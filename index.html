@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="מעקב יצור">
+  <title>מעקב יצור</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <h1 id="page-title">בית</h1>
+      <p id="page-subtitle" class="subtitle"></p>
+    </header>
+
+    <main id="main-content"></main>
+
+    <nav class="bottom-nav" aria-label="ניווט ראשי">
+      <button class="nav-btn active" data-screen="home" aria-label="בית">
+        <span class="nav-icon">🏠</span>
+        <span class="nav-label">בית</span>
+      </button>
+      <button class="nav-btn" data-screen="record" aria-label="ייצור">
+        <span class="nav-icon">➕</span>
+        <span class="nav-label">ייצור</span>
+      </button>
+      <button class="nav-btn" data-screen="process" aria-label="תיעוד">
+        <span class="nav-icon">📝</span>
+        <span class="nav-label">תיעוד</span>
+      </button>
+      <button class="nav-btn" data-screen="products" aria-label="מוצרים">
+        <span class="nav-icon">📦</span>
+        <span class="nav-label">מוצרים</span>
+      </button>
+      <button class="nav-btn" data-screen="targets" aria-label="יעדים">
+        <span class="nav-icon">🎯</span>
+        <span class="nav-label">יעדים</span>
+      </button>
+      <button class="nav-btn" data-screen="reports" aria-label="דוחות">
+        <span class="nav-icon">📊</span>
+        <span class="nav-label">דוחות</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="modal-title"></h2>
+        <button class="modal-close" aria-label="סגור">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+      <div id="modal-footer" class="modal-footer"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/dexie@4/dist/dexie.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
