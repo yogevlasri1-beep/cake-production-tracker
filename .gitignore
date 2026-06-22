@@ -4,3 +4,4 @@ ios/
 .env
 .env.*
 *.local
+cake-production-tracker-vercel.zip

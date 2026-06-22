@@ -16,19 +16,45 @@
 
 ### אפשרות ב' — Vercel (מומלץ, HTTPS + עדכונים מהירים)
 
-1. היכנס ל-[vercel.com](https://vercel.com) → **Add New Project**
-2. **Import** את `yogevlasri1-beep/cake-production-tracker` מ-GitHub
-3. הגדרות (ברירת מחדל — **אין build**):
+#### דרך GitHub (אוטומטי אחרי כל push)
+
+1. היכנס ל-[vercel.com/new](https://vercel.com/new) → התחבר עם **GitHub**
+2. אם לא רואה את הריפו — **Adjust GitHub App Permissions** → תן גישה ל-`cake-production-tracker`
+3. **Import** את `yogevlasri1-beep/cake-production-tracker`
+4. בדף ההגדרות — **חשוב ללחוץ Override** ולוודא:
    - **Framework Preset:** Other
+   - **Install Command:** (ריק)
    - **Build Command:** (ריק)
-   - **Output Directory:** (ריק)
-4. **Deploy**
-5. הכתובת: `https://cake-production-tracker.vercel.app` (או שם ש-Vercel נותן)
-6. באייפון Safari → פתח את הכתובת → **הוסף למסך הבית**
+   - **Output Directory:** `.` (נקודה בלבד)
+5. **Deploy**
 
-לעדכון גרסה: `/?force-update=1` בכתובת.
+`vercel.json` כבר מגדיר את זה — אם ה-Override לא דלוק, Vercel עלול לנסות `npm install` (Capacitor) ולהיכשל.
 
-קובץ `vercel.json` כבר מוגדר עם no-cache ל-`index.html`, `sw.js` ו-`version.js`.
+#### דרך Drop (בלי Git — הכי פשוט אם GitHub נתקע)
+
+1. בטרמינל:
+   ```bash
+   cd ~/Projects/cake-production-tracker
+   ./scripts/make-vercel-drop-zip.sh
+   ```
+2. פתח [vercel.com/new/drop](https://vercel.com/new/drop)
+3. גרור את `cake-production-tracker-vercel.zip` לדף
+4. קבל URL מיד
+
+#### באייפון
+
+1. Safari → פתח את כתובת Vercel
+2. **שיתוף** → **הוסף למסך הבית**
+3. לעדכון גרסה: `/?force-update=1`
+
+#### אם הפריסה נכשלת
+
+| שגיאה | פתרון |
+|--------|--------|
+| `npm install` / Capacitor | Override: Install + Build ריקים, Output = `.` |
+| Repository not found | GitHub App → הרשאות לריפו |
+| 404 אחרי deploy | Output Directory חייב להיות `.` לא `public` |
+| DEPLOYMENT_NOT_FOUND | הפרויקט עדיין לא נפרס — השלם Deploy או Drop |
 
 ### אפשרות ג' — GitHub Pages
 
