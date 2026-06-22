@@ -1,15 +1,15 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, roundMoney,
-} from '../js/validators.js?v=94';
+} from '../js/validators.js?v=95';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=94';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=94';
-import { enrichBackupData } from '../js/backup.js?v=94';
+} from '../js/calc.js?v=95';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=95';
+import { enrichBackupData } from '../js/backup.js?v=95';
 
 export async function runAllTests() {
   /* validators */
@@ -88,11 +88,11 @@ export async function runAllTests() {
   });
 
   /* date ranges */
-  test('weekRange — 7 ימים', () => {
+  test('weekRange — ראשון עד שבת', () => {
     const w = weekRange('2026-06-11');
     assertEqual(w.dates.length, 7);
-    assertEqual(w.from, '2026-06-05');
-    assertEqual(w.to, '2026-06-11');
+    assertEqual(w.from, '2026-06-07');
+    assertEqual(w.to, '2026-06-13');
   });
 
   test('monthRange — יוני 2026', () => {

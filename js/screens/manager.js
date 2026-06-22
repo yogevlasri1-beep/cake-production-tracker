@@ -7,15 +7,15 @@ import {
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
   getManagerDashboardStats,
-} from '../db.js?v=94';
+} from '../db.js?v=95';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=94';
-import { openModal, closeModal } from '../modal.js?v=94';
-import { renderTargets } from './targets.js?v=94';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=94';
-import { APP_VERSION } from '../version.js?v=94';
+} from '../utils.js?v=95';
+import { openModal, closeModal } from '../modal.js?v=95';
+import { renderTargets } from './targets.js?v=95';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=95';
+import { APP_VERSION } from '../version.js?v=95';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },

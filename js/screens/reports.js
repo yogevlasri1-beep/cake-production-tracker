@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=94';
+} from '../db.js?v=95';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml,
-} from '../utils.js?v=94';
+} from '../utils.js?v=95';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=94';
-import { openModal, closeModal } from '../modal.js?v=94';
+} from '../export.js?v=95';
+import { openModal, closeModal } from '../modal.js?v=95';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=94';
-import { isSheetsConfigured } from '../google-sheets.js?v=94';
-import { buildProductMap, sumCategoryTotals, productProductionValue, mapGetById, sortProductsForReport } from '../calc.js?v=94';
-import { defaultColorForIndex } from '../chart.js?v=94';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=94';
+} from '../sheets-flow.js?v=95';
+import { isSheetsConfigured } from '../google-sheets.js?v=95';
+import { buildProductMap, sumCategoryTotals, productProductionValue, mapGetById, sortProductsForReport } from '../calc.js?v=95';
+import { defaultColorForIndex } from '../chart.js?v=95';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=95';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -65,7 +65,7 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     label = mr.label;
     reportTitle = 'דוח חודשי';
   } else if (reportType === 'week') {
-    const anchor = container.dataset.selectedWeekEnd || today;
+    const anchor = container.dataset.selectedWeekDate || container.dataset.selectedWeekEnd || today;
     const wr = weekRange(anchor);
     from = wr.from;
     to = wr.to;
@@ -405,11 +405,12 @@ function renderFiltersHTML(ctx, categories, products, today, defaultMonth) {
   }
 
   if (reportType === 'week') {
+    const weekAnchor = container.dataset.selectedWeekDate || container.dataset.selectedWeekEnd || ctx.to;
     return `
       <div class="form-group">
-        <label for="report-week-end">שבוע (7 ימים עד תאריך)</label>
-        <input type="date" id="report-week-end" value="${ctx.to}">
-        <p class="form-hint">${formatDate(ctx.from)} – ${formatDate(ctx.to)}</p>
+        <label for="report-week">שבוע (ראשון – שבת)</label>
+        <input type="date" id="report-week" value="${weekAnchor}">
+        <p class="form-hint">${formatDateHebrew(ctx.from)} – ${formatDateHebrew(ctx.to)}</p>
       </div>`;
   }
 
@@ -721,8 +722,9 @@ function bindFilterEvents(container) {
     renderReports(container);
   });
 
-  document.getElementById('report-week-end')?.addEventListener('change', (e) => {
-    container.dataset.selectedWeekEnd = e.target.value;
+  document.getElementById('report-week')?.addEventListener('change', (e) => {
+    container.dataset.selectedWeekDate = e.target.value;
+    delete container.dataset.selectedWeekEnd;
     renderReports(container);
   });
 

@@ -1,4 +1,4 @@
-import { sanitizeQuantity, roundMoney } from './validators.js?v=94';
+import { sanitizeQuantity, roundMoney } from './validators.js?v=95';
 
 export { roundMoney };
 
@@ -195,18 +195,30 @@ export function addDaysISO(iso, n) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-export function weekRange(todayIso) {
-  const labels = [];
+/** שבוע לוח שנה: ראשון–שבת שמכיל את התאריך שנבחר */
+export function weekRange(anchorIso) {
+  if (!anchorIso) {
+    return { from: '', to: '', dates: [], label: '' };
+  }
+  const anchor = anchorIso;
+  const d = new Date(`${anchor}T12:00:00`);
+  if (isNaN(d.getTime())) {
+    return { from: anchor, to: anchor, dates: [anchor], label: anchor };
+  }
+  const sundayOffset = d.getDay();
+  const from = addDaysISO(anchor, -sundayOffset);
   const dates = [];
-  for (let i = 6; i >= 0; i--) {
-    const iso = addDaysISO(todayIso, -i);
+  const labels = [];
+  for (let i = 0; i < 7; i++) {
+    const iso = addDaysISO(from, i);
     if (!iso) continue;
     dates.push(iso);
-    const d = new Date(iso + 'T12:00:00');
-    labels.push(d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }));
+    const day = new Date(`${iso}T12:00:00`);
+    labels.push(day.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }));
   }
-  if (!dates.length) return { from: todayIso, to: todayIso, dates: [todayIso], label: todayIso };
-  return { from: dates[0], to: dates[dates.length - 1], dates, label: `${labels[0]} – ${labels[labels.length - 1]}` };
+  if (!dates.length) return { from: anchor, to: anchor, dates: [anchor], label: anchor };
+  const to = dates[dates.length - 1];
+  return { from, to, dates, label: `${labels[0]} – ${labels[labels.length - 1]}` };
 }
 
 export function monthRange(year, month) {
