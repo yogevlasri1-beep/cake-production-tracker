@@ -1,0 +1,22 @@
+{
+  "name": "cake-production-tracker",
+  "version": "1.0.0",
+  "description": "מעקב יצור — אפליקציית מעקב ייצור",
+  "private": true,
+  "scripts": {
+    "cap:sync": "npx cap sync ios",
+    "cap:open": "npx cap open ios",
+    "ios:setup": "npm install && npx cap add ios && npx cap sync ios"
+  },
+  "capacitor": {
+    "platforms": ["ios"]
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "backup-folder": "file:plugins/backup-folder"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/ios": "^7.0.0"
+  }
+}

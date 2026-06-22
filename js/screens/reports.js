@@ -1,107 +1,924 @@
 import {
   getCategories, getProducts, getEntriesForDate, getEntriesForMonth,
   getEntriesInRange, getProductionTotals, getProcessLogsInRange,
-  getProcessLogsForDate, getProcessLogsForMonth,
-} from '../db.js';
-import { todayISO, formatDate, formatMoney, currentMonth, showToast, escapeHtml } from '../utils.js';
+  getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
+  getCategoryGroups,
+  getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
+} from '../db.js?v=94';
+import {
+  todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
+  showToast, escapeHtml,
+} from '../utils.js?v=94';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
-  summarizeProcessLogs, weekRange, monthRange,
-} from '../export.js';
+  summarizeProcessLogs, monthRange, weekRange,
+} from '../export.js?v=94';
+import { openModal, closeModal } from '../modal.js?v=94';
+import {
+  renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
+  openSheetsSetupModal,
+} from '../sheets-flow.js?v=94';
+import { isSheetsConfigured } from '../google-sheets.js?v=94';
+import { buildProductMap, sumCategoryTotals, productProductionValue, mapGetById, sortProductsForReport } from '../calc.js?v=94';
+import { defaultColorForIndex } from '../chart.js?v=94';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=94';
 
-export async function renderReports(container) {
-  const mode = container.dataset.mode || 'day';
-  const today = todayISO();
-  const { year, month } = currentMonth();
+function parseMonthValue(value, fallbackYear, fallbackMonth) {
+  if (value && /^\d{4}-\d{2}$/.test(value)) {
+    const [year, month] = value.split('-').map(Number);
+    return { year, month, iso: value };
+  }
+  return {
+    year: fallbackYear,
+    month: fallbackMonth,
+    iso: `${fallbackYear}-${String(fallbackMonth).padStart(2, '0')}`,
+  };
+}
 
-  const [categories, products] = await Promise.all([getCategories(), getProducts(true)]);
-  const productMap = new Map(products.map((p) => [p.id, p]));
-  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+function monthStartIso(year, month) {
+  return `${year}-${String(month).padStart(2, '0')}-01`;
+}
+
+function resolveReportContext(container, today, curYear, curMonth, catMap, productMap) {
+  const reportType = container.dataset.reportType || 'day';
+  const defaultMonth = `${curYear}-${String(curMonth).padStart(2, '0')}`;
 
   let from = today;
   let to = today;
   let label = formatDate(today);
   let reportTitle = 'דוח יומי';
+  let filterLabel = '';
+  let selectedCategoryId = container.dataset.selectedCategory || '';
+  let selectedProductId = container.dataset.selectedProduct || '';
+  let weekDates = null;
 
-  if (mode === 'day') {
+  if (reportType === 'day') {
     from = container.dataset.selectedDay || today;
     to = from;
     label = formatDate(from);
     reportTitle = 'דוח יומי';
-  } else if (mode === 'week') {
-    const week = weekRange(today);
-    from = week.from;
-    to = week.to;
-    label = week.label;
-    reportTitle = 'דוח שבועי';
-  } else if (mode === 'month') {
-    const mr = monthRange(year, month);
+  } else if (reportType === 'month') {
+    const selectedMonth = parseMonthValue(container.dataset.selectedMonth, curYear, curMonth);
+    const mr = monthRange(selectedMonth.year, selectedMonth.month);
     from = mr.from;
     to = mr.to;
     label = mr.label;
     reportTitle = 'דוח חודשי';
+  } else if (reportType === 'week') {
+    const anchor = container.dataset.selectedWeekEnd || today;
+    const wr = weekRange(anchor);
+    from = wr.from;
+    to = wr.to;
+    weekDates = wr.dates;
+    label = `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח שבועי מפורט';
+  } else if (reportType === 'range') {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח טווח תאריכים';
+  } else if (reportType === 'category') {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח לפי קטגוריה';
+    filterLabel = catMap.get(Number(selectedCategoryId)) || '';
+  } else if (reportType === 'product') {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח לפי מוצר';
+    filterLabel = mapGetById(productMap, selectedProductId)?.name || '';
   }
 
-  const entries = mode === 'day'
-    ? await getEntriesForDate(from)
-    : mode === 'month'
-      ? await getEntriesForMonth(year, month)
-      : await getEntriesInRange(from, to);
+  return {
+    reportType,
+    from,
+    to,
+    label,
+    reportTitle,
+    filterLabel,
+    selectedCategoryId,
+    selectedProductId,
+    defaultMonth,
+    weekDates,
+  };
+}
+
+async function fetchReportData(ctx) {
+  let entries;
+  let processLogs;
+
+  if (ctx.reportType === 'day') {
+    entries = await getEntriesForDate(ctx.from);
+    processLogs = await getProcessLogsForDate(ctx.from);
+  } else if (ctx.reportType === 'month') {
+    const [year, month] = ctx.monthIso.split('-').map(Number);
+    entries = await getEntriesForMonth(year, month);
+    processLogs = await getProcessLogsForMonth(year, month);
+  } else {
+    entries = await getEntriesInRange(ctx.from, ctx.to);
+    processLogs = await getProcessLogsInRange(ctx.from, ctx.to);
+  }
+
+  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+    const catId = Number(ctx.selectedCategoryId);
+    entries = entries.filter((e) => {
+      const p = mapGetById(ctx.productMap, e.productId);
+      return p?.categoryId === catId;
+    });
+    processLogs = processLogs.filter((log) => log.categoryId === catId);
+  }
+
+  if (ctx.reportType === 'product' && ctx.selectedProductId) {
+    const prodId = Number(ctx.selectedProductId);
+    entries = entries.filter((e) => e.productId === prodId);
+    const product = mapGetById(ctx.productMap, prodId);
+    if (product) {
+      processLogs = processLogs.filter((log) => log.categoryId === product.categoryId);
+    } else {
+      processLogs = [];
+    }
+  }
+
+  let productionRuns = await getProductionRunsInRange(ctx.from, ctx.to, { includeActiveOutsideRange: true });
+
+  return { entries, processLogs, productionRuns };
+}
+
+function runMatchesCategory(run, catId, productMap, categories) {
+  if (run.productId) {
+    const p = mapGetById(productMap, run.productId);
+    if (p?.categoryId === catId) return true;
+  }
+  if (run.categoryId === catId) return true;
+  if (run.categoryIds?.includes(catId)) return true;
+  if (run.scopeMode === 'group' && run.categoryGroupId) {
+    const cat = categories.find((c) => c.id === catId);
+    if (cat && Number(cat.groupId) === Number(run.categoryGroupId)) return true;
+  }
+  return false;
+}
+
+function filterProductionRuns(runs, ctx, categories) {
+  let filtered = runs;
+  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+    const catId = Number(ctx.selectedCategoryId);
+    filtered = filtered.filter((r) => runMatchesCategory(r, catId, ctx.productMap, categories));
+  }
+  if (ctx.reportType === 'product' && ctx.selectedProductId) {
+    const prodId = Number(ctx.selectedProductId);
+    filtered = filtered.filter((r) => r.productId === prodId);
+  }
+  return filtered;
+}
+
+function reportRunTitle(run, catMap, productMap, groupMap) {
+  const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
+  if (run.productId && productMap.get(run.productId)) {
+    const p = productMap.get(run.productId);
+    return `${flowPrefix}${escapeHtml(p.name)}`;
+  }
+  if (run.scopeMode === 'group' && run.categoryGroupId) {
+    return `${flowPrefix}${escapeHtml(groupMap.get(run.categoryGroupId) || 'קבוצה')}`;
+  }
+  const ids = run.categoryIds?.length ? run.categoryIds : (run.categoryId ? [run.categoryId] : []);
+  const names = ids.map((id) => catMap.get(id)).filter(Boolean);
+  if (names.length > 1) return `${flowPrefix}${escapeHtml(names[0])} +${names.length - 1}`;
+  return `${flowPrefix}${escapeHtml(catMap.get(run.categoryId) || names[0] || 'תהליך')}`;
+}
+
+function reportRunStepInfo(run) {
+  const total = run.steps?.length || 0;
+  if (!total) return { progress: '—', stepName: '—', statusLabel: run.status === 'completed' ? 'הושלם' : 'פעיל' };
+  if (run.status === 'completed') {
+    const last = run.steps[total - 1];
+    return { progress: `${total}/${total}`, stepName: last?.stepName || '—', statusLabel: 'הושלם' };
+  }
+  const idx = run.currentStepIndex;
+  const current = run.steps[idx];
+  return { progress: `${idx + 1}/${total}`, stepName: current?.stepName || '—', statusLabel: 'פעיל' };
+}
+
+function reportRunStartDate(run) {
+  if (run.startedAt) return String(run.startedAt).slice(0, 10);
+  return run.date || '';
+}
+
+function reportRunEndDate(run) {
+  if (run.completedAt) return String(run.completedAt).slice(0, 10);
+  return '';
+}
+
+function reportRunDatesLabel(run) {
+  const start = reportRunStartDate(run);
+  const end = reportRunEndDate(run);
+  if (start && end) return `${formatDate(start)} → ${formatDate(end)}`;
+  if (start) return formatDate(start);
+  return '—';
+}
+
+function reportFlowTimelineSlot(step, role, emptyLabel) {
+  const labels = { done: 'הושלם', active: 'פעיל', next: 'הבא' };
+  return `
+    <div class="home-flow-slot home-flow-slot--${role}${step ? '' : ' home-flow-slot--empty'}">
+      <span class="home-flow-slot-role">${labels[role]}</span>
+      <span class="home-flow-slot-name">${step ? escapeHtml(step.stepName) : escapeHtml(emptyLabel)}</span>
+    </div>`;
+}
+
+function reportFlowTimeline(run) {
+  const idx = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
+  const done = idx > 0 ? run.steps[idx - 1] : null;
+  const active = run.steps[idx] || null;
+  const next = idx < run.steps.length - 1 ? run.steps[idx + 1] : null;
+  return `
+    <div class="home-flow-timeline-track report-flow-timeline">
+      ${reportFlowTimelineSlot(done, 'done', 'תחילה')}
+      ${reportFlowTimelineSlot(active, 'active', '—')}
+      ${reportFlowTimelineSlot(next, 'next', '—')}
+    </div>`;
+}
+
+function formatStepPortionsReport(step) {
+  if (!step.tracksPortions) return '—';
+  const total = getStepPortionTotal(step);
+  if (total == null) return '—';
+  const batches = getStepPortionBatches(step);
+  if (batches.some((b) => b.name)) {
+    const lines = batches.map((b) => {
+      const detail = formatPortionBatchSummary(b);
+      return `${formatDate(b.date)}: ${escapeHtml(detail)}`;
+    }).join('<br>');
+    return `<div class="portion-report-cell">
+      <strong>סה"כ ${total} מנות</strong>
+      <div class="portion-batch-breakdown">${lines}</div>
+    </div>`;
+  }
+  const sizePart = step.portionUnit === 'weight' && step.portionSize != null
+    ? ` × ${step.portionSize} ק"ג`
+    : '';
+  if (batches.length <= 1) {
+    return `${total}${sizePart}`;
+  }
+  const lines = batches.map((b) => `${formatDate(b.date)}: +${b.count}`).join('<br>');
+  return `<div class="portion-report-cell">
+    <strong>סה"כ ${total}${sizePart}</strong>
+    <div class="portion-batch-breakdown">${lines}</div>
+  </div>`;
+}
+
+function renderPortionUsageReportHTML(productionRuns) {
+  const rows = [];
+  for (const run of productionRuns) {
+    for (const step of run.steps || []) {
+      if (!step.tracksPortions) continue;
+      for (const batch of getStepPortionBatches(step)) {
+        if (!batch.name) continue;
+        rows.push({ run, step, batch });
+      }
+    }
+  }
+  if (!rows.length) return '';
+  return `
+    <div class="card" style="margin-top:16px">
+      <div class="card-title">🍽 שימוש במנות (תזרים יצור)</div>
+      <div class="report-table-wrap">
+        <table class="report-table">
+          <thead><tr>
+            <th>תאריך</th><th>אצווה</th><th>שלב</th><th>שם מנה</th><th>משקל</th><th>תוספת</th><th>כמות</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(({ run, step, batch }) => `
+              <tr>
+                <td>${formatDate(batch.date)}</td>
+                <td>${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
+                <td>${escapeHtml(step.stepName)}</td>
+                <td>${escapeHtml(batch.name)}</td>
+                <td>${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
+                <td>${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
+                <td><strong>${batch.count}</strong></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderProductionRunsStepsTable(run) {
+  if (!run.steps?.length) return '';
+  const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
+  return `
+    <div class="report-table-wrap" style="margin-top:8px">
+    <table class="report-table report-flow-steps-table">
+      <thead><tr><th>#</th><th>שלב</th><th>סטטוס</th><th>מנות</th></tr></thead>
+      <tbody>
+        ${run.steps.map((step, i) => {
+          let status = 'ממתין';
+          if (step.status === 'completed' || i < currentIndex) status = '✓ בוצע';
+          else if (i === currentIndex && run.status === 'active') status = '● פעיל';
+          const portions = formatStepPortionsReport(step);
+          return `<tr class="report-flow-step-row report-flow-step-row--${step.status || 'pending'}">
+            <td>${i + 1}</td>
+            <td>${escapeHtml(step.stepName)}</td>
+            <td>${status}</td>
+            <td>${portions}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    </div>`;
+}
+
+function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap) {
+  if (!productionRuns.length) {
+    return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
+  }
+
+  const activeOutside = productionRuns.filter((r) => r.status === 'active' && (r.date < ctx.from || r.date > ctx.to));
+  const activeCount = productionRuns.filter((r) => r.status === 'active').length;
+  const doneCount = productionRuns.filter((r) => r.status === 'completed').length;
+
+  return `
+    ${activeOutside.length ? `<p class="report-hint">כולל ${activeOutside.length} תזרימים פעילים שהתחילו מחוץ לתקופה</p>` : ''}
+    <p class="report-preview-note" style="margin-bottom:10px">${activeCount} פעילים · ${doneCount} הושלמו</p>
+    <div class="report-table-wrap">
+    <table class="report-table">
+      <thead><tr><th>תאריך התחלה</th><th>תאריך סיום</th><th>אצווה</th><th>תזרים / יעד</th><th>סטטוס</th><th>שלב</th></tr></thead>
+      <tbody>
+        ${productionRuns.map((run) => {
+          const info = reportRunStepInfo(run);
+          const batch = run.batchNumber ? escapeHtml(run.batchNumber) : '—';
+          const startDate = reportRunStartDate(run);
+          const endDate = reportRunEndDate(run);
+          const dateNote = (run.date < ctx.from || run.date > ctx.to) ? ` · ${formatDate(run.date)}` : '';
+          return `<tr>
+            <td>${startDate ? formatDate(startDate) : '—'}${dateNote ? `<span class="report-flow-date-note">${dateNote.trim()}</span>` : ''}</td>
+            <td>${endDate ? formatDate(endDate) : '—'}</td>
+            <td>${batch}</td>
+            <td>${reportRunTitle(run, catMap, productMap, groupMap)}</td>
+            <td><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>
+            <td>${info.progress} · ${escapeHtml(info.stepName)}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    </div>
+    ${productionRuns.map((run) => {
+          const info = reportRunStepInfo(run);
+          return `
+      <details class="report-flow-detail"${run.status === 'active' ? ' open' : ''}>
+        <summary class="report-flow-detail-summary">
+          ${run.batchNumber ? `אצווה ${escapeHtml(run.batchNumber)} · ` : ''}${reportRunTitle(run, catMap, productMap, groupMap)}
+          · ${info.statusLabel} · ${info.progress}
+          · ${reportRunDatesLabel(run)}
+        </summary>
+        ${run.status === 'active' ? reportFlowTimeline(run) : ''}
+        ${renderProductionRunsStepsTable(run)}
+      </details>`;
+        }).join('')}
+    ${renderPortionUsageReportHTML(productionRuns)}`;
+}
+
+function buildProductRows(products, totals, categories, reportType) {
+  const rows = [];
+  for (const p of sortProductsForReport(products, categories)) {
+    const { qty, value } = productProductionValue(p, totals.byProduct);
+    if (qty === 0 && (reportType === 'day' || reportType === 'week')) continue;
+    rows.push({ product: p, qty, value });
+  }
+  return rows;
+}
+
+function renderFiltersHTML(ctx, categories, products, today, defaultMonth) {
+  const { reportType } = ctx;
+
+  if (reportType === 'day') {
+    return `
+      <div class="form-group">
+        <label for="report-day">תאריך</label>
+        <input type="date" id="report-day" value="${ctx.from}">
+      </div>`;
+  }
+
+  if (reportType === 'week') {
+    return `
+      <div class="form-group">
+        <label for="report-week-end">שבוע (7 ימים עד תאריך)</label>
+        <input type="date" id="report-week-end" value="${ctx.to}">
+        <p class="form-hint">${formatDate(ctx.from)} – ${formatDate(ctx.to)}</p>
+      </div>`;
+  }
+
+  if (reportType === 'month') {
+    return `
+      <div class="form-group">
+        <label for="report-month">חודש</label>
+        <input type="month" id="report-month" value="${defaultMonth}">
+      </div>`;
+  }
+
+  let html = `
+    <div class="report-filter-grid">
+      <div class="form-group">
+        <label for="report-from">מתאריך</label>
+        <input type="date" id="report-from" value="${ctx.from}">
+      </div>
+      <div class="form-group">
+        <label for="report-to">עד תאריך</label>
+        <input type="date" id="report-to" value="${ctx.to}">
+      </div>
+    </div>`;
+
+  if (reportType === 'category') {
+    const categoryOptions = categories
+      .map((c) => `<option value="${c.id}" ${String(c.id) === ctx.selectedCategoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`)
+      .join('');
+    html += `
+      <div class="form-group">
+        <label for="report-category">קטגוריה</label>
+        <select id="report-category" ${categories.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר קטגוריה...</option>
+          ${categoryOptions}
+        </select>
+      </div>`;
+  }
+
+  if (reportType === 'product') {
+    const productOptions = products
+      .map((p) => {
+        const cat = categories.find((c) => c.id === p.categoryId);
+        return `<option value="${p.id}" ${String(p.id) === ctx.selectedProductId ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(cat?.name || '')})</option>`;
+      })
+      .join('');
+    html += `
+      <div class="form-group">
+        <label for="report-product">מוצר</label>
+        <select id="report-product" ${products.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר מוצר...</option>
+          ${productOptions}
+        </select>
+      </div>`;
+  }
+
+  return html;
+}
+
+function renderProductionTableHTML(rows, totals, catMap) {
+  if (rows.length === 0) {
+    return '<p class="report-empty">אין נתונים לתקופה זו</p>';
+  }
+  return `
+    <div class="report-table-wrap">
+    <table class="report-table">
+      <thead><tr><th>מוצר</th><th>קטגוריה</th><th>כמות</th><th>ערך</th></tr></thead>
+      <tbody>
+        ${rows.map((r) => `<tr>
+          <td>${escapeHtml(r.product.name)}</td>
+          <td>${escapeHtml(catMap.get(r.product.categoryId) || '')}</td>
+          <td>${r.qty}</td>
+          <td>${formatMoney(r.value)}</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr><td colspan="2">סה"כ</td><td>${totals.total}</td><td>${formatMoney(totals.totalValue)}</td></tr></tfoot>
+    </table>
+    </div>`;
+}
+
+function reportSubtitle(ctx) {
+  return ctx.filterLabel
+    ? `${ctx.reportTitle} · ${ctx.filterLabel} · ${ctx.label}`
+    : `${ctx.reportTitle} · ${ctx.label}`;
+}
+
+async function saveFormattedReport({ fullTitle, ctx, safeLabel, previewHtml }) {
+  const method = await saveReportPageAsHtml({
+    title: fullTitle,
+    subtitle: reportSubtitle(ctx),
+    bodyHtml: previewHtml,
+    filename: `yitzur-doh-${ctx.reportType}-${safeLabel}.html`,
+  });
+  if (method === 'cancelled') showToast('בוטל');
+  else if (method === 'share') showToast('נפתח Share — שמור לקבצים ✓');
+  else showToast('הדוח נשמר ✓');
+}
+
+function bindReportPageToolbar(container, { fullTitle, ctx, safeLabel, previewHtml }) {
+  document.getElementById('report-view-back')?.addEventListener('click', () => {
+    container.dataset.reportView = 'standard';
+    renderReports(container);
+  });
+
+  document.getElementById('report-save-page')?.addEventListener('click', () => {
+    saveFormattedReport({ fullTitle, ctx, safeLabel, previewHtml });
+  });
+
+  document.getElementById('report-print-page')?.addEventListener('click', () => {
+    printReportElement(document.getElementById('report-page-content'));
+  });
+}
+
+function reportCategoryChipStyle(color, id) {
+  const c = color || defaultColorForIndex((Number(id) || 1) - 1);
+  return `background:color-mix(in srgb, ${c} 14%, white);color:${c};border:1px solid color-mix(in srgb, ${c} 28%, transparent)`;
+}
+
+async function buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap) {
+  const subtitle = reportSubtitle(ctx);
+  const totals = await getProductionTotals(entries, productMap);
+  const weekDates = ctx.weekDates || [];
+  const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+
+  const daySections = [];
+  for (const dateIso of weekDates) {
+    const dayEntries = entries.filter((e) => e.date === dateIso);
+    if (!dayEntries.length) continue;
+    const dayTotals = await getProductionTotals(dayEntries, productMap);
+    if (dayTotals.total === 0) continue;
+
+    const catBlocks = categories.map((cat) => {
+      const { qty, value: val } = sumCategoryTotals(cat.id, products, dayTotals.byProduct);
+      if (qty === 0) return '';
+      const productLines = products
+        .filter((p) => p.categoryId === cat.id)
+        .map((p) => {
+          const { qty: pQty, value: pVal } = productProductionValue(p, dayTotals.byProduct);
+          if (pQty === 0) return '';
+          return `<div class="list-item">
+            <span class="list-item-name">${escapeHtml(p.name)}</span>
+            <strong>${pQty} · ${formatMoney(pVal)}</strong>
+          </div>`;
+        })
+        .filter(Boolean)
+        .join('');
+
+      return `
+        <div class="card report-week-cat-card">
+          <div class="section-header home-cat-header" style="margin-bottom:8px">
+            <span class="category-chip" style="${reportCategoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
+            <strong style="font-size:1rem;color:var(--primary)">${qty} יח' · ${formatMoney(val)}</strong>
+          </div>
+          ${productLines}
+        </div>`;
+    }).filter(Boolean).join('');
+
+    daySections.push(`
+      <section class="report-week-day">
+        <h4 class="report-preview-heading">${escapeHtml(formatDateHebrew(dateIso))}</h4>
+        <div class="stat-grid report-preview-stats" style="margin-bottom:12px">
+          <div class="stat-box">
+            <div class="stat-value">${dayTotals.total}</div>
+            <div class="stat-label">ייצור (יח')</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-value">${formatMoney(dayTotals.totalValue)}</div>
+            <div class="stat-label">ערך</div>
+          </div>
+        </div>
+        ${catBlocks || '<p class="report-empty">אין פירוט</p>'}
+      </section>`);
+  }
+
+  const catSummary = categories.map((c) => {
+    const { qty, value: val } = sumCategoryTotals(c.id, products, totals.byProduct);
+    return { name: c.name, qty, val };
+  }).filter((c) => c.qty > 0);
+
+  return `
+    <div class="report-preview">
+      <p class="report-preview-meta">${escapeHtml(subtitle)}</p>
+      <div class="stat-grid report-preview-stats">
+        <div class="stat-box">
+          <div class="stat-value">${totals.total}</div>
+          <div class="stat-label">סה"כ שבוע (יח')</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalValue)}</div>
+          <div class="stat-label">ערך שבועי</div>
+        </div>
+      </div>
+
+      ${catSummary.length ? `
+        <h4 class="report-preview-heading">סיכום שבועי לפי קטגוריה</h4>
+        <div class="report-table-wrap">
+        <table class="report-table">
+          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
+          <tbody>
+            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        </div>` : ''}
+
+      <h4 class="report-preview-heading">פירוט יומי</h4>
+      ${daySections.length ? daySections.join('') : '<p class="report-empty">אין ייצור בשבוע זה</p>'}
+
+      <h4 class="report-preview-heading">תזרימי יצור</h4>
+      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+
+      <h4 class="report-preview-heading">תיעוד הכנות</h4>
+      ${processLogs.length === 0
+    ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
+    : `${processSummary.length ? `
+          <div class="report-table-wrap">
+          <table class="report-table" style="margin-bottom:12px">
+            <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
+            <tbody>
+              ${processSummary.map((r) => `<tr>
+                <td>${escapeHtml(r.activity)}</td>
+                <td>${escapeHtml(r.category)}</td>
+                <td>${r.qty || '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>` : ''}
+          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty || '—'} · ${processLogs.length} רישומים</p>
+          ${processLogs.map((log) => `
+            <div class="list-item report-preview-log">
+              <div class="list-item-info">
+                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+                <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
+              </div>
+            </div>`).join('')}`}
+    </div>`;
+}
+
+function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap) {
+  const subtitle = reportSubtitle(ctx);
+
+  const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+
+  return `
+    <div class="report-preview">
+      <p class="report-preview-meta">${escapeHtml(subtitle)}</p>
+      <div class="stat-grid report-preview-stats">
+        <div class="stat-box">
+          <div class="stat-value">${totals.total}</div>
+          <div class="stat-label">ייצור (יח')</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalValue)}</div>
+          <div class="stat-label">ערך</div>
+        </div>
+      </div>
+
+      ${catSummary.length > 0 ? `
+        <h4 class="report-preview-heading">ייצור לפי קטגוריה</h4>
+        <div class="report-table-wrap">
+        <table class="report-table">
+          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
+          <tbody>
+            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        </div>` : ''}
+
+      <h4 class="report-preview-heading">פירוט מוצרים</h4>
+      ${renderProductionTableHTML(rows, totals, catMap)}
+
+      <h4 class="report-preview-heading">תזרימי יצור</h4>
+      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+
+      <h4 class="report-preview-heading">תיעוד הכנות</h4>
+      ${processLogs.length === 0
+        ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
+        : `${processSummary.length ? `
+          <div class="report-table-wrap">
+          <table class="report-table" style="margin-bottom:12px">
+            <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
+            <tbody>
+              ${processSummary.map((r) => `<tr>
+                <td>${escapeHtml(r.activity)}</td>
+                <td>${escapeHtml(r.category)}</td>
+                <td>${r.qty || '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>` : ''}
+          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty || '—'} · ${processLogs.length} רישומים</p>
+          ${processLogs.map((log) => `
+            <div class="list-item report-preview-log">
+              <div class="list-item-info">
+                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+                <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
+              </div>
+            </div>`).join('')}`}
+    </div>`;
+}
+
+function bindFilterEvents(container) {
+  container.querySelectorAll('.report-type-tabs .tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      container.dataset.reportType = tab.dataset.type;
+      renderReports(container);
+    });
+  });
+
+  document.getElementById('report-day')?.addEventListener('change', (e) => {
+    container.dataset.selectedDay = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-week-end')?.addEventListener('change', (e) => {
+    container.dataset.selectedWeekEnd = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-month')?.addEventListener('change', (e) => {
+    container.dataset.selectedMonth = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-from')?.addEventListener('change', (e) => {
+    container.dataset.rangeFrom = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-to')?.addEventListener('change', (e) => {
+    container.dataset.rangeTo = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-category')?.addEventListener('change', (e) => {
+    container.dataset.selectedCategory = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-product')?.addEventListener('change', (e) => {
+    container.dataset.selectedProduct = e.target.value;
+    renderReports(container);
+  });
+}
+
+export async function renderReports(container) {
+  const today = todayISO();
+  const { year: curYear, month: curMonth } = currentMonth();
+  const defaultMonth = container.dataset.selectedMonth || `${curYear}-${String(curMonth).padStart(2, '0')}`;
+
+  const [categories, products, groups] = await Promise.all([
+    getCategories(), getProducts(true), getCategoryGroups(),
+  ]);
+  const productMap = buildProductMap(products);
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+
+  const ctx = resolveReportContext(container, today, curYear, curMonth, catMap, productMap);
+  ctx.productMap = productMap;
+  ctx.defaultMonth = container.dataset.selectedMonth || defaultMonth;
+
+  if (ctx.reportType === 'month') {
+    const selectedMonth = parseMonthValue(container.dataset.selectedMonth, curYear, curMonth);
+    ctx.monthIso = selectedMonth.iso;
+    const mr = monthRange(selectedMonth.year, selectedMonth.month);
+    ctx.from = mr.from;
+    ctx.to = mr.to;
+    ctx.label = mr.label;
+  } else {
+    ctx.monthIso = defaultMonth;
+  }
+
+  const { entries, processLogs, productionRuns: rawProductionRuns } = await fetchReportData(ctx);
+  const productionRuns = filterProductionRuns(rawProductionRuns, ctx, categories);
 
   const totals = await getProductionTotals(entries, productMap);
-
-  const processLogs = mode === 'day'
-    ? await getProcessLogsForDate(from)
-    : mode === 'month'
-      ? await getProcessLogsForMonth(year, month)
-      : await getProcessLogsInRange(from, to);
-
   const processSummary = summarizeProcessLogs(processLogs, catMap);
   const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
 
-  const rows = [];
-  for (const p of products) {
-    const qty = totals.byProduct[p.id] || 0;
-    if (qty === 0 && mode === 'day') continue;
-    rows.push({ product: p, qty, value: qty * (p.unitPrice || 0) });
+  let relevantProducts = products;
+  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+    relevantProducts = products.filter((p) => String(p.categoryId) === ctx.selectedCategoryId);
+  } else if (ctx.reportType === 'product' && ctx.selectedProductId) {
+    relevantProducts = products.filter((p) => String(p.id) === ctx.selectedProductId);
   }
-  rows.sort((a, b) => b.qty - a.qty);
 
-  const catSummary = categories.map((c) => ({
-    name: c.name,
-    qty: totals.byCategory[c.id] || 0,
-  })).filter((c) => c.qty > 0);
+  const rows = buildProductRows(relevantProducts, totals, categories, ctx.reportType);
 
-  const safeLabel = label.replace(/\//g, '-');
+  const catSummary = (ctx.reportType === 'category' && ctx.selectedCategoryId
+    ? categories.filter((c) => String(c.id) === ctx.selectedCategoryId)
+    : categories
+  ).map((c) => {
+    const { qty, value: val } = sumCategoryTotals(c.id, products, totals.byProduct);
+    return { name: c.name, qty, val };
+  }).filter((c) => c.qty > 0);
+
+  const safeLabel = ctx.label.replace(/\//g, '-').replace(/\s+/g, '_');
+  const fullTitle = ctx.filterLabel
+    ? `${ctx.reportTitle} — ${ctx.filterLabel}`
+    : ctx.reportTitle;
+
+  const needsCategory = ctx.reportType === 'category' && !ctx.selectedCategoryId;
+  const needsProduct = ctx.reportType === 'product' && !ctx.selectedProductId;
+  const canExport = !needsCategory && !needsProduct;
+  const sheetsHTML = await renderSheetsStatusHTML();
+  const sheetsReady = await isSheetsConfigured();
+  const previewHtml = ctx.reportType === 'week'
+    ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
+    : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+  const isPageView = container.dataset.reportView === 'page';
+
+  const filtersCard = `
+    <div class="card report-filters-card">
+      <div class="card-title">סוג דוח</div>
+      <div class="tabs tabs-wrap report-type-tabs">
+        <button type="button" class="tab ${ctx.reportType === 'day' ? 'active' : ''}" data-type="day">יומי</button>
+        <button type="button" class="tab ${ctx.reportType === 'week' ? 'active' : ''}" data-type="week">שבועי מפורט</button>
+        <button type="button" class="tab ${ctx.reportType === 'month' ? 'active' : ''}" data-type="month">חודשי</button>
+        <button type="button" class="tab ${ctx.reportType === 'range' ? 'active' : ''}" data-type="range">טווח תאריכים</button>
+        <button type="button" class="tab ${ctx.reportType === 'category' ? 'active' : ''}" data-type="category">לפי קטגוריה</button>
+        <button type="button" class="tab ${ctx.reportType === 'product' ? 'active' : ''}" data-type="product">לפי מוצר</button>
+      </div>
+      <div class="report-dynamic-filters">
+        ${renderFiltersHTML({ ...ctx, defaultMonth: ctx.defaultMonth }, categories, products, today, ctx.defaultMonth)}
+      </div>
+    </div>`;
+
+  if (isPageView) {
+    container.innerHTML = `
+      ${filtersCard}
+      <div class="report-page-toolbar">
+        <button type="button" class="btn btn-secondary btn-sm" id="report-view-back">← חזרה</button>
+        <button type="button" class="btn btn-primary btn-sm" id="report-save-page">💾 שמור דוח</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="report-print-page">🖨 הדפס / PDF</button>
+      </div>
+      <div class="card report-page-view" id="report-page-content">
+        <div class="report-page-header">
+          <h2>${escapeHtml(fullTitle)}</h2>
+          <p>${escapeHtml(reportSubtitle(ctx))}</p>
+        </div>
+        ${previewHtml}
+      </div>`;
+
+    bindFilterEvents(container);
+    bindReportPageToolbar(container, { fullTitle, ctx, safeLabel, previewHtml });
+    return;
+  }
 
   container.innerHTML = `
-    <div class="tabs">
-      <button class="tab ${mode === 'day' ? 'active' : ''}" data-mode="day">יומי</button>
-      <button class="tab ${mode === 'week' ? 'active' : ''}" data-mode="week">שבועי</button>
-      <button class="tab ${mode === 'month' ? 'active' : ''}" data-mode="month">חודשי</button>
+    <div class="card sheets-primary-card">
+      <div class="card-title">📊 Google Sheets</div>
+      <div id="sheets-status">${sheetsHTML}</div>
     </div>
 
-    ${mode === 'day' ? `
-      <div class="filter-row">
-        <input type="date" id="report-day" value="${from}">
-      </div>` : ''}
+    ${filtersCard}
 
-    <div class="card" style="border-right:3px solid var(--primary)">
-      <div class="card-title">ייצור מוצרים סופיים — העיקרי</div>
-      <button class="btn btn-primary" id="export-excel" style="width:100%">
-        📊 ייצוא דוח ייצור — Excel
+    <div class="card report-actions-card">
+      <div class="card-title">הפקת דוח</div>
+      ${needsCategory ? '<p class="report-hint">בחר קטגוריה לצפייה ולייצוא</p>' : ''}
+      ${needsProduct ? '<p class="report-hint">בחר מוצר לצפייה ולייצוא</p>' : ''}
+      <button type="button" class="btn btn-primary" id="open-report-page" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+        📄 דוח מעוצב — כמו באפליקציה
+      </button>
+      <button type="button" class="btn btn-primary" id="export-sheets-report" style="width:100%;margin-bottom:8px" ${canExport && sheetsReady ? '' : 'disabled'}>
+        📊 שלח דוח ל-Google Sheets
+      </button>
+      ${!sheetsReady ? `<button type="button" class="btn btn-secondary" id="export-sheets-setup" style="width:100%;margin-bottom:8px">🔗 חבר Google Sheets לייצוא</button>` : ''}
+      <button type="button" class="btn btn-secondary" id="preview-report" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+        👁 צפייה מקדימה
+      </button>
+      <details class="excel-export-details">
+        <summary class="excel-export-summary">ייצוא Excel (גיבוי)</summary>
+        <button type="button" class="btn btn-secondary btn-sm" id="export-excel" style="width:100%;margin:8px 0" ${canExport ? '' : 'disabled'}>
+          📊 הורד Excel — ייצור
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="export-process" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+          📝 הורד Excel — תיעוד
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="export-combined" style="width:100%" ${canExport ? '' : 'disabled'}>
+          📋 הורד Excel — משולב
+        </button>
+      </details>
+    </div>
+
+    <div class="card report-import-card">
+      <div class="card-title">ייבוא נתונים</div>
+      <p class="report-hint">מומלץ: ייבוא מ-Google Sheets (למעלה) · או מקובץ Excel</p>
+      <input type="file" id="reports-import-file" accept=".csv,.xlsx,.xls,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+      <button type="button" class="btn btn-secondary" id="reports-import-btn" style="width:100%;margin-bottom:8px">
+        📥 ייבא קובץ Excel
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm" id="reports-template-btn" style="width:100%">
+        הורד קובץ דוגמה
       </button>
     </div>
 
-    ${mode === 'month' ? `
-    <button class="btn btn-primary" id="export-combined" style="width:100%;margin-bottom:8px">
-      📋 דוח חודשי משולב (ייצור + תיעוד)
-    </button>` : ''}
+    <div class="card report-audit-card">
+      <div class="card-title">🔍 בדיקת תקינות חישובים</div>
+      <p class="report-hint">בודק שאין רישומים יתומים, כפילויות, או פערים אחרי איחוד מוצרים</p>
+      <button type="button" class="btn btn-secondary" id="run-audit" style="width:100%;margin-bottom:8px">
+        הרץ בדיקת תקינות
+      </button>
+      <div id="audit-results"></div>
+    </div>
 
-    <button class="btn btn-secondary" id="export-process" style="width:100%;margin-bottom:14px">
-      📝 דוח תיעוד הכנות — Excel (אישי)
-    </button>
+    <p class="stats-block-label">${fullTitle} · ${ctx.label}</p>
 
+    ${ctx.reportType === 'week' ? `
+    <div class="card report-page-view" style="padding:16px">
+      ${previewHtml}
+    </div>
+    ` : `
     <div class="stat-grid">
       <div class="stat-box">
         <div class="stat-value">${totals.total}</div>
@@ -115,38 +932,35 @@ export async function renderReports(container) {
 
     ${catSummary.length > 0 ? `
       <div class="card">
-        <div class="card-title">ייצור לפי קטגוריה — ${label}</div>
-        ${catSummary.map((c) => `
-          <div class="list-item">
-            <span class="list-item-name">${c.name}</span>
-            <strong>${c.qty}</strong>
-          </div>`).join('')}
+        <div class="card-title">ייצור לפי קטגוריה — ${ctx.label}</div>
+        <div class="report-table-wrap">
+        <table class="report-table">
+          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
+          <tbody>
+            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
+          </tbody>
+        </table>
+        </div>
       </div>` : ''}
 
     <div class="card">
-      <div class="card-title">פירוט מוצרים — ${label}</div>
-      ${rows.length === 0
-        ? '<p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:16px">אין נתונים לתקופה זו</p>'
-        : `<table class="report-table">
-            <thead><tr><th>מוצר</th><th>קטגוריה</th><th>כמות</th><th>ערך</th></tr></thead>
-            <tbody>
-              ${rows.map((r) => `<tr>
-                <td>${r.product.name}</td>
-                <td>${catMap.get(r.product.categoryId) || ''}</td>
-                <td>${r.qty}</td>
-                <td>${formatMoney(r.value)}</td>
-              </tr>`).join('')}
-            </tbody>
-            <tfoot><tr><td colspan="2">סה"כ</td><td>${totals.total}</td><td>${formatMoney(totals.totalValue)}</td></tr></tfoot>
-          </table>`}
+      <div class="card-title">פירוט מוצרים — ${ctx.label}</div>
+      ${renderProductionTableHTML(rows, totals, catMap)}
+    </div>
+
+    <div class="card report-flows-card">
+      <div class="card-title">תזרימי יצור — ${ctx.label}</div>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · שלב נוכחי</p>
+      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
     </div>
 
     <div class="card process-card">
-      <div class="card-title">תיעוד הכנות — ${label}</div>
+      <div class="card-title">תיעוד הכנות — ${ctx.label}</div>
       <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">לשימושך · לא נכלל בייצור המוצרים${processTotalQty ? ` · סה"כ כמויות: ${processTotalQty}` : ''}</p>
       ${processLogs.length === 0
-        ? '<p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:12px">אין תיעוד לתקופה זו</p>'
+        ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
         : `${processSummary.length ? `
+          <div class="report-table-wrap">
           <table class="report-table" style="margin-bottom:12px">
             <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
             <tbody>
@@ -156,7 +970,8 @@ export async function renderReports(container) {
                 <td>${r.qty || '—'}</td>
               </tr>`).join('')}
             </tbody>
-          </table>` : ''}
+          </table>
+          </div>` : ''}
           ${processLogs.map((log) => `
           <div class="list-item">
             <div class="list-item-info">
@@ -164,33 +979,97 @@ export async function renderReports(container) {
               <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
             </div>
           </div>`).join('')}`}
-    </div>`;
+    </div>`}`;
 
-  container.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      container.dataset.mode = tab.dataset.mode;
-      renderReports(container);
-    });
+  bindFilterEvents(container);
+
+  bindSheetsStatusEvents(container, {
+    onRefresh: () => renderReports(container),
+    onImportComplete: () => renderReports(container),
   });
 
-  document.getElementById('report-day')?.addEventListener('change', async (e) => {
-    container.dataset.selectedDay = e.target.value;
-    await renderReports(container);
+  document.getElementById('export-sheets-setup')?.addEventListener('click', () => {
+    openSheetsSetupModal({ onSaved: () => renderReports(container) });
+  });
+
+  document.getElementById('export-sheets-report')?.addEventListener('click', async () => {
+    const btn = document.getElementById('export-sheets-report');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+    try {
+      const msg = await exportReportToSheets({
+        title: fullTitle,
+        periodLabel: ctx.label,
+        entries,
+        categories,
+        products: relevantProducts,
+        productMap,
+        catMap,
+        processLogs,
+      }, { openAfter: true });
+      showToast(msg);
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשליחה ל-Sheets');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  const exportParams = {
+    title: fullTitle,
+    periodLabel: ctx.label,
+    entries,
+    categories,
+    products: relevantProducts,
+    productMap,
+    catMap,
+  };
+
+  document.getElementById('open-report-page')?.addEventListener('click', () => {
+    container.dataset.reportView = 'page';
+    renderReports(container);
+  });
+
+  document.getElementById('preview-report')?.addEventListener('click', () => {
+    openModal({
+      title: 'צפייה מקדימה',
+      bodyHTML: previewHtml,
+      footerHTML: `
+        <button type="button" class="btn btn-secondary modal-close-btn">סגור</button>
+        <button type="button" class="btn btn-secondary" id="preview-open-page">📄 מסך מלא</button>
+        <button type="button" class="btn btn-secondary" id="preview-save-page">💾 שמור דוח</button>
+        <button type="button" class="btn btn-primary" id="preview-export">הורד Excel</button>`,
+    });
+    document.querySelector('.modal-close-btn')?.addEventListener('click', closeModal);
+    document.getElementById('preview-open-page')?.addEventListener('click', () => {
+      closeModal();
+      container.dataset.reportView = 'page';
+      renderReports(container);
+    });
+    document.getElementById('preview-save-page')?.addEventListener('click', () => {
+      saveFormattedReport({ fullTitle, ctx, safeLabel, previewHtml });
+    });
+    document.getElementById('preview-export')?.addEventListener('click', async () => {
+      try {
+        const msg = await exportProductionExcel({
+          ...exportParams,
+          filename: `yitzur-${ctx.reportType}-${safeLabel}.xlsx`,
+        });
+        showToast(msg);
+        closeModal();
+      } catch (err) {
+        showToast(err.message || 'שגיאה בייצוא');
+      }
+    });
   });
 
   document.getElementById('export-excel')?.addEventListener('click', async () => {
     try {
-      await exportProductionExcel({
-        title: reportTitle,
-        periodLabel: label,
-        entries,
-        categories,
-        products,
-        productMap,
-        catMap,
-        filename: `yitzur-mutzar-${mode}-${safeLabel}.xlsx`,
+      const msg = await exportProductionExcel({
+        ...exportParams,
+        filename: `yitzur-${ctx.reportType}-${safeLabel}.xlsx`,
       });
-      showToast('דוח ייצור הורד ✓');
+      showToast(msg);
     } catch (err) {
       showToast(err.message || 'שגיאה בייצוא');
     }
@@ -198,14 +1077,14 @@ export async function renderReports(container) {
 
   document.getElementById('export-process')?.addEventListener('click', async () => {
     try {
-      await exportProcessExcel({
-        title: `תיעוד הכנות — ${reportTitle}`,
-        periodLabel: label,
+      const msg = await exportProcessExcel({
+        title: `תיעוד הכנות — ${fullTitle}`,
+        periodLabel: ctx.label,
         processLogs,
         catMap,
-        filename: `yitzur-tiud-${mode}-${safeLabel}.xlsx`,
+        filename: `yitzur-tiud-${ctx.reportType}-${safeLabel}.xlsx`,
       });
-      showToast('דוח תיעוד הורד ✓');
+      showToast(msg);
     } catch (err) {
       showToast(err.message || 'שגיאה בייצוא');
     }
@@ -213,21 +1092,79 @@ export async function renderReports(container) {
 
   document.getElementById('export-combined')?.addEventListener('click', async () => {
     try {
-      await exportCombinedExcel({
-        productionTitle: 'דוח ייצור מוצרים סופיים',
+      const msg = await exportCombinedExcel({
+        productionTitle: fullTitle,
         processTitle: 'תיעוד תהליכי הכנה (נספח)',
-        periodLabel: label,
+        periodLabel: ctx.label,
         entries,
         categories,
-        products,
+        products: relevantProducts,
         productMap,
         catMap,
         processLogs,
-        filename: `yitzur-chodshi-${safeLabel}.xlsx`,
+        filename: `yitzur-${ctx.reportType}-${safeLabel}.xlsx`,
       });
-      showToast('דוח משולב הורד ✓');
+      showToast(msg);
     } catch (err) {
       showToast(err.message || 'שגיאה בייצוא');
+    }
+  });
+
+  document.getElementById('reports-import-btn')?.addEventListener('click', () => {
+    document.getElementById('reports-import-file')?.click();
+  });
+
+  document.getElementById('reports-template-btn')?.addEventListener('click', async () => {
+    const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
+    const { downloadBlob } = await import('../download.js');
+    const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
+    await downloadBlob(blob, 'dugma-yitzur.csv');
+    showToast('קובץ דוגמה — שמור או שתף');
+  });
+
+  document.getElementById('reports-import-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const { handleProductionImportFile } = await import('../import-flow.js');
+    await handleProductionImportFile(file, {
+      onComplete: async () => renderReports(container),
+    });
+  });
+
+  document.getElementById('run-audit')?.addEventListener('click', async () => {
+    const btn = document.getElementById('run-audit');
+    const resultsEl = document.getElementById('audit-results');
+    btn.disabled = true;
+    btn.textContent = 'בודק...';
+    try {
+      const { runProductionAudit, formatAuditIssue } = await import('../integrity.js');
+      const audit = await runProductionAudit();
+      if (audit.ok) {
+        resultsEl.innerHTML = `
+          <div class="audit-ok">
+            <strong>✓ הכל תקין</strong>
+            <p>${audit.validEntries} רישומים · ${audit.totals.total} יח' · ${formatMoney(audit.totals.totalValue)}</p>
+            <p class="form-hint">סכומי קטגוריה, מוצר ודוחות תואמים</p>
+          </div>`;
+        showToast('בדיקה עברה בהצלחה ✓');
+      } else {
+        resultsEl.innerHTML = `
+          <div class="audit-fail">
+            <strong>נמצאו ${audit.issues.length} בעיות</strong>
+            <ul class="audit-issues-list">
+              ${audit.issues.map((issue) => `<li>${escapeHtml(formatAuditIssue(issue))}</li>`).join('')}
+            </ul>
+            ${audit.orphanEntries ? `<p class="form-hint">יש ${audit.orphanEntries} רישומים יתומים — כנראה אחרי איחוד/מחיקה. ייבא גיבוי או מחק ידנית.</p>` : ''}
+          </div>`;
+        showToast(`נמצאו ${audit.issues.length} בעיות`);
+      }
+    } catch (err) {
+      resultsEl.innerHTML = `<p class="audit-fail">${escapeHtml(err.message || 'שגיאה')}</p>`;
+      showToast(err.message || 'שגיאה בבדיקה');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'הרץ בדיקת תקינות';
     }
   });
 }

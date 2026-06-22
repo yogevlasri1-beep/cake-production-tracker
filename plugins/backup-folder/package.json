@@ -1,0 +1,20 @@
+{
+  "name": "backup-folder",
+  "version": "1.0.0",
+  "description": "Pick backup folder via Files app (iOS)",
+  "main": "dist/plugin.cjs.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/esm/index.d.ts",
+  "unpkg": "dist/plugin.js",
+  "files": ["dist/", "ios/"],
+  "author": "yitzur",
+  "license": "MIT",
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=7.0.0"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "appId": "com.yitzur.tracker",
+  "appName": "מעקב יצור",
+  "webDir": ".",
+  "server": {
+    "androidScheme": "https"
+  },
+  "ios": {
+    "contentInset": "automatic",
+    "backgroundColor": "#2563eb",
+    "infoPlist": {
+      "UISupportsDocumentBrowser": true,
+      "LSSupportsOpeningDocumentsInPlace": true
+    }
+  }
+}

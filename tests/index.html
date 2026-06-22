@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>בדיקות — מעקב יצור</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; background: #f8fafc; }
+    h1 { color: #1d4ed8; }
+    .pass { color: #059669; font-weight: 700; font-size: 1.1rem; }
+    .fail { color: #dc2626; margin: 8px 0; }
+    ul { padding-right: 20px; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <p><a href="../">← חזרה לאפליקציה</a></p>
+  <div id="results"><p>מריץ בדיקות...</p></div>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import { runAllTests } from './suite.js?v=94';
+    import { renderResults } from './runner.js';
+
+    runAllTests().then(() => {
+      renderResults(document.getElementById('results'));
+    }).catch((e) => {
+      document.getElementById('results').innerHTML = `<p class="fail">שגיאה: ${e.message}</p>`;
+    });
+  </script>
+</body>
+</html>

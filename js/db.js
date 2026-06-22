@@ -1,3 +1,20 @@
+import {
+  ValidationError,
+  isValidISODate,
+  sanitizeQuantity,
+  sanitizePortionSize,
+  sanitizeMoney,
+  sanitizeName,
+  sanitizeTargetQuantity,
+  sanitizeProductId,
+  sanitizeCategoryColor,
+  productNameKey,
+} from './validators.js?v=94';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=94';
+import { defaultColorForIndex } from './chart.js?v=94';
+
+export { ValidationError };
+
 export const db = new Dexie('CakeProduction');
 
 db.version(1).stores({
@@ -48,8 +65,281 @@ db.version(4).stores({
   });
 });
 
+db.version(5).stores({
+  categories: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+}).upgrade(async (tx) => {
+  let i = 0;
+  await tx.table('categories').toCollection().modify((cat) => {
+    if (!cat.color) cat.color = defaultColorForIndex(i++);
+  });
+});
+
+db.version(6).stores({
+  categories: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+}).upgrade(async (tx) => {
+  const products = await tx.table('products').toArray();
+  const byCategory = new Map();
+  for (const p of products) {
+    if (!byCategory.has(p.categoryId)) byCategory.set(p.categoryId, []);
+    byCategory.get(p.categoryId).push(p);
+  }
+  for (const group of byCategory.values()) {
+    group.sort((a, b) => a.id - b.id);
+    for (let i = 0; i < group.length; i++) {
+      await tx.table('products').update(group[i].id, { sortOrder: i + 1 });
+    }
+  }
+});
+
+db.version(7).stores({
+  categories: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+});
+
+db.version(8).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+}).upgrade(async (tx) => {
+  await tx.table('categories').toCollection().modify((cat) => {
+    if (cat.groupId == null) cat.groupId = null;
+  });
+});
+
+db.version(9).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flowSteps: '++id, categoryId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+});
+
+db.version(10).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flowSteps: '++id, categoryId, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+});
+
+db.version(11).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+}).upgrade(async (tx) => {
+  const steps = await tx.table('flowSteps').toArray();
+  if (!steps.length) return;
+
+  const groups = new Map();
+  for (const step of steps) {
+    const key = step.categoryId
+      ? `c:${step.categoryId}`
+      : step.categoryGroupId
+        ? `g:${step.categoryGroupId}`
+        : null;
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(step);
+  }
+
+  const stepsTable = tx.table('flowSteps');
+  const flowsTable = tx.table('flows');
+  for (const [key, groupSteps] of groups) {
+    const isCategory = key.startsWith('c:');
+    const targetId = Number(key.slice(2));
+    const flowId = await flowsTable.add({
+      categoryId: isCategory ? targetId : null,
+      categoryGroupId: isCategory ? null : targetId,
+      name: 'ברירת מחדל',
+      sortOrder: 1,
+      isDefault: true,
+    });
+    for (const step of groupSteps) {
+      await stepsTable.update(step.id, { flowId });
+    }
+  }
+});
+
+db.version(12).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+});
+
+db.version(13).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+});
+
+db.version(14).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+}).upgrade(async (tx) => {
+  await tx.table('runStepStates').toCollection().modify((s) => {
+    if (!Array.isArray(s.portionBatches)) s.portionBatches = [];
+    if (s.tracksPortions && s.portionCount != null && s.portionBatches.length === 0) {
+      const date = s.completedAt ? String(s.completedAt).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      s.portionBatches = [{
+        count: s.portionCount,
+        date,
+        recordedAt: s.completedAt || new Date().toISOString(),
+        note: '',
+      }];
+    }
+  });
+});
+
+db.version(15).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+});
+
+function compareGroups(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function compareProducts(a, b) {
+  if (a.categoryId !== b.categoryId) return a.categoryId - b.categoryId;
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
 export async function initDB() {
   await db.open();
+}
+
+export async function getSetting(key) {
+  const row = await db.settings.get(key);
+  return row?.value ?? null;
+}
+
+export async function setSetting(key, value) {
+  await db.settings.put({ key, value });
+}
+
+const RUN_SETTINGS_KEY = 'runSettings';
+const DEFAULT_RUN_SETTINGS = { autoBatchEnabled: true, nextBatchNumber: 1 };
+
+export async function getRunSettings() {
+  const raw = await getSetting(RUN_SETTINGS_KEY);
+  return { ...DEFAULT_RUN_SETTINGS, ...(raw || {}) };
+}
+
+export async function setRunSettings(patch) {
+  const current = await getRunSettings();
+  await setSetting(RUN_SETTINGS_KEY, { ...current, ...patch });
+}
+
+export async function isDatabaseEmpty() {
+  const [categories, entries] = await Promise.all([
+    db.categories.count(),
+    db.productionEntries.count(),
+  ]);
+  return categories === 0 && entries === 0;
 }
 
 export async function getCategories() {
@@ -57,27 +347,154 @@ export async function getCategories() {
 }
 
 export async function getProducts(activeOnly = false) {
-  let q = db.products.toCollection();
-  const all = await q.toArray();
+  const all = await db.products.toCollection().toArray();
+  all.sort(compareProducts);
   return activeOnly ? all.filter((p) => p.active) : all;
 }
 
+export async function getCategoryGroups() {
+  return db.categoryGroups.orderBy('sortOrder').toArray();
+}
+
 export async function getProductsByCategory() {
-  const [categories, products] = await Promise.all([getCategories(), getProducts()]);
+  const layout = await getProductsCatalogLayout();
+  return [...layout.ungrouped, ...layout.groups.flatMap((g) => g.categories)];
+}
+
+export async function getProductsCatalogLayout() {
+  const [groups, categories, products] = await Promise.all([
+    getCategoryGroups(),
+    getCategories(),
+    getProducts(),
+  ]);
   const map = new Map(categories.map((c) => [c.id, { ...c, products: [] }]));
   for (const p of products) {
     map.get(p.categoryId)?.products.push(p);
   }
-  return [...map.values()];
+  for (const cat of map.values()) {
+    cat.products.sort(compareProducts);
+  }
+  const allCategories = categories.map((c) => map.get(c.id)).filter(Boolean);
+  const grouped = groups.map((group) => ({
+    ...group,
+    categories: allCategories.filter((c) => Number(c.groupId) === Number(group.id)),
+  }));
+  const ungrouped = allCategories.filter((c) => !c.groupId);
+  return { groups: grouped, ungrouped, allCategories };
 }
 
-export async function addCategory(name) {
+export async function addCategoryGroup(name, color = null) {
+  const clean = sanitizeName(name);
+  if (!clean) throw new ValidationError('שם קטגוריה כללית לא תקין');
+  const maxOrder = await db.categoryGroups.orderBy('sortOrder').last();
+  const count = await db.categoryGroups.count();
+  const resolvedColor = sanitizeCategoryColor(color) || defaultColorForIndex(count);
+  return db.categoryGroups.add({
+    name: clean,
+    sortOrder: (maxOrder?.sortOrder ?? 0) + 1,
+    color: resolvedColor,
+  });
+}
+
+export async function updateCategoryGroup(id, { name, color } = {}) {
+  const patch = {};
+  if (name != null) {
+    const clean = sanitizeName(name);
+    if (!clean) throw new ValidationError('שם קטגוריה כללית לא תקין');
+    patch.name = clean;
+  }
+  if (color !== undefined) {
+    const resolved = sanitizeCategoryColor(color);
+    if (color && !resolved) throw new ValidationError('צבע לא תקין');
+    patch.color = resolved || defaultColorForIndex(Number(id) || 0);
+  }
+  if (!Object.keys(patch).length) return;
+  return db.categoryGroups.update(id, patch);
+}
+
+export async function deleteCategoryGroup(id) {
+  const gid = Number(id);
+  await db.transaction('rw', db.categoryGroups, db.categories, async () => {
+    await db.categories.where('groupId').equals(gid).modify({ groupId: null });
+    await db.categoryGroups.delete(gid);
+  });
+}
+
+export async function setCategoryGroupOrder(groupIds) {
+  if (!Array.isArray(groupIds) || !groupIds.length) return;
+  await db.transaction('rw', db.categoryGroups, async () => {
+    for (let i = 0; i < groupIds.length; i++) {
+      const id = sanitizeProductId(groupIds[i]);
+      if (!id) continue;
+      const group = await db.categoryGroups.get(id);
+      if (group) await db.categoryGroups.update(id, { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function setCategoriesInGroup(groupId, categoryIds) {
+  const gid = groupId ? Number(groupId) : null;
+  if (!gid) throw new ValidationError('קבוצה לא תקינה');
+  const ids = new Set((categoryIds || []).map(Number).filter(Boolean));
+  await db.transaction('rw', db.categories, async () => {
+    const current = await db.categories.where('groupId').equals(gid).toArray();
+    for (const cat of current) {
+      if (!ids.has(cat.id)) await db.categories.update(cat.id, { groupId: null });
+    }
+    for (const cid of ids) {
+      await db.categories.update(cid, { groupId: gid });
+    }
+  });
+}
+
+export async function setCategoryOrderInContainer(groupId, categoryIds) {
+  if (!Array.isArray(categoryIds) || !categoryIds.length) return;
+  const gid = groupId ? Number(groupId) : null;
+  await db.transaction('rw', db.categories, async () => {
+    for (let i = 0; i < categoryIds.length; i++) {
+      const id = sanitizeProductId(categoryIds[i]);
+      if (!id) continue;
+      const cat = await db.categories.get(id);
+      if (!cat) continue;
+      if (gid && Number(cat.groupId) !== gid) continue;
+      if (!gid && cat.groupId) continue;
+      await db.categories.update(id, { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function addCategory(name, color = null, groupId = null) {
+  const clean = sanitizeName(name);
+  if (!clean) throw new ValidationError('שם קטגוריה לא תקין');
   const maxOrder = await db.categories.orderBy('sortOrder').last();
-  return db.categories.add({ name, sortOrder: (maxOrder?.sortOrder ?? 0) + 1 });
+  const count = await db.categories.count();
+  const resolvedColor = sanitizeCategoryColor(color) || defaultColorForIndex(count);
+  const gid = groupId ? sanitizeProductId(groupId) : null;
+  return db.categories.add({
+    name: clean,
+    sortOrder: (maxOrder?.sortOrder ?? 0) + 1,
+    color: resolvedColor,
+    groupId: gid || null,
+  });
 }
 
-export async function updateCategory(id, name) {
-  return db.categories.update(id, { name });
+export async function updateCategory(id, { name, color, groupId } = {}) {
+  const patch = {};
+  if (name != null) {
+    const clean = sanitizeName(name);
+    if (!clean) throw new ValidationError('שם קטגוריה לא תקין');
+    patch.name = clean;
+  }
+  if (color !== undefined) {
+    const resolved = sanitizeCategoryColor(color);
+    if (color && !resolved) throw new ValidationError('צבע לא תקין');
+    patch.color = resolved || defaultColorForIndex(Number(id) || 0);
+  }
+  if (groupId !== undefined) {
+    patch.groupId = groupId ? sanitizeProductId(groupId) : null;
+  }
+  if (!Object.keys(patch).length) return;
+  return db.categories.update(id, patch);
 }
 
 export async function getProduct(id) {
@@ -110,11 +527,22 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, async () => {
     await db.productionEntries.clear();
     await db.processLogs.clear();
+    await db.flowPortionPresets.clear();
+    await db.flowSteps.clear();
+    await db.flows.clear();
+    await db.runStepStates.clear();
+    await db.productionRuns.clear();
+    await db.managerPlanItems.clear();
+    await db.managerPlans.clear();
+    await db.managerTasks.clear();
+    await db.managerIncidents.clear();
+    await db.managerShiftNotes.clear();
     await db.products.clear();
     await db.categories.clear();
+    await db.categoryGroups.clear();
     await db.targets.clear();
     const defaults = ['הכנת בצק', 'שקילות', 'אריזה', 'אפייה', 'קישוט', 'ערבוב', 'קירור'];
     await db.activityPresets.clear();
@@ -122,28 +550,336 @@ export async function resetAllData() {
   });
 }
 
-function productDefaults(fields) {
+const SETTINGS_SKIP_EXPORT = new Set(['backupFileHandle', 'backupDirectoryHandle']);
+
+function compareCategories(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function stripProductForImport(raw) {
   return {
-    categoryId: fields.categoryId,
-    name: fields.name,
-    unitPrice: Number(fields.unitPrice) || 0,
-    rawMaterialsCost: Number(fields.rawMaterialsCost) || 0,
-    packagingCost: Number(fields.packagingCost) || 0,
-    additionalCosts: Number(fields.additionalCosts) || 0,
+    id: raw.id,
+    categoryId: raw.categoryId,
+    name: raw.name,
+    active: raw.active !== false,
+    sortOrder: raw.sortOrder ?? 0,
+    unitPrice: sanitizeMoney(raw.unitPrice),
+    rawMaterialsCost: sanitizeMoney(raw.rawMaterialsCost),
+    packagingCost: sanitizeMoney(raw.packagingCost),
+    additionalCosts: sanitizeMoney(raw.additionalCosts),
+  };
+}
+
+function stripCategoryForImport(raw, index) {
+  return {
+    id: raw.id,
+    name: raw.name,
+    sortOrder: raw.sortOrder ?? index + 1,
+    color: sanitizeCategoryColor(raw.color) || defaultColorForIndex(index),
+    groupId: raw.groupId ? Number(raw.groupId) : null,
+  };
+}
+
+function stripCategoryGroupForImport(raw, index) {
+  return {
+    id: raw.id,
+    name: raw.name,
+    sortOrder: raw.sortOrder ?? index + 1,
+    color: sanitizeCategoryColor(raw.color) || defaultColorForIndex(index),
+  };
+}
+
+export async function exportAllData() {
+  const [
+    categories,
+    categoryGroups,
+    products,
+    productionEntries,
+    targets,
+    processLogs,
+    activityPresets,
+    flowSteps,
+    flows,
+    flowPortionPresets,
+    productionRuns,
+    runStepStates,
+    settingsRows,
+    managerPlans,
+    managerPlanItems,
+    managerTasks,
+    managerIncidents,
+    managerShiftNotes,
+  ] = await Promise.all([
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
+    db.products.toArray(),
+    db.productionEntries.toArray(),
+    db.targets.toArray(),
+    db.processLogs.toArray(),
+    db.activityPresets.toArray(),
+    db.flowSteps.toArray(),
+    db.flows.toArray(),
+    db.flowPortionPresets.toArray(),
+    db.productionRuns.toArray(),
+    db.runStepStates.toArray(),
+    db.settings.toArray(),
+    db.managerPlans.toArray(),
+    db.managerPlanItems.toArray(),
+    db.managerTasks.toArray(),
+    db.managerIncidents.toArray(),
+    db.managerShiftNotes.toArray(),
+  ]);
+  return {
+    categories: categories.slice().sort(compareCategories),
+    categoryGroups: categoryGroups.slice().sort(compareGroups),
+    products: products.slice().sort(compareProducts),
+    productionEntries,
+    targets,
+    processLogs,
+    activityPresets,
+    flowSteps,
+    flows,
+    flowPortionPresets,
+    productionRuns,
+    runStepStates,
+    managerPlans,
+    managerPlanItems,
+    managerTasks,
+    managerIncidents,
+    managerShiftNotes,
+    settings: settingsRows
+      .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
+      .map((row) => ({ key: row.key, value: row.value })),
+  };
+}
+
+export async function importAllData(payload) {
+  const tables = [
+    'categories',
+    'products',
+    'productionEntries',
+    'targets',
+    'processLogs',
+    'activityPresets',
+  ];
+  for (const key of tables) {
+    if (!Array.isArray(payload[key])) {
+      throw new ValidationError(`נתוני גיבוי לא תקינים: ${key}`);
+    }
+  }
+  if (!Array.isArray(payload.categoryGroups)) {
+    payload.categoryGroups = [];
+  }
+  if (!Array.isArray(payload.flowSteps)) payload.flowSteps = [];
+  if (!Array.isArray(payload.flows)) payload.flows = [];
+  if (!Array.isArray(payload.flowPortionPresets)) payload.flowPortionPresets = [];
+  if (!Array.isArray(payload.productionRuns)) payload.productionRuns = [];
+  if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
+  if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
+  if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
+  if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
+  if (!Array.isArray(payload.managerIncidents)) payload.managerIncidents = [];
+  if (!Array.isArray(payload.managerShiftNotes)) payload.managerShiftNotes = [];
+
+  if (!payload.flows.length && payload.flowSteps.length) {
+    payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
+  }
+
+  const categoryGroups = payload.categoryGroups
+    .slice()
+    .sort(compareGroups)
+    .map(stripCategoryGroupForImport);
+  const categories = payload.categories
+    .slice()
+    .sort(compareCategories)
+    .map(stripCategoryForImport);
+  const products = payload.products
+    .slice()
+    .sort(compareProducts)
+    .map(stripProductForImport);
+
+  await db.transaction(
+    'rw',
+    db.categories,
+    db.categoryGroups,
+    db.products,
+    db.productionEntries,
+    db.targets,
+    db.processLogs,
+    db.activityPresets,
+    db.flowSteps,
+    db.flows,
+    db.flowPortionPresets,
+    db.productionRuns,
+    db.runStepStates,
+    db.settings,
+    db.managerPlans,
+    db.managerPlanItems,
+    db.managerTasks,
+    db.managerIncidents,
+    db.managerShiftNotes,
+    async () => {
+      await db.productionEntries.clear();
+      await db.processLogs.clear();
+      await db.runStepStates.clear();
+      await db.productionRuns.clear();
+      await db.flowPortionPresets.clear();
+      await db.flowSteps.clear();
+      await db.flows.clear();
+      await db.managerPlanItems.clear();
+      await db.managerPlans.clear();
+      await db.managerTasks.clear();
+      await db.managerIncidents.clear();
+      await db.managerShiftNotes.clear();
+      await db.products.clear();
+      await db.categories.clear();
+      await db.categoryGroups.clear();
+      await db.targets.clear();
+      await db.activityPresets.clear();
+
+      if (categoryGroups.length) await db.categoryGroups.bulkPut(categoryGroups);
+      if (categories.length) await db.categories.bulkPut(categories);
+      if (products.length) await db.products.bulkPut(products);
+      if (payload.productionEntries.length) await db.productionEntries.bulkPut(payload.productionEntries);
+      if (payload.targets.length) await db.targets.bulkPut(payload.targets);
+      if (payload.processLogs.length) await db.processLogs.bulkPut(payload.processLogs);
+      if (payload.flows.length) await db.flows.bulkPut(payload.flows);
+      if (payload.flowSteps.length) await db.flowSteps.bulkPut(payload.flowSteps);
+      if (payload.flowPortionPresets.length) await db.flowPortionPresets.bulkPut(payload.flowPortionPresets);
+      if (payload.productionRuns.length) await db.productionRuns.bulkPut(payload.productionRuns);
+      if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
+      if (payload.managerPlans.length) await db.managerPlans.bulkPut(payload.managerPlans);
+      if (payload.managerPlanItems.length) await db.managerPlanItems.bulkPut(payload.managerPlanItems);
+      if (payload.managerTasks.length) await db.managerTasks.bulkPut(payload.managerTasks);
+      if (payload.managerIncidents.length) await db.managerIncidents.bulkPut(payload.managerIncidents);
+      if (payload.managerShiftNotes.length) await db.managerShiftNotes.bulkPut(payload.managerShiftNotes);
+      if (payload.activityPresets.length) {
+        await db.activityPresets.bulkPut(payload.activityPresets);
+      } else {
+        const defaults = ['הכנת בצק', 'שקילות', 'אריזה', 'אפייה', 'קישוט', 'ערבוב', 'קירור'];
+        await db.activityPresets.bulkAdd(defaults.map((name) => ({ categoryId: 0, name })));
+      }
+
+      if (Array.isArray(payload.settings)) {
+        for (const row of payload.settings) {
+          if (!row?.key || SETTINGS_SKIP_EXPORT.has(row.key)) continue;
+          await db.settings.put({ key: row.key, value: row.value });
+        }
+      }
+    }
+  );
+}
+
+function productDefaults(fields) {
+  const name = sanitizeName(fields.name);
+  if (!name) throw new ValidationError('שם מוצר לא תקין');
+  const categoryId = sanitizeProductId(fields.categoryId);
+  if (!categoryId) throw new ValidationError('קטגוריה לא תקינה');
+  return {
+    categoryId,
+    name,
+    unitPrice: sanitizeMoney(fields.unitPrice),
+    rawMaterialsCost: sanitizeMoney(fields.rawMaterialsCost),
+    packagingCost: sanitizeMoney(fields.packagingCost),
+    additionalCosts: sanitizeMoney(fields.additionalCosts),
     active: fields.active !== false,
   };
 }
 
 export async function addProduct(fields) {
-  return db.products.add(productDefaults(fields));
+  const data = productDefaults(fields);
+  const inCategory = await db.products.where('categoryId').equals(data.categoryId).toArray();
+  const maxOrder = inCategory.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+  return db.products.add({ ...data, sortOrder: maxOrder + 1 });
 }
 
 export async function updateProduct(id, data) {
   const patch = { ...data };
+  if ('name' in patch) {
+    const name = sanitizeName(patch.name);
+    if (!name) throw new ValidationError('שם מוצר לא תקין');
+    patch.name = name;
+  }
+  if ('categoryId' in patch) {
+    const cid = sanitizeProductId(patch.categoryId);
+    if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+    patch.categoryId = cid;
+    const existing = await db.products.get(id);
+    if (existing && existing.categoryId !== cid) {
+      const inNew = await db.products.where('categoryId').equals(cid).toArray();
+      const maxOrder = inNew.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+      patch.sortOrder = maxOrder + 1;
+    }
+  }
   for (const key of ['unitPrice', 'rawMaterialsCost', 'packagingCost', 'additionalCosts']) {
-    if (key in patch) patch[key] = Number(patch[key]) || 0;
+    if (key in patch) patch[key] = sanitizeMoney(patch[key]);
   }
   return db.products.update(id, patch);
+}
+
+export async function setCategoryOrder(categoryIds) {
+  if (!Array.isArray(categoryIds) || !categoryIds.length) return;
+
+  await db.transaction('rw', db.categories, async () => {
+    for (let i = 0; i < categoryIds.length; i++) {
+      const id = sanitizeProductId(categoryIds[i]);
+      if (!id) continue;
+      const cat = await db.categories.get(id);
+      if (cat) await db.categories.update(id, { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function setProductOrderInCategory(categoryId, productIds) {
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+  if (!Array.isArray(productIds) || !productIds.length) return;
+
+  await db.transaction('rw', db.products, async () => {
+    for (let i = 0; i < productIds.length; i++) {
+      const pid = sanitizeProductId(productIds[i]);
+      if (!pid) continue;
+      const product = await db.products.get(pid);
+      if (product?.categoryId === cid) {
+        await db.products.update(pid, { sortOrder: i + 1 });
+      }
+    }
+  });
+}
+
+export async function setCategoryUnitPrice(categoryId, unitPrice) {
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+  const price = sanitizeMoney(unitPrice);
+
+  const products = await db.products.where('categoryId').equals(cid).toArray();
+  await db.transaction('rw', db.products, async () => {
+    for (const p of products) {
+      await db.products.update(p.id, { unitPrice: price });
+    }
+  });
+  return products.length;
+}
+
+export async function moveProductInCategory(productId, direction) {
+  const product = await db.products.get(productId);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+  if (direction !== 'up' && direction !== 'down') return false;
+
+  const siblings = (await db.products.where('categoryId').equals(product.categoryId).toArray())
+    .sort(compareProducts);
+  const idx = siblings.findIndex((p) => p.id === productId);
+  const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (idx < 0 || targetIdx < 0 || targetIdx >= siblings.length) return false;
+
+  const other = siblings[targetIdx];
+  await db.transaction('rw', db.products, async () => {
+    const orderA = product.sortOrder ?? idx + 1;
+    const orderB = other.sortOrder ?? targetIdx + 1;
+    await db.products.update(product.id, { sortOrder: orderB });
+    await db.products.update(other.id, { sortOrder: orderA });
+  });
+  return true;
 }
 
 export async function toggleProductActive(id) {
@@ -151,12 +887,42 @@ export async function toggleProductActive(id) {
   return db.products.update(id, { active: !p.active });
 }
 
-export async function addProductionEntry({ date, productId, quantity }) {
-  return db.productionEntries.add({ date, productId: Number(productId), quantity: Number(quantity) });
+export async function addProductionEntry({ date, productId, quantity }, { merge = false } = {}) {
+  if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
+  const qty = sanitizeQuantity(quantity);
+  if (qty === null) throw new ValidationError('כמות חייבת להיות מספר שלם חיובי');
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  const product = await db.products.get(pid);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+
+  if (merge) {
+    const existing = await db.productionEntries
+      .where('[date+productId]')
+      .equals([date, pid])
+      .first();
+    if (existing) {
+      await db.productionEntries.update(existing.id, {
+        quantity: (existing.quantity || 0) + qty,
+      });
+      return existing.id;
+    }
+  }
+
+  return db.productionEntries.add({ date, productId: pid, quantity: qty });
 }
 
 export async function updateProductionEntry(id, data) {
-  return db.productionEntries.update(id, data);
+  const patch = { ...data };
+  if ('quantity' in patch) {
+    const qty = sanitizeQuantity(patch.quantity);
+    if (qty === null) throw new ValidationError('כמות חייבת להיות מספר שלם חיובי');
+    patch.quantity = qty;
+  }
+  if ('date' in patch && !isValidISODate(patch.date)) {
+    throw new ValidationError('תאריך לא תקין');
+  }
+  return db.productionEntries.update(id, patch);
 }
 
 export async function deleteProductionEntry(id) {
@@ -178,15 +944,30 @@ export async function getEntriesInRange(from, to) {
   return all.filter((e) => e.date >= from && e.date <= to);
 }
 
+export async function getEntriesForCategory(categoryId) {
+  const cid = Number(categoryId);
+  if (!cid) return [];
+  const productIds = new Set(
+    (await db.products.where('categoryId').equals(cid).primaryKeys()),
+  );
+  if (productIds.size === 0) return [];
+  const all = await db.productionEntries.toArray();
+  return all.filter((e) => productIds.has(e.productId));
+}
+
 export async function getTargets() {
   return db.targets.toArray();
 }
 
 function normalizeScopeId(scope, scopeId) {
-  return scope === 'total' ? 0 : Number(scopeId);
+  return (scope === 'total' || scope === 'money') ? 0 : Number(scopeId);
 }
 
 export async function upsertTarget({ scope, scopeId, period, quantity }) {
+  const qty = scope === 'money'
+    ? sanitizeMoney(quantity)
+    : sanitizeTargetQuantity(quantity);
+  if (qty === null) throw new ValidationError('יעד לא תקין');
   const sid = normalizeScopeId(scope, scopeId);
   const existing = await db.targets
     .where('[scope+scopeId+period]')
@@ -194,9 +975,9 @@ export async function upsertTarget({ scope, scopeId, period, quantity }) {
     .first();
 
   if (existing) {
-    return db.targets.update(existing.id, { quantity: Number(quantity) });
+    return db.targets.update(existing.id, { quantity: qty });
   }
-  return db.targets.add({ scope, scopeId: sid, period, quantity: Number(quantity) });
+  return db.targets.add({ scope, scopeId: sid, period, quantity: qty });
 }
 
 export async function getTarget(scope, scopeId, period) {
@@ -209,21 +990,7 @@ export async function getTarget(scope, scopeId, period) {
 }
 
 export async function getProductionTotals(entries, productMap) {
-  const byProduct = {};
-  const byCategory = {};
-  let total = 0;
-  let totalValue = 0;
-
-  for (const e of entries) {
-    const product = productMap.get(e.productId);
-    if (!product) continue;
-    byProduct[e.productId] = (byProduct[e.productId] || 0) + e.quantity;
-    byCategory[product.categoryId] = (byCategory[product.categoryId] || 0) + e.quantity;
-    total += e.quantity;
-    totalValue += e.quantity * product.unitPrice;
-  }
-
-  return { byProduct, byCategory, total, totalValue };
+  return computeProductionTotals(entries, productMap);
 }
 
 export async function findOrCreateCategory(name) {
@@ -234,9 +1001,10 @@ export async function findOrCreateCategory(name) {
 }
 
 export async function findOrCreateProduct(categoryId, name, unitPrice = 0) {
-  const trimmed = name.trim();
+  const key = productNameKey(name);
+  if (!key) throw new ValidationError('שם מוצר לא תקין');
   const existing = (await getProducts()).find(
-    (p) => p.categoryId === categoryId && p.name === trimmed
+    (p) => p.categoryId === categoryId && productNameKey(p.name) === key
   );
   if (existing) {
     if (unitPrice > 0 && existing.unitPrice !== unitPrice) {
@@ -244,32 +1012,234 @@ export async function findOrCreateProduct(categoryId, name, unitPrice = 0) {
     }
     return existing.id;
   }
-  return addProduct({ categoryId, name: trimmed, unitPrice: unitPrice || 0 });
+  const clean = sanitizeName(name);
+  return addProduct({ categoryId, name: clean, unitPrice: unitPrice || 0 });
+}
+
+export async function findDuplicateProductGroups() {
+  const [products, categories] = await Promise.all([getProducts(), getCategories()]);
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const byKey = new Map();
+
+  for (const p of products) {
+    const key = `${p.categoryId}|${productNameKey(p.name)}`;
+    if (!productNameKey(p.name)) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(p);
+  }
+
+  const groups = [];
+  for (const list of byKey.values()) {
+    if (list.length < 2) continue;
+    const enriched = await Promise.all(list.map(async (p) => {
+      const entries = await db.productionEntries.where('productId').equals(p.id).toArray();
+      const totalQty = entries.reduce((s, e) => s + (e.quantity || 0), 0);
+      return { ...p, entryCount: entries.length, totalQty };
+    }));
+    enriched.sort((a, b) => b.totalQty - a.totalQty || b.entryCount - a.entryCount || a.id - b.id);
+    groups.push({
+      categoryId: list[0].categoryId,
+      categoryName: catMap.get(list[0].categoryId) || '',
+      name: enriched[0].name,
+      products: enriched,
+    });
+  }
+
+  return groups.sort((a, b) => a.categoryName.localeCompare(b.categoryName, 'he') || a.name.localeCompare(b.name, 'he'));
+}
+
+export async function mergeProducts(keepProductId, mergeProductIds, options = {}) {
+  const { newName, requireSameNameKey = true } = options;
+  const keepId = sanitizeProductId(keepProductId);
+  if (!keepId) throw new ValidationError('מוצר לשמירה לא תקין');
+
+  const mergeIds = [...new Set((mergeProductIds || [])
+    .map(sanitizeProductId)
+    .filter((id) => id && id !== keepId))];
+  if (!mergeIds.length) return { merged: 0, keepProductId: keepId };
+
+  const keep = await db.products.get(keepId);
+  if (!keep) throw new ValidationError('מוצר לא נמצא');
+
+  const allIds = [keepId, ...mergeIds];
+  const entriesBefore = await db.productionEntries.toArray();
+  const qtyBefore = sumEntriesForProducts(entriesBefore, allIds);
+
+  let merged = 0;
+
+  await db.transaction('rw', db.products, db.productionEntries, db.targets, async () => {
+    for (const mid of mergeIds) {
+      const dup = await db.products.get(mid);
+      if (!dup || dup.categoryId !== keep.categoryId) continue;
+      if (requireSameNameKey && productNameKey(dup.name) !== productNameKey(keep.name)) continue;
+
+      const entries = await db.productionEntries.where('productId').equals(mid).toArray();
+      for (const e of entries) {
+        const sameDay = await db.productionEntries
+          .where('[date+productId]')
+          .equals([e.date, keepId])
+          .first();
+        if (sameDay) {
+          await db.productionEntries.update(sameDay.id, {
+            quantity: (sameDay.quantity || 0) + (e.quantity || 0),
+          });
+          await db.productionEntries.delete(e.id);
+        } else {
+          await db.productionEntries.update(e.id, { productId: keepId });
+        }
+      }
+
+      const patch = {};
+      if ((dup.unitPrice || 0) > (keep.unitPrice || 0)) patch.unitPrice = dup.unitPrice;
+      if ((dup.rawMaterialsCost || 0) > (keep.rawMaterialsCost || 0)) patch.rawMaterialsCost = dup.rawMaterialsCost;
+      if ((dup.packagingCost || 0) > (keep.packagingCost || 0)) patch.packagingCost = dup.packagingCost;
+      if ((dup.additionalCosts || 0) > (keep.additionalCosts || 0)) patch.additionalCosts = dup.additionalCosts;
+      if (dup.active && !keep.active) patch.active = true;
+      if (Object.keys(patch).length) {
+        await db.products.update(keepId, patch);
+        Object.assign(keep, patch);
+      }
+
+      const prodTargets = await db.targets.where('scope').equals('product').toArray();
+      for (const t of prodTargets.filter((x) => x.scopeId === mid)) {
+        await db.targets.delete(t.id);
+      }
+
+      await db.products.delete(mid);
+      merged++;
+    }
+
+    if (newName != null && newName !== '') {
+      const clean = sanitizeName(newName);
+      if (!clean) throw new ValidationError('שם מוצר לא תקין');
+      await db.products.update(keepId, { name: clean });
+    }
+  });
+
+  if (merged > 0) {
+    const entriesAfter = await db.productionEntries.toArray();
+    const qtyAfter = sumEntriesForProducts(entriesAfter, [keepId]);
+    if (qtyBefore !== qtyAfter) {
+      throw new ValidationError(`פער בכמויות אחרי איחוד: לפני ${qtyBefore}, אחרי ${qtyAfter}`);
+    }
+  }
+
+  return { merged, keepProductId: keepId, qtyBefore, qtyAfter: merged > 0 ? qtyBefore : 0 };
+}
+
+export async function getProductsWithEntryStats(activeOnly = false) {
+  const [products, entries] = await Promise.all([
+    getProducts(activeOnly),
+    db.productionEntries.toArray(),
+  ]);
+  const stats = new Map();
+  for (const e of entries) {
+    if (!stats.has(e.productId)) stats.set(e.productId, { entryCount: 0, totalQty: 0 });
+    const s = stats.get(e.productId);
+    s.entryCount += 1;
+    s.totalQty += e.quantity || 0;
+  }
+  return products.map((p) => ({
+    ...p,
+    entryCount: stats.get(p.id)?.entryCount || 0,
+    totalQty: stats.get(p.id)?.totalQty || 0,
+  }));
+}
+
+export async function mergeSelectedProducts(productIds, newName) {
+  const ids = [...new Set((productIds || []).map(sanitizeProductId).filter(Boolean))];
+  if (ids.length < 2) throw new ValidationError('יש לבחור לפחות 2 מוצרים');
+
+  const allStats = await getProductsWithEntryStats();
+  const statsMap = new Map(allStats.map((p) => [p.id, p]));
+  const selected = ids.map((id) => statsMap.get(id)).filter(Boolean);
+  if (selected.length !== ids.length) throw new ValidationError('אחד המוצרים לא נמצא');
+
+  const categoryId = selected[0].categoryId;
+  if (selected.some((p) => p.categoryId !== categoryId)) {
+    throw new ValidationError('כל המוצרים חייבים להיות באותה קטגוריה');
+  }
+
+  selected.sort(
+    (a, b) => b.totalQty - a.totalQty || b.entryCount - a.entryCount || a.id - b.id
+  );
+
+  const keepId = selected[0].id;
+  const mergeIds = ids.filter((id) => id !== keepId);
+  const cleanName = sanitizeName(newName);
+  if (!cleanName) throw new ValidationError('שם מוצר לא תקין');
+
+  const result = await mergeProducts(keepId, mergeIds, {
+    requireSameNameKey: false,
+    newName: cleanName,
+  });
+  if (!result.merged) throw new ValidationError('לא ניתן לאחד את המוצרים שנבחרו');
+
+  return { ...result, name: cleanName };
+}
+
+export async function mergeAllDuplicateProducts() {
+  const groups = await findDuplicateProductGroups();
+  let merged = 0;
+  for (const g of groups) {
+    const keepId = g.products[0].id;
+    const others = g.products.slice(1).map((p) => p.id);
+    const result = await mergeProducts(keepId, others);
+    merged += result.merged;
+  }
+  return { groups: groups.length, merged };
 }
 
 export async function importProductionRows(rows) {
   let imported = 0;
+  let merged = 0;
   let skipped = 0;
+  let newCategories = 0;
+  let newProducts = 0;
+
+  const categoryNames = new Map((await getCategories()).map((c) => [c.name, c.id]));
+  const productKeys = new Set(
+    (await getProducts()).map((p) => `${p.categoryId}|${productNameKey(p.name)}`)
+  );
 
   for (const row of rows) {
     const { date, category, product, quantity, price } = row;
-    if (!date || !product || !quantity) {
-      skipped++;
-      continue;
-    }
-    const categoryId = category
-      ? await findOrCreateCategory(category)
-      : (await getCategories())[0]?.id;
+    if (!isValidISODate(date)) { skipped++; continue; }
+    const qty = sanitizeQuantity(quantity);
+    const prodName = sanitizeName(product);
+    if (!prodName || qty === null) { skipped++; continue; }
+
+    const categoryName = (category || 'כללי').trim();
+    let categoryId = categoryNames.get(categoryName);
     if (!categoryId) {
-      skipped++;
-      continue;
+      categoryId = await findOrCreateCategory(categoryName);
+      categoryNames.set(categoryName, categoryId);
+      newCategories++;
     }
-    const productId = await findOrCreateProduct(categoryId, product, price || 0);
-    await addProductionEntry({ date, productId, quantity });
-    imported++;
+
+    const productKey = `${categoryId}|${productNameKey(prodName)}`;
+    if (!productKeys.has(productKey)) {
+      newProducts++;
+      productKeys.add(productKey);
+    }
+
+    const productId = await findOrCreateProduct(categoryId, prodName, sanitizeMoney(price));
+    const existing = await db.productionEntries
+      .where('[date+productId]')
+      .equals([date, productId])
+      .first();
+    if (existing) {
+      await db.productionEntries.update(existing.id, {
+        quantity: (existing.quantity || 0) + qty,
+      });
+      merged++;
+    } else {
+      await addProductionEntry({ date, productId, quantity: qty });
+      imported++;
+    }
   }
 
-  return { imported, skipped };
+  return { imported, merged, skipped, newCategories, newProducts };
 }
 
 export async function importCatalogRows(rows) {
@@ -279,7 +1249,7 @@ export async function importCatalogRows(rows) {
     if (!category || !product) continue;
     const categoryId = await findOrCreateCategory(category);
     const exists = (await getProducts()).some(
-      (p) => p.categoryId === categoryId && p.name === product.trim()
+      (p) => p.categoryId === categoryId && productNameKey(p.name) === productNameKey(product)
     );
     await findOrCreateProduct(categoryId, product, price || 0);
     if (!exists) added++;
@@ -318,13 +1288,18 @@ export async function deleteActivityPreset(id) {
 }
 
 export async function addProcessLog({ date, categoryId, activity, notes, quantity }) {
-  const qty = quantity !== '' && quantity != null ? Number(quantity) : null;
+  if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
+  const act = sanitizeName(activity, 80);
+  if (!act) throw new ValidationError('סוג הכנה לא תקין');
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+  const qtyRaw = quantity !== '' && quantity != null ? sanitizeQuantity(quantity, { allowZero: false }) : null;
   return db.processLogs.add({
     date,
-    categoryId: Number(categoryId),
-    activity: activity.trim(),
-    notes: (notes || '').trim(),
-    quantity: qty > 0 ? qty : null,
+    categoryId: cid,
+    activity: act,
+    notes: String(notes || '').trim().slice(0, 500),
+    quantity: qtyRaw,
   });
 }
 
@@ -354,4 +1329,1232 @@ export async function getProcessLogsForMonth(year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   const all = await db.processLogs.toArray();
   return all.filter((e) => e.date.startsWith(prefix));
+}
+
+/* ── תזרים יצור ── */
+
+function sanitizePortionSizeForUnit(raw, unit) {
+  return unit === 'weight'
+    ? sanitizePortionSize(raw)
+    : sanitizeQuantity(raw, { allowZero: false });
+}
+
+function compareFlowSteps(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function compareFlows(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function migrateLegacyFlowStepsToFlows(flowSteps) {
+  const groups = new Map();
+  for (const step of flowSteps) {
+    const key = step.categoryId
+      ? `c:${step.categoryId}`
+      : step.categoryGroupId
+        ? `g:${step.categoryGroupId}`
+        : null;
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(step);
+  }
+
+  const flows = [];
+  let nextFlowId = 1;
+  for (const [key] of groups) {
+    const isCategory = key.startsWith('c:');
+    const targetId = Number(key.slice(2));
+    const flowId = nextFlowId++;
+    flows.push({
+      id: flowId,
+      categoryId: isCategory ? targetId : null,
+      categoryGroupId: isCategory ? null : targetId,
+      name: 'ברירת מחדל',
+      sortOrder: 1,
+      isDefault: true,
+    });
+    for (const step of groups.get(key)) {
+      step.flowId = flowId;
+    }
+  }
+  return flows;
+}
+
+export async function getFlowsForCategory(categoryId) {
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) return [];
+  const flows = await db.flows.where('categoryId').equals(cid).toArray();
+  return flows.sort(compareFlows);
+}
+
+export async function getFlowsForGroup(categoryGroupId) {
+  const gid = sanitizeProductId(categoryGroupId);
+  if (!gid) return [];
+  const flows = await db.flows.where('categoryGroupId').equals(gid).toArray();
+  return flows.sort(compareFlows);
+}
+
+/** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
+export async function getAllFlowsOverview() {
+  const [flows, steps, categories, groups] = await Promise.all([
+    db.flows.toArray(),
+    db.flowSteps.toArray(),
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
+  ]);
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+  const stepCounts = new Map();
+  for (const s of steps) {
+    if (s.flowId) stepCounts.set(s.flowId, (stepCounts.get(s.flowId) || 0) + 1);
+  }
+
+  return flows
+    .map((f) => {
+      const isCategory = !!f.categoryId;
+      const cat = isCategory ? catMap.get(f.categoryId) : null;
+      const groupId = isCategory ? cat?.groupId : f.categoryGroupId;
+      const groupName = groupMap.get(groupId) || '';
+      const targetLabel = isCategory
+        ? (cat?.name || 'קטגוריה')
+        : (groupMap.get(f.categoryGroupId) || 'קבוצה');
+      return {
+        ...f,
+        targetType: isCategory ? 'category' : 'group',
+        targetLabel,
+        groupId: groupId || f.categoryGroupId || null,
+        categoryId: f.categoryId || null,
+        groupName,
+        stepCount: stepCounts.get(f.id) || 0,
+      };
+    })
+    .sort((a, b) => {
+      const gCmp = (a.groupName || '').localeCompare(b.groupName || '', 'he');
+      if (gCmp) return gCmp;
+      const tCmp = a.targetLabel.localeCompare(b.targetLabel, 'he');
+      if (tCmp) return tCmp;
+      return compareFlows(a, b);
+    });
+}
+
+export async function getFlow(flowId) {
+  return db.flows.get(Number(flowId));
+}
+
+export async function getFlowStepsForFlow(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const steps = await db.flowSteps.where('flowId').equals(fid).toArray();
+  return steps.sort(compareFlowSteps);
+}
+
+export async function getFlowSteps(categoryId) {
+  const flows = await getFlowsForCategory(categoryId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) return [];
+  return getFlowStepsForFlow(flow.id);
+}
+
+export async function getFlowStepsForGroup(categoryGroupId) {
+  const flows = await getFlowsForGroup(categoryGroupId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) return [];
+  return getFlowStepsForFlow(flow.id);
+}
+
+export async function resolveFlows({ categoryId, categoryGroupId, scopeMode } = {}) {
+  if (scopeMode === 'group') {
+    return categoryGroupId ? getFlowsForGroup(categoryGroupId) : [];
+  }
+  if (scopeMode === 'categories') {
+    return categoryGroupId ? getFlowsForGroup(categoryGroupId) : [];
+  }
+  if (categoryId) {
+    const catFlows = await getFlowsForCategory(categoryId);
+    if (catFlows.length) return catFlows;
+    const cat = await db.categories.get(Number(categoryId));
+    if (cat?.groupId) return getFlowsForGroup(cat.groupId);
+  }
+  if (categoryGroupId) return getFlowsForGroup(categoryGroupId);
+  return [];
+}
+
+/** תזרימים לקטגוריות נבחרות — מעדיף תזרים ייעודי לכל קטגוריה, נופל לקבוצה */
+export async function resolveFlowsForCategorySelection({ categoryIds, categoryGroupId } = {}) {
+  const ids = (categoryIds || []).map(Number).filter(Boolean);
+  const byId = new Map();
+  for (const cid of ids) {
+    for (const f of await getFlowsForCategory(cid)) {
+      byId.set(f.id, f);
+    }
+  }
+  if (byId.size) return [...byId.values()].sort(compareFlows);
+  return categoryGroupId ? getFlowsForGroup(categoryGroupId) : [];
+}
+
+export async function resolveFlowSteps({ categoryId, categoryGroupId, flowId } = {}) {
+  if (flowId) {
+    const steps = await getFlowStepsForFlow(flowId);
+    if (steps.length) return steps;
+  }
+  if (categoryGroupId) {
+    const flows = await getFlowsForGroup(categoryGroupId);
+    const flow = flows.find((f) => f.isDefault) || flows[0];
+    if (flow) return getFlowStepsForFlow(flow.id);
+  }
+  if (categoryId) {
+    const catFlows = await getFlowsForCategory(categoryId);
+    if (catFlows.length) {
+      const flow = catFlows.find((f) => f.isDefault) || catFlows[0];
+      return getFlowStepsForFlow(flow.id);
+    }
+    const cat = await db.categories.get(Number(categoryId));
+    if (cat?.groupId) {
+      return resolveFlowSteps({ categoryGroupId: cat.groupId, flowId });
+    }
+  }
+  return [];
+}
+
+export async function createFlow({ categoryId, categoryGroupId, name, withDefaults = false }) {
+  const cleanName = sanitizeName(name, 60);
+  if (!cleanName) throw new ValidationError('שם תזרים לא תקין');
+  const cid = categoryId ? sanitizeProductId(categoryId) : null;
+  const gid = categoryGroupId ? sanitizeProductId(categoryGroupId) : null;
+  if (!cid && !gid) throw new ValidationError('יעד תזרים לא תקין');
+
+  const existing = cid ? await getFlowsForCategory(cid) : await getFlowsForGroup(gid);
+  const maxOrder = existing.reduce((m, f) => Math.max(m, f.sortOrder ?? 0), 0);
+  const isFirst = existing.length === 0;
+
+  const newFlowId = await db.flows.add({
+    categoryId: cid || null,
+    categoryGroupId: gid || null,
+    name: cleanName,
+    sortOrder: maxOrder + 1,
+    isDefault: isFirst,
+  });
+
+  if (withDefaults) {
+    await copyDefaultFlowStepsToFlow(newFlowId);
+  }
+  return newFlowId;
+}
+
+export async function updateFlow(flowId, { name, isDefault } = {}) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+
+  const patch = {};
+  if (name != null) {
+    const clean = sanitizeName(name, 60);
+    if (!clean) throw new ValidationError('שם תזרים לא תקין');
+    patch.name = clean;
+  }
+  if (isDefault === true) patch.isDefault = true;
+  if (!Object.keys(patch).length) return;
+
+  await db.transaction('rw', db.flows, async () => {
+    if (patch.isDefault) {
+      const siblings = flow.categoryId
+        ? await getFlowsForCategory(flow.categoryId)
+        : await getFlowsForGroup(flow.categoryGroupId);
+      for (const sibling of siblings) {
+        if (sibling.id !== fid && sibling.isDefault) {
+          await db.flows.update(sibling.id, { isDefault: false });
+        }
+      }
+    }
+    await db.flows.update(fid, patch);
+  });
+}
+
+export async function deleteFlow(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  const flow = await db.flows.get(fid);
+  if (!flow) return;
+
+  const siblings = flow.categoryId
+    ? await getFlowsForCategory(flow.categoryId)
+    : await getFlowsForGroup(flow.categoryGroupId);
+  if (siblings.length <= 1) {
+    throw new ValidationError('לא ניתן למחוק את התזרים האחרון');
+  }
+
+  await db.transaction('rw', db.flows, db.flowSteps, db.flowPortionPresets, async () => {
+    await db.flowPortionPresets.where('flowId').equals(fid).delete();
+    await db.flowSteps.where('flowId').equals(fid).delete();
+    await db.flows.delete(fid);
+    if (flow.isDefault) {
+      const remaining = siblings.filter((f) => f.id !== fid);
+      if (remaining.length) await db.flows.update(remaining[0].id, { isDefault: true });
+    }
+  });
+}
+
+async function addFlowStepRecord({ flowId, name, tracksPortions = false, portionUnit = null, portionSize = null }) {
+  const clean = sanitizeName(name, 80);
+  if (!clean) throw new ValidationError('שם שלב לא תקין');
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+  const existing = await getFlowStepsForFlow(fid);
+  const maxOrder = existing.reduce((m, s) => Math.max(m, s.sortOrder ?? 0), 0);
+  const record = {
+    flowId: fid,
+    categoryId: flow.categoryId || null,
+    categoryGroupId: flow.categoryGroupId || null,
+    name: clean,
+    sortOrder: maxOrder + 1,
+    tracksPortions: !!tracksPortions,
+    portionUnit: null,
+    portionSize: null,
+  };
+  if (record.tracksPortions && (portionUnit || portionSize != null && portionSize !== '')) {
+    const unit = portionUnit === 'weight' ? 'weight' : 'units';
+    const pSize = sanitizePortionSizeForUnit(portionSize, unit);
+    if (pSize != null) {
+      record.portionUnit = unit;
+      record.portionSize = pSize;
+    }
+  }
+  return db.flowSteps.add(record);
+}
+
+export async function addFlowStepToFlow(flowId, name, { tracksPortions, portionUnit, portionSize } = {}) {
+  return addFlowStepRecord({ flowId, name, tracksPortions, portionUnit, portionSize });
+}
+
+export async function addFlowStep(categoryId, name) {
+  const flows = await getFlowsForCategory(categoryId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) throw new ValidationError('אין תזרים — צור תזרים חדש');
+  return addFlowStepRecord({ flowId: flow.id, name });
+}
+
+export async function addFlowStepToGroup(categoryGroupId, name) {
+  const flows = await getFlowsForGroup(categoryGroupId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) throw new ValidationError('אין תזרים — צור תזרים חדש');
+  return addFlowStepRecord({ flowId: flow.id, name });
+}
+
+export async function updateFlowStep(id, { name, tracksPortions, portionUnit, portionSize } = {}) {
+  const existing = await db.flowSteps.get(id);
+  if (!existing) throw new ValidationError('שלב לא נמצא');
+  const patch = {};
+  if (name != null) {
+    const clean = sanitizeName(name, 80);
+    if (!clean) throw new ValidationError('שם שלב לא תקין');
+    patch.name = clean;
+  }
+  if (tracksPortions !== undefined) patch.tracksPortions = !!tracksPortions;
+  if (portionUnit !== undefined) patch.portionUnit = portionUnit === 'weight' ? 'weight' : 'units';
+  if (portionSize !== undefined) {
+    patch.portionSize = portionSize === '' || portionSize == null
+      ? null
+      : sanitizePortionSizeForUnit(
+        portionSize,
+        (patch.portionUnit ?? existing.portionUnit) === 'weight' ? 'weight' : 'units',
+      );
+  }
+  const willTrack = patch.tracksPortions !== undefined ? patch.tracksPortions : existing.tracksPortions;
+  if (willTrack && (portionUnit !== undefined || portionSize !== undefined)) {
+    const unit = (patch.portionUnit ?? existing.portionUnit) === 'weight' ? 'weight' : 'units';
+    const size = patch.portionSize !== undefined ? patch.portionSize : existing.portionSize;
+    if (size != null && size !== '') {
+      const pSize = sanitizePortionSizeForUnit(size, unit);
+      if (pSize != null) {
+        patch.portionUnit = unit;
+        patch.portionSize = pSize;
+        patch.tracksPortions = true;
+      }
+    }
+  } else if (tracksPortions === false) {
+    patch.portionUnit = null;
+    patch.portionSize = null;
+    patch.tracksPortions = false;
+  }
+  if (!Object.keys(patch).length) return;
+  return db.flowSteps.update(id, patch);
+}
+
+export async function deleteFlowStep(id) {
+  return db.flowSteps.delete(id);
+}
+
+export async function getFlowPortionPresets(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const rows = await db.flowPortionPresets.where('flowId').equals(fid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function addFlowPortionPreset(flowId, { name, weight, extra } = {}) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+  const cleanName = sanitizeName(name, 80);
+  if (!cleanName) throw new ValidationError('שם מנה לא תקין');
+  const w = sanitizePortionSize(weight);
+  if (w == null) throw new ValidationError('משקל מנה לא תקין');
+  const existing = await getFlowPortionPresets(fid);
+  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+  return db.flowPortionPresets.add({
+    flowId: fid,
+    name: cleanName,
+    weight: w,
+    extra: String(extra || '').trim().slice(0, 120),
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateFlowPortionPreset(id, { name, weight, extra } = {}) {
+  const existing = await db.flowPortionPresets.get(id);
+  if (!existing) throw new ValidationError('מנה לא נמצאה');
+  const patch = {};
+  if (name != null) {
+    const cleanName = sanitizeName(name, 80);
+    if (!cleanName) throw new ValidationError('שם מנה לא תקין');
+    patch.name = cleanName;
+  }
+  if (weight != null && weight !== '') {
+    const w = sanitizePortionSize(weight);
+    if (w == null) throw new ValidationError('משקל מנה לא תקין');
+    patch.weight = w;
+  }
+  if (extra !== undefined) patch.extra = String(extra || '').trim().slice(0, 120);
+  if (!Object.keys(patch).length) return;
+  return db.flowPortionPresets.update(id, patch);
+}
+
+export async function deleteFlowPortionPreset(id) {
+  return db.flowPortionPresets.delete(id);
+}
+
+export function formatPortionBatchSummary(batch) {
+  if (!batch) return '';
+  if (batch.name) {
+    const parts = [batch.name];
+    if (batch.weight != null) parts.push(`${batch.weight} ק"ג`);
+    if (batch.extra) parts.push(batch.extra);
+    parts.push(`×${batch.count}`);
+    return parts.join(' · ');
+  }
+  return `+${batch.count} מנות`;
+}
+
+export async function setFlowStepOrderForFlow(flowId, orderedIds) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid || !Array.isArray(orderedIds)) return;
+  await db.transaction('rw', db.flowSteps, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      const stepId = sanitizeProductId(orderedIds[i]);
+      if (!stepId) continue;
+      const step = await db.flowSteps.get(stepId);
+      if (step?.flowId === fid) await db.flowSteps.update(stepId, { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function setFlowStepOrder(categoryId, orderedIds) {
+  const flows = await getFlowsForCategory(categoryId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) return;
+  return setFlowStepOrderForFlow(flow.id, orderedIds);
+}
+
+export async function setFlowStepOrderForGroup(categoryGroupId, orderedIds) {
+  const flows = await getFlowsForGroup(categoryGroupId);
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  if (!flow) return;
+  return setFlowStepOrderForFlow(flow.id, orderedIds);
+}
+
+const DEFAULT_FLOW_STEPS = ['הכנת חומרי גלם', 'ערבוב / הכנה', 'שקילה', 'עיצוב', 'אפייה', 'קירור', 'אריזה'];
+
+export async function copyDefaultFlowStepsToFlow(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return 0;
+  const existing = await getFlowStepsForFlow(fid);
+  if (existing.length) return 0;
+  for (let i = 0; i < DEFAULT_FLOW_STEPS.length; i++) {
+    await addFlowStepRecord({ flowId: fid, name: DEFAULT_FLOW_STEPS[i] });
+  }
+  return DEFAULT_FLOW_STEPS.length;
+}
+
+export async function copyDefaultFlowStepsToCategory(categoryId) {
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) return 0;
+  let flows = await getFlowsForCategory(cid);
+  if (!flows.length) {
+    await createFlow({ categoryId: cid, name: 'ברירת מחדל', withDefaults: true });
+    return DEFAULT_FLOW_STEPS.length;
+  }
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  return copyDefaultFlowStepsToFlow(flow.id);
+}
+
+export async function copyDefaultFlowStepsToGroup(categoryGroupId) {
+  const gid = sanitizeProductId(categoryGroupId);
+  if (!gid) return 0;
+  let flows = await getFlowsForGroup(gid);
+  if (!flows.length) {
+    await createFlow({ categoryGroupId: gid, name: 'ברירת מחדל', withDefaults: true });
+    return DEFAULT_FLOW_STEPS.length;
+  }
+  const flow = flows.find((f) => f.isDefault) || flows[0];
+  return copyDefaultFlowStepsToFlow(flow.id);
+}
+
+function nowISO() {
+  return new Date().toISOString();
+}
+
+function isoDatePart(iso) {
+  if (!iso) return '';
+  return String(iso).slice(0, 10);
+}
+
+function mergeDateIntoIso(dateStr, existingIso) {
+  if (!isValidISODate(dateStr)) throw new ValidationError('תאריך לא תקין');
+  let time = '12:00:00';
+  if (existingIso && String(existingIso).length >= 19) {
+    time = String(existingIso).slice(11, 19);
+  }
+  return `${dateStr}T${time}`;
+}
+
+export async function startProductionRun({
+  date, batchNumber, categoryId, categoryIds, productId, categoryGroupId,
+  scopeMode, portionUnit, portionSize, portionCount, flowId,
+}) {
+  if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
+  const runSettings = await getRunSettings();
+  let batch = String(batchNumber || '').trim().slice(0, 40);
+  if (!batch && runSettings.autoBatchEnabled) {
+    batch = String(Math.max(1, Number(runSettings.nextBatchNumber) || 1));
+  }
+
+  const gid = categoryGroupId ? Number(categoryGroupId) : null;
+  const pid = productId ? sanitizeProductId(productId) : null;
+  let resolvedCategoryIds = [];
+  let resolvedCategoryId = null;
+  let steps = [];
+
+  let resolvedFlowId = flowId ? Number(flowId) : null;
+  let flowName = '';
+
+  if (scopeMode === 'product') {
+    if (!pid) throw new ValidationError('בחר מוצר');
+    const product = await db.products.get(pid);
+    if (!product) throw new ValidationError('מוצר לא נמצא');
+    resolvedCategoryId = product.categoryId;
+    resolvedCategoryIds = [resolvedCategoryId];
+    steps = await resolveFlowSteps({ categoryId: resolvedCategoryId, categoryGroupId: gid, flowId: resolvedFlowId });
+  } else if (scopeMode === 'group') {
+    if (!gid) throw new ValidationError('בחר קטגוריה כללית');
+    const cats = await db.categories.where('groupId').equals(gid).toArray();
+    if (!cats.length) throw new ValidationError('אין קטגוריות בקבוצה');
+    resolvedCategoryIds = cats.map((c) => c.id);
+    resolvedCategoryId = resolvedCategoryIds[0];
+    steps = await resolveFlowSteps({ categoryGroupId: gid, flowId: resolvedFlowId });
+  } else if (scopeMode === 'categories') {
+    if (!gid) throw new ValidationError('בחר קטגוריה כללית');
+    resolvedCategoryIds = (categoryIds || []).map(Number).filter(Boolean);
+    if (!resolvedCategoryIds.length) throw new ValidationError('בחר לפחות קטגוריה אחת');
+    const groupCats = await db.categories.where('groupId').equals(gid).toArray();
+    const groupCatIds = new Set(groupCats.map((c) => c.id));
+    if (!resolvedCategoryIds.every((id) => groupCatIds.has(id))) {
+      throw new ValidationError('כל הקטגוריות חייבות להיות באותה קבוצה');
+    }
+    resolvedCategoryId = resolvedCategoryIds[0];
+    steps = await resolveFlowSteps({
+      categoryId: resolvedCategoryIds.length === 1 ? resolvedCategoryIds[0] : null,
+      categoryGroupId: gid,
+      flowId: resolvedFlowId,
+    });
+  } else {
+    const cid = sanitizeProductId(categoryId);
+    if (!cid) throw new ValidationError('בחר קטגוריה');
+    resolvedCategoryId = cid;
+    resolvedCategoryIds = [cid];
+    steps = await resolveFlowSteps({ categoryId: cid, categoryGroupId: gid, flowId: resolvedFlowId });
+  }
+
+  if (!resolvedFlowId) {
+    const availableFlows = await resolveFlows({
+      categoryId: resolvedCategoryId,
+      categoryGroupId: gid,
+      scopeMode: scopeMode || 'category',
+    });
+    const defaultFlow = availableFlows.find((f) => f.isDefault) || availableFlows[0];
+    resolvedFlowId = defaultFlow?.id || null;
+    flowName = defaultFlow?.name || '';
+  } else {
+    const flow = await db.flows.get(resolvedFlowId);
+    flowName = flow?.name || '';
+  }
+
+  if (!steps.length) throw new ValidationError('אין שלבי תזרים — הגדר שלבים ב«נהל תזרים»');
+
+  const startedAt = mergeDateIntoIso(date, nowISO());
+
+  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, async () => {
+    const runId = await db.productionRuns.add({
+      date,
+      batchNumber: batch,
+      categoryId: resolvedCategoryId,
+      categoryIds: resolvedCategoryIds,
+      productId: pid,
+      categoryGroupId: gid,
+      flowId: resolvedFlowId,
+      flowName,
+      scopeMode: scopeMode || 'category',
+      portionUnit: null,
+      portionSize: null,
+      portionCount: null,
+      status: 'active',
+      currentStepIndex: 0,
+      startedAt,
+      completedAt: null,
+    });
+    for (let i = 0; i < steps.length; i++) {
+      const fs = steps[i];
+      await db.runStepStates.add({
+        runId,
+        stepIndex: i,
+        stepName: fs.name,
+        status: i === 0 ? 'active' : 'pending',
+        completedAt: null,
+        notes: '',
+        issues: '',
+        improvements: '',
+        tracksPortions: !!fs.tracksPortions,
+        portionUnit: fs.tracksPortions && fs.portionUnit ? fs.portionUnit : null,
+        portionSize: fs.tracksPortions && fs.portionSize != null ? fs.portionSize : null,
+        portionCount: null,
+        portionBatches: [],
+      });
+    }
+    if (runSettings.autoBatchEnabled) {
+      const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
+      await db.settings.put({ key: RUN_SETTINGS_KEY, value: { ...runSettings, nextBatchNumber: next } });
+    }
+    return runId;
+  });
+}
+
+export async function getProductionRun(runId) {
+  const run = await db.productionRuns.get(runId);
+  if (!run) return null;
+  const steps = await db.runStepStates.where('runId').equals(runId).toArray();
+  steps.sort((a, b) => a.stepIndex - b.stepIndex);
+  return { ...run, steps };
+}
+
+export async function getProductionRunsForDate(date) {
+  const runs = await db.productionRuns.where('date').equals(date).toArray();
+  runs.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id);
+  return runs;
+}
+
+export async function getActiveProductionRuns() {
+  const runs = await db.productionRuns.where('status').equals('active').toArray();
+  runs.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id);
+  const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
+  return full.filter(Boolean);
+}
+
+export async function getProductionRunsInRange(from, to, { includeActiveOutsideRange = false } = {}) {
+  const all = await db.productionRuns.toArray();
+  const seen = new Set();
+  const runs = [];
+
+  for (const r of all) {
+    if (r.date >= from && r.date <= to) {
+      seen.add(r.id);
+      runs.push(r);
+    }
+  }
+  if (includeActiveOutsideRange) {
+    for (const r of all) {
+      if (r.status === 'active' && !seen.has(r.id)) {
+        seen.add(r.id);
+        runs.push(r);
+      }
+    }
+  }
+
+  runs.sort((a, b) => {
+    if (a.status !== b.status) {
+      if (a.status === 'active') return -1;
+      if (b.status === 'active') return 1;
+    }
+    const dateCmp = b.date.localeCompare(a.date);
+    if (dateCmp) return dateCmp;
+    return (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id;
+  });
+
+  const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
+  return full.filter(Boolean);
+}
+
+export function getStepPortionBatches(step) {
+  if (Array.isArray(step?.portionBatches) && step.portionBatches.length) {
+    return step.portionBatches;
+  }
+  if (step?.tracksPortions && step.portionCount != null) {
+    const date = step.completedAt ? String(step.completedAt).slice(0, 10) : todayISOFromDate();
+    return [{
+      count: step.portionCount,
+      date,
+      recordedAt: step.completedAt || managerNowISO(),
+      note: '',
+    }];
+  }
+  return [];
+}
+
+export function sumPortionBatches(batches) {
+  return (batches || []).reduce((sum, b) => sum + (Number(b.count) || 0), 0);
+}
+
+export function getStepPortionTotal(step) {
+  const batches = getStepPortionBatches(step);
+  if (batches.length) return sumPortionBatches(batches);
+  return step?.portionCount != null ? Number(step.portionCount) : null;
+}
+
+export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count, date, note } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  if (!step.tracksPortions) throw new ValidationError('שלב זה לא עוקב אחר מנות');
+
+  const stepReached = step.status === 'completed'
+    || stepIndex <= run.currentStepIndex
+    || run.status === 'completed';
+  if (!stepReached) throw new ValidationError('השלב עדיין לא הגיע ליצור');
+
+  const pCount = sanitizeQuantity(count, { allowZero: false });
+  if (pCount == null) throw new ValidationError('הזן מספר מנות תקין');
+
+  const flowPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
+  const pid = presetId ? Number(presetId) : null;
+  if (flowPresets.length && !pid) throw new ValidationError('בחר מנה מהרשימה');
+
+  const batchDate = date && isValidISODate(date) ? date : todayISOFromDate();
+  const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  if (!batches.length && step.portionCount != null) {
+    batches.push({
+      count: step.portionCount,
+      date: step.completedAt ? String(step.completedAt).slice(0, 10) : batchDate,
+      recordedAt: step.completedAt || managerNowISO(),
+      note: '',
+    });
+  }
+
+  const entry = {
+    count: pCount,
+    date: batchDate,
+    recordedAt: managerNowISO(),
+    note: String(note || '').trim().slice(0, 200),
+  };
+
+  if (pid) {
+    const preset = flowPresets.find((p) => p.id === pid) || await db.flowPortionPresets.get(pid);
+    if (!preset) throw new ValidationError('מנה לא נמצאה');
+    entry.presetId = preset.id;
+    entry.name = preset.name;
+    entry.weight = preset.weight;
+    entry.extra = preset.extra || '';
+  }
+
+  batches.push(entry);
+
+  await db.runStepStates.update(step.id, {
+    portionBatches: batches,
+    portionCount: sumPortionBatches(batches),
+  });
+}
+
+export async function completeRunStep(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status === 'completed') throw new ValidationError('התהליך כבר הושלם');
+  if (stepIndex !== run.currentStepIndex) throw new ValidationError('זה לא השלב הפעיל');
+
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+
+  return db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    const stepPatch = {
+      status: 'completed',
+      completedAt: nowISO(),
+      notes: String(notes ?? step.notes ?? '').trim().slice(0, 500),
+      issues: String(issues ?? step.issues ?? '').trim().slice(0, 500),
+      improvements: String(improvements ?? step.improvements ?? '').trim().slice(0, 500),
+    };
+    if (step.tracksPortions) {
+      const unit = step.portionUnit === 'weight' ? 'weight' : 'units';
+      const pSize = sanitizePortionSizeForUnit(step.portionSize, unit);
+      const rawCount = portionCount ?? step.portionCount;
+      const pCount = rawCount === '' || rawCount == null
+        ? null
+        : sanitizeQuantity(rawCount, { allowZero: false });
+      if (pCount == null && rawCount !== '' && rawCount != null) {
+        throw new ValidationError('מספר מנות לא תקין');
+      }
+      if (pSize != null) {
+        stepPatch.portionUnit = unit;
+        stepPatch.portionSize = pSize;
+      }
+      const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+      if (pCount != null) {
+        batches.push({
+          count: pCount,
+          date: String(stepPatch.completedAt).slice(0, 10),
+          recordedAt: stepPatch.completedAt,
+          note: '',
+        });
+      } else if (!batches.length && step.portionCount != null) {
+        batches.push({
+          count: step.portionCount,
+          date: String(stepPatch.completedAt).slice(0, 10),
+          recordedAt: stepPatch.completedAt,
+          note: '',
+        });
+      }
+      if (batches.length) {
+        stepPatch.portionBatches = batches;
+        stepPatch.portionCount = sumPortionBatches(batches);
+      }
+    }
+    await db.runStepStates.update(step.id, stepPatch);
+
+    const nextIndex = stepIndex + 1;
+    const isLast = nextIndex >= run.steps.length;
+
+    if (isLast) {
+      await db.productionRuns.update(runId, {
+        status: 'completed',
+        currentStepIndex: nextIndex,
+        completedAt: nowISO(),
+      });
+    } else {
+      await db.productionRuns.update(runId, { currentStepIndex: nextIndex });
+      const nextStep = run.steps[nextIndex];
+      if (nextStep) await db.runStepStates.update(nextStep.id, { status: 'active' });
+    }
+  });
+}
+
+export async function updateRunStepFields(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  const patch = {};
+  if (notes !== undefined) patch.notes = String(notes || '').trim().slice(0, 500);
+  if (issues !== undefined) patch.issues = String(issues || '').trim().slice(0, 500);
+  if (improvements !== undefined) patch.improvements = String(improvements || '').trim().slice(0, 500);
+  if (step.tracksPortions && portionCount !== undefined) {
+    const pCount = portionCount === '' || portionCount == null
+      ? null
+      : sanitizeQuantity(portionCount, { allowZero: false });
+    if (pCount == null && portionCount !== '' && portionCount != null) {
+      throw new ValidationError('מספר מנות לא תקין');
+    }
+    if (Array.isArray(step.portionBatches) && step.portionBatches.length) {
+      throw new ValidationError('יש רשומות מנות — השתמש ב+ להוספת מנות');
+    }
+    patch.portionCount = pCount;
+  }
+  if (!Object.keys(patch).length) return;
+  return db.runStepStates.update(step.id, patch);
+}
+
+export async function updateProductionRunDates(runId, { startedDate, completedDate } = {}) {
+  const run = await db.productionRuns.get(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+
+  const patch = {};
+  if (startedDate !== undefined) {
+    patch.startedAt = mergeDateIntoIso(startedDate, run.startedAt);
+    patch.date = startedDate;
+  }
+  if (completedDate !== undefined) {
+    if (run.status !== 'completed') {
+      throw new ValidationError('ניתן לערוך תאריך סיום רק לתהליך שהושלם');
+    }
+    if (completedDate === '' || completedDate == null) {
+      patch.completedAt = null;
+    } else {
+      patch.completedAt = mergeDateIntoIso(completedDate, run.completedAt);
+    }
+  }
+
+  const startIso = patch.startedAt || run.startedAt;
+  const endIso = patch.completedAt !== undefined ? patch.completedAt : run.completedAt;
+  if (startIso && endIso && endIso < startIso) {
+    throw new ValidationError('תאריך סיום לא יכול להיות לפני תאריך התחלה');
+  }
+
+  if (!Object.keys(patch).length) return;
+  await db.productionRuns.update(runId, patch);
+}
+
+export async function deleteProductionRun(runId) {
+  await db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    await db.runStepStates.where('runId').equals(runId).delete();
+    await db.productionRuns.delete(runId);
+  });
+}
+
+// ── ניהול מנהל ──
+
+export const MANAGER_DEPARTMENTS = [
+  { id: 'production', label: 'ייצור', icon: '🏭' },
+  { id: 'sales', label: 'מכירות', icon: '🛒' },
+  { id: 'maintenance', label: 'ניקיון ואחזקה', icon: '🧹' },
+  { id: 'general', label: 'כללי', icon: '📋' },
+];
+
+const MANAGER_DEPT_IDS = new Set(MANAGER_DEPARTMENTS.map((d) => d.id));
+
+function sanitizeManagerDepartment(dept) {
+  return MANAGER_DEPT_IDS.has(dept) ? dept : 'general';
+}
+
+function managerNowISO() {
+  return new Date().toISOString();
+}
+
+export async function getManagerPlan(planType, anchorDate) {
+  return db.managerPlans.where('[planType+anchorDate]').equals([planType, anchorDate]).first();
+}
+
+export async function upsertManagerPlan({ planType, anchorDate, notes }) {
+  const existing = await getManagerPlan(planType, anchorDate);
+  const now = managerNowISO();
+  if (existing) {
+    await db.managerPlans.update(existing.id, {
+      notes: notes ?? existing.notes,
+      updatedAt: now,
+    });
+    return existing.id;
+  }
+  return db.managerPlans.add({
+    planType,
+    anchorDate,
+    notes: notes || '',
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
+export async function getManagerPlanItems(planType, anchorDate) {
+  const items = await db.managerPlanItems
+    .where('[planType+anchorDate]')
+    .equals([planType, anchorDate])
+    .toArray();
+  return items.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getAllFlowPortionPresetsWithContext() {
+  const [presets, flows] = await Promise.all([
+    db.flowPortionPresets.toArray(),
+    db.flows.toArray(),
+  ]);
+  const flowMap = new Map(flows.map((f) => [f.id, f]));
+  return presets
+    .sort((a, b) => {
+      const fa = flowMap.get(a.flowId)?.name || '';
+      const fb = flowMap.get(b.flowId)?.name || '';
+      return fa.localeCompare(fb, 'he') || (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+    })
+    .map((p) => ({
+      ...p,
+      flowName: flowMap.get(p.flowId)?.name || '',
+    }));
+}
+
+export async function addManagerPlanItem({
+  planType, anchorDate, dayOffset = 0, itemKind = 'text',
+  productId = null, categoryId = null, label = '', quantity = null,
+  portionPresetId = null,
+}) {
+  const items = await getManagerPlanItems(planType, anchorDate);
+  const sortOrder = items.length ? Math.max(...items.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+
+  if (itemKind === 'portion') {
+    const pid = Number(portionPresetId);
+    if (!pid) throw new ValidationError('בחר מנה מהרשימה');
+    const preset = await db.flowPortionPresets.get(pid);
+    if (!preset) throw new ValidationError('מנה לא נמצאה');
+    const qty = sanitizeQuantity(quantity, { allowZero: false });
+    if (qty == null) throw new ValidationError('הזן כמות מנות');
+
+    const prodId = productId ? Number(productId) : null;
+    const catId = categoryId ? Number(categoryId) : null;
+    if (prodId && catId) throw new ValidationError('בחר מוצר או קטגוריה — לא שניהם');
+    if (!prodId && !catId) throw new ValidationError('שייך למוצר או לקטגוריה');
+
+    let targetLabel = '';
+    if (prodId) {
+      const prod = await db.products.get(prodId);
+      if (!prod) throw new ValidationError('מוצר לא נמצא');
+      targetLabel = prod.name;
+    } else {
+      const cat = await db.categories.get(catId);
+      if (!cat) throw new ValidationError('קטגוריה לא נמצאה');
+      targetLabel = cat.name;
+    }
+
+    const extraPart = preset.extra ? ` · ${preset.extra}` : '';
+    const builtLabel = `${preset.name} (${preset.weight} ק"ג${extraPart}) → ${targetLabel}`;
+
+    return db.managerPlanItems.add({
+      planType,
+      anchorDate,
+      dayOffset: Number(dayOffset) || 0,
+      itemKind: 'portion',
+      productId: prodId,
+      categoryId: catId,
+      portionPresetId: preset.id,
+      portionName: preset.name,
+      portionWeight: preset.weight,
+      portionExtra: preset.extra || '',
+      label: builtLabel,
+      quantity: qty,
+      done: false,
+      sortOrder,
+    });
+  }
+
+  const text = sanitizeName(label || '', 120);
+  if (itemKind === 'product' && productId) {
+    const prod = await db.products.get(Number(productId));
+    if (!prod) throw new ValidationError('מוצר לא נמצא');
+    return db.managerPlanItems.add({
+      planType,
+      anchorDate,
+      dayOffset: Number(dayOffset) || 0,
+      itemKind: 'product',
+      productId: prod.id,
+      categoryId: null,
+      label: prod.name,
+      quantity: quantity != null ? sanitizeQuantity(quantity, { allowZero: false }) : null,
+      done: false,
+      sortOrder,
+    });
+  }
+  if (!text) throw new ValidationError('הזן תיאור');
+  return db.managerPlanItems.add({
+    planType,
+    anchorDate,
+    dayOffset: Number(dayOffset) || 0,
+    itemKind: 'text',
+    productId: null,
+    categoryId: null,
+    label: text,
+    quantity: quantity != null ? sanitizeQuantity(quantity, { allowZero: true }) : null,
+    done: false,
+    sortOrder,
+  });
+}
+
+export async function updateManagerPlanItem(id, patch) {
+  const row = await db.managerPlanItems.get(Number(id));
+  if (!row) throw new ValidationError('פריט לא נמצא');
+  const next = {};
+  if (patch.label !== undefined) next.label = sanitizeName(patch.label, 120);
+  if (patch.quantity !== undefined) {
+    next.quantity = patch.quantity === '' || patch.quantity == null
+      ? null
+      : sanitizeQuantity(patch.quantity, { allowZero: true });
+  }
+  if (patch.done !== undefined) next.done = !!patch.done;
+  if (patch.dayOffset !== undefined) next.dayOffset = Number(patch.dayOffset) || 0;
+  if (!Object.keys(next).length) return;
+  await db.managerPlanItems.update(row.id, next);
+}
+
+export async function deleteManagerPlanItem(id) {
+  await db.managerPlanItems.delete(Number(id));
+}
+
+export async function getManagerTasks({ department, kind, status } = {}) {
+  let rows = await db.managerTasks.orderBy('createdAt').reverse().toArray();
+  if (department) rows = rows.filter((r) => r.department === department);
+  if (kind) rows = rows.filter((r) => r.kind === kind);
+  if (status) rows = rows.filter((r) => r.status === status);
+  return rows;
+}
+
+export async function addManagerTask({
+  department, kind = 'task', title, body = '',
+  priority = 'medium', dueDate = null,
+}) {
+  const t = sanitizeName(title, 120);
+  if (!t) throw new ValidationError('הזן כותרת');
+  const validKind = ['task', 'improvement', 'checklist'].includes(kind) ? kind : 'task';
+  const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
+  return db.managerTasks.add({
+    department: sanitizeManagerDepartment(department),
+    kind: validKind,
+    title: t,
+    body: String(body || '').trim().slice(0, 1000),
+    status: 'open',
+    priority: validPriority,
+    dueDate: dueDate && isValidISODate(dueDate) ? dueDate : null,
+    createdAt: managerNowISO(),
+    completedAt: null,
+  });
+}
+
+export async function updateManagerTask(id, patch) {
+  const row = await db.managerTasks.get(Number(id));
+  if (!row) throw new ValidationError('משימה לא נמצאה');
+  const next = {};
+  if (patch.title !== undefined) next.title = sanitizeName(patch.title, 120);
+  if (patch.body !== undefined) next.body = String(patch.body || '').trim().slice(0, 1000);
+  if (patch.status !== undefined) {
+    const st = ['open', 'progress', 'done'].includes(patch.status) ? patch.status : row.status;
+    next.status = st;
+    next.completedAt = st === 'done' ? managerNowISO() : null;
+  }
+  if (patch.priority !== undefined && ['low', 'medium', 'high'].includes(patch.priority)) {
+    next.priority = patch.priority;
+  }
+  if (patch.dueDate !== undefined) {
+    next.dueDate = patch.dueDate && isValidISODate(patch.dueDate) ? patch.dueDate : null;
+  }
+  if (!Object.keys(next).length) return;
+  await db.managerTasks.update(row.id, next);
+}
+
+export async function deleteManagerTask(id) {
+  await db.managerTasks.delete(Number(id));
+}
+
+export async function getManagerIncidents({ department, status } = {}) {
+  let rows = await db.managerIncidents.orderBy('occurredAt').reverse().toArray();
+  if (department) rows = rows.filter((r) => r.department === department);
+  if (status) rows = rows.filter((r) => r.status === status);
+  return rows;
+}
+
+export async function addManagerIncident({
+  department, title, description = '', severity = 'minor', occurredAt,
+}) {
+  const t = sanitizeName(title, 120);
+  if (!t) throw new ValidationError('הזן כותרת');
+  const sev = ['minor', 'major', 'critical'].includes(severity) ? severity : 'minor';
+  const when = occurredAt && isValidISODate(occurredAt) ? occurredAt : todayISOFromDate();
+  return db.managerIncidents.add({
+    department: sanitizeManagerDepartment(department),
+    title: t,
+    description: String(description || '').trim().slice(0, 2000),
+    severity: sev,
+    status: 'open',
+    occurredAt: when,
+    createdAt: managerNowISO(),
+    resolvedAt: null,
+    resolution: '',
+    actionTaken: '',
+  });
+}
+
+function todayISOFromDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export async function updateManagerIncident(id, patch) {
+  const row = await db.managerIncidents.get(Number(id));
+  if (!row) throw new ValidationError('אירוע לא נמצא');
+  const next = {};
+  if (patch.title !== undefined) next.title = sanitizeName(patch.title, 120);
+  if (patch.description !== undefined) next.description = String(patch.description || '').trim().slice(0, 2000);
+  if (patch.severity !== undefined && ['minor', 'major', 'critical'].includes(patch.severity)) {
+    next.severity = patch.severity;
+  }
+  if (patch.status !== undefined) {
+    const st = ['open', 'investigating', 'resolved'].includes(patch.status) ? patch.status : row.status;
+    next.status = st;
+    if (st === 'resolved') next.resolvedAt = managerNowISO();
+  }
+  if (patch.resolution !== undefined) next.resolution = String(patch.resolution || '').trim().slice(0, 2000);
+  if (patch.actionTaken !== undefined) next.actionTaken = String(patch.actionTaken || '').trim().slice(0, 2000);
+  if (patch.occurredAt !== undefined && isValidISODate(patch.occurredAt)) next.occurredAt = patch.occurredAt;
+  if (!Object.keys(next).length) return;
+  await db.managerIncidents.update(row.id, next);
+}
+
+export async function deleteManagerIncident(id) {
+  await db.managerIncidents.delete(Number(id));
+}
+
+export async function getManagerShiftNotes(date) {
+  const rows = await db.managerShiftNotes.where('date').equals(date).toArray();
+  return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+}
+
+export async function addManagerShiftNote({ date, department, kind = 'shift', content }) {
+  const text = String(content || '').trim().slice(0, 2000);
+  if (!text) throw new ValidationError('הזן תוכן');
+  const validKind = ['shift', 'briefing', 'checklist'].includes(kind) ? kind : 'shift';
+  return db.managerShiftNotes.add({
+    date: date && isValidISODate(date) ? date : todayISOFromDate(),
+    department: sanitizeManagerDepartment(department),
+    kind: validKind,
+    content: text,
+    createdAt: managerNowISO(),
+  });
+}
+
+export async function deleteManagerShiftNote(id) {
+  await db.managerShiftNotes.delete(Number(id));
+}
+
+export async function getManagerDashboardStats(today) {
+  const [
+    tasks, incidents, planItems, activeRuns, entries, products,
+  ] = await Promise.all([
+    db.managerTasks.toArray(),
+    db.managerIncidents.toArray(),
+    getManagerPlanItems('daily', today),
+    db.productionRuns.where('status').equals('active').count(),
+    getEntriesForDate(today),
+    getProducts(true),
+  ]);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const totals = await getProductionTotals(entries, productMap);
+  const totalTarget = await getTarget('total', 0, 'daily');
+  const openTasks = tasks.filter((t) => t.status !== 'done');
+  const openIncidents = incidents.filter((i) => i.status !== 'resolved');
+  const planDone = planItems.filter((i) => i.done).length;
+  return {
+    openTasks: openTasks.length,
+    highPriorityTasks: openTasks.filter((t) => t.priority === 'high').length,
+    openIncidents: openIncidents.length,
+    criticalIncidents: openIncidents.filter((i) => i.severity === 'critical').length,
+    planTotal: planItems.length,
+    planDone,
+    planPct: planItems.length ? Math.round((planDone / planItems.length) * 100) : 0,
+    activeRuns,
+    productionToday: totals.total,
+    dailyTarget: totalTarget,
+  };
 }

@@ -1,8 +1,11 @@
 import {
-  getCategories, getProducts, getTargets, upsertTarget, getTarget,
+  getCategories, getProducts, upsertTarget, getTarget,
   getEntriesForDate, getEntriesForMonth, getProductionTotals,
 } from '../db.js';
-import { todayISO, progressBar, pct, currentMonth, monthLabel } from '../utils.js';
+import {
+  todayISO, progressBar, moneyProgressBar, moneyProgressBadge,
+  formatMoney, currentMonth, monthLabel,
+} from '../utils.js';
 import { showToast } from '../utils.js';
 
 export async function renderTargets(container) {
@@ -19,6 +22,8 @@ export async function renderTargets(container) {
   const totals = await getProductionTotals(entries, productMap);
 
   const totalTarget = await getTarget('total', 0, period);
+  const moneyTarget = period === 'daily' ? await getTarget('money', 0, 'daily') : 0;
+  const moneyBadge = moneyProgressBadge(totals.totalValue, moneyTarget);
 
   let html = `
     <div class="tabs">
@@ -35,6 +40,22 @@ export async function renderTargets(container) {
       </div>
       <button class="btn btn-primary btn-sm" id="save-total">שמור יעד כולל</button>
     </div>`;
+
+  if (period === 'daily') {
+    html += `
+    <div class="card">
+      <div class="card-title">יעד כסף יומי
+        ${moneyTarget > 0 ? `<span class="badge ${moneyBadge.cls}" style="float:left">${moneyBadge.text}</span>` : ''}
+      </div>
+      ${moneyProgressBar(totals.totalValue, moneyTarget, 'ערך יומי')}
+      <div class="form-group" style="margin-top:12px">
+        <label>יעד (₪)</label>
+        <input type="number" id="target-money" min="0" step="0.01" value="${moneyTarget || ''}" placeholder="5000">
+      </div>
+      <p class="money-target-hint">הערך הנוכחי: <strong class="${totals.totalValue >= moneyTarget && moneyTarget > 0 ? 'money-good' : moneyTarget > 0 ? 'money-bad' : ''}">${formatMoney(totals.totalValue)}</strong></p>
+      <button class="btn btn-primary btn-sm" id="save-money">שמור יעד כסף</button>
+    </div>`;
+  }
 
   if (categories.length > 0) {
     html += `<div class="card"><div class="card-title">יעדים לפי קטגוריה</div>`;
@@ -75,26 +96,49 @@ export async function renderTargets(container) {
   });
 
   document.getElementById('save-total').addEventListener('click', async () => {
-    const qty = document.getElementById('target-total').value;
-    await upsertTarget({ scope: 'total', scopeId: 0, period, quantity: qty || 0 });
-    showToast('נשמר ✓');
-    renderTargets(container);
+    try {
+      const qty = document.getElementById('target-total').value;
+      await upsertTarget({ scope: 'total', scopeId: 0, period, quantity: qty || 0 });
+      showToast('נשמר ✓');
+      renderTargets(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('save-money')?.addEventListener('click', async () => {
+    try {
+      const amount = document.getElementById('target-money').value;
+      await upsertTarget({ scope: 'money', scopeId: 0, period: 'daily', quantity: amount || 0 });
+      showToast('יעד כסף נשמר ✓');
+      renderTargets(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('save-cats')?.addEventListener('click', async () => {
-    for (const input of container.querySelectorAll('.cat-target')) {
-      await upsertTarget({ scope: 'category', scopeId: Number(input.dataset.id), period, quantity: input.value || 0 });
+    try {
+      for (const input of container.querySelectorAll('.cat-target')) {
+        await upsertTarget({ scope: 'category', scopeId: Number(input.dataset.id), period, quantity: input.value || 0 });
+      }
+      showToast('יעדי קטגוריות נשמרו ✓');
+      renderTargets(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
     }
-    showToast('יעדי קטגוריות נשמרו ✓');
-    renderTargets(container);
   });
 
   document.getElementById('save-prods')?.addEventListener('click', async () => {
-    for (const input of container.querySelectorAll('.prod-target')) {
-      await upsertTarget({ scope: 'product', scopeId: Number(input.dataset.id), period, quantity: input.value || 0 });
+    try {
+      for (const input of container.querySelectorAll('.prod-target')) {
+        await upsertTarget({ scope: 'product', scopeId: Number(input.dataset.id), period, quantity: input.value || 0 });
+      }
+      showToast('יעדי מוצרים נשמרו ✓');
+      renderTargets(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
     }
-    showToast('יעדי מוצרים נשמרו ✓');
-    renderTargets(container);
   });
 }
 

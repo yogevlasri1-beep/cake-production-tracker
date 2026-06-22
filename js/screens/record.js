@@ -1,13 +1,15 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js';
-import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js';
-import { openModal, closeModal } from '../modal.js';
+} from '../db.js?v=94';
+import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js?v=94';
+import { openModal, closeModal } from '../modal.js?v=94';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=94';
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
   const selectedCategory = container.dataset.selectedCategory || '';
+  const sheetsHTML = await renderSheetsStatusHTML();
 
   const [products, categories, entries] = await Promise.all([
     getProducts(true),
@@ -79,16 +81,62 @@ export async function renderRecord(container) {
               </div>
             </div>`;
           }).join('')}
-    </div>`;
+    </div>
+
+    <div class="card sheets-primary-card">
+      <div class="card-title">📊 Google Sheets</div>
+      <div id="sheets-status">${sheetsHTML}</div>
+    </div>
+
+    <details class="card import-card">
+      <summary class="import-summary">ייבוא מקובץ Excel (גיבוי)</summary>
+      <p class="import-hint">
+        העלה קובץ Excel או CSV עם התיעוד שלך (סוג, תאריך, כמות).
+        מוצרים וקטגוריות חדשים ייווצרו אוטומטית.
+      </p>
+      <input type="file" id="record-import-file" accept=".csv,.xlsx,.xls,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+      <button type="button" class="btn btn-secondary" id="record-import-btn" style="width:100%;margin-bottom:8px">
+        📥 בחר קובץ Excel / CSV
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm" id="record-template-btn" style="width:100%">
+        הורד קובץ דוגמה
+      </button>
+    </details>`;
 
   document.getElementById('record-date').addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
     renderRecord(container);
   });
 
+  bindSheetsStatusEvents(container, {
+    onRefresh: () => renderRecord(container),
+    onImportComplete: () => renderRecord(container),
+  });
+
   document.getElementById('record-category').addEventListener('change', (e) => {
     container.dataset.selectedCategory = e.target.value;
     renderRecord(container);
+  });
+
+  document.getElementById('record-import-btn')?.addEventListener('click', () => {
+    document.getElementById('record-import-file').click();
+  });
+
+  document.getElementById('record-template-btn')?.addEventListener('click', async () => {
+    const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
+    const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dugma-yitzur.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  document.getElementById('record-import-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    await handleRecordImport(file, container);
   });
 
   document.getElementById('record-form').addEventListener('submit', async (e) => {
@@ -97,11 +145,15 @@ export async function renderRecord(container) {
     const productId = document.getElementById('record-product').value;
     const quantity = document.getElementById('record-qty').value;
     if (!productId) return showToast('בחר קטגוריה ומוצר');
-    await addProductionEntry({ date: d, productId, quantity });
-    showToast('הרישום נשמר ✓');
-    document.getElementById('record-qty').value = '';
-    container.dataset.selectedDate = d;
-    renderRecord(container);
+    try {
+      await addProductionEntry({ date: d, productId, quantity });
+      showToast('הרישום נשמר ✓');
+      document.getElementById('record-qty').value = '';
+      container.dataset.selectedDate = d;
+      renderRecord(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשמירה');
+    }
   });
 
   container.querySelectorAll('.edit-entry').forEach((btn) => {
@@ -116,6 +168,13 @@ export async function renderRecord(container) {
         renderRecord(container);
       }
     });
+  });
+}
+
+async function handleRecordImport(file, container) {
+  const { handleProductionImportFile } = await import('../import-flow.js');
+  await handleProductionImportFile(file, {
+    onComplete: async () => renderRecord(container),
   });
 }
 
@@ -140,13 +199,17 @@ function editEntry(id, entries, productMap, container) {
 
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('edit-save').addEventListener('click', async () => {
-    await updateProductionEntry(entry.id, { quantity: Number(document.getElementById('edit-qty').value) });
-    closeModal();
-    showToast('עודכן ✓');
-    renderRecord(container);
+    try {
+      await updateProductionEntry(entry.id, { quantity: document.getElementById('edit-qty').value });
+      closeModal();
+      showToast('עודכן ✓');
+      renderRecord(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }
 
 export function recordMeta() {
-  return { title: 'רישום ייצור', subtitle: 'בחר קטגוריה ואז מוצר' };
+  return { title: 'רישום ייצור', subtitle: 'רישום ידני' };
 }

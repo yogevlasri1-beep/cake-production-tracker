@@ -1,80 +1,98 @@
-async function loadXLSX() {
-  if (window.XLSX) return window.XLSX;
-  await new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
-    s.onload = resolve;
-    s.onerror = () => reject(new Error('לא ניתן לייצא Excel'));
-    document.head.appendChild(s);
-  });
-  return window.XLSX;
+import {
+  computeReportRows,
+  computeProcessSummary,
+  weekRange,
+  monthRange,
+  roundMoney,
+} from './calc.js?v=94';
+import { loadXLSX } from './xlsx-loader.js?v=94';
+import { downloadBlob, toastAfterDownload } from './download.js?v=94';
+
+async function writeWorkbook(wb, filename) {
+  const XLSX = await loadXLSX();
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob(
+    [wbout],
+    { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+  );
+  const method = await downloadBlob(blob, filename);
+  return toastAfterDownload(method, 'הדוח מוכן');
 }
 
-function buildReportRows(entries, categories, products, productMap, catMap) {
-  const byProduct = {};
-  for (const e of entries) {
-    byProduct[e.productId] = (byProduct[e.productId] || 0) + e.quantity;
+/** רוחב תצוגה משוער — עברית רחבה יותר מאנגלית */
+function displayWidth(value) {
+  const s = value == null ? '' : String(value);
+  let w = 0;
+  for (const ch of s) {
+    if (/[\u0590-\u05FF\uFB1D-\uFB4F]/.test(ch)) w += 1.25;
+    else if (ch === ' ') w += 0.45;
+    else w += 1;
   }
-
-  const detailRows = entries
-    .slice()
-    .sort((a, b) => a.date.localeCompare(b.date) || a.productId - b.productId)
-    .map((e) => {
-      const p = productMap.get(e.productId);
-      if (!p) return null;
-      return [
-        e.date,
-        catMap.get(p.categoryId) || '',
-        p.name,
-        e.quantity,
-        e.quantity * (p.unitPrice || 0),
-      ];
-    })
-    .filter(Boolean);
-
-  const summaryRows = categories.map((c) => {
-    const qty = products
-      .filter((p) => p.categoryId === c.id)
-      .reduce((s, p) => s + (byProduct[p.id] || 0), 0);
-    return [c.name, qty];
-  }).filter((r) => r[1] > 0);
-
-  const totalQty = detailRows.reduce((s, r) => s + r[3], 0);
-  const totalVal = detailRows.reduce((s, r) => s + r[4], 0);
-
-  const productSummary = products
-    .map((p) => ({
-      cat: catMap.get(p.categoryId) || '',
-      name: p.name,
-      qty: byProduct[p.id] || 0,
-      val: (byProduct[p.id] || 0) * (p.unitPrice || 0),
-    }))
-    .filter((r) => r.qty > 0)
-    .sort((a, b) => b.qty - a.qty);
-
-  return { detailRows, summaryRows, totalQty, totalVal, productSummary };
+  return w;
 }
 
-function buildProcessSummary(processLogs, catMap) {
-  const map = {};
-  for (const log of processLogs) {
-    const key = `${log.categoryId}|${log.activity}`;
-    if (!map[key]) {
-      map[key] = {
-        category: catMap.get(log.categoryId) || '',
-        activity: log.activity,
-        qty: 0,
-        count: 0,
-      };
+function cellText(cell) {
+  if (!cell) return '';
+  if (cell.w != null) return String(cell.w);
+  if (cell.v == null) return '';
+  if (cell.t === 'd' && cell.v instanceof Date) {
+    return cell.v.toISOString().slice(0, 10);
+  }
+  return String(cell.v);
+}
+
+/** התאמת רוחב עמודות + RTL + הקפאת שורת כותרות בטבלאות פירוט */
+function formatSheet(XLSX, sheet, { minCol = 10, maxCol = 58, freezeHeader = false } = {}) {
+  const ref = sheet['!ref'];
+  if (!ref) return;
+
+  const range = XLSX.utils.decode_range(ref);
+  const cols = [];
+
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    let maxW = minCol;
+    for (let r = range.s.r; r <= range.e.r; r++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      maxW = Math.max(maxW, displayWidth(cellText(sheet[addr])) + 2);
     }
-    map[key].qty += log.quantity || 0;
-    map[key].count += 1;
+    cols.push({ wch: Math.min(maxCol, Math.ceil(maxW)) });
   }
-  return Object.values(map).sort((a, b) => a.category.localeCompare(b.category, 'he'));
+  sheet['!cols'] = cols;
+
+  const views = [{ rightToLeft: true }];
+  if (freezeHeader) {
+    views[0].state = 'frozen';
+    views[0].ySplit = 1;
+    views[0].activePane = 'bottomRight';
+    const filterEnd = XLSX.utils.encode_cell({ r: range.e.r, c: range.e.c });
+    sheet['!autofilter'] = { ref: `A1:${filterEnd}` };
+  }
+  sheet['!views'] = views;
+
+  const rowHeights = [];
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    let lines = 1;
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const addr = XLSX.utils.encode_cell({ r, c });
+      const text = cellText(sheet[addr]);
+      const colW = cols[c - range.s.c]?.wch || minCol;
+      lines = Math.max(lines, Math.ceil(displayWidth(text) / Math.max(colW - 1, 8)));
+    }
+    rowHeights[r] = { hpt: Math.min(72, Math.max(18, lines * 16)) };
+  }
+  sheet['!rows'] = rowHeights;
+}
+
+function formatSummarySheet(XLSX, sheet) {
+  formatSheet(XLSX, sheet, { minCol: 14, maxCol: 52, freezeHeader: false });
+}
+
+function formatDetailSheet(XLSX, sheet) {
+  formatSheet(XLSX, sheet, { minCol: 12, maxCol: 60, freezeHeader: true });
 }
 
 function appendProductionSheets(XLSX, wb, { title, periodLabel, entries, categories, products, productMap, catMap }) {
-  const { detailRows, summaryRows, totalQty, totalVal, productSummary } = buildReportRows(
+  const { detailRows, summaryRows, totalQty, totalVal, productSummary } = computeReportRows(
     entries, categories, products, productMap, catMap
   );
 
@@ -83,31 +101,33 @@ function appendProductionSheets(XLSX, wb, { title, periodLabel, entries, categor
     [title],
     [periodLabel],
     [''],
-    ['סיכום לפי קטגוריה', 'כמות'],
+    ['סיכום לפי קטגוריה', 'כמות', 'ערך (₪)'],
     ...summaryRows,
     [''],
     ['סה"כ יחידות', totalQty],
-    ['סה"כ ערך (₪)', Math.round(totalVal * 100) / 100],
+    ['סה"כ ערך (₪)', roundMoney(totalVal)],
     [''],
     ['סיכום לפי מוצר', 'קטגוריה', 'כמות', 'ערך (₪)'],
-    ...productSummary.map((r) => [r.name, r.cat, r.qty, Math.round(r.val * 100) / 100]),
+    ...productSummary.map((r) => [r.name, r.cat, r.qty, roundMoney(r.val)]),
   ]);
+  formatSummarySheet(XLSX, summarySheet);
   XLSX.utils.book_append_sheet(wb, summarySheet, 'ייצור — סיכום');
 
   const detailSheet = XLSX.utils.aoa_to_sheet([
     ['תאריך', 'קטגוריה', 'מוצר', 'כמות', 'ערך (₪)'],
-    ...detailRows.map((r) => [r[0], r[1], r[2], r[3], Math.round(r[4] * 100) / 100]),
+    ...detailRows.map((r) => [r[0], r[1], r[2], r[3], roundMoney(r[4])]),
     [''],
-    ['סה"כ', '', '', totalQty, Math.round(totalVal * 100) / 100],
+    ['סה"כ', '', '', totalQty, roundMoney(totalVal)],
   ]);
+  formatDetailSheet(XLSX, detailSheet);
   XLSX.utils.book_append_sheet(wb, detailSheet, 'ייצור — פירוט');
 
   return { totalQty, totalVal };
 }
 
 function appendProcessSheets(XLSX, wb, { title, periodLabel, processLogs, catMap }) {
-  const summary = buildProcessSummary(processLogs, catMap);
-  const totalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+  const summary = computeProcessSummary(processLogs, catMap);
+  const totalQty = processLogs.reduce((s, l) => s + (l.quantity > 0 ? l.quantity : 0), 0);
 
   const detailRows = processLogs
     .slice()
@@ -132,12 +152,14 @@ function appendProcessSheets(XLSX, wb, { title, periodLabel, processLogs, catMap
     ['סה"כ כמויות', totalQty || '—'],
     ['סה"כ רישומים', processLogs.length],
   ]);
+  formatSummarySheet(XLSX, summarySheet);
   XLSX.utils.book_append_sheet(wb, summarySheet, 'תיעוד — סיכום');
 
   const detailSheet = XLSX.utils.aoa_to_sheet([
     ['תאריך', 'קטגוריה', 'סוג הכנה', 'כמות', 'הערות'],
     ...detailRows,
   ]);
+  formatDetailSheet(XLSX, detailSheet);
   XLSX.utils.book_append_sheet(wb, detailSheet, 'תיעוד — פירוט');
 }
 
@@ -145,14 +167,14 @@ export async function exportProductionExcel(params) {
   const XLSX = await loadXLSX();
   const wb = XLSX.utils.book_new();
   appendProductionSheets(XLSX, wb, params);
-  XLSX.writeFile(wb, params.filename);
+  return writeWorkbook(wb, params.filename);
 }
 
 export async function exportProcessExcel(params) {
   const XLSX = await loadXLSX();
   const wb = XLSX.utils.book_new();
   appendProcessSheets(XLSX, wb, params);
-  XLSX.writeFile(wb, params.filename);
+  return writeWorkbook(wb, params.filename);
 }
 
 export async function exportCombinedExcel({
@@ -189,30 +211,11 @@ export async function exportCombinedExcel({
     });
   }
 
-  XLSX.writeFile(wb, filename);
+  return writeWorkbook(wb, filename);
 }
 
 export function summarizeProcessLogs(processLogs, catMap) {
-  return buildProcessSummary(processLogs, catMap);
+  return computeProcessSummary(processLogs, catMap);
 }
 
-export function weekRange(todayIso) {
-  const labels = [];
-  const dates = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(todayIso + 'T12:00:00');
-    d.setDate(d.getDate() - i);
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    dates.push(iso);
-    labels.push(d.toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric' }));
-  }
-  return { from: dates[0], to: dates[dates.length - 1], dates, label: `${labels[0]} – ${labels[labels.length - 1]}` };
-}
-
-export function monthRange(year, month) {
-  const from = `${year}-${String(month).padStart(2, '0')}-01`;
-  const lastDay = new Date(year, month, 0).getDate();
-  const to = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
-  const d = new Date(year, month - 1, 1);
-  return { from, to, label: d.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' }) };
-}
+export { weekRange, monthRange, computeReportRows, computeProcessSummary };

@@ -4,22 +4,41 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
   <meta name="theme-color" content="#2563eb">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="מעקב יצור">
+  <meta name="format-detection" content="telephone=no">
   <title>מעקב יצור</title>
   <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icons/icon-192.png">
-  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="css/styles.css?v=94">
+  <script type="importmap">
+  {
+    "imports": {
+      "@capacitor/core": "https://cdn.jsdelivr.net/npm/@capacitor/core@7.2.0/dist/index.js"
+    }
+  }
+  </script>
+  <style>
+    html, body { background: #f0f4f8 !important; margin: 0; height: 100%; overflow: hidden; color: #0f172a; }
+    #app { height: 100dvh; max-height: 100dvh; overflow: hidden; background: #f0f4f8; }
+    #boot-msg { text-align: center; padding: 48px 20px; color: #64748b; font-family: -apple-system, sans-serif; font-size: 1rem; }
+  </style>
 </head>
 <body>
+  <noscript><p style="padding:20px;font-family:sans-serif">יש להפעיל JavaScript</p></noscript>
   <div id="app">
     <header class="app-header">
       <h1 id="page-title">בית</h1>
       <p id="page-subtitle" class="subtitle"></p>
+      <span id="app-version" class="app-version"></span>
     </header>
 
-    <main id="main-content"></main>
+    <main id="main-content">
+      <p id="boot-msg">טוען אפליקציה...</p>
+    </main>
 
     <nav class="bottom-nav" aria-label="ניווט ראשי">
       <button class="nav-btn active" data-screen="home" aria-label="בית">
@@ -30,17 +49,17 @@
         <span class="nav-icon">➕</span>
         <span class="nav-label">ייצור</span>
       </button>
-      <button class="nav-btn" data-screen="process" aria-label="תיעוד">
-        <span class="nav-icon">📝</span>
-        <span class="nav-label">תיעוד</span>
+      <button class="nav-btn" data-screen="process" aria-label="תזרים יצור">
+        <span class="nav-icon">⚡</span>
+        <span class="nav-label">תזרים</span>
       </button>
       <button class="nav-btn" data-screen="products" aria-label="מוצרים">
         <span class="nav-icon">📦</span>
         <span class="nav-label">מוצרים</span>
       </button>
-      <button class="nav-btn" data-screen="targets" aria-label="יעדים">
-        <span class="nav-icon">🎯</span>
-        <span class="nav-label">יעדים</span>
+      <button class="nav-btn" data-screen="manager" aria-label="ניהול מנהל">
+        <span class="nav-icon">👔</span>
+        <span class="nav-label">מנהל</span>
       </button>
       <button class="nav-btn" data-screen="reports" aria-label="דוחות">
         <span class="nav-icon">📊</span>
@@ -60,7 +79,101 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/dexie@4/dist/dexie.min.js"></script>
-  <script type="module" src="js/app.js"></script>
+  <script>
+    window.__APP_BUILD__ = '94';
+
+    function isIOSStandalone() {
+      return (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
+        && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
+    }
+
+    function showBootError(msg) {
+      var main = document.getElementById('main-content');
+      if (!main) return;
+      var iosHint = isIOSStandalone()
+        ? '<p style="font-size:0.85rem;color:#64748b;margin:12px 0;line-height:1.6"><strong>באייפון מהאייקון?</strong> סגור את האפליקציה, פתח <strong>Safari</strong> (לא האייקון), הקלד את כתובת ה-Mac עם <code>?force-update=1</code>, ואז «נקה מטמון ועדכן». אחרי שרואים «גרסה 91» — מחק את האייקון הישן והוסף מחדש למסך הבית.</p>'
+        : '';
+      main.innerHTML =
+        '<div class="card" style="margin:16px;border:2px solid #ef4444">' +
+        '<div class="card-title" style="color:#dc2626">לא נטען</div>' +
+        '<p style="font-size:0.9rem;line-height:1.6;margin:12px 0;word-break:break-word">' + msg + '</p>' +
+        iosHint +
+        '<button type="button" id="boot-retry" class="btn btn-primary" style="width:100%;margin-bottom:8px">נסה שוב</button>' +
+        '<button type="button" id="boot-force-update" class="btn btn-secondary" style="width:100%">נקה מטמון ועדכן</button></div>';
+      document.getElementById('boot-retry')?.addEventListener('click', function () { location.reload(); });
+      document.getElementById('boot-force-update')?.addEventListener('click', function () {
+        clearAllCaches().then(function () {
+          try { localStorage.removeItem('appBuild'); } catch (e) { /* ignore */ }
+          location.replace(location.pathname + '?force-update=1');
+        });
+      });
+    }
+
+    function clearAllCaches() {
+      var tasks = [];
+      if ('serviceWorker' in navigator) {
+        tasks.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }));
+      }
+      if (window.caches) {
+        tasks.push(caches.keys().then(function (keys) {
+          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+        }));
+      }
+      return Promise.all(tasks);
+    }
+
+    (function bootGate() {
+      var BUILD = window.__APP_BUILD__;
+      var params = new URLSearchParams(location.search);
+
+      if (params.get('force-update') === '1') {
+        clearAllCaches().then(function () {
+          try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+          var u = new URL(location.href);
+          u.searchParams.delete('force-update');
+          u.searchParams.set('v', BUILD);
+          location.replace(u.toString());
+        });
+        return;
+      }
+
+      function loadApp() {
+        import('./js/app.js?v=' + BUILD).catch(function (err) {
+          var detail = (err && err.message) ? err.message : String(err || 'שגיאה');
+          showBootError('שגיאה בטעינה: ' + detail + '<br><br>לחץ «נקה מטמון ועדכן»');
+        });
+      }
+
+      var stored = null;
+      try { stored = localStorage.getItem('appBuild'); } catch (e) { /* ignore */ }
+
+      if (stored && Number(stored) < Number(BUILD)) {
+        clearAllCaches().then(function () {
+          try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+          loadApp();
+        });
+        return;
+      }
+
+      try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+      loadApp();
+    })();
+
+    window.addEventListener('error', function (e) {
+      if (document.getElementById('boot-msg')) {
+        showBootError(e.message || 'שגיאה בטעינה');
+      }
+    });
+
+    window.addEventListener('unhandledrejection', function (e) {
+      if (!document.getElementById('boot-msg')) return;
+      var msg = (e.reason && e.reason.message) ? e.reason.message : String(e.reason || 'שגיאה בטעינה');
+      showBootError(msg);
+    });
+  </script>
+  <script src="js/vendor/dexie.min.js?v=94"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=94"></script>
 </body>
 </html>

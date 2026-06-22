@@ -1,11 +1,131 @@
 import {
-  getProductsByCategory, addCategory, updateCategory, deleteCategory,
+  getProductsCatalogLayout, getCategories, getCategoryGroups, addCategory, updateCategory, deleteCategory,
+  addCategoryGroup, updateCategoryGroup, deleteCategoryGroup, setCategoriesInGroup,
   addProduct, updateProduct, toggleProductActive, getProduct, resetAllData,
-  importCatalogRows, importProductionRows,
-} from '../db.js';
-import { formatMoney, showToast, escapeHtml } from '../utils.js';
-import { openModal, closeModal } from '../modal.js';
-import { parseImportFile, importParsedRows, previewText, CSV_TEMPLATE_BLOCKS } from '../import.js';
+  importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
+  findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
+  getProductsWithEntryStats, mergeSelectedProducts,
+} from '../db.js?v=94';
+import { formatMoney, showToast, escapeHtml } from '../utils.js?v=94';
+import { openModal, closeModal } from '../modal.js?v=94';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=94';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=94';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=94';
+
+const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
+const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
+
+function loadExpandedCategories() {
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_CATS_KEY) || '[]').map(Number));
+  } catch {
+    return new Set();
+  }
+}
+
+let expandedCategories = loadExpandedCategories();
+
+function loadExpandedGroups() {
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_GROUPS_KEY) || '[]').map(Number));
+  } catch {
+    return new Set();
+  }
+}
+
+let expandedGroups = loadExpandedGroups();
+
+function saveExpandedGroups() {
+  sessionStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...expandedGroups]));
+}
+
+function toggleGroupCard(card) {
+  const id = Number(card.dataset.groupId);
+  if (card.classList.toggle('is-expanded')) {
+    expandedGroups.add(id);
+  } else {
+    expandedGroups.delete(id);
+  }
+  saveExpandedGroups();
+  const toggle = card.querySelector('.category-group-toggle');
+  toggle?.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+}
+
+function saveExpandedCategories() {
+  sessionStorage.setItem(EXPANDED_CATS_KEY, JSON.stringify([...expandedCategories]));
+}
+
+function expandCategory(categoryId) {
+  expandedCategories.add(Number(categoryId));
+  saveExpandedCategories();
+}
+
+function toggleCategoryCard(card) {
+  const id = Number(card.dataset.categoryId);
+  if (card.classList.toggle('is-expanded')) {
+    expandedCategories.add(id);
+  } else {
+    expandedCategories.delete(id);
+  }
+  saveExpandedCategories();
+  const toggle = card.querySelector('.category-toggle');
+  toggle?.setAttribute('aria-expanded', card.classList.contains('is-expanded') ? 'true' : 'false');
+}
+
+async function toastAfterMerge(result) {
+  const { runProductionAudit } = await import('../integrity.js');
+  const audit = await runProductionAudit();
+  const qty = result.qtyBefore ?? audit.totals.total;
+  if (audit.ok) {
+    showToast(`איחוד ✓ · ${qty} יח' נשמרו · בדיקת תקינות עברה`);
+  } else {
+    showToast(`איחוד ✓ · ${audit.issues.length} בעיות — בדוק בדוחות → בדיקת תקינות`);
+  }
+}
+
+function categoryChipStyle(color) {
+  const c = color || '#2563eb';
+  return `background:color-mix(in srgb, ${c} 14%, white);color:${c};border:1px solid color-mix(in srgb, ${c} 28%, transparent)`;
+}
+
+function categoryColorValue(cat) {
+  return cat.color || defaultColorForIndex(cat.id);
+}
+
+function renderColorPickerFields(initialColor, prefix = 'cat') {
+  const presets = CATEGORY_COLOR_HEX.map((hex) =>
+    `<button type="button" class="color-swatch" data-color="${hex}" style="background:${hex}" title="${hex}" aria-label="צבע ${hex}"></button>`
+  ).join('');
+
+  return `
+    <div class="form-group">
+      <label for="${prefix}-color">צבע בגרף</label>
+      <div class="color-picker-row">
+        <input type="color" id="${prefix}-color" value="${initialColor}">
+        <span class="color-picker-preview" id="${prefix}-color-preview" style="background:${initialColor}"></span>
+      </div>
+      <div class="color-presets" id="${prefix}-color-presets">${presets}</div>
+    </div>`;
+}
+
+function bindColorPickerInModal(prefix = 'cat') {
+  const colorInput = document.getElementById(`${prefix}-color`);
+  const preview = document.getElementById(`${prefix}-color-preview`);
+  if (!colorInput) return colorInput;
+
+  colorInput.addEventListener('input', () => {
+    if (preview) preview.style.background = colorInput.value;
+  });
+
+  document.querySelectorAll(`#${prefix}-color-presets .color-swatch`).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      colorInput.value = btn.dataset.color;
+      if (preview) preview.style.background = btn.dataset.color;
+    });
+  });
+
+  return colorInput;
+}
 
 function productPriceMeta(p) {
   const parts = [];
@@ -15,65 +135,185 @@ function productPriceMeta(p) {
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
 }
 
+function categoryUniformPrice(products) {
+  if (!products.length) return null;
+  const prices = products.map((p) => Number(p.unitPrice) || 0);
+  const unique = [...new Set(prices)];
+  if (unique.length === 1 && unique[0] > 0) return unique[0];
+  return null;
+}
+
+function renderProductItem(p, index) {
+  return `
+    <div class="list-item product-list-item ${p.active ? '' : 'inactive-label'}" data-product-id="${p.id}">
+      <div class="product-order-col">
+        <span class="product-order-num" aria-label="מיקום ${index + 1}">${index + 1}</span>
+        <span class="product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
+      </div>
+      <div class="list-item-info">
+        <div class="list-item-name">${escapeHtml(p.name)}</div>
+        <div class="list-item-meta">${productPriceMeta(p)} ${p.active ? '' : '· לא פעיל'}</div>
+      </div>
+      <div class="list-item-actions">
+        <button class="btn btn-secondary btn-sm edit-product" data-id="${p.id}">✏️</button>
+        <button class="btn btn-secondary btn-sm toggle-product" data-id="${p.id}">
+          ${p.active ? '🚫' : '✅'}
+        </button>
+      </div>
+    </div>`;
+}
+
+function renderCategoryCard(cat, catIndex) {
+  const uniformPrice = categoryUniformPrice(cat.products);
+  const isExpanded = expandedCategories.has(cat.id);
+  const unitPriceAttrs = `data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-price="${uniformPrice ?? ''}" data-count="${cat.products.length}"`;
+  const unitPriceBtn = `<button type="button" class="btn btn-secondary btn-sm cat-unit-price-btn" ${unitPriceAttrs}>💰 מחיר אחיד</button>`;
+  return `
+    <div class="card category-card${isExpanded ? ' is-expanded' : ''}" data-category-id="${cat.id}">
+      <div class="section-header category-card-header">
+        <div class="category-header-start">
+          <div class="category-order-col">
+            <span class="product-order-num category-order-num" aria-label="מיקום ${catIndex + 1}">${catIndex + 1}</span>
+            <span class="product-drag-handle category-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר קטגוריה">⠿</span>
+          </div>
+          <button type="button" class="category-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="${isExpanded ? 'סגור מוצרים' : 'פתח מוצרים'} — ${escapeHtml(cat.name)}">
+            <span class="category-chevron" aria-hidden="true"></span>
+            <span class="category-chip cat-chip" style="${categoryChipStyle(cat.color)}">${escapeHtml(cat.name)}</span>
+            <span class="category-summary">${cat.products.length} מוצרים</span>
+            ${uniformPrice != null ? `<span class="category-price-badge">${formatMoney(uniformPrice)}</span>` : ''}
+          </button>
+        </div>
+        <div class="category-actions">
+          <button class="btn btn-secondary btn-sm btn-icon edit-cat" aria-label="ערוך קטגוריה" title="ערוך" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-color="${categoryColorValue(cat)}" data-group-id="${cat.groupId || ''}">✏️</button>
+          <button class="btn btn-danger btn-sm btn-icon delete-cat" aria-label="מחק קטגוריה" title="מחק" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-count="${cat.products.length}">🗑</button>
+        </div>
+      </div>
+      <div class="category-products-area">
+        <div class="category-products-toolbar">
+          <span class="category-products-label">מוצרים (${cat.products.length})</span>
+          <div class="category-products-toolbar-actions">
+            ${unitPriceBtn}
+            <button class="btn btn-primary btn-sm add-product" data-cat="${cat.id}" data-catname="${escapeHtml(cat.name)}">+ מוצר</button>
+          </div>
+        </div>
+        ${cat.products.length === 0
+          ? '<p class="category-products-empty">אין מוצרים בקטגוריה זו</p>'
+          : `<p class="product-drag-hint">גרור ⠿ לשינוי סדר · ✏️ לעריכת מחיר למוצר בודד</p>
+             <div class="product-list" data-category-id="${cat.id}">${cat.products.map((p, i) => renderProductItem(p, i)).join('')}</div>`}
+      </div>
+    </div>`;
+}
+
+function renderGroupCard(group, groupIndex, categories) {
+  const totalProducts = categories.reduce((s, c) => s + c.products.length, 0);
+  const isExpanded = expandedGroups.has(group.id);
+  return `
+    <div class="card category-group-card${isExpanded ? ' is-expanded' : ''}" data-group-id="${group.id}">
+      <div class="section-header category-group-header">
+        <div class="category-header-start">
+          <div class="category-order-col">
+            <span class="product-order-num category-group-order-num" aria-label="מיקום ${groupIndex + 1}">${groupIndex + 1}</span>
+            <span class="product-drag-handle category-group-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר קבוצה">⠿</span>
+          </div>
+          <button type="button" class="category-toggle category-group-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="${isExpanded ? 'סגור קטגוריות' : 'פתח קטגוריות'} — ${escapeHtml(group.name)}">
+            <span class="category-chevron" aria-hidden="true"></span>
+            <span class="category-group-chip" style="${categoryChipStyle(group.color)}">📁 ${escapeHtml(group.name)}</span>
+            <span class="category-summary">${categories.length} קטגוריות · ${totalProducts} מוצרים</span>
+          </button>
+        </div>
+        <div class="category-actions">
+          <button class="btn btn-secondary btn-sm edit-group" data-id="${group.id}" data-name="${escapeHtml(group.name)}" data-color="${group.color || defaultColorForIndex(group.id)}">✏️</button>
+          <button class="btn btn-danger btn-sm delete-group" data-id="${group.id}" data-name="${escapeHtml(group.name)}" data-count="${categories.length}">🗑</button>
+        </div>
+      </div>
+      <div class="category-group-body">
+        ${categories.length === 0
+          ? '<p class="category-products-empty">אין קטגוריות בקבוצה — ערוך את הקבוצה להוספת קטגוריות</p>'
+          : `<div class="category-list" data-group-id="${group.id}">${categories.map((cat, i) => renderCategoryCard(cat, i)).join('')}</div>`}
+      </div>
+    </div>`;
+}
+
+function renderCatalogHTML(layout) {
+  const { groups, ungrouped } = layout;
+  if (!layout.allCategories.length) return '';
+
+  const parts = [];
+  if (groups.length) {
+    parts.push(`
+      <p class="product-drag-hint">קטגוריות כלליות — לחץ לפתיחה · גרור ⠿ לשינוי סדר</p>
+      <div class="category-group-list">
+        ${groups.map((g, i) => renderGroupCard(g, i, g.categories)).join('')}
+      </div>`);
+  }
+  if (ungrouped.length) {
+    parts.push(`
+      ${groups.length ? '<h3 class="catalog-section-title">קטגוריות ללא קבוצה</h3>' : '<p class="product-drag-hint">לחץ על קטגוריה לפתיחה · גרור ⠿ לשינוי סדר</p>'}
+      <div class="category-list" data-group-id="">
+        ${ungrouped.map((cat, i) => renderCategoryCard(cat, i)).join('')}
+      </div>`);
+  }
+  return parts.join('');
+}
+
 export async function renderProducts(container) {
-  const data = await getProductsByCategory();
+  const sheetsHTML = await renderSheetsStatusHTML();
+  const layout = await getProductsCatalogLayout();
 
   container.innerHTML = `
-    <div class="section-header">
-      <h2>קטגוריות ומוצרים</h2>
-      <button class="btn btn-primary btn-sm" id="add-category-btn">+ קטגוריה</button>
+    <div class="card sheets-primary-card">
+      <div class="card-title">📊 Google Sheets</div>
+      <div id="sheets-status">${sheetsHTML}</div>
     </div>
 
-    ${data.length === 0
+    <div class="section-header products-toolbar">
+      <h2>קטגוריות ומוצרים</h2>
+      <div class="products-toolbar-actions">
+        <button class="btn btn-secondary btn-sm" id="manual-merge-btn">🔗 איחוד מוצרים נבחרים</button>
+        <button class="btn btn-secondary btn-sm" id="merge-duplicates-btn">🔗 איחוד כפילויות</button>
+        <button class="btn btn-secondary btn-sm" id="add-group-btn">+ קטגוריה כללית</button>
+        <button class="btn btn-primary btn-sm" id="add-category-btn">+ קטגוריה</button>
+      </div>
+    </div>
+
+    ${layout.allCategories.length === 0
       ? `<div class="empty-state">
           <div class="empty-state-icon">📦</div>
-          <p>התחל מאפס — הוסף קטגוריה ראשונה<br>ואז הוסף מוצרים ידנית.</p>
+          <p>התחל מאפס — הוסף קטגוריה ראשונה<br>או צור קטגוריה כללית לארגון קבוצות.</p>
           <button class="btn btn-primary" id="add-category-empty">+ הוסף קטגוריה</button>
         </div>`
-      : data.map((cat) => `
-        <div class="card" data-category-id="${cat.id}">
-          <div class="section-header">
-            <div>
-              <span class="category-chip">${escapeHtml(cat.name)}</span>
-              <span style="font-size:0.78rem;color:var(--text-muted);margin-right:8px">${cat.products.length} מוצרים</span>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button class="btn btn-secondary btn-sm edit-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}">✏️</button>
-              <button class="btn btn-danger btn-sm delete-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-count="${cat.products.length}">🗑</button>
-              <button class="btn btn-primary btn-sm add-product" data-cat="${cat.id}" data-catname="${escapeHtml(cat.name)}">+ מוצר</button>
-            </div>
-          </div>
-          ${cat.products.length === 0
-            ? '<p style="color:var(--text-muted);font-size:0.85rem;padding:8px 0">אין מוצרים — לחץ + מוצר</p>'
-            : cat.products.map((p) => `
-              <div class="list-item ${p.active ? '' : 'inactive-label'}">
-                <div class="list-item-info">
-                  <div class="list-item-name">${escapeHtml(p.name)}</div>
-                  <div class="list-item-meta">${productPriceMeta(p)} ${p.active ? '' : '· לא פעיל'}</div>
-                </div>
-                <div class="list-item-actions">
-                  <button class="btn btn-secondary btn-sm edit-product" data-id="${p.id}">✏️</button>
-                  <button class="btn btn-secondary btn-sm toggle-product" data-id="${p.id}">
-                    ${p.active ? '🚫' : '✅'}
-                  </button>
-                </div>
-              </div>`).join('')}
-        </div>`).join('')}
+      : renderCatalogHTML(layout)}
 
     <details class="card" style="margin-top:8px">
-      <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-muted)">ייבוא מ-Google Sheets (אופציונלי)</summary>
+      <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-muted)">ייבוא מקובץ Excel (גיבוי)</summary>
       <p style="font-size:0.85rem;color:var(--text-muted);margin:12px 0;line-height:1.5">
-        קובץ → הורדה → CSV. רק אם תרצה לייבא נתונים קיימים.
+        מומלץ לייבא מ-<strong>Google Sheets</strong> (למעלה) · או מקובץ Excel ישירות.
       </p>
       <input type="file" id="csv-import" accept=".csv,.xlsx,.xls,.txt" hidden>
       <button class="btn btn-secondary btn-sm" id="import-btn" style="width:100%;margin-bottom:8px">📥 בחר קובץ</button>
       <button class="btn btn-secondary btn-sm" id="template-btn" style="width:100%">הורד קובץ דוגמה</button>
     </details>
 
+    <details class="card backup-card">
+      <summary class="import-summary">גיבוי ושחזור</summary>
+      <p class="import-hint">גיבוי אוטומטי, בחירת תיקייה, ושחזור אחרי מחיקת האפליקציה</p>
+      <button type="button" class="btn btn-primary btn-sm" id="open-backup-screen" style="width:100%">
+        💾 פתח מסך גיבוי
+      </button>
+    </details>
+
     <button class="btn btn-danger btn-sm" id="reset-all" style="width:100%;margin-top:12px">🔄 איפוס — התחלה מאפס</button>`;
 
   container.querySelector('#add-category-btn')?.addEventListener('click', () => showCategoryForm(container));
   container.querySelector('#add-category-empty')?.addEventListener('click', () => showCategoryForm(container));
+  container.querySelector('#add-group-btn')?.addEventListener('click', () => showGroupForm(container));
+  container.querySelector('#merge-duplicates-btn')?.addEventListener('click', () => showMergeDuplicatesModal(container));
+  container.querySelector('#manual-merge-btn')?.addEventListener('click', () => showManualMergeModal(container));
+
+  bindSheetsStatusEvents(container, {
+    onRefresh: () => renderProducts(container),
+    onImportComplete: () => renderProducts(container),
+  });
 
   container.querySelectorAll('.delete-cat').forEach((btn) => {
     btn.addEventListener('click', () => confirmDeleteCategory(container, {
@@ -81,6 +321,11 @@ export async function renderProducts(container) {
       name: btn.dataset.name,
       productCount: Number(btn.dataset.count),
     }));
+  });
+
+  document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
+    const { navigate } = await import('../app.js?v=94');
+    navigate('backup');
   });
 
   document.getElementById('reset-all')?.addEventListener('click', () => {
@@ -109,6 +354,7 @@ export async function renderProducts(container) {
     if (!file) return;
     e.target.value = '';
     try {
+      const { parseImportFile, importParsedRows, previewText } = await import('../import.js');
       const parsed = await parseImportFile(file);
       const { sample, total, categories } = previewText(parsed);
       openModal({
@@ -121,21 +367,41 @@ export async function renderProducts(container) {
           <button class="btn btn-primary" id="confirm-import">ייבא</button>`,
       });
       document.querySelector('.modal-cancel').addEventListener('click', closeModal);
-      document.getElementById('confirm-import').addEventListener('click', async () => {
-        const result = await importParsedRows(parsed, {
-          importCatalog: importCatalogRows,
-          importProduction: importProductionRows,
-        });
-        closeModal();
-        showToast('יובא בהצלחה ✓');
-        renderProducts(container);
+      document.getElementById('confirm-import')?.addEventListener('click', async () => {
+        const btn = document.getElementById('confirm-import');
+        btn.disabled = true;
+        btn.textContent = 'מייבא...';
+        try {
+          const result = await importParsedRows(parsed, {
+            importCatalog: importCatalogRows,
+            importProduction: importProductionRows,
+          });
+          closeModal();
+          const prod = result.production;
+          if (prod) {
+            const parts = [`${prod.imported} רישומים`];
+            if (prod.merged) parts.push(`${prod.merged} עודכנו`);
+            if (prod.newProducts) parts.push(`${prod.newProducts} מוצרים חדשים`);
+            if (prod.newCategories) parts.push(`${prod.newCategories} קטגוריות חדשות`);
+            if (prod.skipped) parts.push(`${prod.skipped} דולגו`);
+            showToast(`יובא בהצלחה: ${parts.join(' · ')} ✓`);
+          } else {
+            showToast('יובא בהצלחה ✓');
+          }
+          renderProducts(container);
+        } catch (err) {
+          btn.disabled = false;
+          btn.textContent = 'ייבא';
+          showImportError(err.message || 'שגיאה בייבוא');
+        }
       });
     } catch (err) {
-      showToast(err.message || 'שגיאה בייבוא');
+      showImportError(err.message || 'שגיאה בייבוא');
     }
   });
 
-  document.getElementById('template-btn')?.addEventListener('click', () => {
+  document.getElementById('template-btn')?.addEventListener('click', async () => {
+    const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
     const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -145,11 +411,86 @@ export async function renderProducts(container) {
   });
 
   container.querySelectorAll('.edit-cat').forEach((btn) => {
-    btn.addEventListener('click', () => showCategoryForm(container, { id: btn.dataset.id, name: btn.dataset.name }));
+    btn.addEventListener('click', () => showCategoryForm(container, {
+      id: btn.dataset.id,
+      name: btn.dataset.name,
+      color: btn.dataset.color,
+      groupId: btn.dataset.groupId || '',
+    }));
+  });
+
+  container.querySelectorAll('.edit-group').forEach((btn) => {
+    btn.addEventListener('click', () => showGroupForm(container, {
+      id: btn.dataset.id,
+      name: btn.dataset.name,
+      color: btn.dataset.color,
+    }));
+  });
+
+  container.querySelectorAll('.delete-group').forEach((btn) => {
+    btn.addEventListener('click', () => confirmDeleteGroup(container, {
+      id: Number(btn.dataset.id),
+      name: btn.dataset.name,
+      categoryCount: Number(btn.dataset.count),
+    }));
+  });
+
+  container.querySelectorAll('.cat-unit-price-btn').forEach((btn) => {
+    btn.addEventListener('click', () => showCategoryPriceModal(container, {
+      id: Number(btn.dataset.id),
+      name: btn.dataset.name,
+      productCount: Number(btn.dataset.count),
+      currentPrice: btn.dataset.price,
+    }));
+  });
+
+  bindProductDragLists(container, async (categoryId, productIds) => {
+    try {
+      await setProductOrderInCategory(categoryId, productIds);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      renderProducts(container);
+    }
+  });
+
+  bindCategoryDragList(container, async (categoryIds, groupId) => {
+    try {
+      await setCategoryOrderInContainer(groupId, categoryIds);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      renderProducts(container);
+    }
+  });
+
+  bindCategoryGroupDragList(container, async (groupIds) => {
+    try {
+      await setCategoryGroupOrder(groupIds);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      renderProducts(container);
+    }
+  });
+
+  container.querySelectorAll('.category-group-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.category-group-card');
+      if (card) toggleGroupCard(card);
+    });
+  });
+
+  container.querySelectorAll('.category-card .category-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('.category-card');
+      if (card) toggleCategoryCard(card);
+    });
   });
 
   container.querySelectorAll('.add-product').forEach((btn) => {
-    btn.addEventListener('click', () => showProductForm(container, { categoryId: Number(btn.dataset.cat), categoryName: btn.dataset.catname }));
+    btn.addEventListener('click', () => {
+      const categoryId = Number(btn.dataset.cat);
+      expandCategory(categoryId);
+      showProductForm(container, { categoryId, categoryName: btn.dataset.catname });
+    });
   });
 
   container.querySelectorAll('.edit-product').forEach((btn) => {
@@ -182,34 +523,390 @@ function confirmDeleteCategory(container, { id, name, productCount }) {
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('confirm-delete-cat').addEventListener('click', async () => {
     await deleteCategory(id, { cascade: true });
+    expandedCategories.delete(id);
+    saveExpandedCategories();
     closeModal();
     showToast('הקטגוריה נמחקה');
     renderProducts(container);
   });
 }
 
+async function showManualMergeModal(container) {
+  const [categories, products] = await Promise.all([
+    getCategories(),
+    getProductsWithEntryStats(),
+  ]);
+
+  if (products.length < 2) {
+    showToast('צריך לפחות 2 מוצרים לאיחוד');
+    return;
+  }
+
+  const defaultCategoryId = categories[0]?.id || products[0].categoryId;
+
+  function productsForCategory(catId) {
+    return products.filter((p) => p.categoryId === Number(catId));
+  }
+
+  function suggestName(checkedIds) {
+    const selected = products.filter((p) => checkedIds.has(p.id));
+    if (!selected.length) return '';
+    selected.sort((a, b) => b.totalQty - a.totalQty || b.entryCount - a.entryCount || a.name.localeCompare(b.name, 'he'));
+    return selected[0].name;
+  }
+
+  function renderProductOptions(catId) {
+    const list = productsForCategory(catId);
+    if (!list.length) {
+      return '<p class="form-hint">אין מוצרים בקטגוריה זו</p>';
+    }
+    return list.map((p) => `
+      <label class="merge-product-option manual-merge-option">
+        <input type="checkbox" class="manual-merge-check" value="${p.id}">
+        <span>
+          <strong>${escapeHtml(p.name)}</strong>
+          <span class="merge-product-meta">${p.entryCount} רישומים · ${p.totalQty} יח'</span>
+        </span>
+      </label>`).join('');
+  }
+
+  openModal({
+    title: 'איחוד מוצרים נבחרים',
+    bodyHTML: `
+      <p class="form-hint" style="margin-bottom:12px;line-height:1.5">
+        בחר 2 מוצרים או יותר מאותה קטגוריה. כל רישומי הייצור יישמרו תחת מוצר אחד.
+      </p>
+      <div class="form-group">
+        <label for="manual-merge-category">קטגוריה</label>
+        <select id="manual-merge-category">
+          ${categories.map((c) => `<option value="${c.id}" ${c.id === defaultCategoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="manual-merge-list" id="manual-merge-list">
+        ${renderProductOptions(defaultCategoryId)}
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <label for="manual-merge-name">שם המוצר המאוחד</label>
+        <input type="text" id="manual-merge-name" placeholder="לדוגמה: עוגת שוקולד">
+      </div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="confirm-manual-merge">אחד מוצרים</button>`,
+  });
+
+  const listEl = document.getElementById('manual-merge-list');
+  const nameInput = document.getElementById('manual-merge-name');
+  const categorySelect = document.getElementById('manual-merge-category');
+
+  function getCheckedIds() {
+    return new Set(
+      [...document.querySelectorAll('.manual-merge-check:checked')].map((el) => Number(el.value))
+    );
+  }
+
+  function syncNameSuggestion() {
+    const ids = getCheckedIds();
+    if (ids.size && !nameInput.dataset.userEdited) {
+      nameInput.value = suggestName(ids);
+    }
+  }
+
+  function bindListEvents() {
+    listEl.querySelectorAll('.manual-merge-check').forEach((cb) => {
+      cb.addEventListener('change', syncNameSuggestion);
+    });
+  }
+
+  bindListEvents();
+
+  nameInput.addEventListener('input', () => {
+    nameInput.dataset.userEdited = nameInput.value.trim() ? '1' : '';
+  });
+
+  categorySelect.addEventListener('change', () => {
+    listEl.innerHTML = renderProductOptions(Number(categorySelect.value));
+    nameInput.value = '';
+    nameInput.dataset.userEdited = '';
+    bindListEvents();
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  document.getElementById('confirm-manual-merge')?.addEventListener('click', async () => {
+    const ids = [...getCheckedIds()];
+    const name = nameInput.value.trim();
+    if (ids.length < 2) {
+      showToast('יש לבחור לפחות 2 מוצרים');
+      return;
+    }
+    if (!name) {
+      showToast('יש להזין שם למוצר המאוחד');
+      return;
+    }
+
+    const btn = document.getElementById('confirm-manual-merge');
+    btn.disabled = true;
+    btn.textContent = 'מאחד...';
+    try {
+      const result = await mergeSelectedProducts(ids, name);
+      closeModal();
+      await toastAfterMerge(result);
+      renderProducts(container);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'אחד מוצרים';
+      showToast(err.message || 'שגיאה באיחוד');
+    }
+  });
+}
+
+async function showMergeDuplicatesModal(container) {
+  const groups = await findDuplicateProductGroups();
+
+  if (!groups.length) {
+    openModal({
+      title: 'איחוד כפילויות',
+      bodyHTML: '<p style="line-height:1.6;color:var(--text-muted)">לא נמצאו כפילויות 🎉</p>',
+      footerHTML: '<button class="btn btn-primary modal-cancel">סגור</button>',
+    });
+    document.querySelector('.modal-cancel').addEventListener('click', closeModal);
+    return;
+  }
+
+  const totalDups = groups.reduce((s, g) => s + g.products.length - 1, 0);
+  const groupsHtml = groups.map((g, gi) => {
+    const radios = g.products.map((p, pi) => `
+      <label class="merge-product-option">
+        <input type="radio" name="merge-keep-${gi}" value="${p.id}" ${pi === 0 ? 'checked' : ''}>
+        <span>
+          <strong>${escapeHtml(p.name)}</strong>
+          <span class="merge-product-meta">${p.entryCount} רישומים · ${p.totalQty} יח'</span>
+        </span>
+      </label>`).join('');
+
+    return `
+      <div class="merge-group" data-group="${gi}">
+        <div class="merge-group-title">${escapeHtml(g.categoryName)} · ${escapeHtml(g.name)}</div>
+        <p class="form-hint">בחר איזה מוצר לשמור — השאר יאוחדו אליו:</p>
+        ${radios}
+      </div>`;
+  }).join('');
+
+  openModal({
+    title: 'איחוד כפילויות',
+    bodyHTML: `
+      <p style="margin-bottom:12px;line-height:1.5">
+        נמצאו <strong>${groups.length}</strong> קבוצות · <strong>${totalDups}</strong> כפילויות
+      </p>
+      <div class="merge-groups-list">${groupsHtml}</div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="merge-all-auto">אחד הכל (אוטומטי)</button>
+      <button class="btn btn-primary" id="merge-selected">אחד לפי בחירה</button>`,
+  });
+
+  document.querySelector('.modal-cancel').addEventListener('click', closeModal);
+
+  document.getElementById('merge-all-auto').addEventListener('click', async () => {
+    try {
+      const result = await mergeAllDuplicateProducts();
+      closeModal();
+      await toastAfterMerge(result);
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('merge-selected').addEventListener('click', async () => {
+    try {
+      let merged = 0;
+      let lastResult = null;
+      for (let gi = 0; gi < groups.length; gi++) {
+        const keepId = Number(document.querySelector(`input[name="merge-keep-${gi}"]:checked`)?.value);
+        if (!keepId) continue;
+        const others = groups[gi].products.map((p) => p.id).filter((id) => id !== keepId);
+        lastResult = await mergeProducts(keepId, others);
+        merged += lastResult.merged;
+      }
+      closeModal();
+      await toastAfterMerge(lastResult || { qtyBefore: 0 });
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
+function showCategoryPriceModal(container, { id, name, productCount, currentPrice }) {
+  openModal({
+    title: `מחיר אחיד — ${name}`,
+    bodyHTML: `
+      <p class="form-hint" style="margin-bottom:12px;line-height:1.5">
+        המחיר יוחל על <strong>${productCount}</strong> מוצרים בקטגוריה.
+        אפשר לערוך מחיר לכל מוצר בנפרד בכפתור ✏️.
+      </p>
+      <div class="form-group">
+        <label for="cat-unit-price">מחיר ללקוח (₪)</label>
+        <input type="number" id="cat-unit-price" min="0" step="0.01" value="${currentPrice !== '' ? currentPrice : ''}" placeholder="לדוגמה: 25">
+      </div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-cat-price">שמור לכל המוצרים</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-cat-price')?.addEventListener('click', async () => {
+    const raw = document.getElementById('cat-unit-price').value;
+    if (raw === '') return showToast('יש להזין מחיר');
+    try {
+      const count = await setCategoryUnitPrice(id, raw);
+      closeModal();
+      showToast(`מחיר עודכן ל-${count} מוצרים ✓`);
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
+function showGroupForm(container, existing) {
+  Promise.all([getProductsCatalogLayout(), getCategoryGroups()]).then(([layout, groups]) => {
+    const groupId = existing?.id ? Number(existing.id) : null;
+    const assigned = new Set(
+      layout.allCategories.filter((c) => Number(c.groupId) === groupId).map((c) => c.id),
+    );
+    const initialColor = existing?.color || defaultColorForIndex(groups.length);
+
+    openModal({
+      title: existing ? 'עריכת קטגוריה כללית' : 'קטגוריה כללית חדשה',
+      bodyHTML: `
+        <p class="form-hint" style="margin-bottom:12px;line-height:1.5">
+          קטגוריה כללית מארגנת כמה קטגוריות תחתיה — המוצרים נשארים בקטגוריות הרגילות.
+        </p>
+        <div class="form-group">
+          <label for="group-name">שם הקבוצה</label>
+          <input type="text" id="group-name" value="${existing ? escapeHtml(existing.name) : ''}" placeholder="לדוגמה: מאפים">
+        </div>
+        ${renderColorPickerFields(initialColor, 'group')}
+        <div class="form-group">
+          <label>קטגוריות בקבוצה</label>
+          <div class="group-category-checklist">
+            ${layout.allCategories.length === 0
+              ? '<p class="form-hint">אין קטגוריות — הוסף קטגוריה קודם</p>'
+              : layout.allCategories.map((cat) => {
+                const inOtherGroup = cat.groupId && Number(cat.groupId) !== groupId;
+                return `
+                  <label class="group-category-option${inOtherGroup ? ' is-disabled' : ''}">
+                    <input type="checkbox" name="group-cats" value="${cat.id}"
+                      ${assigned.has(cat.id) ? 'checked' : ''}
+                      ${inOtherGroup ? 'disabled' : ''}>
+                    <span>${escapeHtml(cat.name)}</span>
+                    ${inOtherGroup ? '<span class="form-hint">(בקבוצה אחרת)</span>' : ''}
+                  </label>`;
+              }).join('')}
+          </div>
+        </div>`,
+      footerHTML: `
+        <button class="btn btn-secondary modal-cancel">ביטול</button>
+        <button class="btn btn-primary" id="save-group">שמור</button>`,
+    });
+
+    const colorInput = bindColorPickerInModal('group');
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('save-group')?.addEventListener('click', async () => {
+      const name = document.getElementById('group-name').value.trim();
+      if (!name) return showToast('יש להזין שם');
+      const color = colorInput?.value || initialColor;
+      const selected = [...document.querySelectorAll('input[name="group-cats"]:checked')].map((el) => Number(el.value));
+      try {
+        let id = groupId;
+        if (existing) {
+          await updateCategoryGroup(id, { name, color });
+        } else {
+          id = await addCategoryGroup(name, color);
+        }
+        await setCategoriesInGroup(id, selected);
+        closeModal();
+        showToast('נשמר ✓');
+        renderProducts(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+}
+
+function confirmDeleteGroup(container, { id, name, categoryCount }) {
+  openModal({
+    title: 'מחיקת קטגוריה כללית',
+    bodyHTML: `
+      <p style="line-height:1.6">למחוק את <strong>${escapeHtml(name)}</strong>?</p>
+      <p class="form-hint">${categoryCount} קטגוריות יועברו ל«ללא קבוצה» · המוצרים לא יימחקו.</p>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-danger" id="confirm-delete-group">מחק</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('confirm-delete-group')?.addEventListener('click', async () => {
+    try {
+      await deleteCategoryGroup(id);
+      expandedGroups.delete(id);
+      closeModal();
+      showToast('נמחק ✓');
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
 function showCategoryForm(container, existing) {
+  Promise.all([getCategoryGroups(), getProductsCatalogLayout()]).then(([groups]) => {
+  const initialColor = existing?.color || defaultColorForIndex(existing?.id ? Number(existing.id) - 1 : 0);
+  const groupOptions = [
+    '<option value="">ללא קבוצה</option>',
+    ...groups.map((g) => `<option value="${g.id}" ${String(existing?.groupId || '') === String(g.id) ? 'selected' : ''}>${escapeHtml(g.name)}</option>`),
+  ].join('');
+
   openModal({
     title: existing ? 'עריכת קטגוריה' : 'קטגוריה חדשה',
     bodyHTML: `
       <div class="form-group">
         <label for="cat-name">שם קטגוריה</label>
-        <input type="text" id="cat-name" value="${existing ? escapeHtml(existing.name) : ''}" placeholder="לדוגמה: עוגות">
-      </div>`,
+        <input type="text" id="cat-name" value="${existing ? escapeHtml(existing.name) : ''}" placeholder="לדוגמה: שטרודל">
+      </div>
+      <div class="form-group">
+        <label for="cat-group">קטגוריה כללית</label>
+        <select id="cat-group">${groupOptions}</select>
+      </div>
+      ${renderColorPickerFields(initialColor)}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-cat">שמור</button>`,
   });
 
+  const colorInput = bindColorPickerInModal();
+
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('save-cat').addEventListener('click', async () => {
     const name = document.getElementById('cat-name').value.trim();
     if (!name) return showToast('יש להזין שם');
-    if (existing) await updateCategory(Number(existing.id), name);
-    else await addCategory(name);
-    closeModal();
-    showToast('נשמר ✓');
-    renderProducts(container);
+    const color = colorInput?.value || initialColor;
+    const groupId = document.getElementById('cat-group').value || null;
+    try {
+      if (existing) {
+        await updateCategory(Number(existing.id), { name, color, groupId });
+      } else {
+        await addCategory(name, color, groupId);
+      }
+      closeModal();
+      showToast('נשמר ✓');
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
   });
 }
 
@@ -222,7 +919,8 @@ function optionalPriceInput(id, label, value) {
 }
 
 async function showProductForm(container, opts) {
-  const categories = (await getProductsByCategory()).map((c) => ({ id: c.id, name: c.name }));
+  const layout = await getProductsCatalogLayout();
+  const categories = layout.allCategories.map((c) => ({ id: c.id, name: c.name }));
 
   openModal({
     title: opts.id ? 'עריכת מוצר' : `מוצר חדש — ${opts.categoryName || ''}`,
@@ -260,14 +958,28 @@ async function showProductForm(container, opts) {
       additionalCosts: document.getElementById('prod-extra').value,
     };
 
-    if (opts.id) await updateProduct(opts.id, data);
-    else await addProduct(data);
-    closeModal();
-    showToast('נשמר ✓');
-    renderProducts(container);
+    try {
+      if (opts.id) await updateProduct(opts.id, data);
+      else await addProduct(data);
+      expandCategory(data.categoryId);
+      closeModal();
+      showToast('נשמר ✓');
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }
 
 export function productsMeta() {
-  return { title: 'מוצרים', subtitle: 'הוסף קטגוריות ומוצרים ידנית' };
+  return { title: 'מוצרים', subtitle: 'קטגוריות כלליות, צבעים ומוצרים' };
+}
+
+function showImportError(message) {
+  openModal({
+    title: 'שגיאה בייבוא',
+    bodyHTML: `<p style="white-space:pre-line;font-size:0.9rem;line-height:1.6;color:var(--text)">${escapeHtml(message)}</p>`,
+    footerHTML: `<button class="btn btn-primary modal-cancel">הבנתי</button>`,
+  });
+  document.querySelector('.modal-cancel').addEventListener('click', closeModal);
 }
