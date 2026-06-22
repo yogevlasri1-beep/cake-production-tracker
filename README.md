@@ -14,7 +14,23 @@
 
 > **חשוב:** בפעם הראשונה חייבים לטעון את האפליקציה עם חיבור (אינטרנט או Mac). אחרי זה — offline לגמרי.
 
-### אפשרות ב' — GitHub Pages (בלי Mac בכלל)
+### אפשרות ב' — Vercel (מומלץ, HTTPS + עדכונים מהירים)
+
+1. היכנס ל-[vercel.com](https://vercel.com) → **Add New Project**
+2. **Import** את `yogevlasri1-beep/cake-production-tracker` מ-GitHub
+3. הגדרות (ברירת מחדל — **אין build**):
+   - **Framework Preset:** Other
+   - **Build Command:** (ריק)
+   - **Output Directory:** (ריק)
+4. **Deploy**
+5. הכתובת: `https://cake-production-tracker.vercel.app` (או שם ש-Vercel נותן)
+6. באייפון Safari → פתח את הכתובת → **הוסף למסך הבית**
+
+לעדכון גרסה: `/?force-update=1` בכתובת.
+
+קובץ `vercel.json` כבר מוגדר עם no-cache ל-`index.html`, `sw.js` ו-`version.js`.
+
+### אפשרות ג' — GitHub Pages
 
 פרסום חינמי באינטרנט — האייפון ניגש ישירות, בלי Mac:
 
