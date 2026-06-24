@@ -9,9 +9,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=97';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=97';
-import { defaultColorForIndex } from './chart.js?v=97';
+} from './validators.js?v=99';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=99';
+import { defaultColorForIndex } from './chart.js?v=99';
 
 export { ValidationError };
 
@@ -913,15 +913,16 @@ export async function setProductOrderInCategory(categoryId, productIds) {
   });
 }
 
-export async function setCategoryUnitPrice(categoryId, unitPrice) {
+export async function setCategoryUnitPrice(categoryId, unitPrice, priceUnit = 'unit') {
   const cid = sanitizeProductId(categoryId);
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
   const price = sanitizeMoney(unitPrice);
+  const unit = sanitizeProductPriceUnit(priceUnit);
 
   const products = await db.products.where('categoryId').equals(cid).toArray();
   await db.transaction('rw', db.products, async () => {
     for (const p of products) {
-      await db.products.update(p.id, { unitPrice: price });
+      await db.products.update(p.id, { unitPrice: price, priceUnit: unit });
     }
   });
   return products.length;

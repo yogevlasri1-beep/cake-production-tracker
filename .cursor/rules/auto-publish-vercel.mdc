@@ -1,0 +1,23 @@
+---
+description: Auto-publish app changes to Vercel via GitHub push
+alwaysApply: true
+---
+
+# פרסום אוטומטי ל-Vercel
+
+הפרויקט מחובר ל-Vercel דרך GitHub: **כל push ל-`main` מפריס אוטומטית** תוך 1–2 דקות.
+
+## אחרי כל שינוי משמעותי בקוד
+
+1. הרץ `./scripts/bump-version.sh` (אם שינית קבצי אפליקציה — cache bust + PWA).
+2. הרץ `./scripts/publish-to-vercel.sh "תיאור קצר של השינוי"` — זה עושה commit + push ל-GitHub.
+3. אל תשאיר שינויים רק מקומיים — המשתמש רואה ב-Vercel/אייפון רק מה שב-GitHub.
+
+## URL
+
+- Production: `https://cake-production-tracker.vercel.app`
+- אחרי deploy: המשתמש יכול לרענן עם `/?force-update=1` אם ה-PWA נתקע על גרסה ישנה.
+
+## אל תשתמש ב-Vercel Drop
+
+הפריסה הרשמית היא דרך GitHub → Vercel, לא zip ידני.
