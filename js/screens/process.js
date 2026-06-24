@@ -8,12 +8,13 @@ import {
   getFlowPortionPresets, addFlowPortionPreset, updateFlowPortionPreset, deleteFlowPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDates,
-  addRunStepPortionBatch, getStepPortionBatches, getStepPortionTotal,
+  addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
+  getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=95';
-import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js?v=95';
-import { openModal, closeModal } from '../modal.js?v=95';
-import { requestAutoBackupNow } from '../backup-service.js?v=95';
+} from '../db.js?v=97';
+import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js?v=97';
+import { openModal, closeModal } from '../modal.js?v=97';
+import { requestAutoBackupNow } from '../backup-service.js?v=97';
 
 function parseIdList(str) {
   try {
@@ -92,25 +93,34 @@ function portionPresetOptionLabel(p) {
   return `${p.name} (${p.weight} ק"ג${extra})`;
 }
 
-function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, presets = [] } = {}) {
+function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = false, presets = [] } = {}) {
   if (!step.tracksPortions) return '';
   const batches = getStepPortionBatches(step);
   const total = getStepPortionTotal(step);
   const hasPresets = presets.length > 0;
+  const editable = canEdit || canAdd;
 
   return `
     <div class="flow-portion-batches" data-step-batches="${stepIndex}">
       ${batches.length ? `
         <ul class="flow-portion-batch-list">
-          ${batches.map((b) => `
-            <li class="flow-portion-batch-item">
+          ${batches.map((b, batchIndex) => `
+            <li class="flow-portion-batch-item" data-batch-index="${batchIndex}">
               <span class="flow-portion-batch-date">${formatDate(b.date)}</span>
               ${b.name ? `
                 <span class="flow-portion-batch-name">${escapeHtml(b.name)}</span>
                 ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
                 ${b.extra ? `<span class="flow-portion-batch-extra">${escapeHtml(b.extra)}</span>` : ''}
+              ` : ''}
+              ${editable ? `
+                <label class="flow-portion-batch-count-edit">
+                  × <input type="number" class="flow-portion-batch-count-input" min="1" step="1" inputmode="numeric"
+                    value="${b.count}" data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="מספר מנות">
+                </label>
+                <button type="button" class="btn btn-danger btn-sm flow-portion-batch-del" data-step="${stepIndex}" data-batch="${batchIndex}" title="הסר">🗑</button>
+              ` : `
                 <span class="flow-portion-batch-count">× ${b.count}</span>
-              ` : `<span class="flow-portion-batch-count">+${b.count} מנות</span>`}
+              `}
               ${b.note ? `<span class="flow-portion-batch-note">${escapeHtml(b.note)}</span>` : ''}
             </li>`).join('')}
         </ul>
@@ -219,11 +229,11 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions
         <textarea id="step-${stepIndex}-improvements" rows="2" placeholder="מה אפשר לשפר">${escapeHtml(step.improvements || '')}</textarea>
       </div>
       ${includePortions ? stepPortionFieldsHTML(step, stepIndex, presets) : ''}
-      <button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור</button>
+      <button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור שינויים</button>
     </div>`;
 }
 
-function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets = []) {
+function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets = [], runStatus = 'active') {
   const visual = stepVisualState(stepIndex, currentIndex, totalSteps, step.status);
   const hasNotes = step.notes || step.issues || step.improvements;
   const portionText = stepPortionLabel(step);
@@ -232,6 +242,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
     : '';
   const isActive = visual === 'active';
   const isDone = visual === 'done';
+  const reachable = isActive || isDone;
   const showPreview = hasNotes && !isActive;
 
   return `
@@ -245,16 +256,19 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽 מנות</span>' : ''}
         </div>
         ${portionText && !isActive ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
-        ${step.tracksPortions && (isDone || isActive || visual === 'done')
-    ? stepPortionBatchesHTML(step, stepIndex, { canAdd: true, presets: portionPresets }) : ''}
+        ${step.tracksPortions && reachable
+    ? stepPortionBatchesHTML(step, stepIndex, { canAdd: reachable, canEdit: reachable, presets: portionPresets }) : ''}
         ${showPreview ? `
           <div class="flow-step-notes-preview">
             ${step.notes ? `<span>📝 ${escapeHtml(step.notes)}</span>` : ''}
             ${step.issues ? `<span>⚠️ ${escapeHtml(step.issues)}</span>` : ''}
             ${step.improvements ? `<span>💡 ${escapeHtml(step.improvements)}</span>` : ''}
           </div>` : ''}
-        ${isActive ? stepInlineEditHTML(step, stepIndex, { expanded: true, includePortions: true, presets: portionPresets }) : ''}
-        ${isDone ? stepInlineEditHTML(step, stepIndex, { expanded: false, includePortions: false }) : ''}
+        ${reachable ? stepInlineEditHTML(step, stepIndex, {
+    expanded: isActive,
+    includePortions: true,
+    presets: portionPresets,
+  }) : ''}
         <div class="flow-step-actions">
           ${isDone ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">עריכה</button>` : ''}
           ${isActive ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
@@ -262,6 +276,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
       </div>
     </div>`;
 }
+
 function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
   const statusLabel = run.status === 'active' ? 'פעיל' : 'הושלם';
   const statusClass = run.status === 'active' ? 'flow-run-active' : 'flow-run-done';
@@ -321,7 +336,7 @@ async function renderRunView(container, runId, ctx) {
     </div>
 
     <div class="flow-timeline">
-      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets)).join('')}
+      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status)).join('')}
     </div>
 
     ${run.status === 'completed'
@@ -403,6 +418,42 @@ async function renderRunView(container, runId, ctx) {
         await addRunStepPortionBatch(run.id, stepIndex, { presetId, count, date });
         requestAutoBackupNow().catch(() => {});
         showToast('מנות נוספו ✓');
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.flow-portion-batch-count-input').forEach((input) => {
+    const saveBatch = async () => {
+      const stepIndex = Number(input.dataset.step);
+      const batchIndex = Number(input.dataset.batch);
+      try {
+        await updateRunStepPortionBatch(run.id, stepIndex, batchIndex, { count: input.value });
+        requestAutoBackupNow().catch(() => {});
+        showToast('כמות עודכנה ✓');
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    };
+    input.addEventListener('change', saveBatch);
+  });
+
+  container.querySelectorAll('.flow-portion-batch-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const stepIndex = Number(btn.dataset.step);
+      const batchIndex = Number(btn.dataset.batch);
+      if (!confirm('להסיר רשומת מנות זו?')) return;
+      try {
+        await deleteRunStepPortionBatch(run.id, stepIndex, batchIndex);
+        requestAutoBackupNow().catch(() => {});
+        showToast('הוסר ✓');
         container.dataset.runId = String(run.id);
         container.dataset.view = 'run';
         renderProcess(container);

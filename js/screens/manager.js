@@ -1,26 +1,30 @@
 import {
   MANAGER_DEPARTMENTS,
   getProducts, getCategories, getAllFlowPortionPresetsWithContext,
+  getAllFlowsOverview, getFlowStepsForFlow,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
-  addManagerPlanItem, updateManagerPlanItem, deleteManagerPlanItem,
+  addManagerPlanItem, addManagerPlanFlowSteps, updateManagerPlanItem, deleteManagerPlanItem,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
   getManagerDashboardStats,
-} from '../db.js?v=95';
+  getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
+  getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
+} from '../db.js?v=97';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=95';
-import { openModal, closeModal } from '../modal.js?v=95';
-import { renderTargets } from './targets.js?v=95';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=95';
-import { APP_VERSION } from '../version.js?v=95';
+} from '../utils.js?v=97';
+import { openModal, closeModal } from '../modal.js?v=97';
+import { renderTargets } from './targets.js?v=97';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=97';
+import { APP_VERSION } from '../version.js?v=97';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
   { id: 'daily', label: 'תוכנית יומית', icon: '📅' },
   { id: 'weekly', label: 'תוכנית שבועית', icon: '🗓' },
+  { id: 'team', label: 'צוות', icon: '👥' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'improvements', label: 'שיפורים', icon: '💡' },
   { id: 'incidents', label: 'תקלות', icon: '⚠️' },
@@ -135,7 +139,7 @@ async function renderOverview(container) {
         <div class="manager-list-item">
           <span class="manager-check${item.done ? ' done' : ''}">${item.done ? '✓' : '○'}</span>
           <div class="manager-list-body">
-            <span>${item.itemKind === 'portion' ? '🍽 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${item.quantity}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
+            <span>${item.itemKind === 'portion' ? '🍽 ' : item.itemKind === 'flow_step' ? '📋 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${item.quantity}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
           </div>
         </div>`).join('')}
       ${planItems.length > 6 ? `<p class="form-hint">+${planItems.length - 6} נוספים</p>` : ''}
@@ -203,6 +207,7 @@ async function renderOverview(container) {
 function planItemRow(item, { showDay = false } = {}) {
   const dayLabels = weekDayLabels();
   const isPortion = item.itemKind === 'portion';
+  const isFlowStep = item.itemKind === 'flow_step';
   let bodyInner;
   if (isPortion) {
     const target = item.label.includes('→') ? item.label.split('→').pop().trim() : item.label;
@@ -210,21 +215,27 @@ function planItemRow(item, { showDay = false } = {}) {
         <span class="manager-plan-label">🍽 ${escapeHtml(item.portionName || item.label)}</span>
         <span class="manager-plan-portion-detail">${item.portionWeight != null ? `${item.portionWeight} ק"ג` : ''}${item.portionExtra ? ` · ${escapeHtml(item.portionExtra)}` : ''}</span>
         <span class="manager-plan-portion-target">→ ${escapeHtml(target)}</span>
-        ${item.quantity ? `<span class="manager-plan-qty"><strong>${item.quantity}</strong> מנות לייצור</span>` : ''}`;
+        <label class="manager-plan-qty-edit">
+          <input type="number" class="plan-item-qty-input" min="1" step="1" inputmode="numeric" value="${item.quantity || 1}" aria-label="כמות מנות">
+          <span>מנות לייצור</span>
+        </label>`;
+  } else if (isFlowStep) {
+    bodyInner = `
+        <span class="manager-plan-label">📋 ${escapeHtml(item.label)}</span>`;
   } else {
     bodyInner = `
         <span class="manager-plan-label">${escapeHtml(item.label)}</span>
         ${item.quantity ? `<span class="manager-plan-qty">× ${item.quantity}</span>` : ''}`;
   }
   return `
-    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}" data-id="${item.id}">
+    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}" data-id="${item.id}">
       <label class="manager-plan-check">
         <input type="checkbox" class="plan-item-done" ${item.done ? 'checked' : ''}>
       </label>
       <div class="manager-plan-body">${bodyInner}
         ${showDay ? `<span class="manager-plan-day">${dayLabels[item.dayOffset] || ''}</span>` : ''}
       </div>
-      <button type="button" class="btn btn-danger btn-sm plan-item-del">🗑</button>
+      <button type="button" class="btn btn-danger btn-sm plan-item-del" title="הסר">🗑</button>
     </div>`;
 }
 
@@ -248,6 +259,21 @@ function bindPlanItems(container, planType, anchorDate) {
       showToast('נמחק');
       renderManager(container);
     });
+  });
+
+  container.querySelectorAll('.plan-item-qty-input').forEach((input) => {
+    const saveQty = async () => {
+      const row = input.closest('.manager-plan-item');
+      try {
+        await updateManagerPlanItem(row.dataset.id, { quantity: input.value });
+        showToast('כמות עודכנה ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+        renderManager(container);
+      }
+    };
+    input.addEventListener('change', saveQty);
+    input.addEventListener('blur', saveQty);
   });
 
   document.getElementById('save-plan-notes')?.addEventListener('click', async () => {
@@ -323,13 +349,21 @@ function bindPlanItems(container, planType, anchorDate) {
 
 async function renderDailyPlan(container) {
   const date = container.dataset.planDate || todayISO();
-  const [plan, items, products, categories, portionPresets] = await Promise.all([
+  const selectedFlowId = container.dataset.planFlowId || '';
+  const [plan, items, products, categories, portionPresets, flowsOverview] = await Promise.all([
     getManagerPlan('daily', date),
     getManagerPlanItems('daily', date),
     getProducts(true),
     getCategories(),
     getAllFlowPortionPresetsWithContext(),
+    getAllFlowsOverview(),
   ]);
+  const flowSteps = selectedFlowId
+    ? await getFlowStepsForFlow(selectedFlowId)
+    : [];
+  const planFlowStepIds = new Set(
+    items.filter((i) => i.itemKind === 'flow_step' && i.flowStepId).map((i) => i.flowStepId)
+  );
   const done = items.filter((i) => i.done).length;
 
   container.innerHTML = `
@@ -347,6 +381,44 @@ async function renderDailyPlan(container) {
       <textarea id="plan-notes" rows="3" placeholder="דגשים, הערות משמרת, הודעות לצוות...">${escapeHtml(plan?.notes || '')}</textarea>
       <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור הערות</button>
     </div>
+
+    ${flowsOverview.length ? `
+    <div class="card">
+      <div class="card-title">📋 משימות מתזרים יצור</div>
+      <p class="form-hint" style="margin-bottom:12px">בחר תזרים, סמן שלבים, והוסף לתוכנית היומית</p>
+      <div class="form-group">
+        <label for="plan-flow-pick">תזרים</label>
+        <select id="plan-flow-pick">
+          <option value="">בחר תזרים...</option>
+          ${flowsOverview.map((f) => `
+            <option value="${f.id}" ${String(f.id) === String(selectedFlowId) ? 'selected' : ''}>
+              ${escapeHtml(f.name)} · ${escapeHtml(f.targetLabel)} (${f.stepCount} שלבים)
+            </option>`).join('')}
+        </select>
+      </div>
+      ${selectedFlowId && flowSteps.length ? `
+      <div class="plan-flow-steps-list">
+        ${flowSteps.map((step, i) => {
+          const inPlan = planFlowStepIds.has(step.id);
+          return `
+          <label class="plan-flow-step-option${inPlan ? ' is-in-plan' : ''}">
+            <input type="checkbox" class="plan-flow-step-cb" value="${step.id}" ${inPlan ? 'disabled checked' : ''}>
+            <span class="plan-flow-step-num">${i + 1}</span>
+            <span class="plan-flow-step-name">${escapeHtml(step.name)}${step.tracksPortions ? ' 🍽' : ''}</span>
+            ${inPlan ? '<span class="plan-flow-step-badge">בתוכנית</span>' : ''}
+          </label>`;
+        }).join('')}
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="add-plan-flow-steps" style="width:100%;margin-top:10px">
+        + הוסף נבחרות לתוכנית
+      </button>` : selectedFlowId ? `
+      <p class="form-hint">אין שלבים בתזרים — הגדר ב«תזרים» → «נהל תזרים»</p>` : `
+      <p class="form-hint">בחר תזרים כדי לראות את השלבים</p>`}
+    </div>` : `
+    <div class="card">
+      <div class="card-title">📋 משימות מתזרים יצור</div>
+      <p class="form-hint">אין תזרימים — הגדר ב«תזרים» → «נהל תזרים»</p>
+    </div>`}
 
     ${portionPresets.length ? `
     <div class="card">
@@ -432,6 +504,31 @@ async function renderDailyPlan(container) {
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;
     renderManager(container);
+  });
+
+  document.getElementById('plan-flow-pick')?.addEventListener('change', (e) => {
+    container.dataset.planFlowId = e.target.value;
+    renderManager(container);
+  });
+
+  document.getElementById('add-plan-flow-steps')?.addEventListener('click', async () => {
+    const flowId = document.getElementById('plan-flow-pick')?.value;
+    const stepIds = [...document.querySelectorAll('.plan-flow-step-cb:checked:not(:disabled)')]
+      .map((cb) => Number(cb.value));
+    if (!flowId) return showToast('בחר תזרים');
+    if (!stepIds.length) return showToast('סמן לפחות משימה אחת');
+    try {
+      const n = await addManagerPlanFlowSteps({
+        planType: 'daily',
+        anchorDate: date,
+        flowId,
+        stepIds,
+      });
+      showToast(`${n} משימות נוספו ✓`);
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }
 
@@ -840,6 +937,137 @@ async function renderNotes(container) {
   });
 }
 
+async function renderTeam(container) {
+  const [areas, employees] = await Promise.all([
+    getManagerResponsibilityAreas(),
+    getManagerEmployees(),
+  ]);
+  const areaMap = new Map(areas.map((a) => [a.id, a.name]));
+
+  container.innerHTML = `
+    ${managerTabsHTML('team')}
+    <div class="card">
+      <div class="card-title">תחומי אחריות</div>
+      <p class="form-hint" style="margin-bottom:10px">הגדר תחומים (למשל: אפייה, קישוט, אריזה) ושייך לכל עובד</p>
+      <div class="filter-row" style="margin-bottom:12px">
+        <input type="text" id="new-area-name" placeholder="שם תחום חדש" style="flex:1">
+        <button type="button" class="btn btn-primary btn-sm" id="add-area-btn">+ הוסף</button>
+      </div>
+      ${areas.length ? `
+        <ul class="manager-area-list">
+          ${areas.map((a) => `
+            <li class="manager-area-item" data-id="${a.id}">
+              <span class="manager-area-name">${escapeHtml(a.name)}</span>
+              <button type="button" class="btn btn-danger btn-sm area-del" data-id="${a.id}" title="מחק">🗑</button>
+            </li>`).join('')}
+        </ul>` : '<p class="form-hint">אין תחומים — הוסף את הראשון</p>'}
+    </div>
+
+    <div class="card">
+      <div class="card-title">עובדים (${employees.length})</div>
+      <div class="form-group">
+        <label for="new-emp-name">שם עובד</label>
+        <input type="text" id="new-emp-name" placeholder="לדוגמה: יוסי">
+      </div>
+      <div class="form-group">
+        <label for="new-emp-area">תחום אחריות</label>
+        <select id="new-emp-area">
+          <option value="">ללא / כללי</option>
+          ${areas.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}
+        </select>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="add-emp-btn" style="width:100%;margin-bottom:16px">+ הוסף עובד</button>
+      ${employees.length ? employees.map((emp) => `
+        <div class="manager-employee-item${emp.active === false ? ' is-inactive' : ''}" data-id="${emp.id}">
+          <div class="manager-employee-main">
+            <strong>${escapeHtml(emp.name)}</strong>
+            <span class="manager-employee-area">${escapeHtml(areaMap.get(emp.responsibilityAreaId) || 'כללי')}</span>
+          </div>
+          <div class="manager-employee-actions">
+            <select class="emp-area-select" data-id="${emp.id}">
+              <option value="">כללי</option>
+              ${areas.map((a) => `<option value="${a.id}" ${emp.responsibilityAreaId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-secondary btn-sm emp-toggle" data-id="${emp.id}">${emp.active === false ? '✅' : '🚫'}</button>
+            <button type="button" class="btn btn-danger btn-sm emp-del" data-id="${emp.id}">🗑</button>
+          </div>
+        </div>`).join('') : '<p class="form-hint">אין עובדים רשומים</p>'}
+    </div>`;
+
+  bindManagerTabs(container);
+
+  document.getElementById('add-area-btn')?.addEventListener('click', async () => {
+    try {
+      await addManagerResponsibilityArea(document.getElementById('new-area-name').value);
+      showToast('תחום נוסף ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.area-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק תחום אחריות?')) return;
+      try {
+        await deleteManagerResponsibilityArea(btn.dataset.id);
+        showToast('נמחק');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('add-emp-btn')?.addEventListener('click', async () => {
+    try {
+      await addManagerEmployee({
+        name: document.getElementById('new-emp-name').value,
+        responsibilityAreaId: document.getElementById('new-emp-area').value || null,
+      });
+      showToast('עובד נוסף ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.emp-area-select').forEach((sel) => {
+    sel.addEventListener('change', async () => {
+      try {
+        await updateManagerEmployee(sel.dataset.id, { responsibilityAreaId: sel.value || null });
+        showToast('עודכן ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+        renderManager(container);
+      }
+    });
+  });
+
+  container.querySelectorAll('.emp-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.manager-employee-item');
+      const active = row?.classList.contains('is-inactive');
+      try {
+        await updateManagerEmployee(btn.dataset.id, { active });
+        showToast(active ? 'הופעל ✓' : 'הושבת');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.emp-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק עובד?')) return;
+      await deleteManagerEmployee(btn.dataset.id);
+      showToast('נמחק');
+      renderManager(container);
+    });
+  });
+}
+
 export async function renderManager(container) {
   const tab = container.dataset.managerTab || 'overview';
 
@@ -856,6 +1084,7 @@ export async function renderManager(container) {
   switch (tab) {
     case 'daily': return renderDailyPlan(container);
     case 'weekly': return renderWeeklyPlan(container);
+    case 'team': return renderTeam(container);
     case 'tasks': return renderTaskList(container, 'task');
     case 'improvements': return renderTaskList(container, 'improvement');
     case 'incidents': return renderIncidents(container);

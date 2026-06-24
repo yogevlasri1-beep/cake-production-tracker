@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=95';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=97';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -16,6 +16,20 @@ export function formatMoney(n) {
   const val = Number(n);
   if (!Number.isFinite(val)) return '₪0';
   return `₪${val.toLocaleString('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
+
+export function productUnitLabel(product) {
+  return product?.priceUnit === 'kg' ? 'ק"ג' : "יח'";
+}
+
+export function productPriceUnitLabel(product) {
+  return product?.priceUnit === 'kg' ? '₪/ק"ג' : '₪/יח\'';
+}
+
+export function formatProductQuantity(product, qty) {
+  if (qty == null || qty === '') return '—';
+  if (product?.priceUnit === 'kg') return `${qty} ק"ג`;
+  return String(qty);
 }
 
 export { pct, pctDisplay, progressClass, progressBadge };

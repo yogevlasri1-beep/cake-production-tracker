@@ -5,12 +5,12 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=95';
-import { formatMoney, showToast, escapeHtml } from '../utils.js?v=95';
-import { openModal, closeModal } from '../modal.js?v=95';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=95';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=95';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=95';
+} from '../db.js?v=97';
+import { formatMoney, showToast, escapeHtml, productPriceUnitLabel, productUnitLabel } from '../utils.js?v=97';
+import { openModal, closeModal } from '../modal.js?v=97';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=97';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=97';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=97';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -129,9 +129,10 @@ function bindColorPickerInModal(prefix = 'cat') {
 
 function productPriceMeta(p) {
   const parts = [];
-  if (p.unitPrice > 0) parts.push(`ללקוח: ${formatMoney(p.unitPrice)}`);
+  if (p.unitPrice > 0) parts.push(`ללקוח: ${formatMoney(p.unitPrice)}/${productUnitLabel(p)}`);
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
+  if (p.priceUnit === 'kg') parts.push('תמחור לפי משקל');
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
 }
 
@@ -324,7 +325,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=95');
+    const { navigate } = await import('../app.js?v=97');
     navigate('backup');
   });
 
@@ -935,7 +936,15 @@ async function showProductForm(container, opts) {
           ${categories.map((c) => `<option value="${c.id}" ${c.id === opts.categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
       </div>
-      ${optionalPriceInput('prod-price', 'מחיר משוער ללקוח (₪)', opts.unitPrice)}
+      ${optionalPriceInput('prod-price', `מחיר משוער ללקוח (${productPriceUnitLabel({ priceUnit: opts.priceUnit || 'unit' })})`, opts.unitPrice)}
+      <div class="form-group">
+        <label for="prod-price-unit">יחידת תמחור</label>
+        <select id="prod-price-unit">
+          <option value="unit" ${opts.priceUnit !== 'kg' ? 'selected' : ''}>יחידה (₪/יח')</option>
+          <option value="kg" ${opts.priceUnit === 'kg' ? 'selected' : ''}>משקל (₪/ק"ג)</option>
+        </select>
+        <p class="form-hint">משקל — רישום ייצור ודוחות לפי ק"ג</p>
+      </div>
       ${optionalPriceInput('prod-raw', 'מחיר חומרי גלם (₪)', opts.rawMaterialsCost)}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
@@ -953,6 +962,7 @@ async function showProductForm(container, opts) {
       name,
       categoryId: Number(document.getElementById('prod-cat').value),
       unitPrice: document.getElementById('prod-price').value,
+      priceUnit: document.getElementById('prod-price-unit').value,
       rawMaterialsCost: document.getElementById('prod-raw').value,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,

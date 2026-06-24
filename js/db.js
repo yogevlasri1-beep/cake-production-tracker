@@ -9,9 +9,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=95';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=95';
-import { defaultColorForIndex } from './chart.js?v=95';
+} from './validators.js?v=97';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=97';
+import { defaultColorForIndex } from './chart.js?v=97';
 
 export { ValidationError };
 
@@ -299,6 +299,51 @@ db.version(15).stores({
   managerShiftNotes: '++id, date, department, kind, createdAt',
 });
 
+db.version(16).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+}).upgrade(async (tx) => {
+  const products = await tx.table('products').toArray();
+  for (const p of products) {
+    if (p.priceUnit !== 'kg' && p.priceUnit !== 'unit') {
+      await tx.table('products').update(p.id, { priceUnit: 'unit' });
+    }
+  }
+});
+
+function sanitizeProductPriceUnit(raw) {
+  return raw === 'kg' ? 'kg' : 'unit';
+}
+
+function sanitizeProductQuantity(raw, product, { allowZero = false } = {}) {
+  if (product?.priceUnit === 'kg') {
+    const min = allowZero ? 0 : 0.001;
+    const n = sanitizePortionSize(raw, { min, max: 100_000 });
+    if (n == null && allowZero && (raw === 0 || raw === '0')) return 0;
+    return n;
+  }
+  return sanitizeQuantity(raw, { allowZero });
+}
+
 function compareGroups(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
@@ -527,7 +572,7 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, async () => {
     await db.productionEntries.clear();
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
@@ -540,6 +585,8 @@ export async function resetAllData() {
     await db.managerTasks.clear();
     await db.managerIncidents.clear();
     await db.managerShiftNotes.clear();
+    await db.managerEmployees.clear();
+    await db.managerResponsibilityAreas.clear();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -564,6 +611,7 @@ function stripProductForImport(raw) {
     active: raw.active !== false,
     sortOrder: raw.sortOrder ?? 0,
     unitPrice: sanitizeMoney(raw.unitPrice),
+    priceUnit: sanitizeProductPriceUnit(raw.priceUnit),
     rawMaterialsCost: sanitizeMoney(raw.rawMaterialsCost),
     packagingCost: sanitizeMoney(raw.packagingCost),
     additionalCosts: sanitizeMoney(raw.additionalCosts),
@@ -609,6 +657,8 @@ export async function exportAllData() {
     managerTasks,
     managerIncidents,
     managerShiftNotes,
+    managerResponsibilityAreas,
+    managerEmployees,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -628,6 +678,8 @@ export async function exportAllData() {
     db.managerTasks.toArray(),
     db.managerIncidents.toArray(),
     db.managerShiftNotes.toArray(),
+    db.managerResponsibilityAreas.toArray(),
+    db.managerEmployees.toArray(),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -647,6 +699,8 @@ export async function exportAllData() {
     managerTasks,
     managerIncidents,
     managerShiftNotes,
+    managerResponsibilityAreas,
+    managerEmployees,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -680,6 +734,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
   if (!Array.isArray(payload.managerIncidents)) payload.managerIncidents = [];
   if (!Array.isArray(payload.managerShiftNotes)) payload.managerShiftNotes = [];
+  if (!Array.isArray(payload.managerResponsibilityAreas)) payload.managerResponsibilityAreas = [];
+  if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -718,6 +774,8 @@ export async function importAllData(payload) {
     db.managerTasks,
     db.managerIncidents,
     db.managerShiftNotes,
+    db.managerResponsibilityAreas,
+    db.managerEmployees,
     async () => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
@@ -731,6 +789,8 @@ export async function importAllData(payload) {
       await db.managerTasks.clear();
       await db.managerIncidents.clear();
       await db.managerShiftNotes.clear();
+      await db.managerEmployees.clear();
+      await db.managerResponsibilityAreas.clear();
       await db.products.clear();
       await db.categories.clear();
       await db.categoryGroups.clear();
@@ -753,6 +813,10 @@ export async function importAllData(payload) {
       if (payload.managerTasks.length) await db.managerTasks.bulkPut(payload.managerTasks);
       if (payload.managerIncidents.length) await db.managerIncidents.bulkPut(payload.managerIncidents);
       if (payload.managerShiftNotes.length) await db.managerShiftNotes.bulkPut(payload.managerShiftNotes);
+      if (payload.managerResponsibilityAreas.length) {
+        await db.managerResponsibilityAreas.bulkPut(payload.managerResponsibilityAreas);
+      }
+      if (payload.managerEmployees.length) await db.managerEmployees.bulkPut(payload.managerEmployees);
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
       } else {
@@ -779,6 +843,7 @@ function productDefaults(fields) {
     categoryId,
     name,
     unitPrice: sanitizeMoney(fields.unitPrice),
+    priceUnit: sanitizeProductPriceUnit(fields.priceUnit),
     rawMaterialsCost: sanitizeMoney(fields.rawMaterialsCost),
     packagingCost: sanitizeMoney(fields.packagingCost),
     additionalCosts: sanitizeMoney(fields.additionalCosts),
@@ -814,6 +879,7 @@ export async function updateProduct(id, data) {
   for (const key of ['unitPrice', 'rawMaterialsCost', 'packagingCost', 'additionalCosts']) {
     if (key in patch) patch[key] = sanitizeMoney(patch[key]);
   }
+  if ('priceUnit' in patch) patch.priceUnit = sanitizeProductPriceUnit(patch.priceUnit);
   return db.products.update(id, patch);
 }
 
@@ -889,12 +955,16 @@ export async function toggleProductActive(id) {
 
 export async function addProductionEntry({ date, productId, quantity }, { merge = false } = {}) {
   if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
-  const qty = sanitizeQuantity(quantity);
-  if (qty === null) throw new ValidationError('כמות חייבת להיות מספר שלם חיובי');
   const pid = sanitizeProductId(productId);
   if (!pid) throw new ValidationError('מוצר לא תקין');
   const product = await db.products.get(pid);
   if (!product) throw new ValidationError('מוצר לא נמצא');
+  const qty = sanitizeProductQuantity(quantity, product);
+  if (qty === null) {
+    throw new ValidationError(product.priceUnit === 'kg'
+      ? 'משקל חייב להיות מספר חיובי (ק"ג)'
+      : 'כמות חייבת להיות מספר שלם חיובי');
+  }
 
   if (merge) {
     const existing = await db.productionEntries
@@ -915,8 +985,14 @@ export async function addProductionEntry({ date, productId, quantity }, { merge 
 export async function updateProductionEntry(id, data) {
   const patch = { ...data };
   if ('quantity' in patch) {
-    const qty = sanitizeQuantity(patch.quantity);
-    if (qty === null) throw new ValidationError('כמות חייבת להיות מספר שלם חיובי');
+    const entry = await db.productionEntries.get(id);
+    const product = entry ? await db.products.get(entry.productId) : null;
+    const qty = sanitizeProductQuantity(patch.quantity, product);
+    if (qty === null) {
+      throw new ValidationError(product?.priceUnit === 'kg'
+        ? 'משקל חייב להיות מספר חיובי (ק"ג)'
+        : 'כמות חייבת להיות מספר שלם חיובי');
+    }
     patch.quantity = qty;
   }
   if ('date' in patch && !isValidISODate(patch.date)) {
@@ -2088,6 +2164,51 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
   });
 }
 
+export async function updateRunStepPortionBatch(runId, stepIndex, batchIndex, { count, date, note } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  const idx = Number(batchIndex);
+  if (idx < 0 || idx >= batches.length) throw new ValidationError('רשומת מנות לא נמצאה');
+
+  const next = { ...batches[idx] };
+  if (count !== undefined) {
+    const pCount = sanitizeQuantity(count, { allowZero: false });
+    if (pCount == null) throw new ValidationError('הזן מספר מנות תקין');
+    next.count = pCount;
+  }
+  if (date !== undefined) {
+    next.date = date && isValidISODate(date) ? date : batches[idx].date;
+  }
+  if (note !== undefined) {
+    next.note = String(note || '').trim().slice(0, 200);
+  }
+  batches[idx] = next;
+
+  await db.runStepStates.update(step.id, {
+    portionBatches: batches,
+    portionCount: sumPortionBatches(batches),
+  });
+}
+
+export async function deleteRunStepPortionBatch(runId, stepIndex, batchIndex) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  const idx = Number(batchIndex);
+  if (idx < 0 || idx >= batches.length) throw new ValidationError('רשומת מנות לא נמצאה');
+
+  batches.splice(idx, 1);
+  await db.runStepStates.update(step.id, {
+    portionBatches: batches,
+    portionCount: batches.length ? sumPortionBatches(batches) : null,
+  });
+}
+
 export async function completeRunStep(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
@@ -2176,9 +2297,10 @@ export async function updateRunStepFields(runId, stepIndex, { notes, issues, imp
       throw new ValidationError('מספר מנות לא תקין');
     }
     if (Array.isArray(step.portionBatches) && step.portionBatches.length) {
-      throw new ValidationError('יש רשומות מנות — השתמש ב+ להוספת מנות');
+      /* כמות מנות מנוהלת ברשימת המנות */
+    } else {
+      patch.portionCount = pCount;
     }
-    patch.portionCount = pCount;
   }
   if (!Object.keys(patch).length) return;
   return db.runStepStates.update(step.id, patch);
@@ -2374,15 +2496,65 @@ export async function addManagerPlanItem({
   });
 }
 
+/** הוספת שלבי תזרים נבחרים לתוכנית יומית/שבועית */
+export async function addManagerPlanFlowSteps({
+  planType, anchorDate, dayOffset = 0, flowId, stepIds = [],
+}) {
+  const fid = Number(flowId);
+  if (!fid) throw new ValidationError('בחר תזרים');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+
+  const selected = [...new Set(stepIds.map(Number).filter(Boolean))];
+  if (!selected.length) throw new ValidationError('בחר לפחות משימה אחת');
+
+  const [steps, existing] = await Promise.all([
+    getFlowStepsForFlow(fid),
+    getManagerPlanItems(planType, anchorDate),
+  ]);
+  const existingStepIds = new Set(
+    existing.filter((i) => i.itemKind === 'flow_step' && i.flowStepId).map((i) => i.flowStepId)
+  );
+
+  let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+  const rows = [];
+  for (const sid of selected) {
+    if (existingStepIds.has(sid)) continue;
+    const step = steps.find((s) => s.id === sid);
+    if (!step) continue;
+    rows.push({
+      planType,
+      anchorDate,
+      dayOffset: Number(dayOffset) || 0,
+      itemKind: 'flow_step',
+      flowId: fid,
+      flowStepId: sid,
+      productId: null,
+      categoryId: null,
+      label: `${flow.name} · ${step.name}`,
+      quantity: null,
+      done: false,
+      sortOrder: sortOrder++,
+    });
+  }
+  if (!rows.length) throw new ValidationError('כל המשימות שנבחרו כבר בתוכנית');
+  await db.managerPlanItems.bulkAdd(rows);
+  return rows.length;
+}
+
 export async function updateManagerPlanItem(id, patch) {
   const row = await db.managerPlanItems.get(Number(id));
   if (!row) throw new ValidationError('פריט לא נמצא');
   const next = {};
   if (patch.label !== undefined) next.label = sanitizeName(patch.label, 120);
   if (patch.quantity !== undefined) {
+    const allowZero = row.itemKind !== 'portion';
     next.quantity = patch.quantity === '' || patch.quantity == null
       ? null
-      : sanitizeQuantity(patch.quantity, { allowZero: true });
+      : sanitizeQuantity(patch.quantity, { allowZero });
+    if (row.itemKind === 'portion' && next.quantity == null && patch.quantity !== '' && patch.quantity != null) {
+      throw new ValidationError('כמות מנות לא תקינה');
+    }
   }
   if (patch.done !== undefined) next.done = !!patch.done;
   if (patch.dayOffset !== undefined) next.dayOffset = Number(patch.dayOffset) || 0;
@@ -2557,4 +2729,84 @@ export async function getManagerDashboardStats(today) {
     productionToday: totals.total,
     dailyTarget: totalTarget,
   };
+}
+
+// ── צוות ותחומי אחריות ──
+
+export async function getManagerResponsibilityAreas() {
+  const rows = await db.managerResponsibilityAreas.toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addManagerResponsibilityArea(name) {
+  const label = sanitizeName(name, 80);
+  if (!label) throw new ValidationError('הזן שם תחום אחריות');
+  const existing = await getManagerResponsibilityAreas();
+  const sortOrder = existing.length ? Math.max(...existing.map((r) => r.sortOrder ?? 0)) + 1 : 1;
+  return db.managerResponsibilityAreas.add({ name: label, sortOrder });
+}
+
+export async function updateManagerResponsibilityArea(id, name) {
+  const label = sanitizeName(name, 80);
+  if (!label) throw new ValidationError('הזן שם תחום אחריות');
+  const row = await db.managerResponsibilityAreas.get(Number(id));
+  if (!row) throw new ValidationError('תחום לא נמצא');
+  return db.managerResponsibilityAreas.update(row.id, { name: label });
+}
+
+export async function deleteManagerResponsibilityArea(id) {
+  const rid = Number(id);
+  const employees = await db.managerEmployees.where('responsibilityAreaId').equals(rid).count();
+  if (employees > 0) throw new ValidationError('יש עובדים משויכים — העבר אותם לפני מחיקה');
+  await db.managerResponsibilityAreas.delete(rid);
+}
+
+export async function getManagerEmployees({ activeOnly = false } = {}) {
+  let rows = await db.managerEmployees.toArray();
+  if (activeOnly) rows = rows.filter((e) => e.active !== false);
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addManagerEmployee({ name, responsibilityAreaId }) {
+  const label = sanitizeName(name, 80);
+  if (!label) throw new ValidationError('הזן שם עובד');
+  const areaId = responsibilityAreaId ? Number(responsibilityAreaId) : null;
+  if (areaId) {
+    const area = await db.managerResponsibilityAreas.get(areaId);
+    if (!area) throw new ValidationError('תחום אחריות לא נמצא');
+  }
+  const existing = await getManagerEmployees();
+  const sortOrder = existing.length ? Math.max(...existing.map((e) => e.sortOrder ?? 0)) + 1 : 1;
+  return db.managerEmployees.add({
+    name: label,
+    responsibilityAreaId: areaId,
+    active: true,
+    sortOrder,
+  });
+}
+
+export async function updateManagerEmployee(id, patch) {
+  const row = await db.managerEmployees.get(Number(id));
+  if (!row) throw new ValidationError('עובד לא נמצא');
+  const next = {};
+  if (patch.name !== undefined) {
+    const label = sanitizeName(patch.name, 80);
+    if (!label) throw new ValidationError('הזן שם עובד');
+    next.name = label;
+  }
+  if (patch.responsibilityAreaId !== undefined) {
+    const areaId = patch.responsibilityAreaId ? Number(patch.responsibilityAreaId) : null;
+    if (areaId) {
+      const area = await db.managerResponsibilityAreas.get(areaId);
+      if (!area) throw new ValidationError('תחום אחריות לא נמצא');
+    }
+    next.responsibilityAreaId = areaId;
+  }
+  if (patch.active !== undefined) next.active = !!patch.active;
+  if (!Object.keys(next).length) return;
+  return db.managerEmployees.update(row.id, next);
+}
+
+export async function deleteManagerEmployee(id) {
+  await db.managerEmployees.delete(Number(id));
 }

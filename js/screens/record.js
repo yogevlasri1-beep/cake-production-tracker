@@ -1,10 +1,10 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=95';
-import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js?v=95';
-import { openModal, closeModal } from '../modal.js?v=95';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=95';
+} from '../db.js?v=97';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity } from '../utils.js?v=97';
+import { openModal, closeModal } from '../modal.js?v=97';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=97';
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
@@ -54,7 +54,7 @@ export async function renderRecord(container) {
           </select>
         </div>
         <div class="form-group">
-          <label for="record-qty">כמות</label>
+          <label for="record-qty" id="record-qty-label">כמות (יח')</label>
           <input type="number" id="record-qty" min="1" step="1" placeholder="לדוגמה: 50" required>
         </div>
         <button type="submit" class="btn btn-primary" ${categories.length === 0 ? 'disabled' : ''}>
@@ -75,7 +75,7 @@ export async function renderRecord(container) {
                 <div class="list-item-meta">${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
               </div>
               <div class="list-item-actions">
-                <strong style="margin-left:8px">${e.quantity}</strong>
+                <strong style="margin-left:8px">${formatProductQuantity(p, e.quantity)}</strong>
                 <button class="btn btn-secondary btn-sm btn-icon edit-entry" data-id="${e.id}" title="ערוך">✏️</button>
                 <button class="btn btn-danger btn-sm btn-icon delete-entry" data-id="${e.id}" title="מחק">🗑</button>
               </div>
@@ -117,6 +117,23 @@ export async function renderRecord(container) {
     container.dataset.selectedCategory = e.target.value;
     renderRecord(container);
   });
+
+  function syncQtyField(productId) {
+    const p = productMap.get(Number(productId));
+    const qtyInput = document.getElementById('record-qty');
+    const qtyLabel = document.getElementById('record-qty-label');
+    if (!qtyInput || !qtyLabel) return;
+    const isKg = p?.priceUnit === 'kg';
+    qtyLabel.textContent = isKg ? 'משקל (ק"ג)' : "כמות (יח')";
+    qtyInput.min = isKg ? '0.001' : '1';
+    qtyInput.step = isKg ? '0.001' : '1';
+    qtyInput.placeholder = isKg ? 'לדוגמה: 2.5' : 'לדוגמה: 50';
+  }
+
+  document.getElementById('record-product')?.addEventListener('change', (e) => {
+    syncQtyField(e.target.value);
+  });
+  syncQtyField(document.getElementById('record-product')?.value);
 
   document.getElementById('record-import-btn')?.addEventListener('click', () => {
     document.getElementById('record-import-file').click();
@@ -181,6 +198,7 @@ async function handleRecordImport(file, container) {
 function editEntry(id, entries, productMap, container) {
   const entry = entries.find((e) => e.id === Number(id));
   const p = productMap.get(entry.productId);
+  const isKg = p?.priceUnit === 'kg';
   openModal({
     title: 'עריכת רישום',
     bodyHTML: `
@@ -189,8 +207,8 @@ function editEntry(id, entries, productMap, container) {
         <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
       </div>
       <div class="form-group">
-        <label for="edit-qty">כמות</label>
-        <input type="number" id="edit-qty" min="1" value="${entry.quantity}">
+        <label for="edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
+        <input type="number" id="edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${entry.quantity}">
       </div>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
