@@ -5,12 +5,12 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=97';
-import { formatMoney, showToast, escapeHtml, productPriceUnitLabel, productUnitLabel } from '../utils.js?v=97';
-import { openModal, closeModal } from '../modal.js?v=97';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=97';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=97';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=97';
+} from '../db.js?v=98';
+import { formatMoney, showToast, escapeHtml, productUnitLabel } from '../utils.js?v=98';
+import { openModal, closeModal } from '../modal.js?v=98';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=98';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=98';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=98';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -129,10 +129,10 @@ function bindColorPickerInModal(prefix = 'cat') {
 
 function productPriceMeta(p) {
   const parts = [];
-  if (p.unitPrice > 0) parts.push(`ללקוח: ${formatMoney(p.unitPrice)}/${productUnitLabel(p)}`);
+  const unitBadge = p.priceUnit === 'kg' ? '⚖️ ' : '';
+  if (p.unitPrice > 0) parts.push(`${unitBadge}ללקוח: ${formatMoney(p.unitPrice)}/${productUnitLabel(p)}`);
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
-  if (p.priceUnit === 'kg') parts.push('תמחור לפי משקל');
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
 }
 
@@ -325,7 +325,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=97');
+    const { navigate } = await import('../app.js?v=98');
     navigate('backup');
   });
 
@@ -911,6 +911,57 @@ function showCategoryForm(container, existing) {
   });
 }
 
+function productPriceUnitFieldsHTML(opts = {}) {
+  const isKg = opts.priceUnit === 'kg';
+  return `
+      <div class="form-group">
+        <label>תמחור מכירה</label>
+        <div class="price-unit-options" role="radiogroup" aria-label="תמחור מכירה">
+          <label class="price-unit-option${!isKg ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="unit" ${!isKg ? 'checked' : ''}>
+            <span class="price-unit-option-title">לפי יחידה</span>
+            <span class="price-unit-option-sub">₪ לכל יחידה / מנה</span>
+          </label>
+          <label class="price-unit-option${isKg ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="kg" ${isKg ? 'checked' : ''}>
+            <span class="price-unit-option-title">לפי משקל</span>
+            <span class="price-unit-option-sub">₪ לכל ק"ג</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="prod-price" id="prod-price-label">מחיר ללקוח (${isKg ? '₪/ק"ג' : '₪/יח\''})</label>
+        <input type="number" id="prod-price" min="0" step="${isKg ? '0.01' : '0.5'}" value="${opts.unitPrice != null && opts.unitPrice !== '' ? opts.unitPrice : ''}" placeholder="${isKg ? 'לדוגמה: 45' : 'לדוגמה: 25'}">
+        <p class="form-hint" id="prod-price-hint">${isKg ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)' : 'ברישום ייצור יזינו מספר יחידות'}</p>
+      </div>`;
+}
+
+function bindProductPriceUnitFields() {
+  const priceInput = document.getElementById('prod-price');
+  const priceLabel = document.getElementById('prod-price-label');
+  const priceHint = document.getElementById('prod-price-hint');
+  const sync = () => {
+    const isKg = document.querySelector('input[name="prod-price-unit"]:checked')?.value === 'kg';
+    document.querySelectorAll('.price-unit-option').forEach((el) => {
+      el.classList.toggle('is-selected', el.querySelector('input')?.checked);
+    });
+    if (priceLabel) priceLabel.textContent = `מחיר ללקוח (${isKg ? '₪/ק"ג' : '₪/יח\''})`;
+    if (priceHint) {
+      priceHint.textContent = isKg
+        ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
+        : 'ברישום ייצור יזינו מספר יחידות';
+    }
+    if (priceInput) {
+      priceInput.step = isKg ? '0.01' : '0.5';
+      priceInput.placeholder = isKg ? 'לדוגמה: 45' : 'לדוגמה: 25';
+    }
+  };
+  document.querySelectorAll('input[name="prod-price-unit"]').forEach((radio) => {
+    radio.addEventListener('change', sync);
+  });
+  sync();
+}
+
 function optionalPriceInput(id, label, value) {
   return `
     <div class="form-group">
@@ -936,15 +987,7 @@ async function showProductForm(container, opts) {
           ${categories.map((c) => `<option value="${c.id}" ${c.id === opts.categoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
       </div>
-      ${optionalPriceInput('prod-price', `מחיר משוער ללקוח (${productPriceUnitLabel({ priceUnit: opts.priceUnit || 'unit' })})`, opts.unitPrice)}
-      <div class="form-group">
-        <label for="prod-price-unit">יחידת תמחור</label>
-        <select id="prod-price-unit">
-          <option value="unit" ${opts.priceUnit !== 'kg' ? 'selected' : ''}>יחידה (₪/יח')</option>
-          <option value="kg" ${opts.priceUnit === 'kg' ? 'selected' : ''}>משקל (₪/ק"ג)</option>
-        </select>
-        <p class="form-hint">משקל — רישום ייצור ודוחות לפי ק"ג</p>
-      </div>
+      ${productPriceUnitFieldsHTML(opts)}
       ${optionalPriceInput('prod-raw', 'מחיר חומרי גלם (₪)', opts.rawMaterialsCost)}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
@@ -953,6 +996,7 @@ async function showProductForm(container, opts) {
       <button class="btn btn-primary" id="save-prod">שמור</button>`,
   });
 
+  bindProductPriceUnitFields();
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('save-prod').addEventListener('click', async () => {
     const name = document.getElementById('prod-name').value.trim();
@@ -962,7 +1006,7 @@ async function showProductForm(container, opts) {
       name,
       categoryId: Number(document.getElementById('prod-cat').value),
       unitPrice: document.getElementById('prod-price').value,
-      priceUnit: document.getElementById('prod-price-unit').value,
+      priceUnit: document.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit',
       rawMaterialsCost: document.getElementById('prod-raw').value,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,

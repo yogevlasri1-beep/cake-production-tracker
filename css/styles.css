@@ -2161,6 +2161,45 @@ table.report-table tfoot td {
   border: 1px solid rgba(37, 99, 235, 0.12);
 }
 
+.price-unit-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.price-unit-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 2px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--surface, #fff);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.price-unit-option.is-selected {
+  border-color: var(--primary);
+  background: var(--primary-soft, #eff6ff);
+}
+
+.price-unit-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.price-unit-option-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.price-unit-option-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
 .color-picker-row {
   display: flex;
   align-items: center;
