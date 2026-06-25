@@ -5,12 +5,12 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=100';
-import { formatMoney, showToast, escapeHtml, productUnitLabel } from '../utils.js?v=100';
-import { openModal, closeModal } from '../modal.js?v=100';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=100';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=100';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=100';
+} from '../db.js?v=101';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=101';
+import { openModal, closeModal } from '../modal.js?v=101';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=101';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=101';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=101';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -129,8 +129,14 @@ function bindColorPickerInModal(prefix = 'cat') {
 
 function productPriceMeta(p) {
   const parts = [];
-  const unitBadge = p.priceUnit === 'kg' ? '⚖️ ' : '';
-  if (p.unitPrice > 0) parts.push(`${unitBadge}ללקוח: ${formatMoney(p.unitPrice)}/${productUnitLabel(p)}`);
+  const unitBadge = p.priceUnit === 'kg' || p.priceUnit === 'kg_units' ? '⚖️ ' : '';
+  if (p.unitPrice > 0) {
+    parts.push(`${unitBadge}ללקוח: ${formatMoney(p.unitPrice)}/${productPriceUnitLabel(p).replace('₪/', '')}`);
+    if (p.priceUnit === 'kg_units') {
+      parts.push('רישום: יח\'');
+      if (p.unitWeightKg) parts.push(`~${p.unitWeightKg} ק"ג/יח'`);
+    }
+  }
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
@@ -141,11 +147,16 @@ function categoryUniformPricing(products) {
   const priced = products.filter((p) => Number(p.unitPrice) > 0);
   if (!priced.length) return null;
   const prices = priced.map((p) => Number(p.unitPrice));
-  const units = priced.map((p) => (p.priceUnit === 'kg' ? 'kg' : 'unit'));
+  const units = priced.map((p) => p.priceUnit || 'unit');
   if ([...new Set(prices)].length === 1 && [...new Set(units)].length === 1) {
     return { price: prices[0], priceUnit: units[0] };
   }
   return null;
+}
+
+function uniformPriceUnitLabel(priceUnit) {
+  if (priceUnit === 'kg' || priceUnit === 'kg_units') return 'ק"ג';
+  return "יח'";
 }
 
 function renderProductItem(p, index) {
@@ -174,7 +185,7 @@ function renderCategoryCard(cat, catIndex) {
   const unitPriceAttrs = `data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-price="${uniform?.price ?? ''}" data-price-unit="${uniform?.priceUnit ?? 'unit'}" data-count="${cat.products.length}"`;
   const unitPriceBtn = `<button type="button" class="btn btn-secondary btn-sm cat-unit-price-btn" ${unitPriceAttrs}>💰 מחיר אחיד</button>`;
   const priceBadge = uniform != null
-    ? `<span class="category-price-badge">${formatMoney(uniform.price)}/${productUnitLabel({ priceUnit: uniform.priceUnit })}</span>`
+    ? `<span class="category-price-badge">${formatMoney(uniform.price)}/${uniformPriceUnitLabel(uniform.priceUnit)}</span>`
     : '';
   return `
     <div class="card category-card${isExpanded ? ' is-expanded' : ''}" data-category-id="${cat.id}">
@@ -332,7 +343,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=100');
+    const { navigate } = await import('../app.js?v=101');
     navigate('backup');
   });
 
@@ -976,11 +987,81 @@ function bindPriceUnitFields(prefix, opts = {}) {
 }
 
 function productPriceUnitFieldsHTML(opts = {}) {
-  return priceUnitFieldsHTML('prod', opts);
+  const mode = opts.priceUnit || 'unit';
+  const isUnit = mode === 'unit';
+  const isKg = mode === 'kg';
+  const isKgUnits = mode === 'kg_units';
+  const priceSuffix = isUnit ? '₪/יח\'' : '₪/ק"ג';
+  return `
+      <div class="form-group">
+        <label>תמחור ורישום ייצור</label>
+        <div class="price-unit-options price-unit-options--triple" data-price-unit-group="prod" role="radiogroup" aria-label="תמחור ורישום">
+          <label class="price-unit-option${isUnit ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="unit" ${isUnit ? 'checked' : ''}>
+            <span class="price-unit-option-title">לפי יחידה</span>
+            <span class="price-unit-option-sub">מחיר ורישום ביחידות</span>
+          </label>
+          <label class="price-unit-option${isKg ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="kg" ${isKg ? 'checked' : ''}>
+            <span class="price-unit-option-title">לפי משקל</span>
+            <span class="price-unit-option-sub">מחיר ורישום בק"ג</span>
+          </label>
+          <label class="price-unit-option${isKgUnits ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="kg_units" ${isKgUnits ? 'checked' : ''}>
+            <span class="price-unit-option-title">משקל + יחידות</span>
+            <span class="price-unit-option-sub">מחיר לק"ג · רישום ביחידות</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group${isKgUnits ? '' : ' hidden'}" id="prod-unit-weight-group">
+        <label for="prod-unit-weight">משקל ממוצע ליחידה (ק"ג)</label>
+        <input type="number" id="prod-unit-weight" min="0.001" step="0.001" value="${opts.unitWeightKg != null && opts.unitWeightKg !== '' ? opts.unitWeightKg : ''}" placeholder="לדוגמה: 0.8">
+        <p class="form-hint">לחישוב ערך בדוחות: יחידות × משקל ממוצע × מחיר לק"ג</p>
+      </div>
+      <div class="form-group">
+        <label for="prod-price" id="prod-price-label">מחיר ללקוח (${priceSuffix})</label>
+        <input type="number" id="prod-price" min="0" step="${isUnit ? '0.5' : '0.01'}" value="${opts.unitPrice != null && opts.unitPrice !== '' ? opts.unitPrice : ''}" placeholder="${isUnit ? 'לדוגמה: 25' : 'לדוגמה: 45'}">
+        <p class="form-hint" id="prod-price-hint">${isKgUnits
+    ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
+    : isKg
+      ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
+      : 'ברישום ייצור יזינו מספר יחידות'}</p>
+      </div>`;
 }
 
 function bindProductPriceUnitFields() {
-  bindPriceUnitFields('prod');
+  const root = document.getElementById('modal-body');
+  if (!root) return;
+  const priceInput = root.querySelector('#prod-price');
+  const priceLabel = root.querySelector('#prod-price-label');
+  const priceHint = root.querySelector('#prod-price-hint');
+  const weightGroup = root.querySelector('#prod-unit-weight-group');
+  const optionGroup = root.querySelector('[data-price-unit-group="prod"]');
+  const sync = () => {
+    const mode = root.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit';
+    const isUnit = mode === 'unit';
+    const isKgUnits = mode === 'kg_units';
+    optionGroup?.querySelectorAll('.price-unit-option').forEach((el) => {
+      el.classList.toggle('is-selected', el.querySelector('input')?.checked);
+    });
+    weightGroup?.classList.toggle('hidden', !isKgUnits);
+    if (priceLabel) priceLabel.textContent = `מחיר ללקוח (${isUnit ? '₪/יח\'' : '₪/ק"ג'})`;
+    if (priceHint) {
+      priceHint.textContent = isKgUnits
+        ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
+        : mode === 'kg'
+          ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
+          : 'ברישום ייצור יזינו מספר יחידות';
+    }
+    if (priceInput) {
+      priceInput.step = isUnit ? '0.5' : '0.01';
+      priceInput.placeholder = isUnit ? 'לדוגמה: 25' : 'לדוגמה: 45';
+    }
+  };
+  root.querySelectorAll('input[name="prod-price-unit"]').forEach((radio) => {
+    radio.addEventListener('change', sync);
+  });
+  sync();
 }
 
 function optionalPriceInput(id, label, value) {
@@ -1028,6 +1109,7 @@ async function showProductForm(container, opts) {
       categoryId: Number(document.getElementById('prod-cat').value),
       unitPrice: document.getElementById('prod-price').value,
       priceUnit: document.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit',
+      unitWeightKg: document.getElementById('prod-unit-weight')?.value ?? '',
       rawMaterialsCost: document.getElementById('prod-raw').value,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,

@@ -1,10 +1,10 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=100';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity } from '../utils.js?v=100';
-import { openModal, closeModal } from '../modal.js?v=100';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=100';
+} from '../db.js?v=101';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=101';
+import { openModal, closeModal } from '../modal.js?v=101';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=101';
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
@@ -56,6 +56,7 @@ export async function renderRecord(container) {
         <div class="form-group">
           <label for="record-qty" id="record-qty-label">כמות (יח')</label>
           <input type="number" id="record-qty" min="1" step="1" placeholder="לדוגמה: 50" required>
+          <p class="form-hint hidden" id="record-qty-hint"></p>
         </div>
         <button type="submit" class="btn btn-primary" ${categories.length === 0 ? 'disabled' : ''}>
           שמור רישום
@@ -123,11 +124,18 @@ export async function renderRecord(container) {
     const qtyInput = document.getElementById('record-qty');
     const qtyLabel = document.getElementById('record-qty-label');
     if (!qtyInput || !qtyLabel) return;
-    const isKg = p?.priceUnit === 'kg';
+    const isKg = productRecordUsesKg(p);
     qtyLabel.textContent = isKg ? 'משקל (ק"ג)' : "כמות (יח')";
     qtyInput.min = isKg ? '0.001' : '1';
     qtyInput.step = isKg ? '0.001' : '1';
     qtyInput.placeholder = isKg ? 'לדוגמה: 2.5' : 'לדוגמה: 50';
+    const hint = document.getElementById('record-qty-hint');
+    if (hint) {
+      hint.textContent = p?.priceUnit === 'kg_units'
+        ? `מחיר ללקוח לפי ק"ג${p.unitWeightKg ? ` · ~${p.unitWeightKg} ק"ג ליחידה` : ''}`
+        : '';
+      hint.classList.toggle('hidden', p?.priceUnit !== 'kg_units');
+    }
   }
 
   document.getElementById('record-product')?.addEventListener('change', (e) => {
@@ -198,7 +206,7 @@ async function handleRecordImport(file, container) {
 function editEntry(id, entries, productMap, container) {
   const entry = entries.find((e) => e.id === Number(id));
   const p = productMap.get(entry.productId);
-  const isKg = p?.priceUnit === 'kg';
+  const isKg = productRecordUsesKg(p);
   openModal({
     title: 'עריכת רישום',
     bodyHTML: `

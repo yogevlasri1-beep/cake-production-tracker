@@ -1,8 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=100';
-import { APP_VERSION } from './version.js?v=100';
-import { defaultColorForIndex } from './chart.js?v=100';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=100';
-import { ValidationError } from './validators.js?v=100';
+import { exportAllData, importAllData } from './db.js?v=101';
+import { APP_VERSION } from './version.js?v=101';
+import { defaultColorForIndex } from './chart.js?v=101';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=101';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=101';
+import { ValidationError } from './validators.js?v=101';
 
 export const BACKUP_VERSION = 3;
 
@@ -25,13 +26,13 @@ function compareProducts(a, b) {
 function buildProductionStatsByProduct(entries, productMap) {
   const stats = {};
   for (const entry of entries || []) {
-    const qty = sanitizeQuantity(entry.quantity, { allowZero: false });
-    if (qty == null) continue;
     const product = productMap.get(entry.productId);
     if (!product) continue;
+    const qty = entryQuantityForProduct(entry.quantity, product);
+    if (qty == null) continue;
     if (!stats[entry.productId]) stats[entry.productId] = { qty: 0, value: 0 };
     stats[entry.productId].qty += qty;
-    stats[entry.productId].value += qty * (Number(product.unitPrice) || 0);
+    stats[entry.productId].value += productLineValue(product, qty);
   }
   for (const id of Object.keys(stats)) {
     stats[id].value = roundMoney(stats[id].value);
@@ -98,6 +99,8 @@ export function normalizeBackupProduct(product, category, stats, indexInCategory
     active: product.active !== false,
     sortOrder: product.sortOrder ?? indexInCategory + 1,
     unitPrice,
+    priceUnit: product.priceUnit === 'kg' || product.priceUnit === 'kg_units' ? product.priceUnit : 'unit',
+    unitWeightKg: product.unitWeightKg != null ? Number(product.unitWeightKg) : null,
     rawMaterialsCost,
     packagingCost,
     additionalCosts,

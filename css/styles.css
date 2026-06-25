@@ -2169,6 +2169,16 @@ table.report-table tfoot td {
   border: 1px solid rgba(37, 99, 235, 0.12);
 }
 
+.price-unit-options--triple {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+@media (max-width: 480px) {
+  .price-unit-options--triple {
+    grid-template-columns: 1fr;
+  }
+}
+
 .price-unit-options {
   display: grid;
   grid-template-columns: 1fr 1fr;

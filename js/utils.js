@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=100';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=101';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -26,17 +26,23 @@ export function formatPortionCount(n) {
 }
 
 export function productUnitLabel(product) {
-  return product?.priceUnit === 'kg' ? 'ק"ג' : "יח'";
+  if (product?.priceUnit === 'kg') return 'ק"ג';
+  return "יח'";
 }
 
 export function productPriceUnitLabel(product) {
-  return product?.priceUnit === 'kg' ? '₪/ק"ג' : '₪/יח\'';
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_units') return '₪/ק"ג';
+  return '₪/יח\'';
+}
+
+export function productRecordUsesKg(product) {
+  return product?.priceUnit === 'kg';
 }
 
 export function formatProductQuantity(product, qty) {
   if (qty == null || qty === '') return '—';
   if (product?.priceUnit === 'kg') return `${qty} ק"ג`;
-  return String(qty);
+  return `${qty} יח'`;
 }
 
 export { pct, pctDisplay, progressClass, progressBadge };

@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=100';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=100';
-import { defaultColorForIndex } from './chart.js?v=100';
+} from './validators.js?v=101';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=101';
+import { defaultColorForIndex } from './chart.js?v=101';
 
 export { ValidationError };
 
@@ -331,8 +331,38 @@ db.version(16).stores({
   }
 });
 
+db.version(17).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+});
+
 function sanitizeProductPriceUnit(raw) {
-  return raw === 'kg' ? 'kg' : 'unit';
+  if (raw === 'kg' || raw === 'kg_units') return raw;
+  return 'unit';
+}
+
+function sanitizeUnitWeightKg(raw, priceUnit) {
+  if (priceUnit !== 'kg_units') return null;
+  return sanitizePortionSize(raw, { min: 0.001, max: 100_000 });
 }
 
 function sanitizeProductQuantity(raw, product, { allowZero = false } = {}) {
@@ -845,6 +875,7 @@ function productDefaults(fields) {
     name,
     unitPrice: sanitizeMoney(fields.unitPrice),
     priceUnit: sanitizeProductPriceUnit(fields.priceUnit),
+    unitWeightKg: sanitizeUnitWeightKg(fields.unitWeightKg, sanitizeProductPriceUnit(fields.priceUnit)),
     rawMaterialsCost: sanitizeMoney(fields.rawMaterialsCost),
     packagingCost: sanitizeMoney(fields.packagingCost),
     additionalCosts: sanitizeMoney(fields.additionalCosts),
@@ -881,6 +912,15 @@ export async function updateProduct(id, data) {
     if (key in patch) patch[key] = sanitizeMoney(patch[key]);
   }
   if ('priceUnit' in patch) patch.priceUnit = sanitizeProductPriceUnit(patch.priceUnit);
+  if ('unitWeightKg' in patch || 'priceUnit' in patch) {
+    const existing = await db.products.get(id);
+    const unit = patch.priceUnit ?? existing?.priceUnit;
+    if ('unitWeightKg' in patch) {
+      patch.unitWeightKg = sanitizeUnitWeightKg(patch.unitWeightKg, unit);
+    } else if (unit !== 'kg_units') {
+      patch.unitWeightKg = null;
+    }
+  }
   return db.products.update(id, patch);
 }
 
@@ -963,9 +1003,10 @@ export async function addProductionEntry({ date, productId, quantity }, { merge 
   if (!product) throw new ValidationError('מוצר לא נמצא');
   const qty = sanitizeProductQuantity(quantity, product);
   if (qty === null) {
-    throw new ValidationError(product.priceUnit === 'kg'
+    const msg = product.priceUnit === 'kg'
       ? 'משקל חייב להיות מספר חיובי (ק"ג)'
-      : 'כמות חייבת להיות מספר שלם חיובי');
+      : 'כמות חייבת להיות מספר שלם חיובי';
+    throw new ValidationError(msg);
   }
 
   if (merge) {

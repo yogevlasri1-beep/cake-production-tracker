@@ -1,4 +1,4 @@
-import { sanitizeQuantity, roundMoney } from './validators.js?v=100';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=101';
 
 export { roundMoney };
 
@@ -32,6 +32,25 @@ export function productUnitCost(product) {
   );
 }
 
+/** ערך שורת ייצור לפי סוג תמחור */
+export function productLineValue(product, qty) {
+  const q = Number(qty) || 0;
+  const price = Number(product?.unitPrice) || 0;
+  if (product?.priceUnit === 'kg') return roundMoney(q * price);
+  if (product?.priceUnit === 'kg_units') {
+    const uw = Number(product?.unitWeightKg) || 0;
+    return roundMoney(q * uw * price);
+  }
+  return roundMoney(q * price);
+}
+
+export function entryQuantityForProduct(raw, product) {
+  if (product?.priceUnit === 'kg') {
+    return sanitizePortionSize(raw, { min: 0.001, max: 100_000 });
+  }
+  return sanitizeQuantity(raw, { allowZero: false });
+}
+
 /** סיכום כמות, עלות ייצור וערך ללקוח לקטגוריה */
 export function sumCategoryTotals(categoryId, products, byProduct) {
   let qty = 0;
@@ -45,7 +64,7 @@ export function sumCategoryTotals(categoryId, products, byProduct) {
     if (Number(p.categoryId) !== cid) continue;
     const q = mapLookup(byProduct, p.id);
     qty += q;
-    value += q * (Number(p.unitPrice) || 0);
+    value += productLineValue(p, q);
     costRaw += q * (Number(p.rawMaterialsCost) || 0);
     costPack += q * (Number(p.packagingCost) || 0);
     costExtra += q * (Number(p.additionalCosts) || 0);
@@ -63,7 +82,7 @@ export function sumCategoryTotals(categoryId, products, byProduct) {
 
 export function productProductionValue(product, byProduct) {
   const qty = mapLookup(byProduct, product?.id);
-  return { qty, value: roundMoney(qty * (Number(product?.unitPrice) || 0)) };
+  return { qty, value: productLineValue(product, qty) };
 }
 
 export function productProductionCost(product, byProduct) {
@@ -142,25 +161,25 @@ export function computeProductionTotals(entries, productMap) {
   let skipped = 0;
 
   for (const e of entries || []) {
-    const qty = sanitizeQuantity(e.quantity, { allowZero: false });
+    const product = mapGetById(productMap, e.productId);
+    const qty = product ? entryQuantityForProduct(e.quantity, product) : sanitizeQuantity(e.quantity, { allowZero: false });
     if (qty == null) {
       skipped++;
       continue;
     }
-    const product = mapGetById(productMap, e.productId);
     if (!product) {
       skipped++;
       continue;
     }
-    const price = Number(product.unitPrice) || 0;
     const unitCost = productUnitCost(product);
+    const lineValue = productLineValue(product, qty);
     const prodId = Number(e.productId);
     const catId = Number(product.categoryId);
     byProduct[prodId] = (byProduct[prodId] || 0) + qty;
     byCategory[catId] = (byCategory[catId] || 0) + qty;
-    byCategoryValue[catId] = (byCategoryValue[catId] || 0) + qty * price;
+    byCategoryValue[catId] = (byCategoryValue[catId] || 0) + lineValue;
     total += qty;
-    totalValue += qty * price;
+    totalValue += lineValue;
     totalCost += qty * unitCost;
   }
 
@@ -195,7 +214,7 @@ export function computeReportRows(entries, categories, products, productMap, cat
       const qty = sanitizeQuantity(e.quantity, { allowZero: false });
       const p = mapGetById(productMap, e.productId);
       if (!p || qty == null) return null;
-      return [e.date, catMap.get(p.categoryId) || '', p.name, qty, roundMoney(qty * (p.unitPrice || 0))];
+      return [e.date, catMap.get(p.categoryId) || '', p.name, qty, productLineValue(p, qty)];
     })
     .filter(Boolean);
 
