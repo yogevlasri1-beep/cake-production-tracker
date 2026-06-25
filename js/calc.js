@@ -1,4 +1,4 @@
-import { sanitizeQuantity, roundMoney } from './validators.js?v=99';
+import { sanitizeQuantity, roundMoney } from './validators.js?v=100';
 
 export { roundMoney };
 
@@ -24,23 +24,60 @@ export function mapLookup(obj, id) {
   return Number(val) || 0;
 }
 
-/** סיכום כמות וערך לקטגוריה — מקור אמת אחיד לכל המסכים */
+export function productUnitCost(product) {
+  return roundMoney(
+    (Number(product?.rawMaterialsCost) || 0)
+    + (Number(product?.packagingCost) || 0)
+    + (Number(product?.additionalCosts) || 0),
+  );
+}
+
+/** סיכום כמות, עלות ייצור וערך ללקוח לקטגוריה */
 export function sumCategoryTotals(categoryId, products, byProduct) {
   let qty = 0;
   let value = 0;
+  let cost = 0;
+  let costRaw = 0;
+  let costPack = 0;
+  let costExtra = 0;
   const cid = Number(categoryId);
   for (const p of products || []) {
     if (Number(p.categoryId) !== cid) continue;
     const q = mapLookup(byProduct, p.id);
     qty += q;
     value += q * (Number(p.unitPrice) || 0);
+    costRaw += q * (Number(p.rawMaterialsCost) || 0);
+    costPack += q * (Number(p.packagingCost) || 0);
+    costExtra += q * (Number(p.additionalCosts) || 0);
+    cost += q * productUnitCost(p);
   }
-  return { qty, value: roundMoney(value) };
+  return {
+    qty,
+    value: roundMoney(value),
+    cost: roundMoney(cost),
+    costRaw: roundMoney(costRaw),
+    costPack: roundMoney(costPack),
+    costExtra: roundMoney(costExtra),
+  };
 }
 
 export function productProductionValue(product, byProduct) {
   const qty = mapLookup(byProduct, product?.id);
   return { qty, value: roundMoney(qty * (Number(product?.unitPrice) || 0)) };
+}
+
+export function productProductionCost(product, byProduct) {
+  const qty = mapLookup(byProduct, product?.id);
+  const raw = roundMoney(qty * (Number(product?.rawMaterialsCost) || 0));
+  const pack = roundMoney(qty * (Number(product?.packagingCost) || 0));
+  const extra = roundMoney(qty * (Number(product?.additionalCosts) || 0));
+  return {
+    qty,
+    costRaw: raw,
+    costPack: pack,
+    costExtra: extra,
+    cost: roundMoney(raw + pack + extra),
+  };
 }
 
 /** סדר תצוגה בדוחות: קטגוריה (sortOrder) → מוצר (sortOrder) */
@@ -101,6 +138,7 @@ export function computeProductionTotals(entries, productMap) {
   const byCategoryValue = {};
   let total = 0;
   let totalValue = 0;
+  let totalCost = 0;
   let skipped = 0;
 
   for (const e of entries || []) {
@@ -115,6 +153,7 @@ export function computeProductionTotals(entries, productMap) {
       continue;
     }
     const price = Number(product.unitPrice) || 0;
+    const unitCost = productUnitCost(product);
     const prodId = Number(e.productId);
     const catId = Number(product.categoryId);
     byProduct[prodId] = (byProduct[prodId] || 0) + qty;
@@ -122,13 +161,22 @@ export function computeProductionTotals(entries, productMap) {
     byCategoryValue[catId] = (byCategoryValue[catId] || 0) + qty * price;
     total += qty;
     totalValue += qty * price;
+    totalCost += qty * unitCost;
   }
 
   for (const id of Object.keys(byCategoryValue)) {
     byCategoryValue[id] = roundMoney(byCategoryValue[id]);
   }
 
-  return { byProduct, byCategory, byCategoryValue, total, totalValue: roundMoney(totalValue), skipped };
+  return {
+    byProduct,
+    byCategory,
+    byCategoryValue,
+    total,
+    totalValue: roundMoney(totalValue),
+    totalCost: roundMoney(totalCost),
+    skipped,
+  };
 }
 
 export function computeReportRows(entries, categories, products, productMap, catMap) {

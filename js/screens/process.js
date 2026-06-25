@@ -11,10 +11,10 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=99';
-import { todayISO, formatDate, showToast, escapeHtml } from '../utils.js?v=99';
-import { openModal, closeModal } from '../modal.js?v=99';
-import { requestAutoBackupNow } from '../backup-service.js?v=99';
+} from '../db.js?v=100';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=100';
+import { openModal, closeModal } from '../modal.js?v=100';
+import { requestAutoBackupNow } from '../backup-service.js?v=100';
 
 function parseIdList(str) {
   try {
@@ -114,17 +114,17 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
               ` : ''}
               ${editable ? `
                 <label class="flow-portion-batch-count-edit">
-                  × <input type="number" class="flow-portion-batch-count-input" min="1" step="1" inputmode="numeric"
+                  × <input type="number" class="flow-portion-batch-count-input" min="0.1" step="0.1" inputmode="decimal"
                     value="${b.count}" data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="מספר מנות">
                 </label>
                 <button type="button" class="btn btn-danger btn-sm flow-portion-batch-del" data-step="${stepIndex}" data-batch="${batchIndex}" title="הסר">🗑</button>
               ` : `
-                <span class="flow-portion-batch-count">× ${b.count}</span>
+                <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
               `}
               ${b.note ? `<span class="flow-portion-batch-note">${escapeHtml(b.note)}</span>` : ''}
             </li>`).join('')}
         </ul>
-        ${total != null ? `<p class="flow-portion-batch-total">סה"כ: <strong>${total}</strong> מנות</p>` : ''}
+        ${total != null ? `<p class="flow-portion-batch-total">סה"כ: <strong>${formatPortionCount(total)}</strong> מנות</p>` : ''}
       ` : `<p class="form-hint" style="margin:0">${hasPresets ? 'טרם נרשמו מנות — בחר מנה מהרשימה' : 'טרם נרשמו מנות — לחץ + להוספה'}</p>`}
       ${canAdd ? `
         <button type="button" class="btn btn-secondary btn-sm flow-portion-add-toggle" data-step="${stepIndex}">
@@ -141,7 +141,8 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
             </div>` : ''}
           <div class="form-group" style="margin:8px 0 6px">
             <label>כמה מנות השתמשת?</label>
-            <input type="number" class="flow-portion-add-count" min="1" step="1" inputmode="numeric" placeholder="5">
+            <input type="number" class="flow-portion-add-count" min="0.1" step="0.1" inputmode="decimal" placeholder="5 או 0.3">
+            <p class="form-hint" style="margin-top:4px">אפשר מ-0.1 — לתוספות קטנות שלא מנצלות מנה שלמה</p>
           </div>
           <div class="form-group" style="margin-bottom:8px">
             <label>תאריך</label>
@@ -198,7 +199,7 @@ function stepPortionFieldsHTML(step, stepIndex, presets = []) {
     : `<p class="form-hint" style="margin-bottom:8px">מנה מוגדרת: <strong>${escapeHtml(sizeLabel)}</strong></p>`}
         <div class="form-group">
           <label for="step-${stepIndex}-portion-count">כמה מנות יצרת (הוספה)</label>
-          <input type="number" id="step-${stepIndex}-portion-count" min="1" step="1" value="" placeholder="אופציונלי — לדוגמה: 5">
+          <input type="number" id="step-${stepIndex}-portion-count" min="0.1" step="0.1" value="" placeholder="אופציונלי — 5 או 0.3">
         </div>
       </fieldset>`;
 }
@@ -984,14 +985,18 @@ async function renderStartView(container, ctx) {
   const runSettings = await getRunSettings();
   const groupId = container.dataset.selectedGroup || '';
   const scopeType = container.dataset.scopeType || 'category';
-  const catSelectionMode = container.dataset.catSelectionMode || 'group';
-  const selectedCategories = parseIdList(container.dataset.selectedCategories);
+  let selectedCategories = parseIdList(container.dataset.selectedCategories);
   const productId = container.dataset.selectedProduct || '';
   const date = container.dataset.selectedDate || todayISO();
 
   const groupCategories = groupId
     ? layout.allCategories.filter((c) => Number(c.groupId) === Number(groupId))
     : [];
+
+  if (scopeType === 'category' && groupId && !selectedCategories.length && groupCategories.length) {
+    selectedCategories = groupCategories.map((c) => c.id);
+    container.dataset.selectedCategories = JSON.stringify(selectedCategories);
+  }
 
   const filteredProducts = groupId
     ? products.filter((p) => groupCategories.some((c) => c.id === p.categoryId))
@@ -1013,18 +1018,22 @@ async function renderStartView(container, ctx) {
         scopeMode: 'product',
       });
     }
-  } else if (groupId && catSelectionMode === 'group') {
-    scopeMode = 'group';
-    availableFlows = await resolveFlows({ categoryGroupId: groupId, scopeMode: 'group' });
-  } else if (groupId && catSelectionMode === 'pick') {
-    if (selectedCategories.length === 1) {
+  } else if (groupId && selectedCategories.length) {
+    const allGroupIds = groupCategories.map((c) => c.id);
+    const allSelected = allGroupIds.length > 0
+      && allGroupIds.every((id) => selectedCategories.includes(id));
+
+    if (allSelected) {
+      scopeMode = 'group';
+      availableFlows = await resolveFlows({ categoryGroupId: groupId, scopeMode: 'group' });
+    } else if (selectedCategories.length === 1) {
       scopeMode = 'category';
       availableFlows = await resolveFlows({
         categoryId: selectedCategories[0],
         categoryGroupId: groupId,
         scopeMode: 'category',
       });
-    } else if (selectedCategories.length > 1) {
+    } else {
       scopeMode = 'categories';
       availableFlows = await resolveFlowsForCategorySelection({
         categoryIds: selectedCategories,
@@ -1096,25 +1105,23 @@ async function renderStartView(container, ctx) {
 
       ${scopeType === 'category' && groupId ? `
         <div class="form-group">
-          <label>בחירת קטגוריות</label>
-          <div class="flow-scope-tabs">
-            <button type="button" class="flow-scope-tab cat-mode-tab${catSelectionMode === 'group' ? ' active' : ''}" data-mode="group">כל הקבוצה</button>
-            <button type="button" class="flow-scope-tab cat-mode-tab${catSelectionMode === 'pick' ? ' active' : ''}" data-mode="pick">קטגוריות נבחרות</button>
-          </div>
-        </div>
-        ${catSelectionMode === 'group' ? `
-          <p class="form-hint" style="margin-bottom:12px">התהליך יכלול את כל ${groupCategories.length} הקטגוריות בקבוצה</p>` : `
-          <div class="form-group">
-            <label>סמן קטגוריות</label>
-            <p class="form-hint" style="margin-bottom:8px">לתזרים ייעודי לקטגוריה — סמן קטגוריה אחת</p>
-            <div class="group-category-checklist">
-              ${groupCategories.map((c) => `
-                <label class="group-category-option">
-                  <input type="checkbox" class="start-cat-check" value="${c.id}" ${selectedCategories.includes(c.id) ? 'checked' : ''}>
-                  <span>${escapeHtml(c.name)}</span>
-                </label>`).join('')}
+          <div class="filter-row" style="margin-bottom:8px;align-items:center">
+            <label style="margin:0">קטגוריות בפס יצור</label>
+            <div style="display:flex;gap:6px;margin-right:auto">
+              <button type="button" class="btn btn-secondary btn-sm" id="start-cats-all">סמן הכל</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="start-cats-none">נקה</button>
             </div>
-          </div>`}
+          </div>
+          <p class="form-hint" style="margin-bottom:8px">סמן כמה קטגוריות — מגוון מוצרים על אותו תזרים יצור</p>
+          <div class="group-category-checklist">
+            ${groupCategories.map((c) => `
+              <label class="group-category-option">
+                <input type="checkbox" class="start-cat-check" value="${c.id}" ${selectedCategories.includes(c.id) ? 'checked' : ''}>
+                <span>${escapeHtml(c.name)}</span>
+              </label>`).join('')}
+          </div>
+          <p class="form-hint" style="margin-top:8px">${selectedCategories.length} מתוך ${groupCategories.length} קטגוריות נבחרו</p>
+        </div>
       ` : scopeType === 'category' ? `
         <p class="form-hint">בחר קטגוריה כללית כדי להתחיל</p>
       ` : `
@@ -1181,19 +1188,23 @@ async function renderStartView(container, ctx) {
     renderProcess(container);
   });
 
+  document.getElementById('start-cats-all')?.addEventListener('click', () => {
+    const ids = groupCategories.map((c) => c.id);
+    container.dataset.selectedCategories = JSON.stringify(ids);
+    container.dataset.selectedFlowId = '';
+    renderProcess(container);
+  });
+
+  document.getElementById('start-cats-none')?.addEventListener('click', () => {
+    container.dataset.selectedCategories = '[]';
+    container.dataset.selectedFlowId = '';
+    renderProcess(container);
+  });
+
   container.querySelectorAll('.flow-scope-tab[data-scope]').forEach((btn) => {
     btn.addEventListener('click', () => {
       container.dataset.scopeType = btn.dataset.scope;
       container.dataset.selectedProduct = '';
-      container.dataset.selectedCategories = '[]';
-      container.dataset.selectedFlowId = '';
-      renderProcess(container);
-    });
-  });
-
-  container.querySelectorAll('.cat-mode-tab').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      container.dataset.catSelectionMode = btn.dataset.mode;
       container.dataset.selectedCategories = '[]';
       container.dataset.selectedFlowId = '';
       renderProcess(container);
@@ -1265,9 +1276,11 @@ async function renderStartView(container, ctx) {
       payload.categoryId = selectedCategories[0];
       payload.scopeMode = 'category';
     } else if (scopeMode === 'categories') {
-      if (!selectedCategories.length) return showToast('בחר לפחות קטגוריה אחת');
+      if (selectedCategories.length < 2) return showToast('בחר לפחות שתי קטגוריות, או סמן הכל');
       payload.categoryIds = selectedCategories;
       payload.scopeMode = 'categories';
+    } else if (!selectedCategories.length) {
+      return showToast('בחר לפחות קטגוריה אחת');
     } else {
       return showToast('בחר קטגוריה');
     }

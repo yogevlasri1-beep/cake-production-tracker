@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=99';
+} from '../db.js?v=100';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
-  showToast, escapeHtml,
-} from '../utils.js?v=99';
+  showToast, escapeHtml, formatPortionCount,
+} from '../utils.js?v=100';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=99';
-import { openModal, closeModal } from '../modal.js?v=99';
+} from '../export.js?v=100';
+import { openModal, closeModal } from '../modal.js?v=100';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=99';
-import { isSheetsConfigured } from '../google-sheets.js?v=99';
-import { buildProductMap, sumCategoryTotals, productProductionValue, mapGetById, sortProductsForReport } from '../calc.js?v=99';
-import { defaultColorForIndex } from '../chart.js?v=99';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=99';
+} from '../sheets-flow.js?v=100';
+import { isSheetsConfigured } from '../google-sheets.js?v=100';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=100';
+import { defaultColorForIndex } from '../chart.js?v=100';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=100';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -254,7 +254,7 @@ function formatStepPortionsReport(step) {
       return `${formatDate(b.date)}: ${escapeHtml(detail)}`;
     }).join('<br>');
     return `<div class="portion-report-cell">
-      <strong>סה"כ ${total} מנות</strong>
+      <strong>סה"כ ${formatPortionCount(total)} מנות</strong>
       <div class="portion-batch-breakdown">${lines}</div>
     </div>`;
   }
@@ -262,50 +262,112 @@ function formatStepPortionsReport(step) {
     ? ` × ${step.portionSize} ק"ג`
     : '';
   if (batches.length <= 1) {
-    return `${total}${sizePart}`;
+    return `${formatPortionCount(total)}${sizePart}`;
   }
-  const lines = batches.map((b) => `${formatDate(b.date)}: +${b.count}`).join('<br>');
+  const lines = batches.map((b) => `${formatDate(b.date)}: +${formatPortionCount(b.count)}`).join('<br>');
   return `<div class="portion-report-cell">
-    <strong>סה"כ ${total}${sizePart}</strong>
+    <strong>סה"כ ${formatPortionCount(total)}${sizePart}</strong>
     <div class="portion-batch-breakdown">${lines}</div>
   </div>`;
 }
 
-function renderPortionUsageReportHTML(productionRuns) {
+function renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap) {
   const rows = [];
   for (const run of productionRuns) {
     for (const step of run.steps || []) {
       if (!step.tracksPortions) continue;
       for (const batch of getStepPortionBatches(step)) {
-        if (!batch.name) continue;
         rows.push({ run, step, batch });
       }
     }
   }
-  if (!rows.length) return '';
+  if (!rows.length) {
+    return '<p class="report-empty">אין תיעוד מנות לתקופה זו</p>';
+  }
+  rows.sort((a, b) => {
+    const d = String(b.batch.date).localeCompare(String(a.batch.date));
+    if (d !== 0) return d;
+    return String(b.batch.recordedAt || '').localeCompare(String(a.batch.recordedAt || ''));
+  });
+
   return `
-    <div class="card" style="margin-top:16px">
-      <div class="card-title">🍽 שימוש במנות (תזרים יצור)</div>
-      <div class="report-table-wrap">
-        <table class="report-table">
-          <thead><tr>
-            <th>תאריך</th><th>אצווה</th><th>שלב</th><th>שם מנה</th><th>משקל</th><th>תוספת</th><th>כמות</th>
-          </tr></thead>
-          <tbody>
-            ${rows.map(({ run, step, batch }) => `
-              <tr>
-                <td>${formatDate(batch.date)}</td>
-                <td>${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
-                <td>${escapeHtml(step.stepName)}</td>
-                <td>${escapeHtml(batch.name)}</td>
-                <td>${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
-                <td>${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
-                <td><strong>${batch.count}</strong></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>
+    <div class="report-table-wrap">
+      <table class="report-table report-portions-table">
+        <thead><tr>
+          <th>תאריך</th><th>אצווה</th><th>יעד</th><th>שלב</th><th>מנה</th><th>משקל</th><th>תוספת</th><th>כמות</th><th>הערה</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(({ run, step, batch }) => `
+            <tr>
+              <td>${formatDate(batch.date)}</td>
+              <td>${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
+              <td>${reportRunTitle(run, catMap, productMap, groupMap)}</td>
+              <td>${escapeHtml(step.stepName)}</td>
+              <td>${batch.name ? escapeHtml(batch.name) : '—'}</td>
+              <td>${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
+              <td>${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
+              <td><strong>${formatPortionCount(batch.count)}</strong></td>
+              <td>${batch.note ? escapeHtml(batch.note) : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderCategorySummaryTable(catSummary) {
+  if (!catSummary.length) return '';
+  return `
+    <div class="report-table-wrap">
+    <table class="report-table report-cost-table">
+      <thead><tr>
+        <th>קטגוריה</th><th>כמות</th><th>חומ"ג</th><th>אריזה</th><th>נוספות</th><th>סה"כ עלות</th><th>ערך ללקוח</th>
+      </tr></thead>
+      <tbody>
+        ${catSummary.map((c) => `<tr>
+          <td>${escapeHtml(c.name)}</td>
+          <td>${c.qty}</td>
+          <td>${c.costRaw > 0 ? formatMoney(c.costRaw) : '—'}</td>
+          <td>${c.costPack > 0 ? formatMoney(c.costPack) : '—'}</td>
+          <td>${c.costExtra > 0 ? formatMoney(c.costExtra) : '—'}</td>
+          <td>${c.cost > 0 ? formatMoney(c.cost) : '—'}</td>
+          <td>${formatMoney(c.val)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>`;
+}
+
+function renderProductionStatsGrid(totals) {
+  return `
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-value">${totals.total}</div>
+        <div class="stat-label">ייצור (יח')</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+        <div class="stat-label">עלות ייצור</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${formatMoney(totals.totalValue)}</div>
+        <div class="stat-label">ערך ללקוח</div>
       </div>
     </div>`;
+}
+
+function mapCategorySummary(categories, products, totals) {
+  return categories.map((c) => {
+    const t = sumCategoryTotals(c.id, products, totals.byProduct);
+    return {
+      name: c.name,
+      qty: t.qty,
+      val: t.value,
+      cost: t.cost,
+      costRaw: t.costRaw,
+      costPack: t.costPack,
+      costExtra: t.costExtra,
+    };
+  }).filter((c) => c.qty > 0);
 }
 
 function renderProductionRunsStepsTable(run) {
@@ -380,17 +442,27 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
         ${renderProductionRunsStepsTable(run)}
       </details>`;
         }).join('')}
-    ${renderPortionUsageReportHTML(productionRuns)}`;
+    ${''}`;
 }
 
 function buildProductRows(products, totals, categories, reportType) {
   const rows = [];
   for (const p of sortProductsForReport(products, categories)) {
     const { qty, value } = productProductionValue(p, totals.byProduct);
+    const costs = productProductionCost(p, totals.byProduct);
     if (qty === 0 && (reportType === 'day' || reportType === 'week')) continue;
-    rows.push({ product: p, qty, value });
+    rows.push({ product: p, qty, value, ...costs });
   }
   return rows;
+}
+
+function productCostTotals(rows) {
+  return rows.reduce((acc, r) => ({
+    raw: acc.raw + r.costRaw,
+    pack: acc.pack + r.costPack,
+    extra: acc.extra + r.costExtra,
+    total: acc.total + r.cost,
+  }), { raw: 0, pack: 0, extra: 0, total: 0 });
 }
 
 function renderFiltersHTML(ctx, categories, products, today, defaultMonth) {
@@ -472,19 +544,34 @@ function renderProductionTableHTML(rows, totals, catMap) {
   if (rows.length === 0) {
     return '<p class="report-empty">אין נתונים לתקופה זו</p>';
   }
+  const costTotals = productCostTotals(rows);
   return `
     <div class="report-table-wrap">
-    <table class="report-table">
-      <thead><tr><th>מוצר</th><th>קטגוריה</th><th>כמות</th><th>ערך</th></tr></thead>
+    <table class="report-table report-cost-table">
+      <thead><tr>
+        <th>מוצר</th><th>קטגוריה</th><th>כמות</th>
+        <th>חומ"ג</th><th>אריזה</th><th>נוספות</th><th>סה"כ עלות</th><th>ערך ללקוח</th>
+      </tr></thead>
       <tbody>
         ${rows.map((r) => `<tr>
           <td>${escapeHtml(r.product.name)}</td>
           <td>${escapeHtml(catMap.get(r.product.categoryId) || '')}</td>
           <td>${r.qty}</td>
+          <td>${r.costRaw > 0 ? formatMoney(r.costRaw) : '—'}</td>
+          <td>${r.costPack > 0 ? formatMoney(r.costPack) : '—'}</td>
+          <td>${r.costExtra > 0 ? formatMoney(r.costExtra) : '—'}</td>
+          <td>${r.cost > 0 ? formatMoney(r.cost) : '—'}</td>
           <td>${formatMoney(r.value)}</td>
         </tr>`).join('')}
       </tbody>
-      <tfoot><tr><td colspan="2">סה"כ</td><td>${totals.total}</td><td>${formatMoney(totals.totalValue)}</td></tr></tfoot>
+      <tfoot><tr>
+        <td colspan="3">סה"כ</td>
+        <td>${costTotals.raw > 0 ? formatMoney(costTotals.raw) : '—'}</td>
+        <td>${costTotals.pack > 0 ? formatMoney(costTotals.pack) : '—'}</td>
+        <td>${costTotals.extra > 0 ? formatMoney(costTotals.extra) : '—'}</td>
+        <td>${costTotals.total > 0 ? formatMoney(costTotals.total) : '—'}</td>
+        <td>${formatMoney(totals.totalValue)}</td>
+      </tr></tfoot>
     </table>
     </div>`;
 }
@@ -583,10 +670,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
       </section>`);
   }
 
-  const catSummary = categories.map((c) => {
-    const { qty, value: val } = sumCategoryTotals(c.id, products, totals.byProduct);
-    return { name: c.name, qty, val };
-  }).filter((c) => c.qty > 0);
+  const catSummary = mapCategorySummary(categories, products, totals);
 
   return `
     <div class="report-preview">
@@ -597,27 +681,27 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
           <div class="stat-label">סה"כ שבוע (יח')</div>
         </div>
         <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+          <div class="stat-label">עלות שבועית</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-value">${formatMoney(totals.totalValue)}</div>
-          <div class="stat-label">ערך שבועי</div>
+          <div class="stat-label">ערך ללקוח</div>
         </div>
       </div>
 
       ${catSummary.length ? `
         <h4 class="report-preview-heading">סיכום שבועי לפי קטגוריה</h4>
-        <div class="report-table-wrap">
-        <table class="report-table">
-          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
-          <tbody>
-            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-        </div>` : ''}
+        ${renderCategorySummaryTable(catSummary)}` : ''}
 
       <h4 class="report-preview-heading">פירוט יומי</h4>
       ${daySections.length ? daySections.join('') : '<p class="report-empty">אין ייצור בשבוע זה</p>'}
 
       <h4 class="report-preview-heading">תזרימי יצור</h4>
       ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+
+      <h4 class="report-preview-heading">🍽 תיעוד מנות</h4>
+      ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
 
       <h4 class="report-preview-heading">תיעוד הכנות</h4>
       ${processLogs.length === 0
@@ -660,27 +744,27 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
           <div class="stat-label">ייצור (יח')</div>
         </div>
         <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+          <div class="stat-label">עלות ייצור</div>
+        </div>
+        <div class="stat-box">
           <div class="stat-value">${formatMoney(totals.totalValue)}</div>
-          <div class="stat-label">ערך</div>
+          <div class="stat-label">ערך ללקוח</div>
         </div>
       </div>
 
       ${catSummary.length > 0 ? `
         <h4 class="report-preview-heading">ייצור לפי קטגוריה</h4>
-        <div class="report-table-wrap">
-        <table class="report-table">
-          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
-          <tbody>
-            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-        </div>` : ''}
+        ${renderCategorySummaryTable(catSummary)}` : ''}
 
       <h4 class="report-preview-heading">פירוט מוצרים</h4>
       ${renderProductionTableHTML(rows, totals, catMap)}
 
       <h4 class="report-preview-heading">תזרימי יצור</h4>
       ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+
+      <h4 class="report-preview-heading">🍽 תיעוד מנות</h4>
+      ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
 
       <h4 class="report-preview-heading">תיעוד הכנות</h4>
       ${processLogs.length === 0
@@ -797,13 +881,13 @@ export async function renderReports(container) {
 
   const rows = buildProductRows(relevantProducts, totals, categories, ctx.reportType);
 
-  const catSummary = (ctx.reportType === 'category' && ctx.selectedCategoryId
-    ? categories.filter((c) => String(c.id) === ctx.selectedCategoryId)
-    : categories
-  ).map((c) => {
-    const { qty, value: val } = sumCategoryTotals(c.id, products, totals.byProduct);
-    return { name: c.name, qty, val };
-  }).filter((c) => c.qty > 0);
+  const catSummary = mapCategorySummary(
+    ctx.reportType === 'category' && ctx.selectedCategoryId
+      ? categories.filter((c) => String(c.id) === ctx.selectedCategoryId)
+      : categories,
+    products,
+    totals,
+  );
 
   const safeLabel = ctx.label.replace(/\//g, '-').replace(/\s+/g, '_');
   const fullTitle = ctx.filterLabel
@@ -927,26 +1011,24 @@ export async function renderReports(container) {
         <div class="stat-label">ייצור מוצרים (יח')</div>
       </div>
       <div class="stat-box">
+        <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+        <div class="stat-label">עלות ייצור</div>
+      </div>
+      <div class="stat-box">
         <div class="stat-value">${formatMoney(totals.totalValue)}</div>
-        <div class="stat-label">ערך מוצרים</div>
+        <div class="stat-label">ערך ללקוח</div>
       </div>
     </div>
 
     ${catSummary.length > 0 ? `
       <div class="card">
         <div class="card-title">ייצור לפי קטגוריה — ${ctx.label}</div>
-        <div class="report-table-wrap">
-        <table class="report-table">
-          <thead><tr><th>קטגוריה</th><th>כמות</th><th>ערך (₪)</th></tr></thead>
-          <tbody>
-            ${catSummary.map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${c.qty}</td><td>${formatMoney(c.val)}</td></tr>`).join('')}
-          </tbody>
-        </table>
-        </div>
+        ${renderCategorySummaryTable(catSummary)}
       </div>` : ''}
 
     <div class="card">
       <div class="card-title">פירוט מוצרים — ${ctx.label}</div>
+      <p class="form-hint" style="margin-bottom:10px">עלות (חומ"ג, אריזה, נוספות) נפרדת מערך המכירה ללקוח</p>
       ${renderProductionTableHTML(rows, totals, catMap)}
     </div>
 
@@ -954,6 +1036,12 @@ export async function renderReports(container) {
       <div class="card-title">תזרימי יצור — ${ctx.label}</div>
       <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · שלב נוכחי</p>
       ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+    </div>
+
+    <div class="card report-portions-card">
+      <div class="card-title">🍽 תיעוד מנות — ${ctx.label}</div>
+      <p class="form-hint" style="margin-bottom:10px">כל רשומות המנות מתזרימי יצור — כולל כמויות חלקיות (0.1 ומעלה)</p>
+      ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
     </div>
 
     <div class="card process-card">

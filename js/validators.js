@@ -26,6 +26,14 @@ export function sanitizeQuantity(raw, { min = 1, max = 1_000_000, allowZero = fa
   return n;
 }
 
+/** כמות מנות — מאפשר עשרוניות מ-0.1 (למשל 0.3 מנה) */
+export function sanitizePortionCount(raw, { min = 0.1, max = 1_000_000 } = {}) {
+  if (raw === '' || raw == null) return null;
+  const n = Number(String(raw).replace(/,/g, '').trim());
+  if (!Number.isFinite(n) || n < min || n > max) return null;
+  return Math.round(n * 10) / 10;
+}
+
 /** משקל מנה בק"ג — מאפשר עשרוניות (למשל 0.1 = 100 גרם) */
 export function sanitizePortionSize(raw, { min = 0.001, max = 100_000 } = {}) {
   if (raw === '' || raw == null) return null;

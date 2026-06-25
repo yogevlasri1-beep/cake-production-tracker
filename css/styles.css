@@ -1437,6 +1437,17 @@ table.report-table {
 .report-table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.report-cost-table {
+  min-width: 640px;
+}
+
+.report-portions-table {
+  min-width: 720px;
+}
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   margin: 0 -4px;
   padding: 0 4px;
 }

@@ -2,6 +2,7 @@ import {
   ValidationError,
   isValidISODate,
   sanitizeQuantity,
+  sanitizePortionCount,
   sanitizePortionSize,
   sanitizeMoney,
   sanitizeName,
@@ -9,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=99';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=99';
-import { defaultColorForIndex } from './chart.js?v=99';
+} from './validators.js?v=100';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=100';
+import { defaultColorForIndex } from './chart.js?v=100';
 
 export { ValidationError };
 
@@ -2123,8 +2124,8 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
     || run.status === 'completed';
   if (!stepReached) throw new ValidationError('השלב עדיין לא הגיע ליצור');
 
-  const pCount = sanitizeQuantity(count, { allowZero: false });
-  if (pCount == null) throw new ValidationError('הזן מספר מנות תקין');
+  const pCount = sanitizePortionCount(count);
+  if (pCount == null) throw new ValidationError('הזן מספר מנות תקין (מ-0.1 ומעלה)');
 
   const flowPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
   const pid = presetId ? Number(presetId) : null;
@@ -2176,8 +2177,8 @@ export async function updateRunStepPortionBatch(runId, stepIndex, batchIndex, { 
 
   const next = { ...batches[idx] };
   if (count !== undefined) {
-    const pCount = sanitizeQuantity(count, { allowZero: false });
-    if (pCount == null) throw new ValidationError('הזן מספר מנות תקין');
+    const pCount = sanitizePortionCount(count);
+    if (pCount == null) throw new ValidationError('הזן מספר מנות תקין (מ-0.1 ומעלה)');
     next.count = pCount;
   }
   if (date !== undefined) {
@@ -2233,9 +2234,9 @@ export async function completeRunStep(runId, stepIndex, { notes, issues, improve
       const rawCount = portionCount ?? step.portionCount;
       const pCount = rawCount === '' || rawCount == null
         ? null
-        : sanitizeQuantity(rawCount, { allowZero: false });
+        : sanitizePortionCount(rawCount);
       if (pCount == null && rawCount !== '' && rawCount != null) {
-        throw new ValidationError('מספר מנות לא תקין');
+        throw new ValidationError('מספר מנות לא תקין (מ-0.1 ומעלה)');
       }
       if (pSize != null) {
         stepPatch.portionUnit = unit;
@@ -2293,9 +2294,9 @@ export async function updateRunStepFields(runId, stepIndex, { notes, issues, imp
   if (step.tracksPortions && portionCount !== undefined) {
     const pCount = portionCount === '' || portionCount == null
       ? null
-      : sanitizeQuantity(portionCount, { allowZero: false });
+      : sanitizePortionCount(portionCount);
     if (pCount == null && portionCount !== '' && portionCount != null) {
-      throw new ValidationError('מספר מנות לא תקין');
+      throw new ValidationError('מספר מנות לא תקין (מ-0.1 ומעלה)');
     }
     if (Array.isArray(step.portionBatches) && step.portionBatches.length) {
       /* כמות מנות מנוהלת ברשימת המנות */
