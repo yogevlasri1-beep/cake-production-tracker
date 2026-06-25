@@ -2,7 +2,7 @@ import {
   getProductsCatalogLayout, getCategoryGroups, getProducts, getAllFlowsOverview,
   getFlowsForCategory, getFlowsForGroup, getFlowStepsForFlow, resolveFlows, resolveFlowSteps,
   resolveFlowsForCategorySelection,
-  createFlow, updateFlow, deleteFlow,
+  createFlow, updateFlow, deleteFlow, duplicateFlow,
   addFlowStepToFlow, updateFlowStep, deleteFlowStep,
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow,
   getFlowPortionPresets, addFlowPortionPreset, updateFlowPortionPreset, deleteFlowPortionPreset,
@@ -11,10 +11,10 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=101';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=101';
-import { openModal, closeModal } from '../modal.js?v=101';
-import { requestAutoBackupNow } from '../backup-service.js?v=101';
+} from '../db.js?v=102';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=102';
+import { openModal, closeModal } from '../modal.js?v=102';
+import { requestAutoBackupNow } from '../backup-service.js?v=102';
 
 function parseIdList(str) {
   try {
@@ -22,6 +22,40 @@ function parseIdList(str) {
   } catch {
     return [];
   }
+}
+
+function applyFlowSelectionToStart(container, flow, layout) {
+  container.dataset.selectedFlowId = String(flow.id);
+  container.dataset.scopeType = 'category';
+  container.dataset.selectedProduct = '';
+  if (flow.targetType === 'category' && flow.categoryId) {
+    container.dataset.selectedGroup = String(flow.groupId || '');
+    container.dataset.selectedCategories = JSON.stringify([flow.categoryId]);
+  } else {
+    const gid = flow.categoryGroupId || flow.groupId;
+    container.dataset.selectedGroup = String(gid || '');
+    const cats = layout.allCategories.filter((c) => Number(c.groupId) === Number(gid));
+    container.dataset.selectedCategories = JSON.stringify(cats.map((c) => c.id));
+  }
+}
+
+function renderFlowPickListHTML(flows, selectedFlowId, { emptyMessage } = {}) {
+  const selectable = flows.filter((f) => f.stepCount > 0);
+  if (!selectable.length) {
+    return `<p class="form-hint">${emptyMessage || 'אין תזרימים עם שלבים — הגדר ב«נהל תזרים»'}</p>`;
+  }
+  return `
+    <div class="flow-pick-list">
+      ${selectable.map((f) => `
+        <button type="button" class="manage-flow-pick start-flow-pick${String(f.id) === String(selectedFlowId) ? ' is-active' : ''}"
+          data-flow-id="${f.id}"
+          data-target-type="${f.targetType}"
+          data-group-id="${f.groupId || f.categoryGroupId || ''}"
+          data-category-id="${f.categoryId || ''}">
+          <span class="manage-flow-pick-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
+          <span class="manage-flow-pick-meta">${escapeHtml(f.groupName ? `${f.groupName} · ` : '')}${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
+        </button>`).join('')}
+    </div>`;
 }
 
 function runTitle(run, catMap, productMap, groupMap) {
@@ -612,6 +646,7 @@ async function renderManageView(container, ctx) {
           ${activeFlow ? `
             <div class="filter-row" style="margin-bottom:12px">
               <button type="button" class="btn btn-secondary btn-sm" id="rename-flow-btn">✏️ שנה שם</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="duplicate-flow-btn">📋 שכפל</button>
               ${!activeFlow.isDefault ? `<button type="button" class="btn btn-secondary btn-sm" id="set-default-flow-btn">★ ברירת מחדל</button>` : ''}
               ${flows.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" id="delete-flow-btn">🗑 מחק</button>` : ''}
             </div>` : ''}
@@ -781,6 +816,11 @@ async function renderManageView(container, ctx) {
         showToast(err.message || 'שגיאה');
       }
     });
+  });
+
+  document.getElementById('duplicate-flow-btn')?.addEventListener('click', () => {
+    if (!activeFlow) return;
+    openDuplicateFlowModal(container, ctx, activeFlow, steps.length);
   });
 
   document.getElementById('set-default-flow-btn')?.addEventListener('click', async () => {
@@ -980,9 +1020,101 @@ function bindFlowStepDrag(container) {
   });
 }
 
+function activeGroupIdFromFlow(flow) {
+  return flow.groupId || flow.categoryGroupId || null;
+}
+
+async function openDuplicateFlowModal(container, ctx, sourceFlow, stepCount = 0) {
+  const { layout, groups } = ctx;
+  const defaultGroupId = activeGroupIdFromFlow(sourceFlow) || '';
+  const groupCategories = defaultGroupId
+    ? layout.allCategories.filter((c) => Number(c.groupId) === Number(defaultGroupId))
+    : layout.allCategories;
+  const defaultTarget = sourceFlow.targetType === 'category' ? 'category' : 'group';
+
+  openModal({
+    title: `שכפול תזרים — ${sourceFlow.name}`,
+    bodyHTML: `
+      <p class="form-hint" style="margin-bottom:12px">יועתקו ${stepCount} שלבים וכל המנות המוכנות</p>
+      <div class="form-group">
+        <label for="dup-flow-name">שם התזרים החדש</label>
+        <input type="text" id="dup-flow-name" value="${escapeHtml(sourceFlow.name)} (עותק)">
+      </div>
+      <div class="form-group">
+        <label for="dup-target-group">קטגוריה כללית (יעד)</label>
+        <select id="dup-target-group">
+          <option value="">בחר קטגוריה כללית...</option>
+          ${groups.map((g) => `<option value="${g.id}" ${String(g.id) === String(defaultGroupId) ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="dup-target-type">יעד התזרים</label>
+        <select id="dup-target-type">
+          <option value="group" ${defaultTarget === 'group' ? 'selected' : ''}>כל הקבוצה</option>
+          <option value="category" ${defaultTarget === 'category' ? 'selected' : ''}>קטגוריה בודדת</option>
+        </select>
+      </div>
+      <div class="form-group${defaultTarget === 'category' ? '' : ' hidden'}" id="dup-category-wrap">
+        <label for="dup-target-category">קטגוריה</label>
+        <select id="dup-target-category">
+          <option value="">בחר קטגוריה...</option>
+          ${groupCategories.map((c) => `<option value="${c.id}" ${String(c.id) === String(sourceFlow.categoryId || '') ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-dup-flow">שכפל</button>`,
+  });
+
+  const syncDupCategory = () => {
+    const type = document.getElementById('dup-target-type')?.value;
+    document.getElementById('dup-category-wrap')?.classList.toggle('hidden', type !== 'category');
+  };
+  document.getElementById('dup-target-type')?.addEventListener('change', syncDupCategory);
+
+  document.getElementById('dup-target-group')?.addEventListener('change', (e) => {
+    const gid = e.target.value;
+    const cats = gid
+      ? layout.allCategories.filter((c) => Number(c.groupId) === Number(gid))
+      : [];
+    const sel = document.getElementById('dup-target-category');
+    if (sel) {
+      sel.innerHTML = `<option value="">בחר קטגוריה...</option>${cats.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}`;
+    }
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-dup-flow')?.addEventListener('click', async () => {
+    const name = document.getElementById('dup-flow-name')?.value.trim();
+    const gid = Number(document.getElementById('dup-target-group')?.value);
+    const targetType = document.getElementById('dup-target-type')?.value;
+    const cid = targetType === 'category' ? Number(document.getElementById('dup-target-category')?.value) : null;
+    if (!name) return showToast('הזן שם תזרים');
+    if (!gid) return showToast('בחר קטגוריה כללית');
+    if (targetType === 'category' && !cid) return showToast('בחר קטגוריה');
+    try {
+      const newId = await duplicateFlow(sourceFlow.id, {
+        name,
+        categoryGroupId: targetType === 'group' ? gid : null,
+        categoryId: targetType === 'category' ? cid : null,
+      });
+      closeModal();
+      container.dataset.manageTarget = targetType;
+      container.dataset.manageGroup = String(gid);
+      container.dataset.manageCategory = targetType === 'category' ? String(cid) : '';
+      container.dataset.manageFlowId = String(newId);
+      showToast('תזרים שוכפל ✓');
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
 async function renderStartView(container, ctx) {
   const { layout, groups, products, catMap } = ctx;
   const runSettings = await getRunSettings();
+  const allFlowsOverview = await getAllFlowsOverview();
   const groupId = container.dataset.selectedGroup || '';
   const scopeType = container.dataset.scopeType || 'category';
   let selectedCategories = parseIdList(container.dataset.selectedCategories);
@@ -1002,21 +1134,19 @@ async function renderStartView(container, ctx) {
     ? products.filter((p) => groupCategories.some((c) => c.id === p.categoryId))
     : products;
 
-  let availableFlows = [];
   let selectedFlowId = container.dataset.selectedFlowId || '';
   let stepCount = 0;
   let canStart = false;
   let scopeMode = 'group';
 
+  const selectedFlowOverview = selectedFlowId
+    ? allFlowsOverview.find((f) => String(f.id) === String(selectedFlowId))
+    : null;
+
   if (scopeType === 'product') {
     const prod = productId ? products.find((p) => p.id === Number(productId)) : null;
     if (prod) {
       scopeMode = 'product';
-      availableFlows = await resolveFlows({
-        categoryId: prod.categoryId,
-        categoryGroupId: groupId || null,
-        scopeMode: 'product',
-      });
     }
   } else if (groupId && selectedCategories.length) {
     const allGroupIds = groupCategories.map((c) => c.id);
@@ -1025,20 +1155,35 @@ async function renderStartView(container, ctx) {
 
     if (allSelected) {
       scopeMode = 'group';
-      availableFlows = await resolveFlows({ categoryGroupId: groupId, scopeMode: 'group' });
     } else if (selectedCategories.length === 1) {
       scopeMode = 'category';
-      availableFlows = await resolveFlows({
-        categoryId: selectedCategories[0],
-        categoryGroupId: groupId,
-        scopeMode: 'category',
-      });
     } else {
       scopeMode = 'categories';
-      availableFlows = await resolveFlowsForCategorySelection({
-        categoryIds: selectedCategories,
+    }
+  }
+
+  if (selectedFlowId) {
+    const steps = await getFlowStepsForFlow(selectedFlowId);
+    stepCount = steps.length;
+    if (scopeType === 'product') {
+      canStart = !!productId && stepCount > 0;
+    } else if (groupId && selectedCategories.length) {
+      canStart = stepCount > 0;
+    }
+  } else if (scopeType === 'product') {
+    const prod = productId ? products.find((p) => p.id === Number(productId)) : null;
+    if (prod && groupId) {
+      const resolved = await resolveFlows({
+        categoryId: prod.categoryId,
         categoryGroupId: groupId,
+        scopeMode: 'product',
       });
+      if (resolved.length && !selectedFlowId) {
+        selectedFlowId = String((resolved.find((f) => f.isDefault) || resolved[0]).id);
+        container.dataset.selectedFlowId = selectedFlowId;
+        stepCount = (await getFlowStepsForFlow(selectedFlowId)).length;
+        canStart = !!productId && stepCount > 0;
+      }
     }
   }
 
@@ -1046,34 +1191,9 @@ async function renderStartView(container, ctx) {
     ? products.find((p) => p.id === Number(productId))?.categoryId
     : (scopeMode === 'category' && selectedCategories.length === 1 ? selectedCategories[0] : null);
 
-  if (availableFlows.length) {
-    const flowExists = availableFlows.some((f) => String(f.id) === String(selectedFlowId));
-    if (!flowExists) {
-      const defaultFlow = availableFlows.find((f) => f.isDefault) || availableFlows[0];
-      selectedFlowId = String(defaultFlow.id);
-      container.dataset.selectedFlowId = selectedFlowId;
-    }
-    const steps = await resolveFlowSteps({
-      categoryId: flowCategoryId,
-      categoryGroupId: groupId || null,
-      flowId: selectedFlowId,
-    });
-    stepCount = steps.length;
-    if (scopeType === 'product') {
-      canStart = !!productId && stepCount > 0;
-    } else if (scopeMode === 'group') {
-      canStart = groupCategories.length > 0 && stepCount > 0;
-    } else if (scopeMode === 'category') {
-      canStart = selectedCategories.length === 1 && stepCount > 0;
-    } else if (scopeMode === 'categories') {
-      canStart = selectedCategories.length > 0 && stepCount > 0;
-    }
-  } else {
-    canStart = false;
-    stepCount = 0;
-  }
+  const selectedFlow = selectedFlowOverview
+    || (selectedFlowId ? allFlowsOverview.find((f) => String(f.id) === String(selectedFlowId)) : null);
 
-  const selectedFlow = availableFlows.find((f) => String(f.id) === String(selectedFlowId)) || null;
   const autoBatch = runSettings.autoBatchEnabled !== false;
   const nextBatch = Math.max(1, Number(runSettings.nextBatchNumber) || 1);
 
@@ -1085,6 +1205,12 @@ async function renderStartView(container, ctx) {
       <div class="form-group">
         <label for="start-date">תאריך</label>
         <input type="date" id="start-date" value="${date}">
+      </div>
+
+      <div class="form-group">
+        <label>בחר תזרים</label>
+        <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים מהרשימה — הקטגוריות ימולאו אוטומטית</p>
+        ${renderFlowPickListHTML(allFlowsOverview, selectedFlowId)}
       </div>
 
       <div class="form-group">
@@ -1135,14 +1261,6 @@ async function renderStartView(container, ctx) {
           </select>
         </div>`}
 
-      ${availableFlows.length ? `
-        <div class="form-group">
-          <label for="start-flow">תזרים</label>
-          <select id="start-flow">
-            ${availableFlows.map((f) => `<option value="${f.id}" ${String(f.id) === String(selectedFlowId) ? 'selected' : ''}>${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</option>`).join('')}
-          </select>
-        </div>` : ''}
-
       <div class="form-group flow-batch-settings">
         <label class="group-category-option" style="margin-bottom:8px">
           <input type="checkbox" id="auto-batch-enabled" ${autoBatch ? 'checked' : ''}>
@@ -1162,9 +1280,11 @@ async function renderStartView(container, ctx) {
 
       ${canStart
         ? `<p class="form-hint" style="margin-bottom:12px">${stepCount} שלבים${selectedFlow ? ` · ${escapeHtml(selectedFlow.name)}` : ''}</p>`
-        : groupId
-          ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ אין תזרימים עם שלבים — הגדר ב«נהל תזרים»</p>`
-          : ''}
+        : !selectedFlowId
+          ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ בחר תזרים מהרשימה למעלה</p>`
+          : groupId
+            ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ השלם בחירת קטגוריות</p>`
+            : ''}
 
       <button type="button" class="btn btn-primary" id="start-run-btn" style="width:100%" ${canStart ? '' : 'disabled'}>
         התחל תזרים יצור
@@ -1188,16 +1308,23 @@ async function renderStartView(container, ctx) {
     renderProcess(container);
   });
 
+  container.querySelectorAll('.start-flow-pick').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const flow = allFlowsOverview.find((f) => String(f.id) === String(btn.dataset.flowId));
+      if (!flow) return;
+      applyFlowSelectionToStart(container, flow, layout);
+      renderProcess(container);
+    });
+  });
+
   document.getElementById('start-cats-all')?.addEventListener('click', () => {
     const ids = groupCategories.map((c) => c.id);
     container.dataset.selectedCategories = JSON.stringify(ids);
-    container.dataset.selectedFlowId = '';
     renderProcess(container);
   });
 
   document.getElementById('start-cats-none')?.addEventListener('click', () => {
     container.dataset.selectedCategories = '[]';
-    container.dataset.selectedFlowId = '';
     renderProcess(container);
   });
 
@@ -1215,14 +1342,8 @@ async function renderStartView(container, ctx) {
     cb.addEventListener('change', () => {
       const ids = [...container.querySelectorAll('.start-cat-check:checked')].map((el) => Number(el.value));
       container.dataset.selectedCategories = JSON.stringify(ids);
-      container.dataset.selectedFlowId = '';
       renderProcess(container);
     });
-  });
-
-  document.getElementById('start-flow')?.addEventListener('change', (e) => {
-    container.dataset.selectedFlowId = e.target.value;
-    renderProcess(container);
   });
 
   document.getElementById('start-product')?.addEventListener('change', (e) => {
@@ -1254,6 +1375,7 @@ async function renderStartView(container, ctx) {
     }
     const d = document.getElementById('start-date').value;
     const flowId = selectedFlowId ? Number(selectedFlowId) : null;
+    if (!flowId) return showToast('בחר תזרים מהרשימה');
 
     const payload = {
       date: d,

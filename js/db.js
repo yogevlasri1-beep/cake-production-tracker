@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=101';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=101';
-import { defaultColorForIndex } from './chart.js?v=101';
+} from './validators.js?v=102';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=102';
+import { defaultColorForIndex } from './chart.js?v=102';
 
 export { ValidationError };
 
@@ -1659,6 +1659,76 @@ export async function createFlow({ categoryId, categoryGroupId, name, withDefaul
     await copyDefaultFlowStepsToFlow(newFlowId);
   }
   return newFlowId;
+}
+
+/** שכפול תזרים — שלבים ומנות מוכנות — ליעד חדש או לאותו יעד */
+export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGroupId } = {}) {
+  const sourceId = sanitizeProductId(sourceFlowId);
+  if (!sourceId) throw new ValidationError('תזרים מקור לא תקין');
+  const source = await db.flows.get(sourceId);
+  if (!source) throw new ValidationError('תזרים מקור לא נמצא');
+
+  let cid = categoryId !== undefined
+    ? (categoryId ? sanitizeProductId(categoryId) : null)
+    : (source.categoryId || null);
+  let gid = categoryGroupId !== undefined
+    ? (categoryGroupId ? sanitizeProductId(categoryGroupId) : null)
+    : (source.categoryGroupId || null);
+
+  if (categoryId !== undefined && categoryGroupId !== undefined) {
+    if (cid && gid) gid = null;
+  }
+
+  if (cid && !gid) {
+    const cat = await db.categories.get(cid);
+    gid = cat?.groupId || null;
+  }
+  if (!cid && !gid) throw new ValidationError('יעד תזרים לא תקין');
+
+  const cleanName = sanitizeName(name, 60) || `${source.name} (עותק)`;
+  const isCategoryTarget = !!cid;
+
+  const [steps, presets, existing] = await Promise.all([
+    getFlowStepsForFlow(sourceId),
+    getFlowPortionPresets(sourceId),
+    isCategoryTarget ? getFlowsForCategory(cid) : getFlowsForGroup(gid),
+  ]);
+  const maxOrder = existing.reduce((m, f) => Math.max(m, f.sortOrder ?? 0), 0);
+
+  return db.transaction('rw', db.flows, db.flowSteps, db.flowPortionPresets, async () => {
+    const newFlowId = await db.flows.add({
+      categoryId: isCategoryTarget ? cid : null,
+      categoryGroupId: isCategoryTarget ? null : gid,
+      name: cleanName,
+      sortOrder: maxOrder + 1,
+      isDefault: false,
+    });
+
+    for (const s of steps) {
+      await db.flowSteps.add({
+        flowId: newFlowId,
+        categoryId: isCategoryTarget ? cid : null,
+        categoryGroupId: isCategoryTarget ? null : gid,
+        name: s.name,
+        sortOrder: s.sortOrder ?? 0,
+        tracksPortions: !!s.tracksPortions,
+        portionUnit: s.portionUnit || null,
+        portionSize: s.portionSize ?? null,
+      });
+    }
+
+    for (const p of presets) {
+      await db.flowPortionPresets.add({
+        flowId: newFlowId,
+        name: p.name,
+        weight: p.weight,
+        extra: p.extra || '',
+        sortOrder: p.sortOrder ?? 0,
+      });
+    }
+
+    return newFlowId;
+  });
 }
 
 export async function updateFlow(flowId, { name, isDefault } = {}) {
