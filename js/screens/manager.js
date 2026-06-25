@@ -10,15 +10,15 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=102';
+} from '../db.js?v=104';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=102';
-import { openModal, closeModal } from '../modal.js?v=102';
-import { renderTargets } from './targets.js?v=102';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=102';
-import { APP_VERSION } from '../version.js?v=102';
+} from '../utils.js?v=104';
+import { openModal, closeModal } from '../modal.js?v=104';
+import { renderTargets } from './targets.js?v=104';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=104';
+import { APP_VERSION } from '../version.js?v=104';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -428,7 +428,7 @@ async function renderDailyPlan(container) {
         <label for="plan-portion-preset">מנה</label>
         <select id="plan-portion-preset">
           <option value="">בחר מנה...</option>
-          ${portionPresets.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} · ${p.weight} ק"ג${p.extra ? ` · ${p.extra}` : ''}${p.flowName ? ` (${p.flowName})` : ''}</option>`).join('')}
+          ${portionPresets.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} · ${p.weight} ק"ג${p.extra ? ` · ${p.extra}` : ''}${p.groupName ? ` (${p.groupName})` : ''}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">

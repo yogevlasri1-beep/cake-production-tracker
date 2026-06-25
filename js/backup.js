@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=102';
-import { APP_VERSION } from './version.js?v=102';
-import { defaultColorForIndex } from './chart.js?v=102';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=102';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=102';
-import { ValidationError } from './validators.js?v=102';
+import { exportAllData, importAllData } from './db.js?v=104';
+import { APP_VERSION } from './version.js?v=104';
+import { defaultColorForIndex } from './chart.js?v=104';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=104';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=104';
+import { ValidationError } from './validators.js?v=104';
 
 export const BACKUP_VERSION = 3;
 
@@ -171,6 +171,7 @@ export function enrichBackupData(raw) {
     flows,
     flowSteps,
     flowPortionPresets: raw.flowPortionPresets || [],
+    groupPortionPresets: raw.groupPortionPresets || [],
     productionRuns: raw.productionRuns || [],
     runStepStates: raw.runStepStates || [],
     settings: raw.settings || [],
@@ -189,6 +190,7 @@ export function summarizeBackupData(data) {
     flowSteps: data.flowSteps?.length || 0,
     flows: data.flows?.length || 0,
     flowPortionPresets: data.flowPortionPresets?.length || 0,
+    groupPortionPresets: data.groupPortionPresets?.length || 0,
     productionRuns: data.productionRuns?.length || 0,
     settings: data.settings?.length || 0,
   };
@@ -205,7 +207,8 @@ export function formatBackupSummary(counts) {
   if (counts.categoryGroups) parts.splice(1, 0, `${counts.categoryGroups} קטגוריות כלליות`);
   if (counts.flows) parts.push(`${counts.flows} תבניות תזרים`);
   if (counts.flowSteps) parts.push(`${counts.flowSteps} שלבי תזרים`);
-  if (counts.flowPortionPresets) parts.push(`${counts.flowPortionPresets} מנות מוכנות`);
+  const portionCount = counts.groupPortionPresets || counts.flowPortionPresets;
+  if (portionCount) parts.push(`${portionCount} מנות מוכנות`);
   if (counts.productionRuns) parts.push(`${counts.productionRuns} תהליכי יצור`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
   return parts.join(' · ');

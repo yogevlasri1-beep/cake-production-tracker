@@ -570,6 +570,17 @@ body {
   opacity: 0.55;
 }
 
+.manage-flows-overview--bottom {
+  margin-top: 24px;
+  margin-bottom: 0;
+}
+
+.manage-portions-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
 .manage-flows-overview {
   margin-bottom: 16px;
   padding: 12px;

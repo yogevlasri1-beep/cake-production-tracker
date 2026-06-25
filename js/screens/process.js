@@ -5,16 +5,16 @@ import {
   createFlow, updateFlow, deleteFlow, duplicateFlow,
   addFlowStepToFlow, updateFlowStep, deleteFlowStep,
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow,
-  getFlowPortionPresets, addFlowPortionPreset, updateFlowPortionPreset, deleteFlowPortionPreset,
+  getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDates,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=102';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=102';
-import { openModal, closeModal } from '../modal.js?v=102';
-import { requestAutoBackupNow } from '../backup-service.js?v=102';
+} from '../db.js?v=104';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=104';
+import { openModal, closeModal } from '../modal.js?v=104';
+import { requestAutoBackupNow } from '../backup-service.js?v=104';
 
 function parseIdList(str) {
   try {
@@ -579,9 +579,13 @@ async function renderManageView(container, ctx) {
   }
 
   const activeFlow = flows.find((f) => String(f.id) === String(activeFlowId)) || null;
+  const portionManageGroupId = container.dataset.managePortionGroup || '';
+  const portionGroupName = portionManageGroupId
+    ? (groups.find((g) => String(g.id) === String(portionManageGroupId))?.name || '')
+    : '';
   const [steps, portionPresets, allFlows] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
-    activeFlow ? getFlowPortionPresets(activeFlow.id) : Promise.resolve([]),
+    portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),
     getAllFlowsOverview(),
   ]);
 
@@ -590,22 +594,6 @@ async function renderManageView(container, ctx) {
       <button type="button" class="btn btn-secondary btn-sm" id="back-from-manage">← חזרה</button>
       <h2 style="font-size:1rem;margin:12px 0 8px">הגדרת תזרימי יצור</h2>
       <p class="form-hint" style="margin-bottom:12px">צור כמה תזרימים עם שמות שונים לאותה קטגוריה — לדוגמה: עוגות גדולות, עוגות אישיות.</p>
-
-      ${allFlows.length ? `
-      <div class="manage-flows-overview">
-        <div class="card-title">כל התזרימים (${allFlows.length})</div>
-        <div class="manage-flows-list">
-          ${allFlows.map((f) => `
-            <button type="button" class="manage-flow-pick${String(f.id) === String(activeFlowId) && targetReady ? ' is-active' : ''}"
-              data-flow-id="${f.id}"
-              data-target-type="${f.targetType}"
-              data-group-id="${f.groupId || ''}"
-              data-category-id="${f.categoryId || ''}">
-              <span class="manage-flow-pick-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
-              <span class="manage-flow-pick-meta">${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
-            </button>`).join('')}
-        </div>
-      </div>` : ''}
 
       <div class="form-group">
         <label>סוג תזרים</label>
@@ -680,9 +668,41 @@ async function renderManageView(container, ctx) {
                    </div>
                  </div>`).join('')}
              </div>`}
-        <div class="flow-portion-presets-card" style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border,#e2e8f0)">
-          <div class="card-title" style="margin-bottom:8px">🍽 רשימת מנות מוכנות</div>
-          <p class="form-hint" style="margin-bottom:12px">שם, משקל (ק"ג) ותוספת — בתזרים יצור בוחרים מנה ומזינים כמה מנות השתמשו</p>
+        ` : `
+          <p class="form-hint" style="margin-bottom:12px">צור תזרים ראשון כדי להגדיר שלבים</p>
+          <button type="button" class="btn btn-primary" id="create-first-flow" style="width:100%">+ צור תזרים ראשון</button>
+        `}
+      ` : `<p class="form-hint">${isGroupTarget ? 'בחר קטגוריה כללית להגדרת תזרימים' : 'בחר קבוצה וקטגוריה'}</p>`}
+
+      ${allFlows.length ? `
+      <div class="manage-flows-overview manage-flows-overview--bottom">
+        <div class="card-title">כל התזרימים (${allFlows.length})</div>
+        <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים כדי לערוך את השלבים שלו</p>
+        <div class="manage-flows-list">
+          ${allFlows.map((f) => `
+            <button type="button" class="manage-flow-pick${String(f.id) === String(activeFlowId) && targetReady ? ' is-active' : ''}"
+              data-flow-id="${f.id}"
+              data-target-type="${f.targetType}"
+              data-group-id="${f.groupId || ''}"
+              data-category-id="${f.categoryId || ''}">
+              <span class="manage-flow-pick-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
+              <span class="manage-flow-pick-meta">${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
+            </button>`).join('')}
+        </div>
+      </div>` : ''}
+
+      <div class="flow-portion-presets-card manage-portions-section">
+        <div class="card-title" style="margin-bottom:8px">🍽 מנות מוכנות</div>
+        <p class="form-hint" style="margin-bottom:12px">בחר קטגוריה כללית — הרשימה משותפת לכל התזרימים באותה קבוצה</p>
+        <div class="form-group">
+          <label for="portion-manage-group">קטגוריה כללית</label>
+          <select id="portion-manage-group">
+            <option value="">בחר קטגוריה כללית...</option>
+            ${groups.map((g) => `<option value="${g.id}" ${String(g.id) === String(portionManageGroupId) ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+          </select>
+        </div>
+        ${portionManageGroupId ? `
+          ${portionGroupName ? `<p class="form-hint" style="margin-bottom:12px">מנות עבור: <strong>${escapeHtml(portionGroupName)}</strong></p>` : ''}
           ${portionPresets.length ? `
             <ul class="flow-preset-list">
               ${portionPresets.map((p) => `
@@ -714,12 +734,8 @@ async function renderManageView(container, ctx) {
             </div>
             <button type="button" class="btn btn-primary btn-sm" id="add-preset-btn" style="width:100%">+ הוסף מנה לרשימה</button>
           </div>
-        </div>
-        ` : `
-          <p class="form-hint" style="margin-bottom:12px">צור תזרים ראשון כדי להגדיר שלבים</p>
-          <button type="button" class="btn btn-primary" id="create-first-flow" style="width:100%">+ צור תזרים ראשון</button>
-        `}
-      ` : `<p class="form-hint">${isGroupTarget ? 'בחר קטגוריה כללית להגדרת תזרימים' : 'בחר קבוצה וקטגוריה'}</p>`}
+        ` : '<p class="form-hint">בחר קטגוריה כללית כדי לראות ולערוך מנות</p>'}
+      </div>
     </div>`;
 
   document.getElementById('back-from-manage')?.addEventListener('click', () => {
@@ -749,12 +765,18 @@ async function renderManageView(container, ctx) {
     renderProcess(container);
   });
 
+  document.getElementById('portion-manage-group')?.addEventListener('change', (e) => {
+    container.dataset.managePortionGroup = e.target.value;
+    renderProcess(container);
+  });
+
   container.querySelectorAll('.manage-flow-pick').forEach((btn) => {
     btn.addEventListener('click', () => {
       container.dataset.manageTarget = btn.dataset.targetType === 'category' ? 'category' : 'group';
       container.dataset.manageGroup = btn.dataset.groupId || '';
       container.dataset.manageCategory = btn.dataset.categoryId || '';
       container.dataset.manageFlowId = btn.dataset.flowId || '';
+      if (btn.dataset.groupId) container.dataset.managePortionGroup = btn.dataset.groupId;
       renderProcess(container);
     });
   });
@@ -862,9 +884,9 @@ async function renderManageView(container, ctx) {
   bindFlowStepPortionConfig('new-step');
 
   document.getElementById('add-preset-btn')?.addEventListener('click', async () => {
-    if (!activeFlow) return;
+    if (!portionManageGroupId) return showToast('בחר קטגוריה כללית');
     try {
-      await addFlowPortionPreset(activeFlow.id, {
+      await addGroupPortionPreset(portionManageGroupId, {
         name: document.getElementById('new-preset-name')?.value,
         weight: document.getElementById('new-preset-weight')?.value,
         extra: document.getElementById('new-preset-extra')?.value,
@@ -889,7 +911,7 @@ async function renderManageView(container, ctx) {
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
       document.getElementById('save-preset')?.addEventListener('click', async () => {
         try {
-          await updateFlowPortionPreset(Number(btn.dataset.id), {
+          await updateGroupPortionPreset(Number(btn.dataset.id), {
             name: document.getElementById('edit-preset-name').value,
             weight: document.getElementById('edit-preset-weight').value,
             extra: document.getElementById('edit-preset-extra').value,
@@ -907,7 +929,7 @@ async function renderManageView(container, ctx) {
   container.querySelectorAll('.delete-preset').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm('למחוק מנה מהרשימה?')) return;
-      await deleteFlowPortionPreset(Number(btn.dataset.id));
+      await deleteGroupPortionPreset(Number(btn.dataset.id));
       showToast('נמחק');
       renderProcess(container);
     });
@@ -1035,7 +1057,7 @@ async function openDuplicateFlowModal(container, ctx, sourceFlow, stepCount = 0)
   openModal({
     title: `שכפול תזרים — ${sourceFlow.name}`,
     bodyHTML: `
-      <p class="form-hint" style="margin-bottom:12px">יועתקו ${stepCount} שלבים וכל המנות המוכנות</p>
+      <p class="form-hint" style="margin-bottom:12px">יועתקו ${stepCount} שלבים (מנות משותפות לפי קטגוריה כללית)</p>
       <div class="form-group">
         <label for="dup-flow-name">שם התזרים החדש</label>
         <input type="text" id="dup-flow-name" value="${escapeHtml(sourceFlow.name)} (עותק)">
