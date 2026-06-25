@@ -1,15 +1,15 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, roundMoney,
-} from '../js/validators.js?v=106';
+} from '../js/validators.js?v=107';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=106';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=106';
-import { enrichBackupData } from '../js/backup.js?v=106';
+} from '../js/calc.js?v=107';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=107';
+import { enrichBackupData } from '../js/backup.js?v=107';
 
 export async function runAllTests() {
   /* validators */

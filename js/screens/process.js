@@ -11,10 +11,10 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=106';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=106';
-import { openModal, closeModal } from '../modal.js?v=106';
-import { requestAutoBackupNow } from '../backup-service.js?v=106';
+} from '../db.js?v=107';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=107';
+import { openModal, closeModal } from '../modal.js?v=107';
+import { requestAutoBackupNow } from '../backup-service.js?v=107';
 
 function parseIdList(str) {
   try {

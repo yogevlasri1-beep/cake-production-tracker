@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=106';
+} from '../db.js?v=107';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=106';
+} from '../utils.js?v=107';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=106';
-import { openModal, closeModal } from '../modal.js?v=106';
+} from '../export.js?v=107';
+import { openModal, closeModal } from '../modal.js?v=107';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=106';
-import { isSheetsConfigured } from '../google-sheets.js?v=106';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=106';
-import { defaultColorForIndex } from '../chart.js?v=106';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=106';
+} from '../sheets-flow.js?v=107';
+import { isSheetsConfigured } from '../google-sheets.js?v=107';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=107';
+import { defaultColorForIndex } from '../chart.js?v=107';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=107';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -321,7 +321,7 @@ function renderCategorySummaryTable(catSummary) {
   if (!catSummary.length) return '';
   return `
     <div class="report-table-wrap">
-    <table class="report-table report-cost-table">
+    <table class="report-table report-cost-table report-cat-summary-table">
       <thead><tr>
         <th>קטגוריה</th><th>כמות</th><th>חומ"ג</th><th>אריזה</th><th>נוספות</th><th>סה"כ עלות</th><th>ערך ללקוח</th>
       </tr></thead>
@@ -648,9 +648,9 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
 
       return `
         <div class="card report-week-cat-card">
-          <div class="section-header home-cat-header" style="margin-bottom:8px">
-            <span class="category-chip" style="${reportCategoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
-            <strong style="font-size:1rem;color:var(--primary)">${qty} יח' · ${formatMoney(val)}</strong>
+          <div class="report-week-cat-header">
+            <span class="category-chip report-week-cat-chip" style="${reportCategoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
+            <span class="report-week-cat-total">${qty} יח' · ${formatMoney(val)}</span>
           </div>
           ${productLines}
         </div>`;

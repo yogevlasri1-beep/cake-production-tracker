@@ -1928,6 +1928,66 @@ table.report-table tfoot td {
   border: 1px solid var(--border);
 }
 
+.report-week-cat-header {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.report-week-cat-chip {
+  align-self: flex-start;
+  max-width: 100%;
+  box-sizing: border-box;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.45;
+  font-size: 0.85rem;
+  padding: 6px 12px;
+  text-align: right;
+}
+
+.report-week-cat-total {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--primary);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.report-week-cat-card .list-item {
+  align-items: flex-start;
+}
+
+.report-week-cat-card .list-item-name {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.report-week-cat-card .list-item > strong {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
+table.report-cat-summary-table th:first-child,
+table.report-cat-summary-table td:first-child {
+  min-width: 7.5rem;
+  max-width: 11rem;
+  word-break: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+table.report-cat-summary-table th:not(:first-child),
+table.report-cat-summary-table td:not(:first-child) {
+  white-space: nowrap;
+}
+
 .report-page-toolbar {
   display: flex;
   flex-wrap: wrap;
