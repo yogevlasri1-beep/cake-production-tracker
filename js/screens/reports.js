@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=107';
+} from '../db.js?v=108';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=107';
+} from '../utils.js?v=108';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=107';
-import { openModal, closeModal } from '../modal.js?v=107';
+} from '../export.js?v=108';
+import { openModal, closeModal } from '../modal.js?v=108';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=107';
-import { isSheetsConfigured } from '../google-sheets.js?v=107';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=107';
-import { defaultColorForIndex } from '../chart.js?v=107';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=107';
+} from '../sheets-flow.js?v=108';
+import { isSheetsConfigured } from '../google-sheets.js?v=108';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=108';
+import { defaultColorForIndex } from '../chart.js?v=108';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=108';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -302,15 +302,15 @@ function renderPortionDocumentationHTML(productionRuns, catMap, productMap, grou
         <tbody>
           ${rows.map(({ run, step, batch }) => `
             <tr>
-              <td>${formatDate(batch.date)}</td>
-              <td>${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
-              <td>${reportRunTitle(run, catMap, productMap, groupMap)}</td>
-              <td>${escapeHtml(step.stepName)}</td>
-              <td>${batch.name ? escapeHtml(batch.name) : '—'}</td>
-              <td>${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
-              <td>${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
-              <td><strong>${formatPortionCount(batch.count)}</strong></td>
-              <td>${batch.note ? escapeHtml(batch.note) : '—'}</td>
+              <td class="report-cell-num">${formatDate(batch.date)}</td>
+              <td class="report-cell-text">${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
+              <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
+              <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
+              <td class="report-cell-text">${batch.name ? escapeHtml(batch.name) : '—'}</td>
+              <td class="report-cell-num">${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
+              <td class="report-cell-text">${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
+              <td class="report-cell-num"><strong>${formatPortionCount(batch.count)}</strong></td>
+              <td class="report-cell-text">${batch.note ? escapeHtml(batch.note) : '—'}</td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -327,13 +327,13 @@ function renderCategorySummaryTable(catSummary) {
       </tr></thead>
       <tbody>
         ${catSummary.map((c) => `<tr>
-          <td>${escapeHtml(c.name)}</td>
-          <td>${c.qty}</td>
-          <td>${c.costRaw > 0 ? formatMoney(c.costRaw) : '—'}</td>
-          <td>${c.costPack > 0 ? formatMoney(c.costPack) : '—'}</td>
-          <td>${c.costExtra > 0 ? formatMoney(c.costExtra) : '—'}</td>
-          <td>${c.cost > 0 ? formatMoney(c.cost) : '—'}</td>
-          <td>${formatMoney(c.val)}</td>
+          <td class="report-cell-text">${escapeHtml(c.name)}</td>
+          <td class="report-cell-num">${c.qty}</td>
+          <td class="report-cell-num">${c.costRaw > 0 ? formatMoney(c.costRaw) : '—'}</td>
+          <td class="report-cell-num">${c.costPack > 0 ? formatMoney(c.costPack) : '—'}</td>
+          <td class="report-cell-num">${c.costExtra > 0 ? formatMoney(c.costExtra) : '—'}</td>
+          <td class="report-cell-num">${c.cost > 0 ? formatMoney(c.cost) : '—'}</td>
+          <td class="report-cell-num">${formatMoney(c.val)}</td>
         </tr>`).join('')}
       </tbody>
     </table>
@@ -387,10 +387,10 @@ function renderProductionRunsStepsTable(run) {
           else if (i === currentIndex && run.status === 'active') status = '● פעיל';
           const portions = formatStepPortionsReport(step);
           return `<tr class="report-flow-step-row report-flow-step-row--${step.status || 'pending'}">
-            <td>${i + 1}</td>
-            <td>${escapeHtml(step.stepName)}</td>
-            <td>${status}</td>
-            <td>${portions}</td>
+            <td class="report-cell-num">${i + 1}</td>
+            <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
+            <td class="report-cell-num">${status}</td>
+            <td class="report-cell-text">${portions}</td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -421,12 +421,12 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
           const endDate = reportRunEndDate(run);
           const dateNote = (run.date < ctx.from || run.date > ctx.to) ? ` · ${formatDate(run.date)}` : '';
           return `<tr>
-            <td>${startDate ? formatDate(startDate) : '—'}${dateNote ? `<span class="report-flow-date-note">${dateNote.trim()}</span>` : ''}</td>
-            <td>${endDate ? formatDate(endDate) : '—'}</td>
-            <td>${batch}</td>
-            <td>${reportRunTitle(run, catMap, productMap, groupMap)}</td>
-            <td><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>
-            <td>${info.progress} · ${escapeHtml(info.stepName)}</td>
+            <td class="report-cell-num">${startDate ? formatDate(startDate) : '—'}${dateNote ? `<span class="report-flow-date-note">${dateNote.trim()}</span>` : ''}</td>
+            <td class="report-cell-num">${endDate ? formatDate(endDate) : '—'}</td>
+            <td class="report-cell-text">${batch}</td>
+            <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
+            <td class="report-cell-num"><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>
+            <td class="report-cell-text">${info.progress} · ${escapeHtml(info.stepName)}</td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -557,14 +557,14 @@ function renderProductionTableHTML(rows, totals, catMap) {
       </tr></thead>
       <tbody>
         ${rows.map((r) => `<tr>
-          <td>${escapeHtml(r.product.name)}</td>
-          <td>${escapeHtml(catMap.get(r.product.categoryId) || '')}</td>
-          <td>${r.qty}</td>
-          <td>${r.costRaw > 0 ? formatMoney(r.costRaw) : '—'}</td>
-          <td>${r.costPack > 0 ? formatMoney(r.costPack) : '—'}</td>
-          <td>${r.costExtra > 0 ? formatMoney(r.costExtra) : '—'}</td>
-          <td>${r.cost > 0 ? formatMoney(r.cost) : '—'}</td>
-          <td>${formatMoney(r.value)}</td>
+          <td class="report-cell-text">${escapeHtml(r.product.name)}</td>
+          <td class="report-cell-text">${escapeHtml(catMap.get(r.product.categoryId) || '')}</td>
+          <td class="report-cell-num">${r.qty}</td>
+          <td class="report-cell-num">${r.costRaw > 0 ? formatMoney(r.costRaw) : '—'}</td>
+          <td class="report-cell-num">${r.costPack > 0 ? formatMoney(r.costPack) : '—'}</td>
+          <td class="report-cell-num">${r.costExtra > 0 ? formatMoney(r.costExtra) : '—'}</td>
+          <td class="report-cell-num">${r.cost > 0 ? formatMoney(r.cost) : '—'}</td>
+          <td class="report-cell-num">${formatMoney(r.value)}</td>
         </tr>`).join('')}
       </tbody>
       <tfoot><tr>
@@ -715,9 +715,9 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
             <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
             <tbody>
               ${processSummary.map((r) => `<tr>
-                <td>${escapeHtml(r.activity)}</td>
-                <td>${escapeHtml(r.category)}</td>
-                <td>${r.qty || '—'}</td>
+                <td class="report-cell-text">${escapeHtml(r.activity)}</td>
+                <td class="report-cell-text">${escapeHtml(r.category)}</td>
+                <td class="report-cell-num">${r.qty || '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -778,9 +778,9 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
             <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
             <tbody>
               ${processSummary.map((r) => `<tr>
-                <td>${escapeHtml(r.activity)}</td>
-                <td>${escapeHtml(r.category)}</td>
-                <td>${r.qty || '—'}</td>
+                <td class="report-cell-text">${escapeHtml(r.activity)}</td>
+                <td class="report-cell-text">${escapeHtml(r.category)}</td>
+                <td class="report-cell-num">${r.qty || '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -1058,9 +1058,9 @@ export async function renderReports(container) {
             <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
             <tbody>
               ${processSummary.map((r) => `<tr>
-                <td>${escapeHtml(r.activity)}</td>
-                <td>${escapeHtml(r.category)}</td>
-                <td>${r.qty || '—'}</td>
+                <td class="report-cell-text">${escapeHtml(r.activity)}</td>
+                <td class="report-cell-text">${escapeHtml(r.category)}</td>
+                <td class="report-cell-num">${r.qty || '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>

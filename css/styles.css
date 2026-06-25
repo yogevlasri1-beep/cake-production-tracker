@@ -1511,9 +1511,8 @@ body.category-drag-active {
 
 table.report-table {
   width: 100%;
-  min-width: 520px;
   border-collapse: collapse;
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   table-layout: auto;
 }
 
@@ -1522,44 +1521,108 @@ table.report-table {
   -webkit-overflow-scrolling: touch;
   margin: 0 -4px;
   padding: 0 4px;
+  max-width: 100%;
 }
 
 .report-cost-table {
-  min-width: 640px;
+  min-width: 560px;
 }
 
 .report-portions-table {
-  min-width: 720px;
+  min-width: 600px;
+}
+
+.report-flow-steps-table {
+  min-width: 280px;
 }
 
 table.report-table th,
 table.report-table td {
-  padding: 10px 10px;
+  padding: 9px 8px;
   text-align: right;
   border-bottom: 1px solid var(--border);
-  white-space: normal;
-  word-break: break-word;
   vertical-align: top;
-  line-height: 1.45;
-}
-
-table.report-table th:nth-child(1),
-table.report-table td:nth-child(1) {
-  min-width: 5.5rem;
-}
-
-table.report-table th:nth-child(2),
-table.report-table td:nth-child(2),
-table.report-table th:nth-child(3),
-table.report-table td:nth-child(3) {
-  min-width: 6.5rem;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 table.report-table th {
   font-weight: 700;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   background: var(--primary-soft);
+  line-height: 1.35;
+}
+
+table.report-table .report-cell-num {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+table.report-table .report-cell-text {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+  min-width: 4.5rem;
+}
+
+table.report-cost-table th:nth-child(1),
+table.report-cost-table td:nth-child(1),
+table.report-cost-table th:nth-child(2),
+table.report-cost-table td:nth-child(2) {
+  min-width: 5rem;
+  max-width: 10rem;
+}
+
+table.report-cost-table th:nth-child(n+3),
+table.report-cost-table td:nth-child(n+3) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+table.report-cat-summary-table th:first-child,
+table.report-cat-summary-table td:first-child {
+  min-width: 6.5rem;
+  max-width: 12rem;
+}
+
+table.report-cat-summary-table th:not(:first-child),
+table.report-cat-summary-table td:not(:first-child) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+table.report-portions-table th:nth-child(1),
+table.report-portions-table td:nth-child(1),
+table.report-portions-table th:nth-child(2),
+table.report-portions-table td:nth-child(2),
+table.report-portions-table th:nth-child(6),
+table.report-portions-table td:nth-child(6),
+table.report-portions-table th:nth-child(7),
+table.report-portions-table td:nth-child(7),
+table.report-portions-table th:nth-child(8),
+table.report-portions-table td:nth-child(8) {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
+table.report-portions-table th:nth-child(3),
+table.report-portions-table td:nth-child(3),
+table.report-portions-table th:nth-child(4),
+table.report-portions-table td:nth-child(4),
+table.report-portions-table th:nth-child(5),
+table.report-portions-table td:nth-child(5),
+table.report-portions-table th:nth-child(9),
+table.report-portions-table td:nth-child(9) {
+  min-width: 4.5rem;
+  max-width: 9rem;
+}
+
+table.report-table:not(.report-cost-table):not(.report-portions-table) th:nth-child(1),
+table.report-table:not(.report-cost-table):not(.report-portions-table) td:nth-child(1) {
+  min-width: 4.5rem;
 }
 
 table.report-table tfoot td {
@@ -1941,7 +2004,7 @@ table.report-table tfoot td {
   max-width: 100%;
   box-sizing: border-box;
   white-space: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   word-break: normal;
   line-height: 1.45;
   font-size: 0.85rem;
@@ -1976,16 +2039,14 @@ table.report-table tfoot td {
 
 table.report-cat-summary-table th:first-child,
 table.report-cat-summary-table td:first-child {
-  min-width: 7.5rem;
-  max-width: 11rem;
-  word-break: normal;
-  overflow-wrap: anywhere;
-  line-height: 1.45;
+  min-width: 6.5rem;
+  max-width: 12rem;
 }
 
 table.report-cat-summary-table th:not(:first-child),
 table.report-cat-summary-table td:not(:first-child) {
   white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 .report-page-toolbar {

@@ -1,4 +1,4 @@
-import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=107';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=108';
 
 export { roundMoney };
 
@@ -201,7 +201,8 @@ export function computeProductionTotals(entries, productMap) {
 export function computeReportRows(entries, categories, products, productMap, catMap) {
   const byProduct = {};
   for (const e of entries || []) {
-    const qty = sanitizeQuantity(e.quantity, { allowZero: false });
+    const p = mapGetById(productMap, e.productId);
+    const qty = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
     if (qty == null) continue;
     const prodId = Number(e.productId);
     byProduct[prodId] = (byProduct[prodId] || 0) + qty;
@@ -211,8 +212,8 @@ export function computeReportRows(entries, categories, products, productMap, cat
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date) || a.productId - b.productId)
     .map((e) => {
-      const qty = sanitizeQuantity(e.quantity, { allowZero: false });
       const p = mapGetById(productMap, e.productId);
+      const qty = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
       if (!p || qty == null) return null;
       return [e.date, catMap.get(p.categoryId) || '', p.name, qty, productLineValue(p, qty)];
     })
@@ -302,8 +303,8 @@ export function qtyForCategoryOnDate(entries, productMap, categoryId, dateIso) {
   let sum = 0;
   for (const e of entries || []) {
     if (e.date !== dateIso) continue;
-    const q = sanitizeQuantity(e.quantity, { allowZero: false });
     const p = mapGetById(productMap, e.productId);
+    const q = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
     if (Number(p?.categoryId) === Number(categoryId) && q != null) sum += q;
   }
   return sum;

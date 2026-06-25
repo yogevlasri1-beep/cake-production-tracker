@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=107';
-import { APP_VERSION } from './version.js?v=107';
-import { defaultColorForIndex } from './chart.js?v=107';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=107';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=107';
-import { ValidationError } from './validators.js?v=107';
+import { exportAllData, importAllData } from './db.js?v=108';
+import { APP_VERSION } from './version.js?v=108';
+import { defaultColorForIndex } from './chart.js?v=108';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=108';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=108';
+import { ValidationError } from './validators.js?v=108';
 
 export const BACKUP_VERSION = 3;
 
@@ -174,6 +174,13 @@ export function enrichBackupData(raw) {
     groupPortionPresets: raw.groupPortionPresets || [],
     productionRuns: raw.productionRuns || [],
     runStepStates: raw.runStepStates || [],
+    managerPlans: raw.managerPlans || [],
+    managerPlanItems: raw.managerPlanItems || [],
+    managerTasks: raw.managerTasks || [],
+    managerIncidents: raw.managerIncidents || [],
+    managerShiftNotes: raw.managerShiftNotes || [],
+    managerResponsibilityAreas: raw.managerResponsibilityAreas || [],
+    managerEmployees: raw.managerEmployees || [],
     settings: raw.settings || [],
   };
 }
@@ -192,6 +199,14 @@ export function summarizeBackupData(data) {
     flowPortionPresets: data.flowPortionPresets?.length || 0,
     groupPortionPresets: data.groupPortionPresets?.length || 0,
     productionRuns: data.productionRuns?.length || 0,
+    runStepStates: data.runStepStates?.length || 0,
+    managerPlans: data.managerPlans?.length || 0,
+    managerPlanItems: data.managerPlanItems?.length || 0,
+    managerTasks: data.managerTasks?.length || 0,
+    managerIncidents: data.managerIncidents?.length || 0,
+    managerShiftNotes: data.managerShiftNotes?.length || 0,
+    managerResponsibilityAreas: data.managerResponsibilityAreas?.length || 0,
+    managerEmployees: data.managerEmployees?.length || 0,
     settings: data.settings?.length || 0,
   };
 }
@@ -210,6 +225,14 @@ export function formatBackupSummary(counts) {
   const portionCount = counts.groupPortionPresets || counts.flowPortionPresets;
   if (portionCount) parts.push(`${portionCount} מנות מוכנות`);
   if (counts.productionRuns) parts.push(`${counts.productionRuns} תהליכי יצור`);
+  if (counts.runStepStates) parts.push(`${counts.runStepStates} שלבי תהליך`);
+  if (counts.managerPlans || counts.managerPlanItems) {
+    parts.push(`${counts.managerPlans || 0} תוכניות / ${counts.managerPlanItems || 0} פריטים`);
+  }
+  if (counts.managerTasks) parts.push(`${counts.managerTasks} משימות מנהל`);
+  if (counts.managerIncidents) parts.push(`${counts.managerIncidents} אירועים`);
+  if (counts.managerShiftNotes) parts.push(`${counts.managerShiftNotes} הערות משמרת`);
+  if (counts.managerEmployees) parts.push(`${counts.managerEmployees} עובדים`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
   return parts.join(' · ');
 }
@@ -243,8 +266,17 @@ function validateBackupPayload(raw) {
   }
   if (!Array.isArray(data.flowSteps)) data.flowSteps = [];
   if (!Array.isArray(data.flows)) data.flows = [];
+  if (!Array.isArray(data.flowPortionPresets)) data.flowPortionPresets = [];
   if (!Array.isArray(data.productionRuns)) data.productionRuns = [];
   if (!Array.isArray(data.runStepStates)) data.runStepStates = [];
+  if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];
+  if (!Array.isArray(data.managerPlans)) data.managerPlans = [];
+  if (!Array.isArray(data.managerPlanItems)) data.managerPlanItems = [];
+  if (!Array.isArray(data.managerTasks)) data.managerTasks = [];
+  if (!Array.isArray(data.managerIncidents)) data.managerIncidents = [];
+  if (!Array.isArray(data.managerShiftNotes)) data.managerShiftNotes = [];
+  if (!Array.isArray(data.managerResponsibilityAreas)) data.managerResponsibilityAreas = [];
+  if (!Array.isArray(data.managerEmployees)) data.managerEmployees = [];
   return enrichBackupData(data);
 }
 

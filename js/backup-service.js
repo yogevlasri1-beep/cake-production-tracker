@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=107';
+} from './db.js?v=108';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=107';
-import { downloadBlob } from './download.js?v=107';
-import { ValidationError } from './validators.js?v=107';
-import { openModal, closeModal } from './modal.js?v=107';
-import { escapeHtml } from './utils.js?v=107';
+} from './backup.js?v=108';
+import { downloadBlob } from './download.js?v=108';
+import { ValidationError } from './validators.js?v=108';
+import { openModal, closeModal } from './modal.js?v=108';
+import { escapeHtml } from './utils.js?v=108';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=107';
+} from './backup-folder-bridge.js?v=108';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -316,6 +316,7 @@ function installDbChangeHooks() {
   const tables = [
     'categories', 'categoryGroups', 'products', 'productionEntries', 'targets',
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
+    'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'productionRuns', 'runStepStates',
     'settings',
   ];

@@ -1,15 +1,15 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, roundMoney,
-} from '../js/validators.js?v=107';
+} from '../js/validators.js?v=108';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=107';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=107';
-import { enrichBackupData } from '../js/backup.js?v=107';
+} from '../js/calc.js?v=108';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=108';
+import { enrichBackupData } from '../js/backup.js?v=108';
 
 export async function runAllTests() {
   /* validators */
@@ -276,6 +276,36 @@ export async function runAllTests() {
     assertEqual(enriched.products[0].categoryName, 'שטרודל');
     assertEqual(enriched.products[0].productionQty, 4);
     assertApprox(enriched.products[0].productionValue, 50);
+  });
+
+  test('computeReportRows — מוצר לפי ק"ג', () => {
+    const categories = [{ id: 1, name: 'בצק' }];
+    const products = [{ id: 1, categoryId: 1, name: 'בצק פריך', unitPrice: 20, priceUnit: 'kg' }];
+    const productMap = buildProductMap(products);
+    const catMap = new Map([[1, 'בצק']]);
+    const entries = [{ date: '2026-06-01', productId: 1, quantity: 2.5 }];
+    const r = computeReportRows(entries, categories, products, productMap, catMap);
+    assertEqual(r.totalQty, 2.5);
+    assertApprox(r.totalVal, 50);
+  });
+
+  test('enrichBackupData — כולל נתוני מנהל', () => {
+    const raw = {
+      categories: [{ id: 1, name: 'א' }],
+      categoryGroups: [],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      flows: [],
+      flowSteps: [],
+      managerPlans: [{ id: 1 }],
+      managerTasks: [{ id: 1 }, { id: 2 }],
+    };
+    const d = enrichBackupData(raw);
+    assertEqual(d.managerPlans.length, 1);
+    assertEqual(d.managerTasks.length, 2);
   });
 
   test('sortProductsForReport — סדר קטגוריה ומוצר', () => {

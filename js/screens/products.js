@@ -5,12 +5,12 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=107';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=107';
-import { openModal, closeModal } from '../modal.js?v=107';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=107';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=107';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=107';
+} from '../db.js?v=108';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=108';
+import { openModal, closeModal } from '../modal.js?v=108';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=108';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=108';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=108';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -343,7 +343,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=107');
+    const { navigate } = await import('../app.js?v=108');
     navigate('backup');
   });
 
