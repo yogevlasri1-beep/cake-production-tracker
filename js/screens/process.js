@@ -11,10 +11,10 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=105';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=105';
-import { openModal, closeModal } from '../modal.js?v=105';
-import { requestAutoBackupNow } from '../backup-service.js?v=105';
+} from '../db.js?v=106';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=106';
+import { openModal, closeModal } from '../modal.js?v=106';
+import { requestAutoBackupNow } from '../backup-service.js?v=106';
 
 function parseIdList(str) {
   try {
@@ -1342,12 +1342,24 @@ async function renderStartView(container, ctx) {
           </div>
           <p class="form-hint" style="margin-bottom:8px">סמן כמה קטגוריות — מגוון מוצרים על אותו תזרים יצור</p>
           <div class="group-category-checklist">
-            ${groupCategories.map((c) => `
-              <label class="group-category-option">
-                <input type="checkbox" class="start-cat-check" value="${c.id}" ${selectedCategories.includes(c.id) ? 'checked' : ''}>
-                <span>${escapeHtml(c.name)}</span>
-              </label>`).join('')}
+            ${groupCategories.map((c) => {
+              const isSelected = selectedCategories.includes(c.id);
+              return `
+              <label class="group-category-option${isSelected ? ' is-selected' : ''}">
+                <input type="checkbox" class="start-cat-check" value="${c.id}" ${isSelected ? 'checked' : ''}>
+                <span class="group-category-option-label">${escapeHtml(c.name)}</span>
+                ${isSelected ? '<span class="group-category-option-check" aria-hidden="true">✓</span>' : ''}
+              </label>`;
+            }).join('')}
           </div>
+          ${selectedCategories.length ? `
+          <div class="start-selected-cats-summary">
+            <span class="start-selected-cats-title">נבחרו:</span>
+            ${groupCategories
+              .filter((c) => selectedCategories.includes(c.id))
+              .map((c) => `<span class="start-selected-cat-chip">${escapeHtml(c.name)}</span>`)
+              .join('')}
+          </div>` : ''}
           <p class="form-hint" style="margin-top:8px">${selectedCategories.length} מתוך ${groupCategories.length} קטגוריות נבחרו</p>
         </div>
       ` : scopeType === 'category' ? `
