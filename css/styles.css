@@ -1529,7 +1529,11 @@ table.report-table {
 }
 
 .report-portions-table {
-  min-width: 600px;
+  min-width: 680px;
+}
+
+.report-portions-summary-table {
+  min-width: 420px;
 }
 
 .report-flow-steps-table {
@@ -1594,16 +1598,12 @@ table.report-cat-summary-table td:not(:first-child) {
   overflow-wrap: normal;
 }
 
-table.report-portions-table th:nth-child(1),
-table.report-portions-table td:nth-child(1),
-table.report-portions-table th:nth-child(2),
-table.report-portions-table td:nth-child(2),
 table.report-portions-table th:nth-child(6),
 table.report-portions-table td:nth-child(6),
-table.report-portions-table th:nth-child(7),
-table.report-portions-table td:nth-child(7),
 table.report-portions-table th:nth-child(8),
-table.report-portions-table td:nth-child(8) {
+table.report-portions-table td:nth-child(8),
+table.report-portions-table th:nth-child(9),
+table.report-portions-table td:nth-child(9) {
   white-space: nowrap;
   overflow-wrap: normal;
 }
@@ -1614,10 +1614,26 @@ table.report-portions-table th:nth-child(4),
 table.report-portions-table td:nth-child(4),
 table.report-portions-table th:nth-child(5),
 table.report-portions-table td:nth-child(5),
-table.report-portions-table th:nth-child(9),
-table.report-portions-table td:nth-child(9) {
+table.report-portions-table th:nth-child(7),
+table.report-portions-table td:nth-child(7),
+table.report-portions-table th:nth-child(10),
+table.report-portions-table td:nth-child(10) {
   min-width: 4.5rem;
   max-width: 9rem;
+}
+
+table.report-portions-summary-table th:nth-child(1),
+table.report-portions-summary-table td:nth-child(1),
+table.report-portions-summary-table th:nth-child(3),
+table.report-portions-summary-table td:nth-child(3) {
+  min-width: 4.5rem;
+  max-width: 9rem;
+}
+
+table.report-portions-summary-table th:nth-child(n+2):not(:nth-child(3)),
+table.report-portions-summary-table td:nth-child(n+2):not(:nth-child(3)) {
+  white-space: nowrap;
+  overflow-wrap: normal;
 }
 
 table.report-table:not(.report-cost-table):not(.report-portions-table) th:nth-child(1),

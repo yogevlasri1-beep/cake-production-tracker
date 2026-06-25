@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=108';
+} from '../db.js?v=109';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=108';
+} from '../utils.js?v=109';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=108';
-import { openModal, closeModal } from '../modal.js?v=108';
+} from '../export.js?v=109';
+import { openModal, closeModal } from '../modal.js?v=109';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=108';
-import { isSheetsConfigured } from '../google-sheets.js?v=108';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=108';
-import { defaultColorForIndex } from '../chart.js?v=108';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=108';
+} from '../sheets-flow.js?v=109';
+import { isSheetsConfigured } from '../google-sheets.js?v=109';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=109';
+import { defaultColorForIndex } from '../chart.js?v=109';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=109';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -274,6 +274,42 @@ function formatStepPortionsReport(step) {
   </div>`;
 }
 
+function batchLineWeightKg(batch) {
+  if (batch?.weight == null) return null;
+  const w = Number(batch.weight);
+  const c = Number(batch.count) || 0;
+  if (!Number.isFinite(w) || !Number.isFinite(c)) return null;
+  return w * c;
+}
+
+function formatPortionWeightKg(kg) {
+  if (kg == null || !Number.isFinite(kg)) return '—';
+  const rounded = Math.round(kg * 1000) / 1000;
+  const text = Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return `${text} ק"ג`;
+}
+
+function aggregatePortionDocumentation(rows) {
+  const map = new Map();
+  for (const { batch } of rows) {
+    const name = batch.name || 'ללא שם';
+    const weight = batch.weight != null ? Number(batch.weight) : null;
+    const extra = batch.extra || '';
+    const key = `${name}|${weight ?? ''}|${extra}`;
+    if (!map.has(key)) {
+      map.set(key, { name, weight, extra, count: 0, totalWeightKg: 0, hasWeight: weight != null });
+    }
+    const agg = map.get(key);
+    const cnt = Number(batch.count) || 0;
+    agg.count += cnt;
+    const lineKg = batchLineWeightKg(batch);
+    if (lineKg != null) agg.totalWeightKg += lineKg;
+    else agg.hasWeight = false;
+  }
+  return [...map.values()]
+    .sort((a, b) => a.name.localeCompare(b.name, 'he') || (a.weight ?? 0) - (b.weight ?? 0));
+}
+
 function renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap) {
   const rows = [];
   for (const run of productionRuns) {
@@ -293,25 +329,60 @@ function renderPortionDocumentationHTML(productionRuns, catMap, productMap, grou
     return String(b.batch.recordedAt || '').localeCompare(String(a.batch.recordedAt || ''));
   });
 
+  const summary = aggregatePortionDocumentation(rows);
+  const grandTotalKg = summary.reduce((s, row) => s + (row.hasWeight ? row.totalWeightKg : 0), 0);
+  const grandHasWeight = summary.some((row) => row.hasWeight);
+
   return `
+    ${summary.length ? `
+    <div class="report-portions-summary" style="margin-bottom:16px">
+      <h4 class="report-preview-heading" style="margin-top:0">סיכום משקל לפי מנה</h4>
+      <div class="report-table-wrap">
+        <table class="report-table report-portions-summary-table">
+          <thead><tr>
+            <th>מנה</th><th>משקל למנה</th><th>תוספת</th><th>סה"כ מנות</th><th>סה"כ משקל</th>
+          </tr></thead>
+          <tbody>
+            ${summary.map((row) => `
+              <tr>
+                <td class="report-cell-text">${escapeHtml(row.name)}</td>
+                <td class="report-cell-num">${row.weight != null ? formatPortionWeightKg(row.weight) : '—'}</td>
+                <td class="report-cell-text">${row.extra ? escapeHtml(row.extra) : '—'}</td>
+                <td class="report-cell-num"><strong>${formatPortionCount(row.count)}</strong></td>
+                <td class="report-cell-num"><strong>${row.hasWeight ? formatPortionWeightKg(row.totalWeightKg) : '—'}</strong></td>
+              </tr>`).join('')}
+          </tbody>
+          ${grandHasWeight ? `
+          <tfoot><tr>
+            <td colspan="4">סה"כ משקל (כל המנות)</td>
+            <td class="report-cell-num"><strong>${formatPortionWeightKg(grandTotalKg)}</strong></td>
+          </tr></tfoot>` : ''}
+        </table>
+      </div>
+    </div>` : ''}
+    <h4 class="report-preview-heading">פירוט רשומות</h4>
     <div class="report-table-wrap">
       <table class="report-table report-portions-table">
         <thead><tr>
-          <th>תאריך</th><th>אצווה</th><th>יעד</th><th>שלב</th><th>מנה</th><th>משקל</th><th>תוספת</th><th>כמות</th><th>הערה</th>
+          <th>תאריך</th><th>אצווה</th><th>יעד</th><th>שלב</th><th>מנה</th><th>משקל למנה</th><th>תוספת</th><th>כמות</th><th>סה"כ משקל</th><th>הערה</th>
         </tr></thead>
         <tbody>
-          ${rows.map(({ run, step, batch }) => `
+          ${rows.map(({ run, step, batch }) => {
+            const lineKg = batchLineWeightKg(batch);
+            return `
             <tr>
               <td class="report-cell-num">${formatDate(batch.date)}</td>
               <td class="report-cell-text">${run.batchNumber ? escapeHtml(run.batchNumber) : '—'}</td>
               <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
               <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
               <td class="report-cell-text">${batch.name ? escapeHtml(batch.name) : '—'}</td>
-              <td class="report-cell-num">${batch.weight != null ? `${batch.weight} ק"ג` : '—'}</td>
+              <td class="report-cell-num">${batch.weight != null ? formatPortionWeightKg(batch.weight) : '—'}</td>
               <td class="report-cell-text">${batch.extra ? escapeHtml(batch.extra) : '—'}</td>
               <td class="report-cell-num"><strong>${formatPortionCount(batch.count)}</strong></td>
+              <td class="report-cell-num"><strong>${lineKg != null ? formatPortionWeightKg(lineKg) : '—'}</strong></td>
               <td class="report-cell-text">${batch.note ? escapeHtml(batch.note) : '—'}</td>
-            </tr>`).join('')}
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>`;

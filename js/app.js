@@ -1,16 +1,16 @@
-import { initDB } from './db.js?v=108';
-import { renderHome, homeMeta } from './screens/home.js?v=108';
-import { renderRecord, recordMeta } from './screens/record.js?v=108';
-import { renderProducts, productsMeta } from './screens/products.js?v=108';
-import { renderManager, managerMeta } from './screens/manager.js?v=108';
-import { renderProcess, processMeta } from './screens/process.js?v=108';
-import { renderReports, reportsMeta } from './screens/reports.js?v=108';
-import { renderBackup, backupMeta } from './screens/backup.js?v=108';
-import { initIOSInstallPrompt } from './ios-install.js?v=108';
-import { initNetworkCheck } from './network.js?v=108';
-import { registerServiceWorker } from './sw-register.js?v=108';
-import { APP_VERSION } from './version.js?v=108';
-import './modal.js?v=108';
+import { initDB } from './db.js?v=109';
+import { renderHome, homeMeta } from './screens/home.js?v=109';
+import { renderRecord, recordMeta } from './screens/record.js?v=109';
+import { renderProducts, productsMeta } from './screens/products.js?v=109';
+import { renderManager, managerMeta } from './screens/manager.js?v=109';
+import { renderProcess, processMeta } from './screens/process.js?v=109';
+import { renderReports, reportsMeta } from './screens/reports.js?v=109';
+import { renderBackup, backupMeta } from './screens/backup.js?v=109';
+import { initIOSInstallPrompt } from './ios-install.js?v=109';
+import { initNetworkCheck } from './network.js?v=109';
+import { registerServiceWorker } from './sw-register.js?v=109';
+import { APP_VERSION } from './version.js?v=109';
+import './modal.js?v=109';
 
 const SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -69,7 +69,7 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate, detectRemoteVersion } = await import('./sw-register.js?v=108');
+        const { forceAppUpdate, detectRemoteVersion } = await import('./sw-register.js?v=109');
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           if (confirm(`גרסה ${remote} זמינה (מותקנת: ${APP_VERSION}). לעדכן?`)) await forceAppUpdate();
@@ -77,7 +77,7 @@ async function boot() {
           await forceAppUpdate();
         }
       });
-      import('./sw-register.js?v=108').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=109').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -89,7 +89,7 @@ async function boot() {
 
     await initDB();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=108');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=109');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
