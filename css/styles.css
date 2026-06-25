@@ -2036,6 +2036,76 @@ table.report-table tfoot td {
   white-space: nowrap;
 }
 
+.report-qty-value-block {
+  margin-top: 8px;
+}
+
+.report-qty-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem 5.5rem;
+  gap: 6px 12px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.report-qty-value-row--labels {
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.report-qty-value-row--totals {
+  padding-top: 2px;
+}
+
+.report-qty-value-row--product {
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(226, 232, 240, 0.7);
+}
+
+.report-qty-value-row--product:last-child {
+  border-bottom: none;
+}
+
+.report-qty-value-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.report-qty-value-label--name {
+  text-align: right;
+}
+
+.report-qty-value-label--spacer {
+  visibility: hidden;
+}
+
+.report-qty-value-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+.report-qty-value-num {
+  font-size: 0.88rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.report-qty-value-row--totals .report-qty-value-num {
+  font-size: 0.95rem;
+  color: var(--primary);
+}
+
+.report-week-product-list {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
 .report-week-cat-card .list-item {
   align-items: flex-start;
 }

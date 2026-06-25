@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=109';
+} from '../db.js?v=110';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=109';
+} from '../utils.js?v=110';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=109';
-import { openModal, closeModal } from '../modal.js?v=109';
+} from '../export.js?v=110';
+import { openModal, closeModal } from '../modal.js?v=110';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=109';
-import { isSheetsConfigured } from '../google-sheets.js?v=109';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=109';
-import { defaultColorForIndex } from '../chart.js?v=109';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=109';
+} from '../sheets-flow.js?v=110';
+import { isSheetsConfigured } from '../google-sheets.js?v=110';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=110';
+import { defaultColorForIndex } from '../chart.js?v=110';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=110';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -394,7 +394,7 @@ function renderCategorySummaryTable(catSummary) {
     <div class="report-table-wrap">
     <table class="report-table report-cost-table report-cat-summary-table">
       <thead><tr>
-        <th>קטגוריה</th><th>כמות</th><th>חומ"ג</th><th>אריזה</th><th>נוספות</th><th>סה"כ עלות</th><th>ערך ללקוח</th>
+        <th>קטגוריה</th><th>כמות</th><th>חומ"ג</th><th>אריזה</th><th>נוספות</th><th>סה"כ עלות</th><th>ערך כספי</th>
       </tr></thead>
       <tbody>
         ${catSummary.map((c) => `<tr>
@@ -442,6 +442,30 @@ function mapCategorySummary(categories, products, totals) {
       costExtra: t.costExtra,
     };
   }).filter((c) => c.qty > 0);
+}
+
+function renderReportQtyValueLabels({ showProductName = false } = {}) {
+  return `
+    <div class="report-qty-value-row report-qty-value-row--labels" role="row">
+      ${showProductName ? '<span class="report-qty-value-label report-qty-value-label--name">מוצר</span>' : '<span class="report-qty-value-label report-qty-value-label--spacer" aria-hidden="true"></span>'}
+      <span class="report-qty-value-label">כמות</span>
+      <span class="report-qty-value-label">ערך כספי</span>
+    </div>`;
+}
+
+function renderReportQtyValueRow({ name, qty, value, bold = false }) {
+  const qtyText = typeof qty === 'number' ? formatPortionCount(qty) : qty;
+  const valText = formatMoney(value);
+  const strongOpen = bold ? '<strong>' : '';
+  const strongClose = bold ? '</strong>' : '';
+  return `
+    <div class="report-qty-value-row${name ? ' report-qty-value-row--product' : ' report-qty-value-row--totals'}" role="row">
+      ${name
+    ? `<span class="report-qty-value-name">${escapeHtml(name)}</span>`
+    : '<span class="report-qty-value-label report-qty-value-label--spacer" aria-hidden="true"></span>'}
+      <span class="report-qty-value-num">${strongOpen}${escapeHtml(String(qtyText))}${strongClose}</span>
+      <span class="report-qty-value-num">${strongOpen}${valText}${strongClose}</span>
+    </div>`;
 }
 
 function renderProductionRunsStepsTable(run) {
@@ -704,26 +728,30 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
     const catBlocks = categories.map((cat) => {
       const { qty, value: val } = sumCategoryTotals(cat.id, products, dayTotals.byProduct);
       if (qty === 0) return '';
-      const productLines = products
+      const productRows = products
         .filter((p) => p.categoryId === cat.id)
         .map((p) => {
           const { qty: pQty, value: pVal } = productProductionValue(p, dayTotals.byProduct);
           if (pQty === 0) return '';
-          return `<div class="list-item">
-            <span class="list-item-name">${escapeHtml(p.name)}</span>
-            <strong>${pQty} · ${formatMoney(pVal)}</strong>
-          </div>`;
+          return renderReportQtyValueRow({ name: p.name, qty: pQty, value: pVal });
         })
-        .filter(Boolean)
-        .join('');
+        .filter(Boolean);
+      const productLines = productRows.join('');
 
       return `
         <div class="card report-week-cat-card">
           <div class="report-week-cat-header">
             <span class="category-chip report-week-cat-chip" style="${reportCategoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
-            <span class="report-week-cat-total">${qty} יח' · ${formatMoney(val)}</span>
+            <div class="report-qty-value-block">
+              ${renderReportQtyValueLabels()}
+              ${renderReportQtyValueRow({ qty, value: val, bold: true })}
+            </div>
           </div>
-          ${productLines}
+          ${productRows.length ? `
+            <div class="report-week-product-list">
+              ${renderReportQtyValueLabels({ showProductName: true })}
+              ${productLines}
+            </div>` : ''}
         </div>`;
     }).filter(Boolean).join('');
 
@@ -733,11 +761,11 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
         <div class="stat-grid report-preview-stats" style="margin-bottom:12px">
           <div class="stat-box">
             <div class="stat-value">${dayTotals.total}</div>
-            <div class="stat-label">ייצור (יח')</div>
+            <div class="stat-label">כמות</div>
           </div>
           <div class="stat-box">
             <div class="stat-value">${formatMoney(dayTotals.totalValue)}</div>
-            <div class="stat-label">ערך</div>
+            <div class="stat-label">ערך כספי</div>
           </div>
         </div>
         ${catBlocks || '<p class="report-empty">אין פירוט</p>'}
