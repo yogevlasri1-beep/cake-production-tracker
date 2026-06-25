@@ -7,14 +7,14 @@ import {
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
-  completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDates,
+  completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=104';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=104';
-import { openModal, closeModal } from '../modal.js?v=104';
-import { requestAutoBackupNow } from '../backup-service.js?v=104';
+} from '../db.js?v=105';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=105';
+import { openModal, closeModal } from '../modal.js?v=105';
+import { requestAutoBackupNow } from '../backup-service.js?v=105';
 
 function parseIdList(str) {
   try {
@@ -140,7 +140,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
         <ul class="flow-portion-batch-list">
           ${batches.map((b, batchIndex) => `
             <li class="flow-portion-batch-item" data-batch-index="${batchIndex}">
-              <span class="flow-portion-batch-date">${formatDate(b.date)}</span>
+              ${!editable ? `<span class="flow-portion-batch-date">${formatDate(b.date)}</span>` : ''}
               ${b.name ? `
                 <span class="flow-portion-batch-name">${escapeHtml(b.name)}</span>
                 ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
@@ -150,6 +150,10 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
                 <label class="flow-portion-batch-count-edit">
                   × <input type="number" class="flow-portion-batch-count-input" min="0.1" step="0.1" inputmode="decimal"
                     value="${b.count}" data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="מספר מנות">
+                </label>
+                <label class="flow-portion-batch-date-edit">
+                  <input type="date" class="flow-portion-batch-date-input" value="${b.date || ''}"
+                    data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="תאריך">
                 </label>
                 <button type="button" class="btn btn-danger btn-sm flow-portion-batch-del" data-step="${stepIndex}" data-batch="${batchIndex}" title="הסר">🗑</button>
               ` : `
@@ -268,7 +272,7 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions
     </div>`;
 }
 
-function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets = [], runStatus = 'active') {
+function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets = [], runStatus = 'active', editAllMode = false) {
   const visual = stepVisualState(stepIndex, currentIndex, totalSteps, step.status);
   const hasNotes = step.notes || step.issues || step.improvements;
   const portionText = stepPortionLabel(step);
@@ -278,7 +282,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const isActive = visual === 'active';
   const isDone = visual === 'done';
   const reachable = isActive || isDone;
-  const showPreview = hasNotes && !isActive;
+  const showPreview = hasNotes && !isActive && !editAllMode;
 
   return `
     <div class="flow-step flow-step--${visual}" data-step-index="${stepIndex}">
@@ -290,7 +294,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
           ${timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : ''}
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽 מנות</span>' : ''}
         </div>
-        ${portionText && !isActive ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
+        ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${step.tracksPortions && reachable
     ? stepPortionBatchesHTML(step, stepIndex, { canAdd: reachable, canEdit: reachable, presets: portionPresets }) : ''}
         ${showPreview ? `
@@ -300,13 +304,14 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
             ${step.improvements ? `<span>💡 ${escapeHtml(step.improvements)}</span>` : ''}
           </div>` : ''}
         ${reachable ? stepInlineEditHTML(step, stepIndex, {
-    expanded: isActive,
+    expanded: isActive || editAllMode,
     includePortions: true,
     presets: portionPresets,
   }) : ''}
         <div class="flow-step-actions">
-          ${isDone ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">עריכה</button>` : ''}
-          ${isActive ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
+          ${isDone && !editAllMode ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">עריכה</button>` : ''}
+          ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
+          ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם שלב</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -344,6 +349,7 @@ async function renderRunView(container, runId, ctx) {
   const { catMap, productMap, groupMap } = ctx;
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
+  const editAllMode = container.dataset.runEditAll === '1';
 
   container.innerHTML = `
     <div class="card flow-run-header-card">
@@ -361,8 +367,13 @@ async function renderRunView(container, runId, ctx) {
           <span class="flow-run-dates-label">סיום</span>
           <span class="flow-run-dates-value">${run.completedAt ? formatRunTimestamp(run.completedAt) : '—'}</span>
         </div>
-        <button type="button" class="btn btn-secondary btn-sm" id="edit-run-dates">✏️ ערוך תאריכים</button>
       </div>
+      <div class="flow-run-header-actions filter-row" style="margin-top:12px;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" id="toggle-edit-all">${editAllMode ? 'סיום עריכה' : '✏️ ערוך הכל'}</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="edit-run-details">📋 פרטי תהליך</button>
+        <button type="button" class="btn btn-danger btn-sm" id="delete-run-in-view">🗑 מחק תהליך</button>
+      </div>
+      ${editAllMode ? '<p class="form-hint" style="margin-top:8px">מצב עריכה — כל השלבים שהגיעו אליהם פתוחים לעריכה</p>' : ''}
       <div class="flow-legend">
         <span class="flow-legend-item flow-legend-item--done">✓ בוצע</span>
         <span class="flow-legend-item flow-legend-item--active">● פעיל</span>
@@ -370,16 +381,65 @@ async function renderRunView(container, runId, ctx) {
       </div>
     </div>
 
-    <div class="flow-timeline">
-      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status)).join('')}
+    <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
+      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode)).join('')}
     </div>
+
+    ${editAllMode ? `
+      <div class="card">
+        <button type="button" class="btn btn-primary" id="save-all-steps" style="width:100%">שמור את כל השינויים</button>
+      </div>` : ''}
 
     ${run.status === 'completed'
       ? `<div class="card"><p class="flow-complete-msg">✓ התהליך הושלם${run.batchNumber ? ` · אצווה ${escapeHtml(run.batchNumber)}` : ''}</p></div>`
       : ''}`;
 
-  document.getElementById('edit-run-dates')?.addEventListener('click', () => {
-    openRunDatesModal(container, run, ctx);
+  document.getElementById('toggle-edit-all')?.addEventListener('click', () => {
+    container.dataset.runEditAll = editAllMode ? '' : '1';
+    container.dataset.runId = String(run.id);
+    container.dataset.view = 'run';
+    renderProcess(container);
+  });
+
+  document.getElementById('edit-run-details')?.addEventListener('click', () => {
+    openRunDetailsModal(container, run, ctx);
+  });
+
+  document.getElementById('delete-run-in-view')?.addEventListener('click', async () => {
+    if (!confirm('למחוק את התהליך הזה? פעולה זו לא ניתנת לביטול.')) return;
+    try {
+      await deleteProductionRun(run.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast('התהליך נמחק');
+      container.dataset.view = 'list';
+      delete container.dataset.runId;
+      delete container.dataset.runEditAll;
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('save-all-steps')?.addEventListener('click', async () => {
+    const reachableIndexes = run.steps
+      .map((step, i) => ({ step, i }))
+      .filter(({ step, i }) => {
+        const visual = stepVisualState(i, currentIndex, run.steps.length, step.status);
+        return visual === 'active' || visual === 'done';
+      })
+      .map(({ i }) => i);
+    try {
+      for (const stepIndex of reachableIndexes) {
+        await updateRunStepFields(run.id, stepIndex, readStepInlineFields(stepIndex));
+      }
+      requestAutoBackupNow().catch(() => {});
+      showToast('כל השינויים נשמרו ✓');
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('back-to-list')?.addEventListener('click', () => {
@@ -480,6 +540,20 @@ async function renderRunView(container, runId, ctx) {
     input.addEventListener('change', saveBatch);
   });
 
+  container.querySelectorAll('.flow-portion-batch-date-input').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const stepIndex = Number(input.dataset.step);
+      const batchIndex = Number(input.dataset.batch);
+      try {
+        await updateRunStepPortionBatch(run.id, stepIndex, batchIndex, { date: input.value });
+        requestAutoBackupNow().catch(() => {});
+        showToast('תאריך עודכן ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
   container.querySelectorAll('.flow-portion-batch-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const stepIndex = Number(btn.dataset.step);
@@ -499,13 +573,17 @@ async function renderRunView(container, runId, ctx) {
   });
 }
 
-function openRunDatesModal(container, run, ctx) {
+function openRunDetailsModal(container, run, ctx) {
   const startDate = runStartDateIso(run) || todayISO();
   const endDate = run.completedAt ? String(run.completedAt).slice(0, 10) : '';
 
   openModal({
-    title: 'עריכת תאריכי תהליך',
+    title: 'עריכת פרטי תהליך',
     bodyHTML: `
+      <div class="form-group">
+        <label for="run-batch-number">מספר אצווה</label>
+        <input type="text" id="run-batch-number" value="${escapeHtml(run.batchNumber || '')}" placeholder="אופציונלי">
+      </div>
       <div class="form-group">
         <label for="run-started-date">תאריך התחלה</label>
         <input type="date" id="run-started-date" value="${startDate}">
@@ -518,24 +596,26 @@ function openRunDatesModal(container, run, ctx) {
       <p class="form-hint">תאריך סיום יופיע ויהיה ניתן לעריכה לאחר השלמת כל השלבים</p>`}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
-      <button class="btn btn-primary" id="save-run-dates">שמור</button>`,
+      <button class="btn btn-primary" id="save-run-details">שמור</button>`,
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 
-  document.getElementById('save-run-dates')?.addEventListener('click', async () => {
+  document.getElementById('save-run-details')?.addEventListener('click', async () => {
     try {
-      const startedDate = document.getElementById('run-started-date').value;
-      const payload = { startedDate };
+      const payload = {
+        batchNumber: document.getElementById('run-batch-number')?.value ?? '',
+        startedDate: document.getElementById('run-started-date').value,
+      };
       if (run.status === 'completed') {
         payload.completedDate = document.getElementById('run-completed-date').value;
       }
-      await updateProductionRunDates(run.id, payload);
+      await updateProductionRunDetails(run.id, payload);
       closeModal();
-      showToast('תאריכים נשמרו ✓');
+      showToast('פרטים נשמרו ✓');
       container.dataset.runId = String(run.id);
       container.dataset.view = 'run';
-      if (startedDate) container.dataset.selectedDate = startedDate;
+      if (payload.startedDate) container.dataset.selectedDate = payload.startedDate;
       renderProcess(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');

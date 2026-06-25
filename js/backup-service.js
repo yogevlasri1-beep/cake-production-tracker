@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=104';
+} from './db.js?v=105';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=104';
-import { downloadBlob } from './download.js?v=104';
-import { ValidationError } from './validators.js?v=104';
-import { openModal, closeModal } from './modal.js?v=104';
-import { escapeHtml } from './utils.js?v=104';
+} from './backup.js?v=105';
+import { downloadBlob } from './download.js?v=105';
+import { ValidationError } from './validators.js?v=105';
+import { openModal, closeModal } from './modal.js?v=105';
+import { escapeHtml } from './utils.js?v=105';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=104';
+} from './backup-folder-bridge.js?v=105';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';

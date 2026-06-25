@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=104';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=104';
-import { defaultColorForIndex } from './chart.js?v=104';
+} from './validators.js?v=105';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=105';
+import { defaultColorForIndex } from './chart.js?v=105';
 
 export { ValidationError };
 
@@ -2536,6 +2536,39 @@ export async function updateProductionRunDates(runId, { startedDate, completedDa
   if (!run) throw new ValidationError('תהליך לא נמצא');
 
   const patch = {};
+  if (startedDate !== undefined) {
+    patch.startedAt = mergeDateIntoIso(startedDate, run.startedAt);
+    patch.date = startedDate;
+  }
+  if (completedDate !== undefined) {
+    if (run.status !== 'completed') {
+      throw new ValidationError('ניתן לערוך תאריך סיום רק לתהליך שהושלם');
+    }
+    if (completedDate === '' || completedDate == null) {
+      patch.completedAt = null;
+    } else {
+      patch.completedAt = mergeDateIntoIso(completedDate, run.completedAt);
+    }
+  }
+
+  const startIso = patch.startedAt || run.startedAt;
+  const endIso = patch.completedAt !== undefined ? patch.completedAt : run.completedAt;
+  if (startIso && endIso && endIso < startIso) {
+    throw new ValidationError('תאריך סיום לא יכול להיות לפני תאריך התחלה');
+  }
+
+  if (!Object.keys(patch).length) return;
+  await db.productionRuns.update(runId, patch);
+}
+
+export async function updateProductionRunDetails(runId, { batchNumber, startedDate, completedDate } = {}) {
+  const run = await db.productionRuns.get(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+
+  const patch = {};
+  if (batchNumber !== undefined) {
+    patch.batchNumber = String(batchNumber || '').trim().slice(0, 40);
+  }
   if (startedDate !== undefined) {
     patch.startedAt = mergeDateIntoIso(startedDate, run.startedAt);
     patch.date = startedDate;

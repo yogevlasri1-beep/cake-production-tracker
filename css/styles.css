@@ -581,6 +581,15 @@ body {
   border-top: 1px solid var(--border, #e2e8f0);
 }
 
+.flow-portion-batch-date-edit input {
+  font-size: 0.85rem;
+  padding: 4px 6px;
+}
+
+.flow-run-header-actions {
+  gap: 8px;
+}
+
 .manage-flows-overview {
   margin-bottom: 16px;
   padding: 12px;

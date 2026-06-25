@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=104';
+} from '../db.js?v=105';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=104';
+} from '../utils.js?v=105';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=104';
-import { openModal, closeModal } from '../modal.js?v=104';
+} from '../export.js?v=105';
+import { openModal, closeModal } from '../modal.js?v=105';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=104';
-import { isSheetsConfigured } from '../google-sheets.js?v=104';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=104';
-import { defaultColorForIndex } from '../chart.js?v=104';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=104';
+} from '../sheets-flow.js?v=105';
+import { isSheetsConfigured } from '../google-sheets.js?v=105';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=105';
+import { defaultColorForIndex } from '../chart.js?v=105';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=105';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -51,6 +51,7 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
   let selectedCategoryId = container.dataset.selectedCategory || '';
   let selectedProductId = container.dataset.selectedProduct || '';
   let weekDates = null;
+  let weekAnchor = null;
 
   if (reportType === 'day') {
     from = container.dataset.selectedDay || today;
@@ -72,6 +73,7 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     weekDates = wr.dates;
     label = `${formatDate(from)} – ${formatDate(to)}`;
     reportTitle = 'דוח שבועי מפורט';
+    weekAnchor = anchor;
   } else if (reportType === 'range') {
     from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
     to = container.dataset.rangeTo || today;
@@ -105,6 +107,7 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     selectedProductId,
     defaultMonth,
     weekDates,
+    weekAnchor,
   };
 }
 
@@ -477,7 +480,7 @@ function renderFiltersHTML(ctx, categories, products, today, defaultMonth) {
   }
 
   if (reportType === 'week') {
-    const weekAnchor = container.dataset.selectedWeekDate || container.dataset.selectedWeekEnd || ctx.to;
+    const weekAnchor = ctx.weekAnchor || ctx.to;
     return `
       <div class="form-group">
         <label for="report-week">שבוע (ראשון – שבת)</label>
