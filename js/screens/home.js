@@ -3,16 +3,16 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns,
-} from '../db.js?v=110';
+} from '../db.js?v=111';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate,
-} from '../utils.js?v=110';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=110';
+} from '../utils.js?v=111';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=111';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=110';
+} from '../calc.js?v=111';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -465,13 +465,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=110');
+      const { navigate } = await import('../app.js?v=111');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=110');
+    const { navigate } = await import('../app.js?v=111');
     navigate('backup');
   });
 

@@ -2071,7 +2071,7 @@ table.report-table tfoot td {
   font-size: 0.72rem;
   font-weight: 700;
   color: var(--text-muted);
-  text-align: left;
+  text-align: center;
 }
 
 .report-qty-value-label--name {
@@ -2091,7 +2091,7 @@ table.report-table tfoot td {
 
 .report-qty-value-num {
   font-size: 0.88rem;
-  text-align: left;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -2100,9 +2100,14 @@ table.report-table tfoot td {
   color: var(--primary);
 }
 
+.report-qty-value-row--totals .report-qty-value-name {
+  font-weight: 700;
+  color: var(--primary);
+}
+
 .report-week-product-list {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px dashed var(--border);
 }
 

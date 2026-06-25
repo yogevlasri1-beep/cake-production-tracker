@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=110';
+} from '../db.js?v=111';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=110';
+} from '../utils.js?v=111';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=110';
-import { openModal, closeModal } from '../modal.js?v=110';
+} from '../export.js?v=111';
+import { openModal, closeModal } from '../modal.js?v=111';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=110';
-import { isSheetsConfigured } from '../google-sheets.js?v=110';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=110';
-import { defaultColorForIndex } from '../chart.js?v=110';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=110';
+} from '../sheets-flow.js?v=111';
+import { isSheetsConfigured } from '../google-sheets.js?v=111';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=111';
+import { defaultColorForIndex } from '../chart.js?v=111';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=111';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -453,13 +453,14 @@ function renderReportQtyValueLabels({ showProductName = false } = {}) {
     </div>`;
 }
 
-function renderReportQtyValueRow({ name, qty, value, bold = false }) {
+function renderReportQtyValueRow({ name, qty, value, bold = false, variant }) {
   const qtyText = typeof qty === 'number' ? formatPortionCount(qty) : qty;
   const valText = formatMoney(value);
   const strongOpen = bold ? '<strong>' : '';
   const strongClose = bold ? '</strong>' : '';
+  const rowVariant = variant || (name ? 'product' : 'totals');
   return `
-    <div class="report-qty-value-row${name ? ' report-qty-value-row--product' : ' report-qty-value-row--totals'}" role="row">
+    <div class="report-qty-value-row report-qty-value-row--${rowVariant}" role="row">
       ${name
     ? `<span class="report-qty-value-name">${escapeHtml(name)}</span>`
     : '<span class="report-qty-value-label report-qty-value-label--spacer" aria-hidden="true"></span>'}
@@ -738,20 +739,23 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
         .filter(Boolean);
       const productLines = productRows.join('');
 
+      const hasProducts = productRows.length > 0;
       return `
         <div class="card report-week-cat-card">
           <div class="report-week-cat-header">
             <span class="category-chip report-week-cat-chip" style="${reportCategoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
-            <div class="report-qty-value-block">
-              ${renderReportQtyValueLabels()}
-              ${renderReportQtyValueRow({ qty, value: val, bold: true })}
-            </div>
           </div>
-          ${productRows.length ? `
-            <div class="report-week-product-list">
-              ${renderReportQtyValueLabels({ showProductName: true })}
-              ${productLines}
-            </div>` : ''}
+          <div class="report-qty-value-block">
+            ${renderReportQtyValueLabels({ showProductName: hasProducts })}
+            ${renderReportQtyValueRow({
+        name: hasProducts ? 'סה״כ' : undefined,
+        qty,
+        value: val,
+        bold: true,
+        variant: 'totals',
+      })}
+            ${hasProducts ? `<div class="report-week-product-list">${productLines}</div>` : ''}
+          </div>
         </div>`;
     }).filter(Boolean).join('');
 
