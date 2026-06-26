@@ -14,12 +14,12 @@ import {
   supportsBackupLocationPicker,
   pickJsonFileFromDevice,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=112';
-import { describeDownloadMethod } from '../download.js?v=112';
-import { showToast, escapeHtml } from '../utils.js?v=112';
-import { openModal, closeModal } from '../modal.js?v=112';
-import { APP_VERSION } from '../version.js?v=112';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=112';
+} from '../backup-service.js?v=113';
+import { describeDownloadMethod } from '../download.js?v=113';
+import { showToast, escapeHtml } from '../utils.js?v=113';
+import { openModal, closeModal } from '../modal.js?v=113';
+import { APP_VERSION } from '../version.js?v=113';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=113';
 
 function formatWhen(iso) {
   if (!iso) return '—';

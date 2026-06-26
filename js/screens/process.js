@@ -4,7 +4,7 @@ import {
   resolveFlowsForCategorySelection,
   createFlow, updateFlow, deleteFlow, duplicateFlow,
   addFlowStepToFlow, updateFlowStep, deleteFlowStep,
-  setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow,
+  setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails,
@@ -12,10 +12,11 @@ import {
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
   getEntriesForDate, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
-} from '../db.js?v=112';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=112';
-import { openModal, closeModal } from '../modal.js?v=112';
-import { requestAutoBackupNow } from '../backup-service.js?v=112';
+} from '../db.js?v=113';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=113';
+import { openModal, closeModal } from '../modal.js?v=113';
+import { requestAutoBackupNow } from '../backup-service.js?v=113';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=113';
 
 function parseIdList(str) {
   try {
@@ -308,25 +309,6 @@ function flowStepProductionSummary(step) {
   const count = step.productionEntryIds?.length || 0;
   if (!count) return ' <span class="flow-step-production-badge">📦 ייצור</span>';
   return ` <span class="flow-step-production-badge">📦 ${count} רישומים</span>`;
-}
-
-function flowStepConfigHTML(step, idPrefix) {
-  const tracksPortions = !!step?.tracksPortions;
-  const tracksProduction = !!step?.tracksProduction;
-  return `
-    ${flowStepPortionConfigHTML(step, idPrefix)}
-    <label class="group-category-option flow-production-toggle" style="margin-top:8px">
-      <input type="checkbox" id="${idPrefix}-production" ${tracksProduction ? 'checked' : ''}>
-      <span>תיעוד ייצור בשלב זה</span>
-    </label>
-    <p class="form-hint" style="margin-top:4px">בזמן תזרים פעיל — רישום מוצרים וכמויות (כמו עמדת ייצור), ללא הגבלה</p>`;
-}
-
-function readFlowStepConfig(idPrefix) {
-  return {
-    ...readFlowStepPortionConfig(idPrefix),
-    tracksProduction: !!document.getElementById(`${idPrefix}-production`)?.checked,
-  };
 }
 
 function stepProductionPanelHTML({
@@ -983,6 +965,9 @@ async function renderManageView(container, ctx) {
   const portionGroupName = portionManageGroupId
     ? (groups.find((g) => String(g.id) === String(portionManageGroupId))?.name || '')
     : '';
+  if (activeFlow) {
+    await ensureFlowProductionStep(activeFlow.id);
+  }
   const [steps, portionPresets, allFlows] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
     portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),
@@ -1042,11 +1027,12 @@ async function renderManageView(container, ctx) {
 
         ${activeFlow ? `
         <div class="flow-new-step-card">
+          <p class="form-hint" style="margin-bottom:8px">כל תזרים כולל שלב <strong>תיעוד ייצור</strong> אוטומטי בסוף — שם מתועדים המוצרים</p>
           <div class="form-group" style="margin-bottom:8px">
             <label for="new-step-name">שלב חדש</label>
             <input type="text" id="new-step-name" placeholder="שם השלב">
           </div>
-          ${flowStepConfigHTML(null, 'new-step')}
+          ${flowStepPortionConfigHTML(null, 'new-step')}
           <button class="btn btn-primary btn-sm" id="add-step" style="width:100%;margin-top:8px">+ הוסף שלב</button>
         </div>
         ${steps.length === 0
@@ -1060,11 +1046,11 @@ async function renderManageView(container, ctx) {
                      <span class="product-drag-handle flow-step-drag-handle" role="button" tabindex="0">⠿</span>
                    </div>
                    <div class="list-item-info">
-                     <div class="list-item-name">${escapeHtml(s.name)}${s.tracksProduction ? ' <span class="flow-step-production-badge">📦 ייצור</span>' : ''}${s.tracksPortions ? ' <span class="flow-step-portion-badge">🍽 מנות</span>' : ''}</div>
+                     <div class="list-item-name">${escapeHtml(s.name)}${s.tracksProduction ? ' <span class="flow-step-production-badge">📦 ייצור · חובה</span>' : ''}${s.tracksPortions ? ' <span class="flow-step-portion-badge">🍽 מנות</span>' : ''}</div>
                    </div>
                    <div class="list-item-actions">
                      <button class="btn btn-secondary btn-sm edit-step" data-id="${s.id}" data-name="${escapeHtml(s.name)}" data-tracks-portions="${s.tracksPortions ? '1' : ''}" data-tracks-production="${s.tracksProduction ? '1' : ''}" data-portion-unit="${s.portionUnit || 'units'}" data-portion-size="${s.portionSize ?? ''}">✏️</button>
-                     <button class="btn btn-danger btn-sm delete-step" data-id="${s.id}">🗑</button>
+                     ${s.tracksProduction ? '' : `<button class="btn btn-danger btn-sm delete-step" data-id="${s.id}">🗑</button>`}
                    </div>
                  </div>`).join('')}
              </div>`}
@@ -1273,7 +1259,7 @@ async function renderManageView(container, ctx) {
     if (!name) return showToast('הזן שם שלב');
     if (!activeFlow) return showToast('בחר תזרים');
     try {
-      await addFlowStepToFlow(activeFlow.id, name, readFlowStepConfig('new-step'));
+      await addFlowStepToFlow(activeFlow.id, name, readFlowStepPortionConfig('new-step'));
       showToast('נוסף ✓');
       renderProcess(container);
     } catch (err) {
@@ -1340,10 +1326,10 @@ async function renderManageView(container, ctx) {
       openModal({
         title: 'עריכת שלב',
         bodyHTML: `
+          ${btn.dataset.tracksProduction ? '<p class="form-hint" style="margin-bottom:8px">שלב תיעוד ייצור — חובה בכל תזרים. ניתן לשנות שם בלבד.</p>' : ''}
           <div class="form-group"><label>שם</label><input type="text" id="edit-step-name" value="${btn.dataset.name}"></div>
-          ${flowStepConfigHTML({
+          ${btn.dataset.tracksProduction ? '' : flowStepPortionConfigHTML({
             tracksPortions: !!btn.dataset.tracksPortions,
-            tracksProduction: !!btn.dataset.tracksProduction,
             portionUnit: btn.dataset.portionUnit || 'units',
             portionSize: btn.dataset.portionSize || '',
           }, 'edit-step')}`,
@@ -1355,7 +1341,7 @@ async function renderManageView(container, ctx) {
         try {
           await updateFlowStep(Number(btn.dataset.id), {
             name: document.getElementById('edit-step-name').value,
-            ...readFlowStepConfig('edit-step'),
+            ...(btn.dataset.tracksProduction ? {} : readFlowStepPortionConfig('edit-step')),
           });
           closeModal();
           showToast('עודכן ✓');
@@ -1882,10 +1868,11 @@ export async function renderProcess(container) {
     return renderStartView(container, ctx);
   }
 
-  const [activeRuns, dateRuns, flowsOverview] = await Promise.all([
+  const [activeRuns, dateRuns, flowsOverview, sheetsHTML] = await Promise.all([
     getActiveProductionRuns(),
     getProductionRunsForDate(date),
     getAllFlowsOverview(),
+    renderSheetsStatusHTML(),
   ]);
   const doneRuns = dateRuns.filter((r) => r.status === 'completed');
 
@@ -1897,6 +1884,8 @@ export async function renderProcess(container) {
         <button type="button" class="btn btn-primary btn-sm" id="new-run">+ תהליך חדש</button>
       </div>
     </div>
+
+    <p class="form-hint" style="margin-bottom:12px">רישום ייצור מתבצע בתוך התזרים — בשלב <strong>תיעוד ייצור</strong> בזמן תהליך פעיל</p>
 
     <div class="card">
       <div class="form-group" style="margin-bottom:0">
@@ -1928,7 +1917,27 @@ export async function renderProcess(container) {
           <strong>${escapeHtml(f.name)}</strong> · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים
         </div>`).join('')}
       ${flowsOverview.length > 8 ? `<p class="form-hint" style="margin-top:8px">+${flowsOverview.length - 8} נוספים — «נהל תזרים»</p>` : ''}
-    </div>` : ''}`;
+    </div>` : ''}
+
+    <div class="card sheets-primary-card">
+      <div class="card-title">📊 Google Sheets</div>
+      <div id="sheets-status">${sheetsHTML}</div>
+    </div>
+
+    <details class="card import-card">
+      <summary class="import-summary">ייבוא מקובץ Excel (גיבוי)</summary>
+      <p class="import-hint">
+        העלה קובץ Excel או CSV עם התיעוד שלך (סוג, תאריך, כמות).
+        מוצרים וקטגוריות חדשים ייווצרו אוטומטית.
+      </p>
+      <input type="file" id="process-import-file" accept=".csv,.xlsx,.xls,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+      <button type="button" class="btn btn-secondary" id="process-import-btn" style="width:100%;margin-bottom:8px">
+        📥 בחר קובץ Excel / CSV
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm" id="process-template-btn" style="width:100%">
+        הורד קובץ דוגמה
+      </button>
+    </details>`;
 
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
@@ -1962,8 +1971,35 @@ export async function renderProcess(container) {
       renderProcess(container);
     });
   });
+
+  bindSheetsStatusEvents(container, {
+    onRefresh: () => renderProcess(container),
+    onImportComplete: () => renderProcess(container),
+  });
+
+  document.getElementById('process-import-btn')?.addEventListener('click', () => {
+    document.getElementById('process-import-file').click();
+  });
+
+  document.getElementById('process-template-btn')?.addEventListener('click', async () => {
+    const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
+    const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'dugma-yitzur.csv';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  document.getElementById('process-import-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const { handleProductionImportFile } = await import('../import-flow.js');
+    await handleProductionImportFile(file, { onComplete: () => renderProcess(container) });
+  });
 }
 
 export function processMeta() {
-  return { title: 'תזרים יצור', subtitle: 'תיעוד תהליך יצור בזמן אמת' };
+  return { title: 'תזרים יצור', subtitle: 'תיעוד תהליך + רישום ייצור' };
 }

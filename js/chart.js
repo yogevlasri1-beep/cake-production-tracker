@@ -216,7 +216,7 @@ export async function renderProductionChart(canvas, summaryEl, period, entries, 
 
   const hasData = chartData.datasets.some((ds) => ds.data.some((v) => v > 0));
   if (!hasData && summaryEl) {
-    summaryEl.textContent += ' · אין נתונים — רשום ייצור במסך "ייצור"';
+    summaryEl.textContent += ' · אין נתונים — התחל תזרים ורשום ייצור בשלב «תיעוד ייצור»';
   }
 
   chartInstance = new Chart(canvas, {
@@ -272,7 +272,7 @@ export async function renderCategoryPieChart(canvas, summaryEl, totals, categori
   if (summaryEl) {
     summaryEl.textContent = total > 0
       ? `סה"כ ${total} יחידות · ${slices.length} קטגוריות`
-      : 'אין נתונים — רשום ייצור במסך "ייצור"';
+      : 'אין נתונים — התחל תזרים ורשום ייצור בשלב «תיעוד ייצור»';
   }
 
   pieChartInstance = new Chart(canvas, {

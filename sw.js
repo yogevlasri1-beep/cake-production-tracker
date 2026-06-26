@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '112';
+const VERSION = '113';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -40,7 +40,6 @@ const PRECACHE = [
   v('./js/sw-register.js'),
   v('./js/product-drag.js'),
   v('./js/screens/home.js'),
-  v('./js/screens/record.js'),
   v('./js/screens/process.js'),
   v('./js/screens/products.js'),
   v('./js/screens/manager.js'),

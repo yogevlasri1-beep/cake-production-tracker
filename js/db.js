@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=112';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=112';
-import { defaultColorForIndex } from './chart.js?v=112';
+} from './validators.js?v=113';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=113';
+import { defaultColorForIndex } from './chart.js?v=113';
 
 export { ValidationError };
 
@@ -435,6 +435,36 @@ db.version(19).stores({
     if (s.tracksProduction === undefined) s.tracksProduction = false;
     if (!Array.isArray(s.productionEntryIds)) s.productionEntryIds = [];
   });
+});
+
+db.version(20).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+}).upgrade(async (tx) => {
+  const flows = await tx.table('flows').toArray();
+  for (const flow of flows) {
+    await ensureFlowProductionStepInTx(tx, flow.id);
+  }
 });
 
 async function resolveCategoryGroupIdForFlow(flowId) {
@@ -1818,6 +1848,8 @@ export async function createFlow({ categoryId, categoryGroupId, name, withDefaul
 
   if (withDefaults) {
     await copyDefaultFlowStepsToFlow(newFlowId);
+  } else {
+    await ensureFlowProductionStep(newFlowId);
   }
   return newFlowId;
 }
@@ -1877,6 +1909,8 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
         portionSize: s.portionSize ?? null,
       });
     }
+
+    await ensureFlowProductionStep(newFlowId);
 
     return newFlowId;
   });
@@ -1994,7 +2028,12 @@ export async function updateFlowStep(id, { name, tracksPortions, tracksProductio
     patch.name = clean;
   }
   if (tracksPortions !== undefined) patch.tracksPortions = !!tracksPortions;
-  if (tracksProduction !== undefined) patch.tracksProduction = !!tracksProduction;
+  if (tracksProduction !== undefined) {
+    if (tracksProduction === false && existing.tracksProduction) {
+      throw new ValidationError('שלב תיעוד ייצור הוא חובה בכל תזרים — לא ניתן לבטל');
+    }
+    patch.tracksProduction = !!tracksProduction;
+  }
   if (portionUnit !== undefined) patch.portionUnit = portionUnit === 'weight' ? 'weight' : 'units';
   if (portionSize !== undefined) {
     patch.portionSize = portionSize === '' || portionSize == null
@@ -2026,7 +2065,13 @@ export async function updateFlowStep(id, { name, tracksPortions, tracksProductio
 }
 
 export async function deleteFlowStep(id) {
-  return db.flowSteps.delete(id);
+  const step = await db.flowSteps.get(id);
+  if (step?.tracksProduction) {
+    throw new ValidationError('לא ניתן למחוק את שלב תיעוד הייצור — הוא חובה בכל תזרים');
+  }
+  const flowId = step?.flowId;
+  await db.flowSteps.delete(id);
+  if (flowId) await ensureFlowProductionStep(flowId);
 }
 
 export async function getGroupPortionPresets(categoryGroupId) {
@@ -2143,6 +2188,38 @@ export async function setFlowStepOrderForGroup(categoryGroupId, orderedIds) {
 }
 
 const DEFAULT_FLOW_STEPS = ['הכנת חומרי גלם', 'ערבוב / הכנה', 'שקילה', 'עיצוב', 'אפייה', 'קירור', 'אריזה'];
+export const PRODUCTION_STEP_NAME = 'תיעוד ייצור';
+
+async function ensureFlowProductionStepInTx(tx, flowId) {
+  const steps = await tx.table('flowSteps').where('flowId').equals(flowId).toArray();
+  steps.sort(compareFlowSteps);
+  if (steps.some((s) => s.tracksProduction)) return false;
+  const named = steps.find((s) => s.name === PRODUCTION_STEP_NAME);
+  if (named) {
+    await tx.table('flowSteps').update(named.id, { tracksProduction: true });
+    return true;
+  }
+  const maxOrder = steps.reduce((m, s) => Math.max(m, s.sortOrder ?? 0), 0);
+  const flow = await tx.table('flows').get(flowId);
+  await tx.table('flowSteps').add({
+    flowId,
+    categoryId: flow?.categoryId || null,
+    categoryGroupId: flow?.categoryGroupId || null,
+    name: PRODUCTION_STEP_NAME,
+    sortOrder: maxOrder + 1,
+    tracksPortions: false,
+    tracksProduction: true,
+    portionUnit: null,
+    portionSize: null,
+  });
+  return true;
+}
+
+export async function ensureFlowProductionStep(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return false;
+  return db.transaction('rw', db.flowSteps, db.flows, (tx) => ensureFlowProductionStepInTx(tx, fid));
+}
 
 export async function copyDefaultFlowStepsToFlow(flowId) {
   const fid = sanitizeProductId(flowId);
@@ -2152,7 +2229,8 @@ export async function copyDefaultFlowStepsToFlow(flowId) {
   for (let i = 0; i < DEFAULT_FLOW_STEPS.length; i++) {
     await addFlowStepRecord({ flowId: fid, name: DEFAULT_FLOW_STEPS[i] });
   }
-  return DEFAULT_FLOW_STEPS.length;
+  await addFlowStepRecord({ flowId: fid, name: PRODUCTION_STEP_NAME, tracksProduction: true });
+  return DEFAULT_FLOW_STEPS.length + 1;
 }
 
 export async function copyDefaultFlowStepsToCategory(categoryId) {
@@ -2266,6 +2344,15 @@ export async function startProductionRun({
   } else {
     const flow = await db.flows.get(resolvedFlowId);
     flowName = flow?.name || '';
+  }
+
+  if (resolvedFlowId) {
+    await ensureFlowProductionStep(resolvedFlowId);
+    steps = await resolveFlowSteps({
+      categoryId: resolvedCategoryId,
+      categoryGroupId: gid,
+      flowId: resolvedFlowId,
+    });
   }
 
   if (!steps.length) throw new ValidationError('אין שלבי תזרים — הגדר שלבים ב«נהל תזרים»');
