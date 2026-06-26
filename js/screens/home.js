@@ -3,17 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=120';
+} from '../db.js?v=121';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
-} from '../utils.js?v=120';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=120';
+  formatPortionCount,
+} from '../utils.js?v=121';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=121';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=120';
-import { requestAutoBackupNow } from '../backup-service.js?v=120';
+} from '../calc.js?v=121';
+import { requestAutoBackupNow } from '../backup-service.js?v=121';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -304,6 +305,38 @@ async function renderCategoryHistory(container, categoryId) {
   bindProductionEntryDeletes(container, () => renderCategoryHistory(container, categoryId));
 }
 
+function renderHomeQtyValueLabels() {
+  return `
+    <div class="report-qty-value-row report-qty-value-row--labels home-cat-col-labels" role="row">
+      <span class="report-qty-value-label report-qty-value-label--name">מוצר</span>
+      <span class="report-qty-value-label">יחידות</span>
+      <span class="report-qty-value-label">ערך</span>
+    </div>`;
+}
+
+function formatHomeProductQty(product, qty) {
+  if (product?.priceUnit === 'kg') return formatProductQuantity(product, qty);
+  return formatPortionCount(qty);
+}
+
+function renderHomeQtyValueProductRow(product, qty, value) {
+  return `
+    <div class="report-qty-value-row report-qty-value-row--product home-cat-product-row" role="row">
+      <span class="report-qty-value-name">${escapeHtml(product.name)}</span>
+      <span class="report-qty-value-num">${formatHomeProductQty(product, qty)}</span>
+      <span class="report-qty-value-num">${formatMoney(value)}</span>
+    </div>`;
+}
+
+function renderHomeQtyValueTotalsRow(label, qty, value) {
+  return `
+    <div class="report-qty-value-row report-qty-value-row--totals home-cat-totals-row" role="row">
+      <span class="report-qty-value-name"><strong>${escapeHtml(label)}</strong></span>
+      <span class="report-qty-value-num"><strong>${formatPortionCount(qty)}</strong></span>
+      <span class="report-qty-value-num"><strong>${formatMoney(value)}</strong></span>
+    </div>`;
+}
+
 async function buildCategorySections(categories, allProducts, activeProducts, totals, targetPeriod, periodLabel, isDay) {
   let html = '';
   for (const cat of categories) {
@@ -319,22 +352,23 @@ async function buildCategorySections(categories, allProducts, activeProducts, to
       .map((p) => {
         const { qty: pQty, value: pVal } = productProductionValue(p, totals.byProduct);
         if (pQty === 0) return '';
-        return `<div class="list-item">
-          <span class="list-item-name">${escapeHtml(p.name)}</span>
-          <strong>${pQty} · ${formatMoney(pVal)}</strong>
-        </div>`;
+        return renderHomeQtyValueProductRow(p, pQty, pVal);
       })
       .filter(Boolean)
       .join('');
+
+    const productTable = productLines ? `
+      <div class="report-qty-value-block home-cat-product-list">
+        ${renderHomeQtyValueLabels()}
+        ${renderHomeQtyValueTotalsRow('סה"כ', qty, catValue)}
+        ${productLines}
+      </div>` : '';
 
     html += `
       <div class="card home-cat-card" data-cat-id="${cat.id}" role="button" tabindex="0" aria-label="היסטוריית ייצור — ${escapeHtml(cat.name)}">
         <div class="section-header home-cat-header">
           <span class="category-chip" style="${categoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
-          <div class="home-cat-totals">
-            <strong class="home-cat-qty">${qty} יח' · ${formatMoney(catValue)}</strong>
-            <span class="home-cat-open-hint">לחץ לצפייה בהיסטוריה ›</span>
-          </div>
+          <span class="home-cat-open-hint">לחץ לצפייה בהיסטוריה ›</span>
         </div>
         ${catTarget > 0 ? `
           <div class="home-cat-target-badge">
@@ -342,7 +376,7 @@ async function buildCategorySections(categories, allProducts, activeProducts, to
           </div>
           ${progressBar(qty, catTarget, targetLabel)}
         ` : ''}
-        ${productLines || `<p style="color:var(--text-muted);font-size:0.85rem;padding:8px 0">${periodLabel}</p>`}
+        ${productTable || `<p class="home-cat-empty">${periodLabel}</p>`}
       </div>`;
   }
   return html;
@@ -571,13 +605,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=120');
+      const { navigate } = await import('../app.js?v=121');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=120');
+    const { navigate } = await import('../app.js?v=121');
     navigate('backup');
   });
 
