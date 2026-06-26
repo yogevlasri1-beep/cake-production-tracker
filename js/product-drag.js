@@ -335,6 +335,32 @@ export function bindRecipeDragList(container, categoryId, saveOrder) {
   });
 }
 
+export function bindSupplierDragList(container, categoryId, saveOrder) {
+  const list = container.querySelector('.supplier-list');
+  if (!list) return;
+  bindGenericDragList(list, {
+    itemSelector: '.supplier-list-item',
+    handleSelector: '.supplier-drag-handle',
+    idAttr: 'supplierId',
+    orderNumSelector: '.supplier-order-num',
+    bodyClass: 'supplier-drag-active',
+    saveOrder: (ids) => saveOrder(ids, categoryId),
+  });
+}
+
+export function bindMaterialDragList(container, categoryId, saveOrder) {
+  const list = container.querySelector('.material-list');
+  if (!list) return;
+  bindGenericDragList(list, {
+    itemSelector: '.material-list-item',
+    handleSelector: '.material-drag-handle',
+    idAttr: 'materialId',
+    orderNumSelector: '.material-order-num',
+    bodyClass: 'material-drag-active',
+    saveOrder: (ids) => saveOrder(ids, categoryId),
+  });
+}
+
 function bindGenericDragList(list, {
   itemSelector,
   handleSelector,

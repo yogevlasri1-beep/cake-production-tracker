@@ -4023,13 +4023,17 @@ body {
 }
 
 /* ── מתכונים ── */
-.recipe-list-item {
+.recipe-list-item,
+.material-list-item,
+.supplier-list-item {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.recipe-drag-handle {
+.recipe-drag-handle,
+.material-drag-handle,
+.supplier-drag-handle {
   flex: 0 0 auto;
   border: none;
   background: transparent;
@@ -4040,21 +4044,35 @@ body {
   touch-action: none;
 }
 
-.recipe-order-num {
+.recipe-order-num,
+.material-order-num,
+.supplier-order-num {
   flex: 0 0 1.5rem;
   font-size: 0.75rem;
   color: var(--text-muted);
   text-align: center;
 }
 
-.recipe-list-item.is-dragging {
+.recipe-list-item.is-dragging,
+.material-list-item.is-dragging,
+.supplier-list-item.is-dragging {
   opacity: 0.85;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
-body.recipe-drag-active {
+body.recipe-drag-active,
+body.material-drag-active,
+body.supplier-drag-active {
   cursor: grabbing;
   user-select: none;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  cursor: pointer;
 }
 
 .recipe-book-group-title {

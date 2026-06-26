@@ -18,13 +18,20 @@ function roundQty(n) {
 export function normalizeRecipeUnitKind(unit) {
   const u = String(unit || '').trim().toLowerCase();
   if (u === 'g' || u === 'gr' || u === 'גרם' || u === "ג'" || u === 'ג׳') return 'g';
+  if (u === 'l' || u.includes('ליטר') || u === "ל'" || u === 'ל׳') return 'l';
   if (u === 'kg' || u.includes('ק') || u.includes('קג')) return 'kg';
   return 'kg';
 }
 
 export function formatRecipeUnitKind(kind) {
-  return kind === 'g' ? 'גרם' : 'ק"ג';
+  if (kind === 'g') return 'גרם';
+  if (kind === 'l') return 'ליטר';
+  return 'ק"ג';
 }
+
+export const IMPORT_WORD_GROUP = 'ייבוא Word';
+export const IMPORT_WORD_SUB = 'ללא סיווג';
+export const IMPORT_MATERIALS_CAT = 'ייבוא ממתכונים';
 
 /* ── קטגוריות כלליות (קבוצות) ── */
 
@@ -317,22 +324,74 @@ export function scaleRecipeIngredients(ingredients, anchorIngredientId, targetQu
   }));
 }
 
-export async function importParsedRecipes(parsedRecipes, { groupId, subCategoryId } = {}) {
+export async function findOrCreateWordImportCategory() {
+  const groups = await getRecipeGroups();
+  let group = groups.find((g) => g.name === IMPORT_WORD_GROUP);
+  if (!group) {
+    const groupId = await addRecipeGroup({ name: IMPORT_WORD_GROUP, linkedCategoryGroupId: null });
+    group = { id: groupId };
+  }
+  const subs = await getRecipeSubCategories(group.id);
+  let sub = subs.find((s) => s.name === IMPORT_WORD_SUB);
+  if (!sub) {
+    const subId = await addRecipeSubCategory({
+      groupId: group.id,
+      name: IMPORT_WORD_SUB,
+      linkedCategoryId: null,
+    });
+    sub = { id: subId };
+  }
+  return { groupId: group.id, subCategoryId: sub.id };
+}
+
+export async function findOrCreateImportMaterialsCategory() {
+  const cats = await getSupplierCategories();
+  const found = cats.find((c) => c.name === IMPORT_MATERIALS_CAT);
+  if (found) return found.id;
+  return addSupplierCategory(IMPORT_MATERIALS_CAT);
+}
+
+export async function ensureRawMaterialByName(name, { supplierCategoryId, unit }) {
+  const trimmed = sanitizeName(name, 80);
+  if (!trimmed) return null;
+  const all = await db.rawMaterials.toArray();
+  const found = all.find((m) => m.name === trimmed);
+  if (found) return found.id;
+  return addRawMaterial({
+    supplierCategoryId,
+    name: trimmed,
+    unit: String(unit || 'ק"ג').trim().slice(0, 20),
+    unitPrice: 0,
+    supplierId: null,
+  });
+}
+
+export async function importParsedRecipes(parsedRecipes, {
+  groupId, subCategoryId, addRawMaterials = true,
+} = {}) {
+  let materialsCategoryId = null;
+  if (addRawMaterials) {
+    materialsCategoryId = await findOrCreateImportMaterialsCategory();
+  }
+
   let imported = 0;
+  let rawMaterialsAdded = 0;
+  const existingMaterials = addRawMaterials ? await db.rawMaterials.toArray() : [];
+  const materialNames = new Set(existingMaterials.map((m) => m.name));
+
   for (const item of parsedRecipes) {
     let gid = groupId;
-    if (!gid && item.groupName) gid = await findOrCreateRecipeGroup(item.groupName);
-    if (!gid) {
-      const groups = await getRecipeGroups();
-      gid = groups[0]?.id;
-      if (!gid) gid = await addRecipeGroup({ name: 'כללי', linkedCategoryGroupId: null });
-    }
     let subId = subCategoryId;
-    if (!subId && item.subName) subId = await findOrCreateRecipeSubCategory(gid, item.subName);
+    if (!gid && item.groupName) gid = await findOrCreateRecipeGroup(item.groupName);
+    if (!subId && item.subName && gid) subId = await findOrCreateRecipeSubCategory(gid, item.subName);
+    if (!gid || !subId) {
+      const loc = await findOrCreateWordImportCategory();
+      if (!gid) gid = loc.groupId;
+      if (!subId) subId = loc.subCategoryId;
+    }
     if (!subId) {
       const subs = await getRecipeSubCategories(gid);
       subId = subs[0]?.id;
-      if (!subId) subId = await addRecipeSubCategory({ groupId: gid, name: 'ראשי', linkedCategoryId: null });
     }
     const recipeId = await addRecipe({
       categoryId: subId,
@@ -341,16 +400,29 @@ export async function importParsedRecipes(parsedRecipes, { groupId, subCategoryI
     });
     for (const ing of item.ingredients || []) {
       const unitKind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+      let rawMaterialId = null;
+      if (addRawMaterials && materialsCategoryId) {
+        const isNew = !materialNames.has(ing.name);
+        rawMaterialId = await ensureRawMaterialByName(ing.name, {
+          supplierCategoryId: materialsCategoryId,
+          unit: ing.unit || formatRecipeUnitKind(unitKind),
+        });
+        if (isNew && rawMaterialId) {
+          materialNames.add(ing.name);
+          rawMaterialsAdded++;
+        }
+      }
       await addRecipeIngredient(recipeId, {
+        rawMaterialId,
         name: ing.name,
         quantity: ing.quantity,
-        unit: formatRecipeUnitKind(unitKind),
+        unit: ing.unit || formatRecipeUnitKind(unitKind),
         unitKind,
       });
     }
     imported++;
   }
-  return imported;
+  return { imported, rawMaterialsAdded };
 }
 
 export async function deleteRecipe(id) {
@@ -488,6 +560,24 @@ export async function deleteSupplier(id) {
   const sid = sanitizeProductId(id);
   if (!sid) return;
   await db.suppliers.delete(sid);
+}
+
+export async function setSupplierOrder(categoryId, orderedIds) {
+  const cid = sanitizeProductId(categoryId);
+  await db.transaction('rw', db.suppliers, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.suppliers.update(Number(orderedIds[i]), { sortOrder: i + 1, categoryId: cid });
+    }
+  });
+}
+
+export async function setRawMaterialOrder(categoryId, orderedIds) {
+  const cid = sanitizeProductId(categoryId);
+  await db.transaction('rw', db.rawMaterials, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.rawMaterials.update(Number(orderedIds[i]), { sortOrder: i + 1, supplierCategoryId: cid });
+    }
+  });
 }
 
 /* ── חומרי גלם ── */

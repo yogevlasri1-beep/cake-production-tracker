@@ -2,13 +2,16 @@ import { loadFFlate } from './docx-loader.js';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
-const QTY_UNIT_RE = /([\d.,]+)\s*(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g)\b/i;
-const NAME_QTY_UNIT_RE = /^(.+?)\s+([\d.,]+)\s*(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g)\s*$/i;
-const UNIT_QTY_NAME_RE = /^(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g)\s+([\d.,]+)\s+(.+)$/i;
-const STRUCTURED_RE = /^(.+?)\s*[|｜]\s*([\d.,]+)\s*[|｜]\s*(kg|g|ק"ג|גרם)?\s*$/i;
+const UNIT_L = /^(ליטר|ל'|ל׳|liter|l|lt)$/i;
+const QTY_UNIT_RE = /([\d.,]+)\s*(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g|ליטר|ל'|ל׳|l)\b/i;
+const NAME_QTY_UNIT_RE = /^(.+?)\s+([\d.,]+)\s*(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g|ליטר|ל'|ל׳|l)\s*$/i;
+const UNIT_QTY_NAME_RE = /^(ק"ג|ק״ג|קג|kg|קילו|גרם|ג'|ג׳|gr|g|ליטר|ל'|ל׳|l)\s+([\d.,]+)\s+(.+)$/i;
+const STRUCTURED_RE = /^(.+?)\s*[|｜]\s*([\d.,]+)\s*[|｜]\s*(kg|g|l|ק"ג|גרם|ליטר)?\s*$/i;
 const RECIPE_HEADER_RE = /^(?:===?\s*)?(?:מתכון|recipe)\s*[:：]\s*(.+)$/i;
 const GROUP_HEADER_RE = /^(?:קטגוריה|קבוצה|group)\s*[:：]\s*(.+)$/i;
 const SUB_HEADER_RE = /^(?:תת[- ]?קטגוריה|sub)\s*[:：]\s*(.+)$/i;
+const SKIP_TITLE_RE = /^ספר\s*מתכונים|^תוכן|^עמוד/i;
+const TOTAL_ROW_RE = /סה["״']?כ|^total$/i;
 
 function parseNumber(raw) {
   const n = parseFloat(String(raw || '').replace(',', '.'));
@@ -18,12 +21,27 @@ function parseNumber(raw) {
 export function normalizeImportUnit(raw) {
   const u = String(raw || '').trim().toLowerCase();
   if (UNIT_G.test(u) || u === 'g') return 'g';
+  if (UNIT_L.test(u)) return 'l';
   if (UNIT_KG.test(u) || u === 'kg') return 'kg';
   return 'kg';
 }
 
 function unitLabel(kind) {
-  return kind === 'g' ? 'גרם' : 'ק"ג';
+  if (kind === 'g') return 'גרם';
+  if (kind === 'l') return 'ליטר';
+  return 'ק"ג';
+}
+
+function parseQtyUnitText(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  const m = trimmed.match(/^([\d.,]+)\s*(.*)$/);
+  if (!m) return null;
+  const qty = parseNumber(m[1]);
+  if (qty == null) return null;
+  const unitRaw = m[2].trim() || 'ק"ג';
+  const unitKind = normalizeImportUnit(unitRaw);
+  return { quantity: qty, unit: unitLabel(unitKind), unitKind };
 }
 
 function parseIngredientLine(line) {
@@ -34,36 +52,24 @@ function parseIngredientLine(line) {
   if (m) {
     const qty = parseNumber(m[2]);
     if (qty == null) return null;
-    return {
-      name: m[1].trim(),
-      quantity: qty,
-      unit: unitLabel(normalizeImportUnit(m[3] || 'kg')),
-      unitKind: normalizeImportUnit(m[3] || 'kg'),
-    };
+    const unitKind = normalizeImportUnit(m[3] || 'kg');
+    return { name: m[1].trim(), quantity: qty, unit: unitLabel(unitKind), unitKind };
   }
 
   m = trimmed.match(NAME_QTY_UNIT_RE);
   if (m) {
     const qty = parseNumber(m[2]);
     if (qty == null) return null;
-    return {
-      name: m[1].trim(),
-      quantity: qty,
-      unit: unitLabel(normalizeImportUnit(m[3])),
-      unitKind: normalizeImportUnit(m[3]),
-    };
+    const unitKind = normalizeImportUnit(m[3]);
+    return { name: m[1].trim(), quantity: qty, unit: unitLabel(unitKind), unitKind };
   }
 
   m = trimmed.match(UNIT_QTY_NAME_RE);
   if (m) {
     const qty = parseNumber(m[2]);
     if (qty == null) return null;
-    return {
-      name: m[3].trim(),
-      quantity: qty,
-      unit: unitLabel(normalizeImportUnit(m[1])),
-      unitKind: normalizeImportUnit(m[1]),
-    };
+    const unitKind = normalizeImportUnit(m[1]);
+    return { name: m[3].trim(), quantity: qty, unit: unitLabel(unitKind), unitKind };
   }
 
   m = trimmed.match(QTY_UNIT_RE);
@@ -72,15 +78,166 @@ function parseIngredientLine(line) {
     const name = (trimmed.slice(0, idx) + trimmed.slice(idx + m[0].length)).trim();
     const qty = parseNumber(m[1]);
     if (!name || qty == null) return null;
-    return {
-      name,
-      quantity: qty,
-      unit: unitLabel(normalizeImportUnit(m[2])),
-      unitKind: normalizeImportUnit(m[2]),
-    };
+    const unitKind = normalizeImportUnit(m[2]);
+    return { name, quantity: qty, unit: unitLabel(unitKind), unitKind };
   }
 
   return null;
+}
+
+function paragraphText(p) {
+  return [...p.getElementsByTagName('w:t')].map((t) => t.textContent || '').join('').trim();
+}
+
+function cellText(cell) {
+  return [...cell.getElementsByTagName('w:t')].map((t) => t.textContent || '').join('').trim();
+}
+
+function isTableTag(el) {
+  return el?.localName === 'tbl' || el?.tagName === 'w:tbl';
+}
+
+function isParagraphTag(el) {
+  return el?.localName === 'p' || el?.tagName === 'w:p';
+}
+
+function isHeaderRow(cells) {
+  const joined = cells.join(' ');
+  return /כמות|quantity/i.test(joined) && /חומר|גלם|material/i.test(joined);
+}
+
+function isTotalRow(cells) {
+  return cells.some((c) => TOTAL_ROW_RE.test(c.trim()));
+}
+
+function detectColumns(cells) {
+  let qtyCol = 0;
+  let nameCol = 1;
+  const qtyIdx = cells.findIndex((c) => /כמות|quantity/i.test(c));
+  const nameIdx = cells.findIndex((c) => /חומר|גלם|material/i.test(c));
+  if (qtyIdx >= 0) qtyCol = qtyIdx;
+  if (nameIdx >= 0) nameCol = nameIdx;
+  if (qtyCol === nameCol) {
+    qtyCol = 0;
+    nameCol = 1;
+  }
+  return { qtyCol, nameCol };
+}
+
+function parseRecipeTable(table, title) {
+  const rows = [...table.getElementsByTagName('w:tr')];
+  if (!rows.length) return null;
+
+  const ingredients = [];
+  let qtyCol = 0;
+  let nameCol = 1;
+  let headerDone = false;
+
+  for (const row of rows) {
+    const cells = [...row.getElementsByTagName('w:tc')].map(cellText);
+    if (!cells.length) continue;
+
+    if (!headerDone && (cells.length >= 2 || isHeaderRow(cells))) {
+      if (isHeaderRow(cells)) {
+        ({ qtyCol, nameCol } = detectColumns(cells));
+        headerDone = true;
+        continue;
+      }
+    }
+    headerDone = true;
+
+    if (isTotalRow(cells)) continue;
+
+    let qtyText = cells[qtyCol] || '';
+    let nameText = cells[nameCol] || '';
+
+    if (!nameText && cells.length >= 2) {
+      nameText = cells.find((c, i) => i !== qtyCol && c && !/^[\d.,]+\s*(ק"ג|גרם|ליטר|l|kg|g)?$/i.test(c)) || '';
+      qtyText = cells.find((c) => c !== nameText && /[\d.,]/.test(c)) || qtyText;
+    }
+
+    if (!nameText?.trim()) continue;
+
+    let ing = null;
+    if (qtyText && /[\d.,]/.test(qtyText)) {
+      const parsed = parseQtyUnitText(qtyText);
+      if (parsed) {
+        ing = { name: nameText.trim(), ...parsed };
+      }
+    }
+    if (!ing) {
+      ing = parseIngredientLine(`${nameText} ${qtyText}`.trim()) || parseIngredientLine(nameText);
+      if (ing && !ing.name) ing.name = nameText.trim();
+      if (ing && nameText && !parseIngredientLine(nameText)) ing.name = nameText.trim();
+    }
+    if (!ing && nameText) {
+      const fromName = parseIngredientLine(nameText);
+      if (fromName) ing = fromName;
+    }
+
+    if (ing?.name && ing.quantity != null) ingredients.push(ing);
+  }
+
+  if (!ingredients.length) return null;
+  return {
+    title: title || 'מתכון ללא שם',
+    groupName: '',
+    subName: '',
+    ingredients,
+    notes: '',
+  };
+}
+
+export function parseRecipesFromDocumentXml(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  const body = doc.getElementsByTagName('w:body')[0];
+  if (!body) return [];
+
+  const recipes = [];
+  let pendingTitle = null;
+  let pendingGroup = '';
+  let pendingSub = '';
+
+  const blocks = [...body.children].filter((el) => el.nodeType === 1);
+
+  for (const block of blocks) {
+    if (isParagraphTag(block)) {
+      const text = paragraphText(block);
+      if (!text) continue;
+
+      const groupM = text.match(GROUP_HEADER_RE);
+      if (groupM) {
+        pendingGroup = groupM[1].trim();
+        continue;
+      }
+      const subM = text.match(SUB_HEADER_RE);
+      if (subM) {
+        pendingSub = subM[1].trim();
+        continue;
+      }
+      const recipeM = text.match(RECIPE_HEADER_RE);
+      if (recipeM) {
+        pendingTitle = recipeM[1].trim();
+        continue;
+      }
+      if (SKIP_TITLE_RE.test(text)) continue;
+      if (parseIngredientLine(text)) continue;
+      if (text.length <= 80) pendingTitle = text;
+      continue;
+    }
+
+    if (isTableTag(block)) {
+      const recipe = parseRecipeTable(block, pendingTitle);
+      pendingTitle = null;
+      if (recipe) {
+        recipe.groupName = pendingGroup;
+        recipe.subName = pendingSub;
+        recipes.push(recipe);
+      }
+    }
+  }
+
+  return recipes;
 }
 
 function extractTextFromDocumentXml(xml) {
@@ -89,8 +246,7 @@ function extractTextFromDocumentXml(xml) {
   const lines = [];
 
   for (const p of paragraphs) {
-    const texts = [...p.getElementsByTagName('w:t')].map((t) => t.textContent || '');
-    const line = texts.join('').trim();
+    const line = paragraphText(p);
     if (line) lines.push(line);
     else if (lines.length && lines[lines.length - 1] !== '') lines.push('');
   }
@@ -98,13 +254,17 @@ function extractTextFromDocumentXml(xml) {
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-export async function extractTextFromDocx(arrayBuffer) {
+async function getDocumentXml(arrayBuffer) {
   const fflate = await loadFFlate();
   const bytes = new Uint8Array(arrayBuffer);
   const files = fflate.unzipSync(bytes);
   const docXml = files['word/document.xml'];
   if (!docXml) throw new Error('קובץ Word לא תקין — חסר document.xml');
-  const xml = new TextDecoder('utf-8').decode(docXml);
+  return new TextDecoder('utf-8').decode(docXml);
+}
+
+export async function extractTextFromDocx(arrayBuffer) {
+  const xml = await getDocumentXml(arrayBuffer);
   return extractTextFromDocumentXml(xml);
 }
 
@@ -178,10 +338,14 @@ export function parseRecipesFromText(text) {
 
 export async function parseRecipesFromDocxFile(file) {
   const buf = await file.arrayBuffer();
-  const text = await extractTextFromDocx(buf);
-  const recipes = parseRecipesFromText(text);
+  const xml = await getDocumentXml(buf);
+  let recipes = parseRecipesFromDocumentXml(xml);
   if (!recipes.length) {
-    throw new Error('לא נמצאו מתכונים בקובץ — הפרד מתכונים בשורה ריקה או השתמש בכותרת "מתכון: שם"');
+    const text = extractTextFromDocumentXml(xml);
+    recipes = parseRecipesFromText(text);
+  }
+  if (!recipes.length) {
+    throw new Error('לא נמצאו מתכונים — ודא שיש טבלאות עם עמודות "כמות" ו"חומר גלם"');
   }
   return recipes;
 }

@@ -2,12 +2,13 @@ import {
   getSupplierCategories, getSuppliers, addSupplierCategory, addSupplier, updateSupplier, deleteSupplier,
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
-  getRecipeForProduct,
+  getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
 } from '../kitchen-db.js';
 import { getProducts } from '../db.js';
 import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate } from '../utils.js';
 import { openModal, closeModal } from '../modal.js';
 import { requestAutoBackupNow } from '../backup-service.js';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js';
 
 export function suppliersMeta() {
   return { title: 'ספקים', subtitle: 'חומרי גלם, תוכנית שבועית והזמנות' };
@@ -83,10 +84,14 @@ async function renderMaterialsTab(body, container, categories, selectedCat) {
         <div class="card-title" style="margin:0;flex:1">${escapeHtml(catMap.get(Number(selectedCat)) || 'חומרים')}</div>
         <button type="button" class="btn btn-primary btn-sm" id="add-material">+ חומר</button>
       </div>
+      <p class="form-hint" style="margin-bottom:8px">גרור ☰ לשינוי סדר חומרי גלם</p>
       ${materials.length === 0
     ? '<p class="form-hint">אין חומרים — הוסף חומרי גלם לפי קטגוריה</p>'
-    : materials.map((m) => `
-        <div class="list-item">
+    : `<div class="material-list" data-cat-id="${selectedCat}">
+        ${materials.map((m, i) => `
+        <div class="list-item material-list-item" data-material-id="${m.id}">
+          <button type="button" class="material-drag-handle" aria-label="גרור לשינוי סדר">☰</button>
+          <span class="material-order-num" aria-hidden="true">${i + 1}</span>
           <div class="list-item-info">
             <div class="list-item-name">${escapeHtml(m.name)}</div>
             <div class="list-item-meta">
@@ -98,6 +103,7 @@ async function renderMaterialsTab(body, container, categories, selectedCat) {
             <button type="button" class="btn btn-danger btn-sm del-mat" data-id="${m.id}">🗑</button>
           </div>
         </div>`).join('')}
+      </div>`}
     </div>`;
 
   body.querySelectorAll('[data-mat-cat]').forEach((btn) => {
@@ -154,6 +160,12 @@ async function renderMaterialsTab(body, container, categories, selectedCat) {
       renderSuppliers(container);
     });
   });
+
+  if (materials.length) {
+    bindMaterialDragList(body, Number(selectedCat), async (orderedIds) => {
+      await setRawMaterialOrder(Number(selectedCat), orderedIds);
+    });
+  }
 }
 
 async function renderSuppliersTab(body, container, categories, selectedCat) {
@@ -173,10 +185,14 @@ async function renderSuppliersTab(body, container, categories, selectedCat) {
         <div class="card-title" style="margin:0;flex:1">ספקים · ${escapeHtml(catMap.get(Number(selectedCat)) || '')}</div>
         <button type="button" class="btn btn-primary btn-sm" id="add-supplier">+ ספק</button>
       </div>
+      <p class="form-hint" style="margin-bottom:8px">גרור ☰ לשינוי סדר ספקים</p>
       ${suppliers.length === 0
     ? '<p class="form-hint">אין ספקים בקטגוריה</p>'
-    : suppliers.map((s) => `
-        <div class="list-item">
+    : `<div class="supplier-list" data-cat-id="${selectedCat}">
+        ${suppliers.map((s, i) => `
+        <div class="list-item supplier-list-item" data-supplier-id="${s.id}">
+          <button type="button" class="supplier-drag-handle" aria-label="גרור לשינוי סדר">☰</button>
+          <span class="supplier-order-num" aria-hidden="true">${i + 1}</span>
           <div class="list-item-info">
             <div class="list-item-name">${escapeHtml(s.name)}</div>
             <div class="list-item-meta">
@@ -188,6 +204,7 @@ async function renderSuppliersTab(body, container, categories, selectedCat) {
             <button type="button" class="btn btn-danger btn-sm del-sup" data-id="${s.id}">🗑</button>
           </div>
         </div>`).join('')}
+      </div>`}
     </div>`;
 
   body.querySelectorAll('[data-sup-cat]').forEach((btn) => {
@@ -231,6 +248,12 @@ async function renderSuppliersTab(body, container, categories, selectedCat) {
       renderSuppliers(container);
     });
   });
+
+  if (suppliers.length) {
+    bindSupplierDragList(body, Number(selectedCat), async (orderedIds) => {
+      await setSupplierOrder(Number(selectedCat), orderedIds);
+    });
+  }
 }
 
 async function renderPlanTab(body, container, products, weekStart) {

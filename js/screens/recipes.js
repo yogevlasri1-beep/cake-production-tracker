@@ -5,6 +5,7 @@ import {
   addRecipe, updateRecipe, deleteRecipe, addRecipeIngredient, deleteRecipeIngredient,
   updateRecipeIngredient, syncProductCostFromRecipe, getRawMaterials,
   setRecipeOrder, importParsedRecipes, scaleRecipeIngredients,
+  findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind,
 } from '../kitchen-db.js';
 import { getProducts, getCategoryGroups, getCategories } from '../db.js';
@@ -412,50 +413,80 @@ function openImportPreview(container, parsed, { groupId, subId, groups, subs }) 
     title: `ייבוא ${parsed.length} מתכונים מ-Word`,
     bodyHTML: `
       <div class="form-group">
-        <label>קטגוריה כללית (ברירת מחדל)</label>
+        <label>יעד שמירה (ניתן למיין אחר כך)</label>
         <select id="import-group">
-          <option value="">— לפי הקובץ / אוטומטי —</option>
-          ${groups.map((g) => `<option value="${g.id}" ${g.id === groupId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+          <option value="word-import" selected>${escapeHtml(IMPORT_WORD_GROUP)} · ${escapeHtml(IMPORT_WORD_SUB)}</option>
+          ${groups.filter((g) => g.name !== IMPORT_WORD_GROUP).map((g) => `
+            <option value="${g.id}" ${g.id === groupId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group" id="import-sub-wrap">
+        <label>תת-קטגוריה</label>
+        <select id="import-sub">
+          <option value="word-import" selected>${escapeHtml(IMPORT_WORD_SUB)}</option>
+          ${subs.filter((s) => s.name !== IMPORT_WORD_SUB).map((s) => `
+            <option value="${s.id}" ${s.id === subId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
-        <label>תת-קטגוריה (ברירת מחדל)</label>
-        <select id="import-sub">
-          <option value="">— לפי הקובץ / אוטומטי —</option>
-          ${subs.map((s) => `<option value="${s.id}" ${s.id === subId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-        </select>
+        <label class="checkbox-label">
+          <input type="checkbox" id="import-add-materials" checked>
+          הוסף חומרי גלם לספקים (קטגוריה "ייבוא ממתכונים")
+        </label>
       </div>
       <div class="form-group" style="max-height:240px;overflow:auto">
-        <label>תצוגה מקדימה</label>
+        <label>תצוגה מקדימה (${parsed.length} מתכונים)</label>
         ${parsed.map((r) => `
           <div style="margin-bottom:12px;padding:8px;background:#f8fafc;border-radius:8px">
             <strong>${escapeHtml(r.title)}</strong>
-            ${r.groupName ? `<span class="form-hint"> · ${escapeHtml(r.groupName)}</span>` : ''}
-            ${r.subName ? `<span class="form-hint"> / ${escapeHtml(r.subName)}</span>` : ''}
             <ul style="margin:4px 0 0;padding-right:18px;font-size:0.85rem">
               ${(r.ingredients || []).map((ing) => `<li>${escapeHtml(ing.name)} — ${ing.quantity} ${escapeHtml(ing.unit)}</li>`).join('')}
               ${!(r.ingredients || []).length ? '<li class="form-hint">אין חומרים מזוהים</li>' : ''}
             </ul>
           </div>`).join('')}
       </div>
-      <p class="form-hint">הפרד מתכונים בשורה ריקה. שורות חומרים: "קמח 50 ק״ג" או "שם | 500 | g"</p>`,
+      <p class="form-hint">תומך בטבלאות Word עם עמודות "כמות" ו"חומר גלם". שורת סה"כ מדולגת.</p>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
-      <button class="btn btn-primary" id="confirm-recipe-import">ייבוא</button>`,
+      <button class="btn btn-primary" id="confirm-recipe-import">ייבוא הכל</button>`,
   });
+
+  const groupSelect = document.getElementById('import-group');
+  const subWrap = document.getElementById('import-sub-wrap');
+  groupSelect?.addEventListener('change', () => {
+    if (subWrap) subWrap.style.display = groupSelect.value === 'word-import' ? 'none' : '';
+  });
+  if (subWrap) subWrap.style.display = 'none';
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 
   document.getElementById('confirm-recipe-import')?.addEventListener('click', async () => {
-    const gid = document.getElementById('import-group')?.value;
-    const sid = document.getElementById('import-sub')?.value;
+    let gid = document.getElementById('import-group')?.value;
+    let sid = document.getElementById('import-sub')?.value;
+    const addRawMaterials = document.getElementById('import-add-materials')?.checked !== false;
     try {
-      const n = await importParsedRecipes(parsed, {
-        groupId: gid ? Number(gid) : null,
-        subCategoryId: sid ? Number(sid) : null,
+      if (gid === 'word-import' || !gid) {
+        const loc = await findOrCreateWordImportCategory();
+        gid = loc.groupId;
+        sid = loc.subCategoryId;
+      } else {
+        gid = Number(gid);
+        sid = sid && sid !== 'word-import' ? Number(sid) : null;
+        if (!sid) {
+          const subList = await getRecipeSubCategories(gid);
+          sid = subList[0]?.id;
+        }
+      }
+      const result = await importParsedRecipes(parsed, {
+        groupId: gid,
+        subCategoryId: sid,
+        addRawMaterials,
       });
       closeModal();
-      showToast(`יובאו ${n} מתכונים ✓`);
+      container.dataset.recipeGroup = String(gid);
+      container.dataset.recipeSub = String(sid);
+      const matMsg = result.rawMaterialsAdded ? ` · ${result.rawMaterialsAdded} חומרים חדשים בספקים` : '';
+      showToast(`יובאו ${result.imported} מתכונים${matMsg} ✓`);
       renderRecipes(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
