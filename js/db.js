@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=118';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=118';
-import { defaultColorForIndex } from './chart.js?v=118';
+} from './validators.js?v=119';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=119';
+import { defaultColorForIndex } from './chart.js?v=119';
 
 export { ValidationError };
 
@@ -1264,9 +1264,11 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
       .equals([date, pid])
       .first();
     if (existing) {
-      await db.productionEntries.update(existing.id, {
-        quantity: (existing.quantity || 0) + qty,
-      });
+      const patch = { quantity: (existing.quantity || 0) + qty };
+      const rid = sanitizeProductId(runId);
+      if (rid) patch.runId = rid;
+      if (stepIndex != null && !Number.isNaN(Number(stepIndex))) patch.stepIndex = Number(stepIndex);
+      await db.productionEntries.update(existing.id, patch);
       return existing.id;
     }
   }
@@ -1301,6 +1303,53 @@ export async function deleteProductionEntry(id) {
   return db.productionEntries.delete(id);
 }
 
+/** מוחק רישום ייצור ומנתק אותו מכל שלבי תהליך */
+export async function deleteProductionEntryFully(id) {
+  const eid = Number(id);
+  if (!eid) return;
+  const entry = await db.productionEntries.get(eid);
+  if (!entry) return;
+
+  const rid = sanitizeProductId(entry.runId);
+  const steps = rid
+    ? await db.runStepStates.where('runId').equals(rid).toArray()
+    : await db.runStepStates.toArray();
+
+  for (const step of steps) {
+    if (!(step.productionEntryIds || []).includes(eid)) continue;
+    await db.runStepStates.update(step.id, {
+      productionEntryIds: (step.productionEntryIds || []).filter((x) => x !== eid),
+    });
+  }
+
+  await db.productionEntries.delete(eid);
+}
+
+async function collectProductionEntryIdsForRun(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) return new Set();
+
+  const entryIds = new Set();
+  const run = await getProductionRun(rid, { normalize: false });
+  if (run) {
+    for (const step of run.steps) {
+      for (const id of step.productionEntryIds || []) entryIds.add(Number(id));
+    }
+  }
+
+  try {
+    const indexed = await db.productionEntries.where('runId').equals(rid).toArray();
+    indexed.forEach((e) => entryIds.add(e.id));
+  } catch {
+    /* index may be missing on very old DB */
+  }
+
+  const legacy = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
+  legacy.forEach((e) => entryIds.add(e.id));
+
+  return entryIds;
+}
+
 export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity }) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
@@ -1323,16 +1372,7 @@ export async function addRunStepProductionEntry(runId, stepIndex, { date, produc
 }
 
 export async function removeRunStepProductionEntry(runId, stepIndex, entryId) {
-  const run = await getProductionRun(runId, { normalize: false });
-  if (!run) throw new ValidationError('תהליך לא נמצא');
-  const eid = Number(entryId);
-  await deleteProductionEntry(eid);
-  for (const s of run.steps) {
-    if (!(s.productionEntryIds || []).includes(eid)) continue;
-    await db.runStepStates.update(s.id, {
-      productionEntryIds: (s.productionEntryIds || []).filter((id) => id !== eid),
-    });
-  }
+  await deleteProductionEntryFully(Number(entryId));
 }
 
 export async function getRunProductionEntries(runId) {
@@ -2993,15 +3033,7 @@ export async function deleteProductionRun(runId) {
   const rid = sanitizeProductId(runId);
   if (!rid) return;
 
-  const entryIds = new Set();
-  const run = await getProductionRun(rid);
-  if (run) {
-    for (const step of run.steps) {
-      for (const id of step.productionEntryIds || []) entryIds.add(Number(id));
-    }
-  }
-  const byRun = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
-  byRun.forEach((e) => entryIds.add(e.id));
+  const entryIds = await collectProductionEntryIdsForRun(rid);
 
   await db.transaction('rw', db.productionRuns, db.runStepStates, db.productionEntries, async () => {
     for (const id of entryIds) {

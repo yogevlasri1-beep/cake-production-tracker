@@ -13,11 +13,11 @@ import {
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
-} from '../db.js?v=118';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=118';
-import { openModal, closeModal } from '../modal.js?v=118';
-import { requestAutoBackupNow } from '../backup-service.js?v=118';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=118';
+} from '../db.js?v=119';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=119';
+import { openModal, closeModal } from '../modal.js?v=119';
+import { requestAutoBackupNow } from '../backup-service.js?v=119';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=119';
 
 function parseIdList(str) {
   try {
@@ -2098,6 +2098,7 @@ export async function renderProcess(container) {
     btn.addEventListener('click', async () => {
       if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו.')) return;
       await deleteProductionRun(Number(btn.dataset.id));
+      requestAutoBackupNow().catch(() => {});
       showToast('התהליך ורישומי הייצור נמחקו');
       renderProcess(container);
     });

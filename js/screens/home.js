@@ -2,17 +2,18 @@ import {
   getCategories, getProducts, getEntriesForMonth, getEntriesForDate,
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
-  getActiveProductionRuns,
-} from '../db.js?v=118';
+  getActiveProductionRuns, deleteProductionEntryFully,
+} from '../db.js?v=119';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
-  todayISO, formatDateHebrew, escapeHtml, formatDate,
-} from '../utils.js?v=118';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=118';
+  todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
+} from '../utils.js?v=119';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=119';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=118';
+} from '../calc.js?v=119';
+import { requestAutoBackupNow } from '../backup-service.js?v=119';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -126,7 +127,7 @@ function monthEndIso(year, month) {
   return `${year}-${String(month).padStart(2, '0')}-${String(last).padStart(2, '0')}`;
 }
 
-function sortCategoryHistoryEntries(entries, productMap, categories) {
+function sortProductionEntries(entries, productMap, categories) {
   return (entries || []).slice().sort((a, b) => {
     const dateCmp = b.date.localeCompare(a.date);
     if (dateCmp !== 0) return dateCmp;
@@ -136,10 +137,10 @@ function sortCategoryHistoryEntries(entries, productMap, categories) {
   });
 }
 
-function buildCategoryHistoryHTML(entries, productMap, categories, category) {
-  const sorted = sortCategoryHistoryEntries(entries, productMap, categories);
+function buildProductionEntriesListHTML(entries, productMap, categories, catMap, { showDelete = false } = {}) {
+  const sorted = sortProductionEntries(entries, productMap, categories);
   if (sorted.length === 0) {
-    return '<p class="report-empty">אין רישומי ייצור לקטגוריה זו</p>';
+    return '<p class="report-empty">אין רישומי ייצור</p>';
   }
 
   let html = '';
@@ -150,6 +151,7 @@ function buildCategoryHistoryHTML(entries, productMap, categories, category) {
     const product = mapGetById(productMap, entry.productId);
     const { qty, value } = productProductionValue(product || { id: entry.productId }, { [entry.productId]: entry.quantity });
     const monthKey = monthKeyFromDate(entry.date);
+    const catName = catMap.get(product?.categoryId) || '';
 
     if (monthKey !== lastMonth) {
       lastMonth = monthKey;
@@ -164,25 +166,104 @@ function buildCategoryHistoryHTML(entries, productMap, categories, category) {
     }
 
     html += `
-      <div class="list-item">
+      <div class="list-item home-prod-entry" data-entry-id="${entry.id}">
         <div class="list-item-info">
           <div class="list-item-name">${escapeHtml(product?.name || 'מוצר לא ידוע')}</div>
-          <div class="list-item-meta">${formatDate(entry.date)} · ${qty} יח' · ${formatMoney(value)}</div>
+          <div class="list-item-meta">
+            ${catName ? `<span class="category-chip">${escapeHtml(catName)}</span> · ` : ''}
+            ${formatDate(entry.date)} · ${formatProductQuantity(product, qty)} · ${formatMoney(value)}
+          </div>
         </div>
+        ${showDelete ? `
+        <div class="list-item-actions">
+          <button type="button" class="btn btn-danger btn-sm btn-icon home-prod-del" data-id="${entry.id}" title="מחק">🗑</button>
+        </div>` : ''}
       </div>`;
   }
 
-  const byProduct = {};
-  for (const entry of sorted) {
-    byProduct[entry.productId] = (byProduct[entry.productId] || 0) + entry.quantity;
-  }
-  const catTotals = sumCategoryTotals(category.id, [...productMap.values()], byProduct);
+  const totalQty = sorted.reduce((s, e) => s + (Number(e.quantity) || 0), 0);
+  const totalVal = sorted.reduce((s, e) => {
+    const p = mapGetById(productMap, e.productId);
+    return s + productProductionValue(p || {}, { [e.productId]: e.quantity }).value;
+  }, 0);
 
   return `
     <p class="history-summary">
-      סה"כ ${sorted.length} רישומים · ${catTotals.qty} יח' · ${formatMoney(catTotals.value)}
+      סה"כ ${sorted.length} רישומים · ${totalQty} יח' · ${formatMoney(totalVal)}
     </p>
     ${html}`;
+}
+
+function bindProductionEntryDeletes(container, onDeleted) {
+  container.querySelectorAll('.home-prod-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק את רישום הייצור?')) return;
+      try {
+        await deleteProductionEntryFully(Number(btn.dataset.id));
+        requestAutoBackupNow().catch(() => {});
+        showToast('נמחק');
+        onDeleted();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+}
+
+async function renderHomeProductionList(container) {
+  const today = todayISO();
+  const { year: curY, month: curM } = currentMonth();
+  const defaultMonth = `${curY}-${String(curM).padStart(2, '0')}`;
+
+  const viewMode = container.dataset.homeViewMode || 'day';
+  const selectedDay = container.dataset.homeDay || today;
+  const selectedMonth = parseMonthValue(container.dataset.homeMonth || monthFromDay(selectedDay) || defaultMonth);
+  const isDay = viewMode === 'day';
+  const periodLabel = isDay
+    ? formatDateHebrew(selectedDay)
+    : monthLabel(selectedMonth.year, selectedMonth.month);
+
+  const [categories, allProducts, entries] = await Promise.all([
+    getCategories(),
+    getProducts(),
+    isDay
+      ? getEntriesForDate(selectedDay)
+      : getEntriesForMonth(selectedMonth.year, selectedMonth.month),
+  ]);
+
+  const productMap = buildProductMap(allProducts);
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const listTitle = isDay ? `רשימת ייצור יומי · ${periodLabel}` : `רשימת ייצור חודשי · ${periodLabel}`;
+
+  document.getElementById('page-title').textContent = isDay ? 'ייצור יומי' : 'ייצור חודשי';
+  document.getElementById('page-subtitle').textContent = periodLabel;
+
+  container.innerHTML = `
+    <button type="button" class="btn btn-secondary btn-sm history-back-btn" id="home-prod-list-back">← חזרה לבית</button>
+    <div class="card history-card">
+      <div class="card-title">${listTitle}</div>
+      <p class="form-hint" style="margin-bottom:12px">לחץ 🗑 למחיקת רישום — גם אם נוצר מתזרים יצור</p>
+      ${buildProductionEntriesListHTML(entries, productMap, categories, catMap, { showDelete: true })}
+    </div>`;
+
+  document.getElementById('home-prod-list-back')?.addEventListener('click', () => {
+    delete container.dataset.homeProductionList;
+    renderHome(container);
+  });
+
+  bindProductionEntryDeletes(container, () => renderHomeProductionList(container));
+}
+
+function buildCategoryHistoryHTML(entries, productMap, categories, category, catMap) {
+  const filtered = entries.filter((e) => {
+    const p = mapGetById(productMap, e.productId);
+    return p?.categoryId === category.id;
+  });
+  const body = buildProductionEntriesListHTML(filtered, productMap, categories, catMap, { showDelete: true });
+  if (filtered.length === 0) {
+    return '<p class="report-empty">אין רישומי ייצור לקטגוריה זו</p>';
+  }
+  return body;
 }
 
 async function renderCategoryHistory(container, categoryId) {
@@ -199,7 +280,8 @@ async function renderCategoryHistory(container, categoryId) {
   }
 
   const productMap = buildProductMap(allProducts);
-  const body = buildCategoryHistoryHTML(entries, productMap, categories, category);
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const body = buildCategoryHistoryHTML(entries, productMap, categories, category, catMap);
 
   document.getElementById('page-title').textContent = category.name;
   document.getElementById('page-subtitle').textContent = 'היסטוריית ייצור';
@@ -210,6 +292,7 @@ async function renderCategoryHistory(container, categoryId) {
       <div class="section-header" style="margin-bottom:8px">
         <span class="category-chip" style="${categoryChipStyle(category.color, category.id)}">${escapeHtml(category.name)}</span>
       </div>
+      <p class="form-hint" style="margin-bottom:12px">לחץ 🗑 למחיקת רישום</p>
       ${body}
     </div>`;
 
@@ -217,6 +300,8 @@ async function renderCategoryHistory(container, categoryId) {
     delete container.dataset.homeCategoryHistory;
     renderHome(container);
   });
+
+  bindProductionEntryDeletes(container, () => renderCategoryHistory(container, categoryId));
 }
 
 async function buildCategorySections(categories, allProducts, activeProducts, totals, targetPeriod, periodLabel, isDay) {
@@ -321,6 +406,10 @@ function bindCategoryCardClicks(container) {
 }
 
 export async function renderHome(container) {
+  if (container.dataset.homeProductionList === '1') {
+    return renderHomeProductionList(container);
+  }
+
   if (container.dataset.homeCategoryHistory) {
     return renderCategoryHistory(container, container.dataset.homeCategoryHistory);
   }
@@ -396,9 +485,10 @@ export async function renderHome(container) {
 
     <p class="stats-block-label">${periodLabel}</p>
     <div class="stat-grid">
-      <div class="stat-box ${isDay ? 'stat-box-day' : ''}">
+      <div class="stat-box stat-box-clickable ${isDay ? 'stat-box-day' : ''}" id="home-open-prod-list" role="button" tabindex="0" title="לחץ לרשימת ייצור">
         <div class="stat-value">${totals.total}</div>
         <div class="stat-label">${qtyLabel}</div>
+        <span class="stat-open-hint">לחץ לרשימה ›</span>
       </div>
       <div class="stat-box ${isDay ? 'stat-box-day' : ''}">
         <div class="stat-value">${formatMoney(totals.totalValue)}</div>
@@ -459,19 +549,31 @@ export async function renderHome(container) {
 
   bindCategoryCardClicks(container);
 
+  const openProdList = () => {
+    container.dataset.homeProductionList = '1';
+    renderHome(container);
+  };
+  document.getElementById('home-open-prod-list')?.addEventListener('click', openProdList);
+  document.getElementById('home-open-prod-list')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openProdList();
+    }
+  });
+
   container.querySelectorAll('.home-flow-open').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const main = document.getElementById('main-content');
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=118');
+      const { navigate } = await import('../app.js?v=119');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=118');
+    const { navigate } = await import('../app.js?v=119');
     navigate('backup');
   });
 
