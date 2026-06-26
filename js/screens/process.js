@@ -12,11 +12,12 @@ import {
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
-} from '../db.js?v=116';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=116';
-import { openModal, closeModal } from '../modal.js?v=116';
-import { requestAutoBackupNow } from '../backup-service.js?v=116';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=116';
+  resolveProductionStepIndex,
+} from '../db.js?v=117';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=117';
+import { openModal, closeModal } from '../modal.js?v=117';
+import { requestAutoBackupNow } from '../backup-service.js?v=117';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=117';
 
 function parseIdList(str) {
   try {
@@ -326,6 +327,25 @@ function flowStepProductionSummary(step) {
   return ` <span class="flow-step-production-badge">📦 ${count} רישומים</span>`;
 }
 
+function mergeRunListProducts(scopedProducts, runEntries, productMap) {
+  const seen = new Set();
+  const merged = [];
+  for (const p of scopedProducts) {
+    if (p && !seen.has(p.id)) {
+      seen.add(p.id);
+      merged.push(p);
+    }
+  }
+  for (const e of runEntries) {
+    const p = productMap.get(e.productId);
+    if (p && !seen.has(p.id)) {
+      seen.add(p.id);
+      merged.push(p);
+    }
+  }
+  return merged;
+}
+
 function stepProductionPanelHTML({
   stepIndex,
   prodDate,
@@ -340,17 +360,18 @@ function stepProductionPanelHTML({
   canAdd,
   canManageEntries,
 }) {
-  const multiProducts = scopedProducts.length > 1;
-  const singleProduct = scopedProducts.length === 1 ? scopedProducts[0] : null;
+  const listProducts = mergeRunListProducts(scopedProducts, runEntries, productMap);
+  const multiProducts = listProducts.length > 1;
+  const singleProduct = listProducts.length === 1 ? listProducts[0] : (scopedProducts.length === 1 ? scopedProducts[0] : null);
   const filteredProducts = selectedCategory
-    ? scopedProducts.filter((p) => String(p.categoryId) === selectedCategory)
-    : scopedProducts;
+    ? listProducts.filter((p) => String(p.categoryId) === selectedCategory)
+    : listProducts;
   const formProducts = multiProducts ? filteredProducts : (singleProduct ? [singleProduct] : []);
   const productOptions = formProducts
     .map((p) => `<option value="${p.id}" ${String(p.id) === String(selectedFormProduct || '') ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
     .join('');
 
-  let entries = runEntries.filter((e) => scopedProducts.some((p) => p.id === e.productId));
+  let entries = [...runEntries];
   if (listProductFilter) {
     entries = entries.filter((e) => String(e.productId) === listProductFilter);
   }
@@ -364,8 +385,8 @@ function stepProductionPanelHTML({
     <div class="form-group" style="margin-bottom:8px">
       <label for="step-${stepIndex}-prod-filter">סינון רשימה לפי מוצר</label>
       <select id="step-${stepIndex}-prod-filter" class="flow-prod-list-filter" data-step="${stepIndex}">
-        <option value="">הכל (${runEntries.filter((e) => scopedProducts.some((p) => p.id === e.productId)).length})</option>
-        ${scopedProducts.map((p) => `<option value="${p.id}" ${String(p.id) === listProductFilter ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+        <option value="">הכל (${runEntries.length})</option>
+        ${listProducts.map((p) => `<option value="${p.id}" ${String(p.id) === listProductFilter ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
       </select>
     </div>` : '';
 
@@ -396,9 +417,10 @@ function stepProductionPanelHTML({
                 <option value="">${formProducts.length ? 'בחר מוצר...' : 'אין מוצרים'}</option>
                 ${productOptions}
               </select>
-            </div>` : `
+            </div>` : (singleProduct ? `
             <input type="hidden" id="step-${stepIndex}-prod-product" class="flow-prod-product" value="${singleProduct.id}">
-            <p class="form-hint" style="margin-bottom:8px">מוצר: <strong>${escapeHtml(singleProduct.name)}</strong></p>`}
+            <p class="form-hint" style="margin-bottom:8px">מוצר: <strong>${escapeHtml(singleProduct.name)}</strong></p>` : `
+            <p class="form-hint" style="margin-bottom:8px">אין מוצרים זמינים לתיעוד — הגדר מוצרים ב«מוצרים»</p>`)}
           <div class="form-group">
             <label for="step-${stepIndex}-prod-qty" class="flow-prod-qty-label">${qtyIsKg ? 'משקל (ק"ג)' : "כמות (יח')"}</label>
             <input type="number" id="step-${stepIndex}-prod-qty" class="flow-prod-qty" min="${qtyIsKg ? '0.001' : '1'}" step="${qtyIsKg ? '0.001' : '1'}" placeholder="${qtyIsKg ? '2.5' : '50'}" required>
@@ -538,22 +560,21 @@ async function renderRunView(container, runId, ctx) {
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
   const editAllMode = container.dataset.runEditAll === '1';
-  const hasProductionSteps = run.steps.some((s) => s.tracksProduction);
-  const prodDate = container.dataset.runProdDate || todayISO();
   let productionCtx = null;
+  let runEntries = [];
+
+  const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
+  runEntries = await getRunProductionEntries(runId);
+  const productionStepIdx = resolveProductionStepIndex(run, runEntries);
+  const hasProductionSteps = productionStepIdx >= 0;
 
   if (hasProductionSteps) {
-    const [products, categories, runEntries] = await Promise.all([
-      getProducts(true),
-      getCategories(),
-      getRunProductionEntries(runId),
-    ]);
     const scopedCategories = filterCategoriesForRun(run, categories);
     const scopedProducts = filterProductsForRun(run, products, categories);
     const selectedCategories = {};
     const selectedFormProducts = {};
-    run.steps.forEach((step, i) => {
-      if (!step.tracksProduction) return;
+    if (productionStepIdx >= 0) {
+      const i = productionStepIdx;
       const key = runProdCategoryKey(i);
       let cat = container.dataset[key] || '';
       if (!cat && scopedCategories.length === 1) cat = String(scopedCategories[0].id);
@@ -563,9 +584,9 @@ async function renderRunView(container, runId, ctx) {
       }
       selectedCategories[i] = cat;
       selectedFormProducts[i] = container.dataset[`runProdFormProduct_${i}`] || '';
-    });
+    }
     productionCtx = {
-      prodDate,
+      prodDate: container.dataset.runProdDate || todayISO(),
       selectedCategories,
       selectedFormProducts,
       listProductFilter: container.dataset.runProdFilter || '',
@@ -577,7 +598,6 @@ async function renderRunView(container, runId, ctx) {
     };
   }
 
-  const productionStepIdx = run.steps.findIndex((s) => s.tracksProduction);
   const showTopProduction = productionStepIdx >= 0 && productionCtx;
   const topProductionHTML = showTopProduction
     ? stepProductionPanelHTML({

@@ -10,15 +10,15 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=116';
+} from '../db.js?v=117';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=116';
-import { openModal, closeModal } from '../modal.js?v=116';
-import { renderTargets } from './targets.js?v=116';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=116';
-import { APP_VERSION } from '../version.js?v=116';
+} from '../utils.js?v=117';
+import { openModal, closeModal } from '../modal.js?v=117';
+import { renderTargets } from './targets.js?v=117';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=117';
+import { APP_VERSION } from '../version.js?v=117';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -176,6 +176,7 @@ async function renderOverview(container) {
       <div class="manager-quick-grid">
         <button type="button" class="btn btn-secondary btn-sm" data-goto-tab="daily">📅 תוכנית יומית</button>
         <button type="button" class="btn btn-secondary btn-sm" data-goto-tab="weekly">🗓 תוכנית שבועית</button>
+        <button type="button" class="btn btn-secondary btn-sm" data-goto-tab="team">🏷 מחלקות צוות</button>
         <button type="button" class="btn btn-secondary btn-sm" data-quick="task">✅ משימה חדשה</button>
         <button type="button" class="btn btn-secondary btn-sm" data-quick="incident">⚠️ דווח תקלה</button>
         <button type="button" class="btn btn-secondary btn-sm" data-goto-tab="notes">📝 הערת משמרת</button>

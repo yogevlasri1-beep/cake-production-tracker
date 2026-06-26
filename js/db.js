@@ -10,11 +10,13 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=116';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=116';
-import { defaultColorForIndex } from './chart.js?v=116';
+} from './validators.js?v=117';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=117';
+import { defaultColorForIndex } from './chart.js?v=117';
 
 export { ValidationError };
+
+export const PRODUCTION_STEP_NAME = 'תיעוד ייצור';
 
 export const db = new Dexie('CakeProduction');
 
@@ -497,6 +499,41 @@ db.version(21).stores({
   for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
     await tx.table('managerDepartments').add({ ...d, active: true });
   }
+});
+
+db.version(22).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  await tx.table('runStepStates').toCollection().modify((s) => {
+    if (
+      s.stepName === PRODUCTION_STEP_NAME
+      || (Array.isArray(s.productionEntryIds) && s.productionEntryIds.length > 0)
+    ) {
+      s.tracksProduction = true;
+    }
+  });
 });
 
 async function resolveCategoryGroupIdForFlow(flowId) {
@@ -1270,7 +1307,14 @@ export async function addRunStepProductionEntry(runId, stepIndex, { date, produc
   if (run.status !== 'active') throw new ValidationError('התהליך לא פעיל');
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
-  if (!step.tracksProduction) throw new ValidationError('שלב זה אינו שלב תיעוד ייצור');
+  if (!step.tracksProduction) {
+    if (step.stepName === PRODUCTION_STEP_NAME || (step.productionEntryIds?.length > 0)) {
+      await db.runStepStates.update(step.id, { tracksProduction: true });
+      step.tracksProduction = true;
+    } else {
+      throw new ValidationError('שלב זה אינו שלב תיעוד ייצור');
+    }
+  }
 
   const entryId = await addProductionEntry({ date, productId, quantity, runId, stepIndex });
   const ids = [...(step.productionEntryIds || []), entryId];
@@ -1279,13 +1323,16 @@ export async function addRunStepProductionEntry(runId, stepIndex, { date, produc
 }
 
 export async function removeRunStepProductionEntry(runId, stepIndex, entryId) {
-  const run = await getProductionRun(runId);
+  const run = await getProductionRun(runId, { normalize: false });
   if (!run) throw new ValidationError('תהליך לא נמצא');
-  const step = run.steps[stepIndex];
-  if (!step) throw new ValidationError('שלב לא תקין');
-  await deleteProductionEntry(Number(entryId));
-  const ids = (step.productionEntryIds || []).filter((id) => id !== Number(entryId));
-  await db.runStepStates.update(step.id, { productionEntryIds: ids });
+  const eid = Number(entryId);
+  await deleteProductionEntry(eid);
+  for (const s of run.steps) {
+    if (!(s.productionEntryIds || []).includes(eid)) continue;
+    await db.runStepStates.update(s.id, {
+      productionEntryIds: (s.productionEntryIds || []).filter((id) => id !== eid),
+    });
+  }
 }
 
 export async function getRunProductionEntries(runId) {
@@ -2269,7 +2316,6 @@ export async function setFlowStepOrderForGroup(categoryGroupId, orderedIds) {
 }
 
 const DEFAULT_FLOW_STEPS = ['הכנת חומרי גלם', 'ערבוב / הכנה', 'שקילה', 'עיצוב', 'אפייה', 'קירור', 'אריזה'];
-export const PRODUCTION_STEP_NAME = 'תיעוד ייצור';
 
 async function ensureFlowProductionStepInTx(tx, flowId) {
   const steps = await tx.table('flowSteps').where('flowId').equals(flowId).toArray();
@@ -2487,12 +2533,95 @@ export async function startProductionRun({
   });
 }
 
-export async function getProductionRun(runId) {
+async function normalizeRunProductionSteps(run) {
+  if (!run?.steps?.length) return false;
+  let changed = false;
+
+  for (const step of run.steps) {
+    const shouldTrack = step.stepName === PRODUCTION_STEP_NAME
+      || (Array.isArray(step.productionEntryIds) && step.productionEntryIds.length > 0);
+    if (shouldTrack && !step.tracksProduction) {
+      await db.runStepStates.update(step.id, { tracksProduction: true });
+      step.tracksProduction = true;
+      changed = true;
+    }
+  }
+
+  if (!run.steps.some((s) => s.tracksProduction) && run.flowId) {
+    const flowSteps = await db.flowSteps.where('flowId').equals(run.flowId).toArray();
+    flowSteps.sort(compareFlowSteps);
+    const prodFlowStep = flowSteps.find((s) => s.tracksProduction || s.name === PRODUCTION_STEP_NAME);
+    if (prodFlowStep) {
+      const byName = run.steps.find((s) => s.stepName === prodFlowStep.name || s.stepName === PRODUCTION_STEP_NAME);
+      if (byName && !byName.tracksProduction) {
+        await db.runStepStates.update(byName.id, { tracksProduction: true });
+        byName.tracksProduction = true;
+        changed = true;
+      } else if (!byName) {
+        const newIndex = run.steps.length;
+        const stepId = await db.runStepStates.add({
+          runId: run.id,
+          stepIndex: newIndex,
+          stepName: prodFlowStep.name,
+          status: run.status === 'completed' ? 'completed' : 'pending',
+          completedAt: run.status === 'completed' ? run.completedAt : null,
+          notes: '',
+          issues: '',
+          improvements: '',
+          tracksPortions: false,
+          tracksProduction: true,
+          portionUnit: null,
+          portionSize: null,
+          portionCount: null,
+          portionBatches: [],
+          productionEntryIds: [],
+        });
+        run.steps.push({
+          id: stepId,
+          runId: run.id,
+          stepIndex: newIndex,
+          stepName: prodFlowStep.name,
+          status: run.status === 'completed' ? 'completed' : 'pending',
+          completedAt: run.status === 'completed' ? run.completedAt : null,
+          notes: '',
+          issues: '',
+          improvements: '',
+          tracksPortions: false,
+          tracksProduction: true,
+          portionUnit: null,
+          portionSize: null,
+          portionCount: null,
+          portionBatches: [],
+          productionEntryIds: [],
+        });
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+export function resolveProductionStepIndex(run, runEntries = []) {
+  if (!run?.steps?.length) return -1;
+  let idx = run.steps.findIndex((s) => s.tracksProduction);
+  if (idx >= 0) return idx;
+  idx = run.steps.findIndex((s) => s.stepName === PRODUCTION_STEP_NAME);
+  if (idx >= 0) return idx;
+  idx = run.steps.findIndex((s) => (s.productionEntryIds || []).length > 0);
+  if (idx >= 0) return idx;
+  if (runEntries.length > 0) return run.steps.length - 1;
+  return -1;
+}
+
+export async function getProductionRun(runId, { normalize = true } = {}) {
   const run = await db.productionRuns.get(runId);
   if (!run) return null;
   const steps = await db.runStepStates.where('runId').equals(runId).toArray();
   steps.sort((a, b) => a.stepIndex - b.stepIndex);
-  return { ...run, steps };
+  const result = { ...run, steps };
+  if (normalize) await normalizeRunProductionSteps(result);
+  return result;
 }
 
 export async function getProductionRunsForDate(date) {
