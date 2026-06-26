@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=127';
-import { APP_VERSION } from './version.js?v=127';
-import { defaultColorForIndex } from './chart.js?v=127';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=127';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=127';
-import { ValidationError } from './validators.js?v=127';
+import { exportAllData, importAllData } from './db.js?v=128';
+import { APP_VERSION } from './version.js?v=128';
+import { defaultColorForIndex } from './chart.js?v=128';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=128';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=128';
+import { ValidationError } from './validators.js?v=128';
 
 export const BACKUP_VERSION = 3;
 
@@ -173,6 +173,14 @@ export function enrichBackupData(raw) {
     flowPortionPresets: raw.flowPortionPresets || [],
     groupPortionPresets: raw.groupPortionPresets || [],
     flowPreparations: raw.flowPreparations || [],
+    recipeCategories: raw.recipeCategories || [],
+    recipes: raw.recipes || [],
+    recipeIngredients: raw.recipeIngredients || [],
+    supplierCategories: raw.supplierCategories || [],
+    suppliers: raw.suppliers || [],
+    rawMaterials: raw.rawMaterials || [],
+    weeklyProductionPlans: raw.weeklyProductionPlans || [],
+    weeklyProductionPlanItems: raw.weeklyProductionPlanItems || [],
     productionRuns: raw.productionRuns || [],
     runStepStates: raw.runStepStates || [],
     productPreparations: raw.productPreparations || [],
@@ -277,6 +285,14 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.flowPreparations)) data.flowPreparations = [];
   if (!Array.isArray(data.productPreparations)) data.productPreparations = [];
   if (!Array.isArray(data.runPreparationChecks)) data.runPreparationChecks = [];
+  if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
+  if (!Array.isArray(data.recipes)) data.recipes = [];
+  if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
+  if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
+  if (!Array.isArray(data.suppliers)) data.suppliers = [];
+  if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];
+  if (!Array.isArray(data.weeklyProductionPlans)) data.weeklyProductionPlans = [];
+  if (!Array.isArray(data.weeklyProductionPlanItems)) data.weeklyProductionPlanItems = [];
   if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];
   if (!Array.isArray(data.managerPlans)) data.managerPlans = [];
   if (!Array.isArray(data.managerPlanItems)) data.managerPlanItems = [];

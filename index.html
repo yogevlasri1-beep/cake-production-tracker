@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="css/styles.css?v=127">
+  <link rel="stylesheet" href="css/styles.css?v=128">
   <script type="importmap">
   {
     "imports": {
@@ -31,9 +31,31 @@
   <noscript><p style="padding:20px;font-family:sans-serif">יש להפעיל JavaScript</p></noscript>
   <div id="app">
     <header class="app-header">
-      <h1 id="page-title">בית</h1>
-      <p id="page-subtitle" class="subtitle"></p>
-      <span id="app-version" class="app-version"></span>
+      <div class="app-header-row">
+        <button type="button" id="workspace-menu-btn" class="header-menu-btn" aria-label="תפריט עמדות" aria-expanded="false">☰</button>
+        <div class="app-header-titles">
+          <h1 id="page-title">בית</h1>
+          <p id="page-subtitle" class="subtitle"></p>
+          <span id="app-version" class="app-version"></span>
+        </div>
+      </div>
+      <div id="workspace-drawer" class="workspace-drawer hidden" aria-hidden="true">
+        <div class="workspace-drawer-panel">
+          <div class="workspace-drawer-title">עמדות</div>
+          <button type="button" class="workspace-menu-item active" data-workspace="production">
+            <span class="workspace-menu-icon">🏭</span>
+            <span class="workspace-menu-label">תיעוד יצור</span>
+          </button>
+          <button type="button" class="workspace-menu-item" data-workspace="suppliers">
+            <span class="workspace-menu-icon">🚚</span>
+            <span class="workspace-menu-label">ספקים</span>
+          </button>
+          <button type="button" class="workspace-menu-item" data-workspace="recipes">
+            <span class="workspace-menu-icon">📒</span>
+            <span class="workspace-menu-label">מתכונים</span>
+          </button>
+        </div>
+      </div>
     </header>
 
     <main id="main-content">
@@ -76,7 +98,7 @@
   </div>
 
   <script>
-    window.__APP_BUILD__ = '127';
+    window.__APP_BUILD__ = '128';
 
     function isIOSStandalone() {
       return (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
@@ -169,7 +191,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=127"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=127"></script>
+  <script src="js/vendor/dexie.min.js?v=128"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=128"></script>
 </body>
 </html>

@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=127';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=127';
-import { defaultColorForIndex } from './chart.js?v=127';
+} from './validators.js?v=128';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=128';
+import { defaultColorForIndex } from './chart.js?v=128';
 
 export { ValidationError };
 
@@ -593,6 +593,58 @@ db.version(24).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
 });
 
+db.version(25).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  flowPreparations: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeCategories: '++id, name, sortOrder',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const recipeCats = await tx.table('recipeCategories').count();
+  if (recipeCats === 0) {
+    const defaults = ['מפעל', 'מאפייה', 'פרטי', 'מהאינטרנט', 'אחר'];
+    await tx.table('recipeCategories').bulkAdd(
+      defaults.map((name, i) => ({ name, sortOrder: i + 1 })),
+    );
+  }
+  const supplierCats = await tx.table('supplierCategories').count();
+  if (supplierCats === 0) {
+    const defaults = ['חומרי גלם יבשים', 'חלב ומוצריו', 'ירקות ופירות', 'אריזה', 'אחר'];
+    await tx.table('supplierCategories').bulkAdd(
+      defaults.map((name, i) => ({ name, sortOrder: i + 1 })),
+    );
+  }
+});
+
 async function resolveCategoryGroupIdForFlow(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return null;
@@ -881,7 +933,15 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeCategories, db.recipes, db.recipeIngredients, db.supplierCategories, db.suppliers, db.rawMaterials, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+    await db.weeklyProductionPlanItems.clear();
+    await db.weeklyProductionPlans.clear();
+    await db.recipeIngredients.clear();
+    await db.recipes.clear();
+    await db.recipeCategories.clear();
+    await db.rawMaterials.clear();
+    await db.suppliers.clear();
+    await db.supplierCategories.clear();
     await db.productionEntries.clear();
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
@@ -910,6 +970,10 @@ export async function resetAllData() {
     for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
       await db.managerDepartments.add({ ...d, active: true });
     }
+    const recipeDefaults = ['מפעל', 'מאפייה', 'פרטי', 'מהאינטרנט', 'אחר'];
+    await db.recipeCategories.bulkAdd(recipeDefaults.map((name, i) => ({ name, sortOrder: i + 1 })));
+    const supplierDefaults = ['חומרי גלם יבשים', 'חלב ומוצריו', 'ירקות ופירות', 'אריזה', 'אחר'];
+    await db.supplierCategories.bulkAdd(supplierDefaults.map((name, i) => ({ name, sortOrder: i + 1 })));
   });
 }
 
@@ -980,6 +1044,14 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    recipeCategories,
+    recipes,
+    recipeIngredients,
+    supplierCategories,
+    suppliers,
+    rawMaterials,
+    weeklyProductionPlans,
+    weeklyProductionPlanItems,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -1006,6 +1078,14 @@ export async function exportAllData() {
     db.managerResponsibilityAreas.toArray(),
     db.managerEmployees.toArray(),
     db.managerDepartments?.toArray?.() ?? Promise.resolve([]),
+    db.recipeCategories.toArray(),
+    db.recipes.toArray(),
+    db.recipeIngredients.toArray(),
+    db.supplierCategories.toArray(),
+    db.suppliers.toArray(),
+    db.rawMaterials.toArray(),
+    db.weeklyProductionPlans.toArray(),
+    db.weeklyProductionPlanItems.toArray(),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -1032,6 +1112,14 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    recipeCategories,
+    recipes,
+    recipeIngredients,
+    supplierCategories,
+    suppliers,
+    rawMaterials,
+    weeklyProductionPlans,
+    weeklyProductionPlanItems,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -1064,6 +1152,14 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
   if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
   if (!Array.isArray(payload.runPreparationChecks)) payload.runPreparationChecks = [];
+  if (!Array.isArray(payload.weeklyProductionPlanItems)) payload.weeklyProductionPlanItems = [];
+  if (!Array.isArray(payload.recipeCategories)) payload.recipeCategories = [];
+  if (!Array.isArray(payload.recipes)) payload.recipes = [];
+  if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
+  if (!Array.isArray(payload.supplierCategories)) payload.supplierCategories = [];
+  if (!Array.isArray(payload.suppliers)) payload.suppliers = [];
+  if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
+  if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
   if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
   if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
   if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
@@ -1117,9 +1213,25 @@ export async function importAllData(payload) {
     db.managerResponsibilityAreas,
     db.managerEmployees,
     db.managerDepartments,
+    db.recipeCategories,
+    db.recipes,
+    db.recipeIngredients,
+    db.supplierCategories,
+    db.suppliers,
+    db.rawMaterials,
+    db.weeklyProductionPlans,
+    db.weeklyProductionPlanItems,
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
+      await db.weeklyProductionPlanItems.clear();
+      await db.weeklyProductionPlans.clear();
+      await db.recipeIngredients.clear();
+      await db.recipes.clear();
+      await db.recipeCategories.clear();
+      await db.rawMaterials.clear();
+      await db.suppliers.clear();
+      await db.supplierCategories.clear();
       await db.runPreparationChecks.clear();
       await db.runStepStates.clear();
       await db.productionRuns.clear();
@@ -1161,6 +1273,16 @@ export async function importAllData(payload) {
       if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
       if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
       if (payload.runPreparationChecks.length) await db.runPreparationChecks.bulkPut(payload.runPreparationChecks);
+      if (payload.recipeCategories.length) await db.recipeCategories.bulkPut(payload.recipeCategories);
+      if (payload.recipes.length) await db.recipes.bulkPut(payload.recipes);
+      if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
+      if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
+      if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);
+      if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
+      if (payload.weeklyProductionPlans.length) await db.weeklyProductionPlans.bulkPut(payload.weeklyProductionPlans);
+      if (payload.weeklyProductionPlanItems.length) {
+        await db.weeklyProductionPlanItems.bulkPut(payload.weeklyProductionPlanItems);
+      }
       if (payload.managerPlans.length) await db.managerPlans.bulkPut(payload.managerPlans);
       if (payload.managerPlanItems.length) await db.managerPlanItems.bulkPut(payload.managerPlanItems);
       if (payload.managerTasks.length) await db.managerTasks.bulkPut(payload.managerTasks);

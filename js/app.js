@@ -1,18 +1,21 @@
-import { initDB } from './db.js?v=127';
-import { renderHome, homeMeta } from './screens/home.js?v=127';
-import { renderProducts, productsMeta } from './screens/products.js?v=127';
-import { renderManager, managerMeta } from './screens/manager.js?v=127';
-import { renderProcess, processMeta } from './screens/process.js?v=127';
-import { renderReports, reportsMeta } from './screens/reports.js?v=127';
-import { renderBackup, backupMeta } from './screens/backup.js?v=127';
-import { initIOSInstallPrompt } from './ios-install.js?v=127';
-import { initNetworkCheck } from './network.js?v=127';
-import { registerServiceWorker } from './sw-register.js?v=127';
-import { APP_VERSION } from './version.js?v=127';
-import { showToast } from './utils.js?v=127';
-import './modal.js?v=127';
+import { initDB } from './db.js?v=128';
+import { renderHome, homeMeta } from './screens/home.js?v=128';
+import { renderProducts, productsMeta } from './screens/products.js?v=128';
+import { renderManager, managerMeta } from './screens/manager.js?v=128';
+import { renderProcess, processMeta } from './screens/process.js?v=128';
+import { renderReports, reportsMeta } from './screens/reports.js?v=128';
+import { renderBackup, backupMeta } from './screens/backup.js?v=128';
+import { renderRecipes, recipesMeta } from './screens/recipes.js?v=128';
+import { renderSuppliers, suppliersMeta } from './screens/suppliers.js?v=128';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES } from './workspaces.js?v=128';
+import { initIOSInstallPrompt } from './ios-install.js?v=128';
+import { initNetworkCheck } from './network.js?v=128';
+import { registerServiceWorker } from './sw-register.js?v=128';
+import { APP_VERSION } from './version.js?v=128';
+import { showToast } from './utils.js?v=128';
+import './modal.js?v=128';
 
-const SCREENS = {
+const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
   process: { render: renderProcess, meta: processMeta },
   products: { render: renderProducts, meta: productsMeta },
@@ -24,16 +27,89 @@ const SCREENS = {
   },
 };
 
+const WORKSPACE_SCREENS = {
+  production: PRODUCTION_SCREENS,
+  suppliers: {
+    suppliers: { render: renderSuppliers, meta: suppliersMeta },
+  },
+  recipes: {
+    recipes: { render: renderRecipes, meta: recipesMeta },
+  },
+};
+
+let currentWorkspace = getSavedWorkspace();
 let currentScreen = 'home';
 
+function getActiveScreens() {
+  return WORKSPACE_SCREENS[currentWorkspace] || PRODUCTION_SCREENS;
+}
+
+function updateWorkspaceChrome() {
+  const bottomNav = document.querySelector('.bottom-nav');
+  bottomNav?.classList.toggle('bottom-nav--hidden', currentWorkspace !== 'production');
+
+  document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.workspace === currentWorkspace);
+  });
+}
+
+function closeWorkspaceDrawer() {
+  const drawer = document.getElementById('workspace-drawer');
+  const btn = document.getElementById('workspace-menu-btn');
+  drawer?.classList.add('hidden');
+  drawer?.setAttribute('aria-hidden', 'true');
+  btn?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleWorkspaceDrawer() {
+  const drawer = document.getElementById('workspace-drawer');
+  const btn = document.getElementById('workspace-menu-btn');
+  if (!drawer) return;
+  const open = drawer.classList.toggle('hidden');
+  drawer.setAttribute('aria-hidden', open ? 'true' : 'false');
+  btn?.setAttribute('aria-expanded', open ? 'false' : 'true');
+}
+
+function initWorkspaceMenu() {
+  document.getElementById('workspace-menu-btn')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleWorkspaceDrawer();
+  });
+
+  document.addEventListener('click', (e) => {
+    const drawer = document.getElementById('workspace-drawer');
+    const btn = document.getElementById('workspace-menu-btn');
+    if (!drawer || drawer.classList.contains('hidden')) return;
+    if (drawer.contains(e.target) || btn?.contains(e.target)) return;
+    closeWorkspaceDrawer();
+  });
+
+  document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ws = btn.dataset.workspace;
+      if (!WORKSPACES[ws]) return;
+      currentWorkspace = ws;
+      saveWorkspace(ws);
+      updateWorkspaceChrome();
+      closeWorkspaceDrawer();
+      navigate(WORKSPACES[ws].defaultScreen);
+    });
+  });
+}
+
 async function navigate(screen) {
-  if (!SCREENS[screen]) return;
+  const SCREENS = getActiveScreens();
+  if (!SCREENS[screen]) {
+    const fallback = WORKSPACES[currentWorkspace]?.defaultScreen || 'home';
+    if (SCREENS[fallback]) return navigate(fallback);
+    return;
+  }
   currentScreen = screen;
 
   const main = document.getElementById('main-content');
   const header = document.querySelector('.app-header');
-  main.classList.toggle('home-screen', screen === 'home');
-  header?.classList.toggle('app-header--centered', screen === 'home');
+  main.classList.toggle('home-screen', screen === 'home' && currentWorkspace === 'production');
+  header?.classList.toggle('app-header--centered', screen === 'home' && currentWorkspace === 'production');
 
   if (screen === 'home') {
     delete main.dataset.homeCategoryHistory;
@@ -44,9 +120,11 @@ async function navigate(screen) {
     delete main.dataset.homeProductionList;
   }
 
-  document.querySelectorAll('.nav-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.screen === screen);
-  });
+  if (currentWorkspace === 'production') {
+    document.querySelectorAll('.nav-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.screen === screen);
+    });
+  }
 
   const { title, subtitle } = SCREENS[screen].meta();
   document.getElementById('page-title').textContent = title;
@@ -58,6 +136,11 @@ async function navigate(screen) {
 
 document.querySelectorAll('.nav-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
+    if (currentWorkspace !== 'production') {
+      currentWorkspace = 'production';
+      saveWorkspace('production');
+      updateWorkspaceChrome();
+    }
     const main = document.getElementById('main-content');
     if (btn.dataset.screen === 'process') {
       delete main.dataset.view;
@@ -75,11 +158,11 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=127');
+        const { forceAppUpdate } = await import('./sw-register.js?v=128');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=127').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=128').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -89,13 +172,17 @@ async function boot() {
       }).catch(() => {});
     }
 
+    initWorkspaceMenu();
+    updateWorkspaceChrome();
+
     await initDB();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=127');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=128');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
-    await navigate('home');
+    const ws = WORKSPACES[currentWorkspace] || WORKSPACES.production;
+    await navigate(ws.defaultScreen);
     initIOSInstallPrompt();
     initNetworkCheck();
 

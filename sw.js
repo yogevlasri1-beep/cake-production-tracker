@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '127';
+const VERSION = '128';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -39,6 +39,8 @@ const PRECACHE = [
   v('./js/ios-install.js'),
   v('./js/sw-register.js'),
   v('./js/product-drag.js'),
+  v('./js/workspaces.js'),
+  v('./js/kitchen-db.js'),
   v('./js/screens/home.js'),
   v('./js/screens/process.js'),
   v('./js/screens/products.js'),
@@ -46,6 +48,8 @@ const PRECACHE = [
   v('./js/screens/targets.js'),
   v('./js/screens/reports.js'),
   v('./js/screens/backup.js'),
+  v('./js/screens/recipes.js'),
+  v('./js/screens/suppliers.js'),
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
