@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=124';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=124';
-import { defaultColorForIndex } from './chart.js?v=124';
+} from './validators.js?v=125';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=125';
+import { defaultColorForIndex } from './chart.js?v=125';
 
 export { ValidationError };
 
@@ -536,6 +536,34 @@ db.version(22).stores({
   });
 });
 
+db.version(23).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, productPreparationId, [runId+productPreparationId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
 async function resolveCategoryGroupIdForFlow(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return null;
@@ -824,13 +852,14 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.productionEntries.clear();
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
     await db.groupPortionPresets.clear();
     await db.flowSteps.clear();
     await db.flows.clear();
+    await db.runPreparationChecks.clear();
     await db.runStepStates.clear();
     await db.productionRuns.clear();
     await db.managerPlanItems.clear();
@@ -909,6 +938,8 @@ export async function exportAllData() {
     groupPortionPresets,
     productionRuns,
     runStepStates,
+    productPreparations,
+    runPreparationChecks,
     settingsRows,
     managerPlans,
     managerPlanItems,
@@ -932,6 +963,8 @@ export async function exportAllData() {
     db.groupPortionPresets.toArray(),
     db.productionRuns.toArray(),
     db.runStepStates.toArray(),
+    db.productPreparations.toArray(),
+    db.runPreparationChecks.toArray(),
     db.settings.toArray(),
     db.managerPlans.toArray(),
     db.managerPlanItems.toArray(),
@@ -956,6 +989,8 @@ export async function exportAllData() {
     groupPortionPresets,
     productionRuns,
     runStepStates,
+    productPreparations,
+    runPreparationChecks,
     managerPlans,
     managerPlanItems,
     managerTasks,
@@ -993,6 +1028,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.groupPortionPresets)) payload.groupPortionPresets = [];
   if (!Array.isArray(payload.productionRuns)) payload.productionRuns = [];
   if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
+  if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
+  if (!Array.isArray(payload.runPreparationChecks)) payload.runPreparationChecks = [];
   if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
   if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
   if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
@@ -1034,6 +1071,8 @@ export async function importAllData(payload) {
     db.groupPortionPresets,
     db.productionRuns,
     db.runStepStates,
+    db.productPreparations,
+    db.runPreparationChecks,
     db.settings,
     db.managerPlans,
     db.managerPlanItems,
@@ -1046,6 +1085,7 @@ export async function importAllData(payload) {
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
+      await db.runPreparationChecks.clear();
       await db.runStepStates.clear();
       await db.productionRuns.clear();
       await db.flowPortionPresets.clear();
@@ -1059,6 +1099,7 @@ export async function importAllData(payload) {
       await db.managerShiftNotes.clear();
       await db.managerEmployees.clear();
       await db.managerResponsibilityAreas.clear();
+      await db.productPreparations.clear();
       await db.products.clear();
       await db.categories.clear();
       await db.categoryGroups.clear();
@@ -1081,6 +1122,8 @@ export async function importAllData(payload) {
       }
       if (payload.productionRuns.length) await db.productionRuns.bulkPut(payload.productionRuns);
       if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
+      if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
+      if (payload.runPreparationChecks.length) await db.runPreparationChecks.bulkPut(payload.runPreparationChecks);
       if (payload.managerPlans.length) await db.managerPlans.bulkPut(payload.managerPlans);
       if (payload.managerPlanItems.length) await db.managerPlanItems.bulkPut(payload.managerPlanItems);
       if (payload.managerTasks.length) await db.managerTasks.bulkPut(payload.managerTasks);
@@ -1807,6 +1850,142 @@ export async function getProcessLogsForMonth(year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   const all = await db.processLogs.toArray();
   return all.filter((e) => e.date.startsWith(prefix));
+}
+
+/* ── הכנות למוצר (צ'קליסט בתזרים) ── */
+
+export async function getProductPreparations(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return [];
+  const rows = await db.productPreparations.where('productId').equals(pid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function addProductPreparation(productId, name) {
+  const pid = sanitizeProductId(productId);
+  const trimmed = sanitizeName(name, 80);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  if (!trimmed) throw new ValidationError('שם הכנה לא תקין');
+  const existing = await getProductPreparations(pid);
+  if (existing.some((p) => p.name === trimmed)) {
+    throw new ValidationError('הכנה זו כבר קיימת למוצר');
+  }
+  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+  return db.productPreparations.add({ productId: pid, name: trimmed, sortOrder: maxOrder + 1 });
+}
+
+export async function deleteProductPreparation(id) {
+  const prepId = sanitizeProductId(id);
+  if (!prepId) return;
+  await db.productPreparations.delete(prepId);
+}
+
+export async function importProductPreparationsFromActivityPresets(productId, categoryId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  const presets = await getActivityPresets(categoryId);
+  const existing = await getProductPreparations(pid);
+  const names = new Set(existing.map((p) => p.name));
+  let added = 0;
+  for (const name of presets) {
+    if (names.has(name)) continue;
+    await addProductPreparation(pid, name);
+    names.add(name);
+    added += 1;
+  }
+  return added;
+}
+
+async function seedRunPreparationChecksInTx(tx, runId, productId) {
+  const pid = sanitizeProductId(productId);
+  const rid = sanitizeProductId(runId);
+  if (!pid || !rid) return;
+  const preps = await tx.table('productPreparations').where('productId').equals(pid).toArray();
+  preps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  for (const prep of preps) {
+    await tx.table('runPreparationChecks').add({
+      runId: rid,
+      productPreparationId: prep.id,
+      name: prep.name,
+      sortOrder: prep.sortOrder ?? 0,
+      checked: false,
+      checkedAt: null,
+    });
+  }
+}
+
+export async function getRunPreparationChecks(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) return [];
+  const rows = await db.runPreparationChecks.where('runId').equals(rid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function ensureRunPreparationChecks(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) return [];
+  const run = await db.productionRuns.get(rid);
+  if (!run?.productId) return [];
+
+  const preps = await getProductPreparations(run.productId);
+  const existing = await getRunPreparationChecks(rid);
+  const byPrepId = new Map(
+    existing.filter((c) => c.productPreparationId).map((c) => [c.productPreparationId, c]),
+  );
+
+  await db.transaction('rw', db.runPreparationChecks, async () => {
+    for (const prep of preps) {
+      const ex = byPrepId.get(prep.id);
+      if (ex) {
+        if (ex.name !== prep.name || ex.sortOrder !== prep.sortOrder) {
+          await db.runPreparationChecks.update(ex.id, { name: prep.name, sortOrder: prep.sortOrder ?? 0 });
+        }
+      } else {
+        await db.runPreparationChecks.add({
+          runId: rid,
+          productPreparationId: prep.id,
+          name: prep.name,
+          sortOrder: prep.sortOrder ?? 0,
+          checked: false,
+          checkedAt: null,
+        });
+      }
+    }
+  });
+
+  return getRunPreparationChecks(rid);
+}
+
+export async function setRunPreparationChecked(checkId, checked) {
+  const id = sanitizeProductId(checkId);
+  if (!id) throw new ValidationError('פריט לא תקין');
+  return db.runPreparationChecks.update(id, {
+    checked: !!checked,
+    checkedAt: checked ? nowISO() : null,
+  });
+}
+
+export async function addRunPreparationFromProduct(productId, name, runId) {
+  const prepId = await addProductPreparation(productId, name);
+  const rid = sanitizeProductId(runId);
+  if (!rid) return prepId;
+  const prep = await db.productPreparations.get(prepId);
+  if (prep) {
+    const existing = await getRunPreparationChecks(rid);
+    if (!existing.some((c) => c.productPreparationId === prep.id)) {
+      await db.runPreparationChecks.add({
+        runId: rid,
+        productPreparationId: prep.id,
+        name: prep.name,
+        sortOrder: prep.sortOrder ?? 0,
+        checked: false,
+        checkedAt: null,
+      });
+    }
+  }
+  return prepId;
 }
 
 /* ── תזרים יצור ── */
@@ -2585,7 +2764,7 @@ export async function startProductionRun({
 
   const startedAt = mergeDateIntoIso(date, nowISO());
 
-  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, async () => {
+  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, async () => {
     const runId = await db.productionRuns.add({
       date,
       batchNumber: batch,
@@ -2623,6 +2802,9 @@ export async function startProductionRun({
         portionBatches: [],
         productionEntryIds: [],
       });
+    }
+    if (pid) {
+      await seedRunPreparationChecksInTx(db, runId, pid);
     }
     if (runSettings.autoBatchEnabled) {
       const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
@@ -3109,6 +3291,12 @@ export async function syncProductionRunWithFlow(runId) {
   const refreshed = await getProductionRun(runId, { normalize: false });
   if (await normalizeRunProductionSteps(refreshed)) changed = true;
 
+  if (run.productId) {
+    const before = (await getRunPreparationChecks(runId)).length;
+    const after = (await ensureRunPreparationChecks(runId)).length;
+    if (after > before) changed = true;
+  }
+
   return { updated: changed };
 }
 
@@ -3195,10 +3383,11 @@ export async function deleteProductionRun(runId) {
 
   const entryIds = await collectProductionEntryIdsForRun(rid);
 
-  await db.transaction('rw', db.productionRuns, db.runStepStates, db.productionEntries, async () => {
+  await db.transaction('rw', db.productionRuns, db.runStepStates, db.productionEntries, db.runPreparationChecks, async () => {
     for (const id of entryIds) {
       await db.productionEntries.delete(id);
     }
+    await db.runPreparationChecks.where('runId').equals(rid).delete();
     await db.runStepStates.where('runId').equals(rid).delete();
     await db.productionRuns.delete(rid);
   });

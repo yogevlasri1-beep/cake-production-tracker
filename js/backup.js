@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=124';
-import { APP_VERSION } from './version.js?v=124';
-import { defaultColorForIndex } from './chart.js?v=124';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=124';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=124';
-import { ValidationError } from './validators.js?v=124';
+import { exportAllData, importAllData } from './db.js?v=125';
+import { APP_VERSION } from './version.js?v=125';
+import { defaultColorForIndex } from './chart.js?v=125';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=125';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=125';
+import { ValidationError } from './validators.js?v=125';
 
 export const BACKUP_VERSION = 3;
 
@@ -174,6 +174,8 @@ export function enrichBackupData(raw) {
     groupPortionPresets: raw.groupPortionPresets || [],
     productionRuns: raw.productionRuns || [],
     runStepStates: raw.runStepStates || [],
+    productPreparations: raw.productPreparations || [],
+    runPreparationChecks: raw.runPreparationChecks || [],
     managerPlans: raw.managerPlans || [],
     managerPlanItems: raw.managerPlanItems || [],
     managerTasks: raw.managerTasks || [],
@@ -271,6 +273,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.flowPortionPresets)) data.flowPortionPresets = [];
   if (!Array.isArray(data.productionRuns)) data.productionRuns = [];
   if (!Array.isArray(data.runStepStates)) data.runStepStates = [];
+  if (!Array.isArray(data.productPreparations)) data.productPreparations = [];
+  if (!Array.isArray(data.runPreparationChecks)) data.runPreparationChecks = [];
   if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];
   if (!Array.isArray(data.managerPlans)) data.managerPlans = [];
   if (!Array.isArray(data.managerPlanItems)) data.managerPlanItems = [];

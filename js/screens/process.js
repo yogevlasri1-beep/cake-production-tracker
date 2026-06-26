@@ -14,11 +14,12 @@ import {
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
-} from '../db.js?v=124';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=124';
-import { openModal, closeModal } from '../modal.js?v=124';
-import { requestAutoBackupNow } from '../backup-service.js?v=124';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=124';
+  ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromProduct,
+} from '../db.js?v=125';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=125';
+import { openModal, closeModal } from '../modal.js?v=125';
+import { requestAutoBackupNow } from '../backup-service.js?v=125';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=125';
 
 function parseIdList(str) {
   try {
@@ -573,6 +574,47 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
     </div>`;
 }
 
+function flowPreparationsPanelHTML({ checks, productName, runStatus, canManageList }) {
+  if (!productName) {
+    return `
+      <div class="card flow-preparations-card">
+        <div class="flow-preparations-header">
+          <span class="flow-preparations-title">🧁 הכנות</span>
+        </div>
+        <p class="form-hint">לא נבחר מוצר בתהליך — אין רשימת הכנות</p>
+      </div>`;
+  }
+
+  const checkedCount = checks.filter((c) => c.checked).length;
+  const total = checks.length;
+  const progress = total ? `${checkedCount}/${total} הושלמו` : 'אין פריטים';
+
+  return `
+    <div class="card flow-preparations-card">
+      <div class="flow-preparations-header">
+        <span class="flow-preparations-title">🧁 הכנות — ${escapeHtml(productName)}</span>
+        <span class="flow-preparations-progress">${progress}</span>
+      </div>
+      ${total === 0
+    ? `<p class="form-hint" style="margin-bottom:10px">אין הכנות למוצר זה. הוסף למטה או ב«מוצרים» → עריכת מוצר.</p>`
+    : `<ul class="flow-prep-checklist">
+          ${checks.map((c) => `
+            <li class="flow-prep-item${c.checked ? ' is-checked' : ''}">
+              <label class="flow-prep-label">
+                <input type="checkbox" class="flow-prep-check" data-check-id="${c.id}" ${c.checked ? 'checked' : ''}>
+                <span class="flow-prep-checkmark">${c.checked ? '✓' : ''}</span>
+                <span class="flow-prep-name">${escapeHtml(c.name)}</span>
+              </label>
+            </li>`).join('')}
+        </ul>`}
+      ${canManageList ? `
+        <div class="flow-prep-add-row filter-row" style="margin-top:12px">
+          <input type="text" class="flow-prep-add-input" id="flow-prep-add-input" placeholder="הכנה חדשה (למשל: הכנת בצק)">
+          <button type="button" class="btn btn-secondary btn-sm" id="flow-prep-add-btn">+ הוסף</button>
+        </div>` : ''}
+    </div>`;
+}
+
 async function renderRunView(container, runId, ctx) {
   try {
     await syncProductionRunWithFlow(runId);
@@ -587,6 +629,19 @@ async function renderRunView(container, runId, ctx) {
   }
 
   const { catMap, productMap, groupMap } = ctx;
+
+  let prepChecks = [];
+  if (run.productId) {
+    try {
+      prepChecks = await ensureRunPreparationChecks(run.id);
+    } catch {
+      prepChecks = [];
+    }
+  }
+  const prepProductName = run.productId && productMap.get(run.productId)
+    ? productMap.get(run.productId).name
+    : null;
+
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
   const editAllMode = container.dataset.runEditAll === '1';
@@ -629,6 +684,12 @@ async function renderRunView(container, runId, ctx) {
   }
 
   const showTopProduction = productionStepIdx >= 0 && productionCtx;
+  const prepPanelHTML = flowPreparationsPanelHTML({
+    checks: prepChecks,
+    productName: prepProductName,
+    runStatus: run.status,
+    canManageList: run.status === 'active' && !!run.productId,
+  });
   const topProductionHTML = showTopProduction
     ? stepProductionPanelHTML({
       stepIndex: productionStepIdx,
@@ -686,6 +747,8 @@ async function renderRunView(container, runId, ctx) {
         ${hasProductionSteps ? '<span class="flow-legend-item flow-legend-item--production">📦 ייצור</span>' : ''}
       </div>
     </div>
+
+    ${prepPanelHTML}
 
     ${showTopProduction ? `
     <div class="card flow-production-always-card" id="flow-production-anchor">
@@ -771,6 +834,52 @@ async function renderRunView(container, runId, ctx) {
     container.dataset.view = 'list';
     delete container.dataset.runId;
     renderProcess(container);
+  });
+
+  container.querySelectorAll('.flow-prep-check').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const checkId = Number(input.dataset.checkId);
+      try {
+        await setRunPreparationChecked(checkId, input.checked);
+        requestAutoBackupNow().catch(() => {});
+        const item = input.closest('.flow-prep-item');
+        const mark = item?.querySelector('.flow-prep-checkmark');
+        if (item) item.classList.toggle('is-checked', input.checked);
+        if (mark) mark.textContent = input.checked ? '✓' : '';
+        const progressEl = container.querySelector('.flow-preparations-progress');
+        if (progressEl) {
+          const all = container.querySelectorAll('.flow-prep-check');
+          const done = [...all].filter((el) => el.checked).length;
+          progressEl.textContent = `${done}/${all.length} הושלמו`;
+        }
+      } catch (err) {
+        input.checked = !input.checked;
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('flow-prep-add-btn')?.addEventListener('click', async () => {
+    const input = document.getElementById('flow-prep-add-input');
+    const name = input?.value?.trim();
+    if (!name) return showToast('הזן שם הכנה');
+    try {
+      await addRunPreparationFromProduct(run.productId, name, run.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast('הכנה נוספה ✓');
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('flow-prep-add-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('flow-prep-add-btn')?.click();
+    }
   });
 
   container.querySelectorAll('.flow-step-complete-btn').forEach((btn) => {
