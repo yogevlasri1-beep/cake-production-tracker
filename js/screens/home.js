@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=121';
+} from '../db.js?v=122';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount,
-} from '../utils.js?v=121';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=121';
+} from '../utils.js?v=122';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=122';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=121';
-import { requestAutoBackupNow } from '../backup-service.js?v=121';
+} from '../calc.js?v=122';
+import { requestAutoBackupNow } from '../backup-service.js?v=122';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -360,8 +360,8 @@ async function buildCategorySections(categories, allProducts, activeProducts, to
     const productTable = productLines ? `
       <div class="report-qty-value-block home-cat-product-list">
         ${renderHomeQtyValueLabels()}
-        ${renderHomeQtyValueTotalsRow('סה"כ', qty, catValue)}
         ${productLines}
+        ${renderHomeQtyValueTotalsRow('סה"כ', qty, catValue)}
       </div>` : '';
 
     html += `
@@ -605,13 +605,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=121');
+      const { navigate } = await import('../app.js?v=122');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=121');
+    const { navigate } = await import('../app.js?v=122');
     navigate('backup');
   });
 

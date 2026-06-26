@@ -2027,6 +2027,12 @@ table.report-table tfoot td {
   text-align: center;
 }
 
+.home-screen .home-cat-totals-row {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
 .home-screen .home-cat-empty {
   color: var(--text-muted);
   font-size: 0.85rem;
