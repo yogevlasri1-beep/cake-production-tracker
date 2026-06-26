@@ -223,6 +223,13 @@ export function summarizeBackupData(data) {
     managerEmployees: data.managerEmployees?.length || 0,
     managerDepartments: data.managerDepartments?.length || 0,
     settings: data.settings?.length || 0,
+    recipeGroups: data.recipeGroups?.length || 0,
+    recipeCategories: data.recipeCategories?.length || 0,
+    recipes: data.recipes?.length || 0,
+    recipeIngredients: data.recipeIngredients?.length || 0,
+    supplierCategories: data.supplierCategories?.length || 0,
+    suppliers: data.suppliers?.length || 0,
+    rawMaterials: data.rawMaterials?.length || 0,
   };
 }
 
@@ -249,6 +256,9 @@ export function formatBackupSummary(counts) {
   if (counts.managerShiftNotes) parts.push(`${counts.managerShiftNotes} הערות משמרת`);
   if (counts.managerEmployees) parts.push(`${counts.managerEmployees} עובדים`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
+  if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
+  if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
+  if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   return parts.join(' · ');
 }
 

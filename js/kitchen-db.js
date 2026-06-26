@@ -140,6 +140,93 @@ export async function addRecipeCategory(name) {
   return addRecipeSubCategory({ groupId, name, linkedCategoryId: null });
 }
 
+function resolveRecipeGroupForSub(sub, groups, groupByName, productGroups, productCats) {
+  const trimmed = sub.name.trim();
+  if (trimmed && trimmed !== 'ראשי') {
+    const byName = groupByName.get(trimmed);
+    if (byName) return byName;
+  }
+  let productCat = sub.linkedCategoryId
+    ? productCats.find((c) => c.id === sub.linkedCategoryId)
+    : null;
+  if (!productCat && trimmed !== 'ראשי') {
+    productCat = productCats.find((c) => c.name === trimmed);
+  }
+  if (productCat?.groupId) {
+    const pg = productGroups.find((g) => g.id === productCat.groupId);
+    if (pg) {
+      return groupByName.get(pg.name) || groups.find((g) => g.linkedCategoryGroupId === pg.id) || null;
+    }
+  }
+  return null;
+}
+
+async function mergeSubIntoTarget(misplacedSub, targetGroupId, subsInTx) {
+  const destSubs = subsInTx.filter((s) => Number(s.groupId) === Number(targetGroupId));
+  let destSub = destSubs.find((s) => s.name === misplacedSub.name && s.id !== misplacedSub.id)
+    || destSubs.find((s) => s.name === 'ראשי');
+  if (!destSub) {
+    const newId = await db.recipeCategories.add({
+      groupId: targetGroupId,
+      name: 'ראשי',
+      sortOrder: 1,
+      linkedCategoryId: misplacedSub.linkedCategoryId || null,
+    });
+    destSub = { id: newId, groupId: targetGroupId, name: 'ראשי' };
+    subsInTx.push(destSub);
+  }
+  const recipes = await db.recipes.where('categoryId').equals(misplacedSub.id).toArray();
+  for (const r of recipes) {
+    await db.recipes.update(r.id, { categoryId: destSub.id });
+  }
+  const remaining = await db.recipes.where('categoryId').equals(misplacedSub.id).count();
+  if (remaining > 0) {
+    await db.recipeCategories.update(misplacedSub.id, { groupId: targetGroupId });
+    return true;
+  }
+  const siblingCount = await db.recipeCategories.where('groupId').equals(misplacedSub.groupId).count();
+  if (siblingCount > 1) {
+    await db.recipeCategories.delete(misplacedSub.id);
+    const idx = subsInTx.findIndex((s) => s.id === misplacedSub.id);
+    if (idx >= 0) subsInTx.splice(idx, 1);
+  } else {
+    await db.recipeCategories.update(misplacedSub.id, { groupId: targetGroupId });
+  }
+  return true;
+}
+
+/** מעביר תת-קטגוריות שנמצאות תחת קבוצה שגויה (למשל הכל תחת «מפעל») לקבוצה הכללית המתאימה */
+export async function repairRecipeCategoryPlacement() {
+  await importRecipeGroupsFromProducts();
+
+  const [groups, productGroups, productCats] = await Promise.all([
+    getRecipeGroups(),
+    db.categoryGroups.toArray(),
+    db.categories.toArray(),
+  ]);
+  const groupByName = new Map(groups.map((g) => [g.name.trim(), g]));
+  let fixes = 0;
+
+  await db.transaction('rw', db.recipeCategories, db.recipes, db.recipeGroups, async () => {
+    for (const rg of groups) {
+      const pg = productGroups.find((p) => p.name === rg.name);
+      if (pg && rg.linkedCategoryGroupId !== pg.id) {
+        await db.recipeGroups.update(rg.id, { linkedCategoryGroupId: pg.id });
+      }
+    }
+
+    const subsInTx = await db.recipeCategories.toArray();
+    for (const sub of subsInTx.slice().sort((a, b) => a.id - b.id)) {
+      const targetGroup = resolveRecipeGroupForSub(sub, groups, groupByName, productGroups, productCats);
+      if (!targetGroup || Number(sub.groupId) === Number(targetGroup.id)) continue;
+      const moved = await mergeSubIntoTarget(sub, targetGroup.id, subsInTx);
+      if (moved) fixes += 1;
+    }
+  });
+
+  return fixes;
+}
+
 export async function importRecipeSubCategoriesFromProducts(groupId) {
   const gid = sanitizeProductId(groupId);
   if (!gid) throw new ValidationError('קטגוריה לא תקינה');

@@ -1,5 +1,5 @@
 import {
-  getRecipeGroups, getRecipeSubCategories, getRecipes, getRecipe, getRecipesCatalogLayout,
+  getRecipeGroups, getRecipeSubCategories, getRecipes, getRecipe, getRecipesCatalogLayout, repairRecipeCategoryPlacement,
   addRecipeGroup, addRecipeSubCategory, importRecipeGroupsFromProducts,
   importRecipeSubCategoriesFromProducts, deleteRecipeGroup, deleteRecipeSubCategory,
   addRecipe, updateRecipe, deleteRecipe, addRecipeIngredient, deleteRecipeIngredient,
@@ -193,6 +193,14 @@ export function recipesMeta() {
 
 export async function renderRecipes(container) {
   const viewMode = container.dataset.recipeView || 'manage';
+  if (!container.dataset.recipePlacementChecked) {
+    container.dataset.recipePlacementChecked = '1';
+    try {
+      await repairRecipeCategoryPlacement();
+    } catch {
+      /* ignore — migration may have already run */
+    }
+  }
   const [layout, products, productCatalog, productGroups, productCats] = await Promise.all([
     getRecipesCatalogLayout(),
     getProducts(true),

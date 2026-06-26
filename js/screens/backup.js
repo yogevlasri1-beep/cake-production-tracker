@@ -65,7 +65,7 @@ export async function renderBackup(container, { navigate } = {}) {
       ${iosPwa ? `
         <div class="backup-ios-notice">
           <p><strong>איפה הגיבוי נשמר באייפון?</strong></p>
-          <p class="form-hint" style="margin-bottom:8px">הגיבוי כולל את כל האפליקציה — קטגוריות, קטגוריות כלליות, מוצרים, תזרימי יצור והגדרות.</p>
+          <p class="form-hint" style="margin-bottom:8px">הגיבוי כולל את כל האפליקציה — מוצרים, מתכונים, ספקים, תזרימי יצור והגדרות.</p>
           <ul class="backup-ios-list">
             <li><strong>קובץ JSON ב«קבצים»</strong> — הגיבוי האמיתי (דרך Share → שמירה לקבצים)</li>
             <li><strong>פנימי באפליקציה</strong> — גיבוי מהיר לשחזור, <em>נמחק עם האפליקציה</em></li>
@@ -83,7 +83,8 @@ export async function renderBackup(container, { navigate } = {}) {
       ` : `
         <p class="backup-lead">
           הגיבוי כולל <strong>את כל תוכן האפליקציה</strong>: קטגוריות וקטגוריות כלליות (קבוצות),
-          מוצרים (מחירים, סדר), רישומי ייצור, יעדים, תיעוד הכנות,
+          מוצרים (מחירים, סדר), <strong>מתכונים</strong> (קטגוריות, חומרים, קישור למוצרים),
+          <strong>ספקים וחומרי גלם</strong>, רישומי ייצור, יעדים, תיעוד הכנות,
           <strong>תבניות תזרים יצור</strong> (שמות, שלבים) ו<strong>תהליכי יצור פעילים/הושלמו</strong>, והגדרות.
           <strong>לאחר מחיקת האפליקציה</strong> — התקן מחדש וייבא את קובץ הגיבוי.
         </p>
