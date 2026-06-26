@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=113';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=113';
-import { defaultColorForIndex } from './chart.js?v=113';
+} from './validators.js?v=114';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=114';
+import { defaultColorForIndex } from './chart.js?v=114';
 
 export { ValidationError };
 
@@ -1219,6 +1219,7 @@ export async function deleteProductionEntry(id) {
 export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity }) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status !== 'active') throw new ValidationError('התהליך לא פעיל');
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
   if (!step.tracksProduction) throw new ValidationError('שלב זה אינו שלב תיעוד ייצור');
@@ -2657,11 +2658,44 @@ export async function completeRunStep(runId, stepIndex, { notes, issues, improve
   });
 }
 
+export async function reopenRunStep(runId, targetStepIndex) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status === 'completed') throw new ValidationError('התהליך הושלם — לא ניתן לחזור');
+  const idx = Number(targetStepIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= run.steps.length) {
+    throw new ValidationError('שלב לא תקין');
+  }
+  if (idx >= run.currentStepIndex) {
+    throw new ValidationError('כבר בשלב זה או אחריו');
+  }
+
+  return db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    for (let i = idx; i < run.steps.length; i++) {
+      const s = run.steps[i];
+      await db.runStepStates.update(s.id, {
+        status: i === idx ? 'active' : 'pending',
+        completedAt: null,
+      });
+    }
+    await db.productionRuns.update(runId, {
+      currentStepIndex: idx,
+      status: 'active',
+      completedAt: null,
+    });
+  });
+}
+
 export async function updateRunStepFields(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
+  const reached = step.status === 'completed'
+    || step.status === 'active'
+    || stepIndex <= run.currentStepIndex
+    || run.status === 'completed';
+  if (!reached) throw new ValidationError('השלב עדיין לא הגיע');
   const patch = {};
   if (notes !== undefined) patch.notes = String(notes || '').trim().slice(0, 500);
   if (issues !== undefined) patch.issues = String(issues || '').trim().slice(0, 500);

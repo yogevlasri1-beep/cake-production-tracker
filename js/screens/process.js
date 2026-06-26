@@ -7,16 +7,16 @@ import {
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
-  completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails,
+  completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
   getEntriesForDate, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
-} from '../db.js?v=113';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=113';
-import { openModal, closeModal } from '../modal.js?v=113';
-import { requestAutoBackupNow } from '../backup-service.js?v=113';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=113';
+} from '../db.js?v=114';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=114';
+import { openModal, closeModal } from '../modal.js?v=114';
+import { requestAutoBackupNow } from '../backup-service.js?v=114';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=114';
 
 function parseIdList(str) {
   try {
@@ -394,7 +394,7 @@ function stepProductionPanelHTML({
     </div>`;
 }
 
-function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets, runStatus, editAllMode, run, productionCtx) {
+function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets, runStatus, editAllMode, run, productionCtx, productionStepIdx) {
   const visual = stepVisualState(stepIndex, currentIndex, totalSteps, step.status);
   const hasNotes = step.notes || step.issues || step.improvements;
   const portionText = stepPortionLabel(step);
@@ -403,22 +403,34 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
     : '';
   const isActive = visual === 'active';
   const isDone = visual === 'done';
-  const reachable = isActive || isDone;
+  const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
   const showPreview = hasNotes && !isActive && !editAllMode;
-  const canProdAdd = step.tracksProduction && run?.status === 'active' && reachable;
-  const prodPanel = step.tracksProduction && reachable && productionCtx
-    ? stepProductionPanelHTML({
-      stepIndex,
-      prodDate: productionCtx.prodDate,
-      selectedCategory: productionCtx.selectedCategories[stepIndex] || '',
-      scopedCategories: productionCtx.scopedCategories,
-      scopedProducts: productionCtx.scopedProducts,
-      entriesForDate: productionCtx.entriesForDate,
-      catMap: productionCtx.catMap,
-      productMap: productionCtx.productMap,
-      canAdd: canProdAdd,
-    })
-    : '';
+  const runActive = run?.status === 'active';
+  const canEditCompleted = runActive && isDone;
+  const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
+  const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
+  const showTopProduction = productionStepIdx >= 0 && runActive && productionCtx;
+
+  let prodPanel = '';
+  if (step.tracksProduction && productionCtx) {
+    if (runActive && showTopProduction) {
+      if (stepIndex === productionStepIdx) {
+        prodPanel = '<p class="flow-production-inline-hint"><a href="#flow-production-anchor">↑ טופס תיעוד ייצור — למעלה</a></p>';
+      }
+    } else {
+      prodPanel = stepProductionPanelHTML({
+        stepIndex,
+        prodDate: productionCtx.prodDate,
+        selectedCategory: productionCtx.selectedCategories[stepIndex] || '',
+        scopedCategories: productionCtx.scopedCategories,
+        scopedProducts: productionCtx.scopedProducts,
+        entriesForDate: productionCtx.entriesForDate,
+        catMap: productionCtx.catMap,
+        productMap: productionCtx.productMap,
+        canAdd: runActive,
+      });
+    }
+  }
 
   return `
     <div class="flow-step flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
@@ -433,23 +445,25 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
         </div>
         ${prodPanel}
         ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
-        ${step.tracksPortions && reachable
-    ? stepPortionBatchesHTML(step, stepIndex, { canAdd: reachable, canEdit: reachable, presets: portionPresets }) : ''}
+        ${step.tracksPortions && portionEditable
+    ? stepPortionBatchesHTML(step, stepIndex, { canAdd: portionEditable, canEdit: portionEditable, presets: portionPresets }) : ''}
         ${showPreview ? `
           <div class="flow-step-notes-preview">
             ${step.notes ? `<span>📝 ${escapeHtml(step.notes)}</span>` : ''}
             ${step.issues ? `<span>⚠️ ${escapeHtml(step.issues)}</span>` : ''}
             ${step.improvements ? `<span>💡 ${escapeHtml(step.improvements)}</span>` : ''}
           </div>` : ''}
-        ${reachable ? stepInlineEditHTML(step, stepIndex, {
+        ${canEditFields ? stepInlineEditHTML(step, stepIndex, {
     expanded: isActive || editAllMode,
     includePortions: true,
     presets: portionPresets,
   }) : ''}
         <div class="flow-step-actions">
-          ${isDone && !editAllMode ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">עריכה</button>` : ''}
+          ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור לשלב</button>` : ''}
+          ${isDone && (runActive || run?.status === 'completed') ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">✏️ ערוך</button>` : ''}
           ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
           ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם שלב</button>` : ''}
+          ${isDone && canEditFields ? `<button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור</button>` : ''}
         </div>
       </div>
     </div>`;
@@ -523,6 +537,22 @@ async function renderRunView(container, runId, ctx) {
     };
   }
 
+  const productionStepIdx = run.steps.findIndex((s) => s.tracksProduction);
+  const showTopProduction = productionStepIdx >= 0 && run.status === 'active' && productionCtx;
+  const topProductionHTML = showTopProduction
+    ? stepProductionPanelHTML({
+      stepIndex: productionStepIdx,
+      prodDate: productionCtx.prodDate,
+      selectedCategory: productionCtx.selectedCategories[productionStepIdx] || '',
+      scopedCategories: productionCtx.scopedCategories,
+      scopedProducts: productionCtx.scopedProducts,
+      entriesForDate: productionCtx.entriesForDate,
+      catMap: productionCtx.catMap,
+      productMap: productionCtx.productMap,
+      canAdd: true,
+    })
+    : '';
+
   container.innerHTML = `
     <div class="card flow-run-header-card">
       <button type="button" class="btn btn-secondary btn-sm" id="back-to-list">← חזרה</button>
@@ -554,8 +584,17 @@ async function renderRunView(container, runId, ctx) {
       </div>
     </div>
 
+    ${showTopProduction ? `
+    <div class="card flow-production-always-card" id="flow-production-anchor">
+      <div class="flow-production-always-header">
+        <span class="flow-production-always-title">📦 תיעוד ייצור — זמין תמיד</span>
+        <span class="flow-production-always-hint">אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב</span>
+      </div>
+      ${topProductionHTML}
+    </div>` : ''}
+
     <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
-      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx)).join('')}
+      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx, productionStepIdx)).join('')}
     </div>
 
     ${editAllMode ? `
@@ -637,6 +676,24 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  container.querySelectorAll('.flow-step-reopen-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const stepIndex = Number(btn.dataset.step);
+      if (!confirm('לחזור לשלב זה? השלבים שאחריו יסומנו כממתינים (הנתונים נשמרים).')) return;
+      try {
+        await reopenRunStep(run.id, stepIndex);
+        requestAutoBackupNow().catch(() => {});
+        showToast('חזרת לשלב ✓');
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        delete container.dataset.runEditAll;
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
   container.querySelectorAll('.flow-step-edit-toggle').forEach((btn) => {
     btn.addEventListener('click', () => {
       const stepIndex = Number(btn.dataset.step);
@@ -644,7 +701,7 @@ async function renderRunView(container, runId, ctx) {
       if (!panel) return;
       const opening = panel.classList.contains('hidden');
       panel.classList.toggle('hidden');
-      btn.textContent = opening ? 'סגור' : 'עריכה';
+      btn.textContent = opening ? 'סגור' : '✏️ ערוך';
     });
   });
 
@@ -1040,7 +1097,7 @@ async function renderManageView(container, ctx) {
           : `<p class="product-drag-hint">גרור ⠿ לשינוי סדר</p>
              <div class="flow-step-manage-list" data-flow-id="${activeFlow.id}">
                ${steps.map((s, i) => `
-                 <div class="list-item flow-step-manage-item" data-step-id="${s.id}">
+                 <div class="list-item flow-step-manage-item${s.tracksProduction ? ' flow-step-manage-item--production' : ''}" data-step-id="${s.id}">
                    <div class="product-order-col">
                      <span class="product-order-num">${i + 1}</span>
                      <span class="product-drag-handle flow-step-drag-handle" role="button" tabindex="0">⠿</span>

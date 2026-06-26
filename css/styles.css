@@ -222,30 +222,35 @@ body {
 
 .flow-step--production .flow-step-body {
   border-width: 3px;
-  border-color: #93c5fd;
-  background: linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%);
+  border-color: #fde047;
+  background: linear-gradient(135deg, #fefce8 0%, #fffbeb 100%);
 }
 
 .flow-step--production .flow-step-marker {
-  background: #3b82f6;
-  border-color: #2563eb;
+  background: #eab308;
+  border-color: #ca8a04;
   width: 16px;
   height: 16px;
 }
 
 .flow-step--production.flow-step--active .flow-step-body {
-  border-color: #2563eb;
-  background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%);
-  box-shadow: 0 4px 18px rgba(37, 99, 235, 0.22);
+  border-color: #facc15;
+  background: linear-gradient(135deg, #fef9c3 0%, #fefce8 100%);
+  box-shadow: 0 4px 18px rgba(234, 179, 8, 0.28);
 }
 
 .flow-step--production.flow-step--active .flow-step-marker {
-  box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.35);
+  box-shadow: 0 0 0 5px rgba(234, 179, 8, 0.35);
 }
 
 .flow-step--production.flow-step--done .flow-step-body {
-  border-color: #60a5fa;
-  background: #f0f9ff;
+  border-color: #fde047;
+  background: #fefce8;
+}
+
+.flow-step--production.flow-step--future .flow-step-body {
+  border-color: #fde68a;
+  background: #fffbeb;
 }
 
 .flow-step-production-badge {
@@ -254,15 +259,15 @@ body {
   gap: 4px;
   font-size: 0.72rem;
   font-weight: 700;
-  color: #1d4ed8;
-  background: #dbeafe;
+  color: #854d0e;
+  background: #fef08a;
   padding: 2px 8px;
   border-radius: 999px;
   white-space: nowrap;
 }
 
 .flow-legend-item--production {
-  color: #1d4ed8;
+  color: #854d0e;
   font-weight: 700;
 }
 
@@ -270,8 +275,59 @@ body {
   margin: 10px 0 12px;
   padding: 12px;
   border-radius: 12px;
-  border: 2px dashed #93c5fd;
+  border: 2px dashed #fde047;
   background: rgba(255, 255, 255, 0.75);
+}
+
+.flow-production-always-card {
+  margin-bottom: 14px;
+  border: 3px solid #fde047;
+  background: linear-gradient(135deg, #fefce8 0%, #fffbeb 100%);
+  box-shadow: 0 4px 16px rgba(234, 179, 8, 0.18);
+}
+
+.flow-production-always-header {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #fde68a;
+}
+
+.flow-production-always-title {
+  display: block;
+  font-weight: 800;
+  font-size: 1.05rem;
+  color: #854d0e;
+  margin-bottom: 4px;
+}
+
+.flow-production-always-hint {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.flow-production-inline-hint {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+}
+
+.flow-production-inline-hint a {
+  color: #854d0e;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.flow-step-manage-item--production {
+  background: #fefce8 !important;
+  border: 2px solid #fde047 !important;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+
+.flow-step-manage-item--production .list-item-name {
+  color: #854d0e;
+  font-weight: 700;
 }
 
 .flow-production-panel-header {
@@ -282,7 +338,7 @@ body {
   display: block;
   font-weight: 800;
   font-size: 1rem;
-  color: #1e40af;
+  color: #854d0e;
   margin-bottom: 4px;
 }
 
@@ -296,7 +352,7 @@ body {
 .flow-production-entries {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid rgba(147, 197, 253, 0.6);
+  border-top: 1px solid rgba(253, 224, 71, 0.7);
 }
 
 .flow-production-entries-title {
