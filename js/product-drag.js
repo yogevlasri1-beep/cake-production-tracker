@@ -322,6 +322,114 @@ function bindCategoryGroupList(list, saveOrder) {
   });
 }
 
+export function bindRecipeDragList(container, categoryId, saveOrder) {
+  const list = container.querySelector('.recipe-list');
+  if (!list) return;
+  bindGenericDragList(list, {
+    itemSelector: '.recipe-list-item',
+    handleSelector: '.recipe-drag-handle',
+    idAttr: 'recipeId',
+    orderNumSelector: '.recipe-order-num',
+    bodyClass: 'recipe-drag-active',
+    saveOrder: (ids) => saveOrder(ids, categoryId),
+  });
+}
+
+function bindGenericDragList(list, {
+  itemSelector,
+  handleSelector,
+  idAttr,
+  orderNumSelector,
+  bodyClass,
+  saveOrder,
+}) {
+  let drag = null;
+
+  const getOrderedIds = () => [...list.querySelectorAll(itemSelector)].map(
+    (el) => Number(el.dataset[idAttr]),
+  );
+
+  const refreshOrderNumbers = () => {
+    list.querySelectorAll(itemSelector).forEach((item, i) => {
+      const num = item.querySelector(orderNumSelector);
+      if (!num) return;
+      num.textContent = String(i + 1);
+      num.setAttribute('aria-label', `מיקום ${i + 1}`);
+    });
+  };
+
+  const resetUi = () => {
+    document.body.classList.remove(bodyClass);
+    list.classList.remove('is-sorting');
+    list.querySelectorAll(`${itemSelector}.is-dragging`).forEach((el) => {
+      el.classList.remove('is-dragging');
+    });
+  };
+
+  const clearDocumentListeners = () => {
+    document.removeEventListener('pointermove', onDocumentPointerMove);
+    document.removeEventListener('pointerup', onDocumentPointerUp);
+    document.removeEventListener('pointercancel', onDocumentPointerUp);
+  };
+
+  const finishDrag = (shouldSave) => {
+    if (!drag) return;
+    const { item, handle, pointerId, orderBefore } = drag;
+    drag = null;
+    clearDocumentListeners();
+    item.classList.remove('is-dragging');
+    resetUi();
+    refreshOrderNumbers();
+    try {
+      if (handle.hasPointerCapture?.(pointerId)) handle.releasePointerCapture(pointerId);
+    } catch { /* ignore */ }
+    if (!shouldSave) return;
+    const newOrder = getOrderedIds();
+    if (JSON.stringify(orderBefore) === JSON.stringify(newOrder)) return;
+    saveOrder(newOrder).catch(() => {});
+  };
+
+  function onDocumentPointerMove(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    e.preventDefault();
+    moveDraggedItem(list, drag.item, e.clientY, itemSelector);
+    refreshOrderNumbers();
+  }
+
+  function onDocumentPointerUp(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    e.preventDefault();
+    finishDrag(true);
+  }
+
+  list.addEventListener('pointerdown', (e) => {
+    const handle = e.target.closest(handleSelector);
+    if (!handle || !list.contains(handle)) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const item = handle.closest(itemSelector);
+    if (!item || drag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      return;
+    }
+    drag = {
+      item,
+      handle,
+      pointerId: e.pointerId,
+      orderBefore: getOrderedIds(),
+    };
+    item.classList.add('is-dragging');
+    list.classList.add('is-sorting');
+    document.body.classList.add(bodyClass);
+    document.addEventListener('pointermove', onDocumentPointerMove, { passive: false });
+    document.addEventListener('pointerup', onDocumentPointerUp);
+    document.addEventListener('pointercancel', onDocumentPointerUp);
+  });
+}
+
 export function bindCategoryGroupDragList(container, saveOrder) {
   const list = container.querySelector('.category-group-list');
   if (list) bindCategoryGroupList(list, saveOrder);

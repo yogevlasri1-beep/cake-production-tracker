@@ -6,33 +6,205 @@ import { weekStartISO } from './utils.js';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
+export const RECIPE_WEIGHT_UNITS = [
+  { id: 'kg', label: 'ק"ג' },
+  { id: 'g', label: 'גרם' },
+];
+
 function roundQty(n) {
   return Math.round(n * 1000) / 1000;
 }
 
-/* ── קטגוריות מתכונים ── */
+export function normalizeRecipeUnitKind(unit) {
+  const u = String(unit || '').trim().toLowerCase();
+  if (u === 'g' || u === 'gr' || u === 'גרם' || u === "ג'" || u === 'ג׳') return 'g';
+  if (u === 'kg' || u.includes('ק') || u.includes('קג')) return 'kg';
+  return 'kg';
+}
 
-export async function getRecipeCategories() {
-  const rows = await db.recipeCategories.toArray();
+export function formatRecipeUnitKind(kind) {
+  return kind === 'g' ? 'גרם' : 'ק"ג';
+}
+
+/* ── קטגוריות כלליות (קבוצות) ── */
+
+export async function getRecipeGroups() {
+  const rows = await db.recipeGroups.toArray();
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
 }
 
-export async function addRecipeCategory(name) {
+export async function addRecipeGroup({ name, linkedCategoryGroupId }) {
   const trimmed = sanitizeName(name, 40);
   if (!trimmed) throw new ValidationError('שם קטגוריה לא תקין');
-  const existing = await getRecipeCategories();
-  if (existing.some((c) => c.name === trimmed)) throw new ValidationError('קטגוריה כבר קיימת');
-  const maxOrder = existing.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0);
-  return db.recipeCategories.add({ name: trimmed, sortOrder: maxOrder + 1 });
+  const existing = await getRecipeGroups();
+  if (existing.some((g) => g.name === trimmed)) throw new ValidationError('קטגוריה כבר קיימת');
+  const maxOrder = existing.reduce((m, g) => Math.max(m, g.sortOrder ?? 0), 0);
+  const linkId = linkedCategoryGroupId ? sanitizeProductId(linkedCategoryGroupId) : null;
+  const groupId = await db.recipeGroups.add({
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+    linkedCategoryGroupId: linkId,
+  });
+  await db.recipeCategories.add({
+    groupId,
+    name: 'ראשי',
+    sortOrder: 1,
+    linkedCategoryId: null,
+  });
+  return groupId;
 }
 
-export async function deleteRecipeCategory(id) {
+export async function importRecipeGroupsFromProducts() {
+  const productGroups = await db.categoryGroups.toArray();
+  productGroups.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const existing = await getRecipeGroups();
+  const linked = new Set(existing.map((g) => g.linkedCategoryGroupId).filter(Boolean));
+  const names = new Set(existing.map((g) => g.name));
+  let added = 0;
+
+  for (const pg of productGroups) {
+    if (linked.has(pg.id) || names.has(pg.name)) continue;
+    await addRecipeGroup({ name: pg.name, linkedCategoryGroupId: pg.id });
+    names.add(pg.name);
+    added++;
+  }
+  return added;
+}
+
+export async function setRecipeGroupOrder(orderedIds) {
+  await db.transaction('rw', db.recipeGroups, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.recipeGroups.update(Number(orderedIds[i]), { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function deleteRecipeGroup(id) {
+  const gid = sanitizeProductId(id);
+  if (!gid) return;
+  const subs = await db.recipeCategories.where('groupId').equals(gid).toArray();
+  for (const sub of subs) {
+    const count = await db.recipes.where('categoryId').equals(sub.id).count();
+    if (count > 0) throw new ValidationError('יש מתכונים בקטגוריה — העבר או מחק אותם קודם');
+  }
+  await db.transaction('rw', db.recipeGroups, db.recipeCategories, async () => {
+    for (const sub of subs) await db.recipeCategories.delete(sub.id);
+    await db.recipeGroups.delete(gid);
+  });
+}
+
+/* ── תת-קטגוריות מתכונים ── */
+
+export async function getRecipeSubCategories(groupId) {
+  let rows = await db.recipeCategories.toArray();
+  if (groupId) rows = rows.filter((c) => c.groupId === Number(groupId));
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+/** @deprecated use getRecipeSubCategories */
+export async function getRecipeCategories(groupId) {
+  return getRecipeSubCategories(groupId);
+}
+
+export async function addRecipeSubCategory({ groupId, name, linkedCategoryId }) {
+  const gid = sanitizeProductId(groupId);
+  const trimmed = sanitizeName(name, 40);
+  if (!gid) throw new ValidationError('קטגוריה כללית לא תקינה');
+  if (!trimmed) throw new ValidationError('שם תת-קטגוריה לא תקין');
+  const existing = await getRecipeSubCategories(gid);
+  if (existing.some((c) => c.name === trimmed)) throw new ValidationError('תת-קטגוריה כבר קיימת');
+  const maxOrder = existing.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0);
+  const linkId = linkedCategoryId ? sanitizeProductId(linkedCategoryId) : null;
+  return db.recipeCategories.add({
+    groupId: gid,
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+    linkedCategoryId: linkId,
+  });
+}
+
+/** @deprecated */
+export async function addRecipeCategory(name) {
+  const groups = await getRecipeGroups();
+  let groupId = groups[0]?.id;
+  if (!groupId) groupId = await addRecipeGroup({ name, linkedCategoryGroupId: null });
+  return addRecipeSubCategory({ groupId, name, linkedCategoryId: null });
+}
+
+export async function importRecipeSubCategoriesFromProducts(groupId) {
+  const gid = sanitizeProductId(groupId);
+  if (!gid) throw new ValidationError('קטגוריה לא תקינה');
+  const group = await db.recipeGroups.get(gid);
+  if (!group) throw new ValidationError('קטגוריה לא נמצאה');
+
+  let productCats = await db.categories.toArray();
+  if (group.linkedCategoryGroupId) {
+    productCats = productCats.filter((c) => c.groupId === group.linkedCategoryGroupId);
+  }
+  productCats.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+
+  const existing = await getRecipeSubCategories(gid);
+  const linked = new Set(existing.map((c) => c.linkedCategoryId).filter(Boolean));
+  const names = new Set(existing.map((c) => c.name));
+  let added = 0;
+
+  for (const pc of productCats) {
+    if (linked.has(pc.id) || names.has(pc.name)) continue;
+    await addRecipeSubCategory({ groupId: gid, name: pc.name, linkedCategoryId: pc.id });
+    names.add(pc.name);
+    added++;
+  }
+  return added;
+}
+
+export async function setRecipeSubCategoryOrder(groupId, orderedIds) {
+  const gid = sanitizeProductId(groupId);
+  await db.transaction('rw', db.recipeCategories, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.recipeCategories.update(Number(orderedIds[i]), { sortOrder: i + 1, groupId: gid });
+    }
+  });
+}
+
+export async function deleteRecipeSubCategory(id) {
   const cid = sanitizeProductId(id);
   if (!cid) return;
   const recipes = await db.recipes.where('categoryId').equals(cid).count();
-  if (recipes > 0) throw new ValidationError('יש מתכונים בקטגוריה — העבר או מחק אותם קודם');
+  if (recipes > 0) throw new ValidationError('יש מתכונים בתת-קטגוריה — העבר או מחק אותם קודם');
+  const sub = await db.recipeCategories.get(cid);
+  if (!sub) return;
+  const siblingCount = await db.recipeCategories.where('groupId').equals(sub.groupId).count();
+  if (siblingCount <= 1) throw new ValidationError('חייבת להישאר לפחות תת-קטגוריה אחת');
   await db.recipeCategories.delete(cid);
+}
+
+/** @deprecated */
+export async function deleteRecipeCategory(id) {
+  return deleteRecipeSubCategory(id);
+}
+
+export async function findOrCreateRecipeGroup(name) {
+  const trimmed = sanitizeName(name, 40);
+  if (!trimmed) {
+    const groups = await getRecipeGroups();
+    if (groups[0]?.id) return groups[0].id;
+    return addRecipeGroup({ name: 'כללי', linkedCategoryGroupId: null });
+  }
+  const groups = await getRecipeGroups();
+  const found = groups.find((g) => g.name === trimmed);
+  if (found) return found.id;
+  return addRecipeGroup({ name: trimmed, linkedCategoryGroupId: null });
+}
+
+export async function findOrCreateRecipeSubCategory(groupId, name) {
+  const gid = sanitizeProductId(groupId);
+  const trimmed = sanitizeName(name, 40) || 'ראשי';
+  const subs = await getRecipeSubCategories(gid);
+  const found = subs.find((s) => s.name === trimmed);
+  if (found) return found.id;
+  return addRecipeSubCategory({ groupId: gid, name: trimmed, linkedCategoryId: null });
 }
 
 /* ── מתכונים ── */
@@ -113,6 +285,74 @@ export async function updateRecipe(id, patch) {
   await db.recipes.update(rid, data);
 }
 
+export async function setRecipeOrder(categoryId, orderedIds) {
+  const cid = sanitizeProductId(categoryId);
+  await db.transaction('rw', db.recipes, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.recipes.update(Number(orderedIds[i]), { sortOrder: i + 1, categoryId: cid });
+    }
+  });
+}
+
+export async function setRecipeIngredientOrder(recipeId, orderedIds) {
+  const rid = sanitizeProductId(recipeId);
+  await db.transaction('rw', db.recipeIngredients, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.recipeIngredients.update(Number(orderedIds[i]), { sortOrder: i + 1, recipeId: rid });
+    }
+  });
+}
+
+export function scaleRecipeIngredients(ingredients, anchorIngredientId, targetQuantity) {
+  const anchor = ingredients.find((i) => i.id === Number(anchorIngredientId));
+  if (!anchor) throw new ValidationError('חומר בסיס לא נמצא');
+  const baseQty = Number(anchor.quantity);
+  const target = Number(targetQuantity);
+  if (!baseQty || baseQty <= 0) throw new ValidationError('כמות בסיס לא תקינה');
+  if (!target || target <= 0) throw new ValidationError('כמות יעד לא תקינה');
+  const ratio = target / baseQty;
+  return ingredients.map((ing) => ({
+    ...ing,
+    scaledQuantity: roundQty(Number(ing.quantity) * ratio),
+  }));
+}
+
+export async function importParsedRecipes(parsedRecipes, { groupId, subCategoryId } = {}) {
+  let imported = 0;
+  for (const item of parsedRecipes) {
+    let gid = groupId;
+    if (!gid && item.groupName) gid = await findOrCreateRecipeGroup(item.groupName);
+    if (!gid) {
+      const groups = await getRecipeGroups();
+      gid = groups[0]?.id;
+      if (!gid) gid = await addRecipeGroup({ name: 'כללי', linkedCategoryGroupId: null });
+    }
+    let subId = subCategoryId;
+    if (!subId && item.subName) subId = await findOrCreateRecipeSubCategory(gid, item.subName);
+    if (!subId) {
+      const subs = await getRecipeSubCategories(gid);
+      subId = subs[0]?.id;
+      if (!subId) subId = await addRecipeSubCategory({ groupId: gid, name: 'ראשי', linkedCategoryId: null });
+    }
+    const recipeId = await addRecipe({
+      categoryId: subId,
+      name: item.title,
+      notes: item.notes || '',
+    });
+    for (const ing of item.ingredients || []) {
+      const unitKind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+      await addRecipeIngredient(recipeId, {
+        name: ing.name,
+        quantity: ing.quantity,
+        unit: formatRecipeUnitKind(unitKind),
+        unitKind,
+      });
+    }
+    imported++;
+  }
+  return imported;
+}
+
 export async function deleteRecipe(id) {
   const rid = sanitizeProductId(id);
   if (!rid) return;
@@ -122,7 +362,24 @@ export async function deleteRecipe(id) {
   });
 }
 
-export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit }) {
+export async function updateRecipeIngredient(id, patch) {
+  const iid = sanitizeProductId(id);
+  if (!iid) return;
+  const data = { ...patch };
+  if ('name' in data) data.name = sanitizeName(data.name, 80);
+  if ('quantity' in data) data.quantity = sanitizeQuantity(data.quantity, { allowZero: false });
+  if ('unitKind' in data) {
+    data.unitKind = normalizeRecipeUnitKind(data.unitKind);
+    data.unit = formatRecipeUnitKind(data.unitKind);
+  }
+  if ('unit' in data && !('unitKind' in data)) {
+    data.unitKind = normalizeRecipeUnitKind(data.unit);
+    data.unit = formatRecipeUnitKind(data.unitKind);
+  }
+  await db.recipeIngredients.update(iid, data);
+}
+
+export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind }) {
   const rid = sanitizeProductId(recipeId);
   const trimmed = sanitizeName(name, 80);
   if (!rid) throw new ValidationError('מתכון לא תקין');
@@ -131,12 +388,14 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
   const existing = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
   const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
+  const kind = unitKind ? normalizeRecipeUnitKind(unitKind) : normalizeRecipeUnitKind(unit);
   return db.recipeIngredients.add({
     recipeId: rid,
     rawMaterialId: matId,
     name: trimmed,
     quantity: qty,
-    unit: String(unit || 'יח').trim().slice(0, 20),
+    unit: formatRecipeUnitKind(kind),
+    unitKind: kind,
     sortOrder: maxOrder + 1,
   });
 }
@@ -390,10 +649,11 @@ export function formatWhatsAppOrderText({ weekStart, categories }) {
 
 export async function exportKitchenTables() {
   const [
-    recipeCategories, recipes, recipeIngredients,
+    recipeGroups, recipeCategories, recipes, recipeIngredients,
     supplierCategories, suppliers, rawMaterials,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
+    db.recipeGroups.toArray(),
     db.recipeCategories.toArray(),
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
@@ -404,6 +664,7 @@ export async function exportKitchenTables() {
     db.weeklyProductionPlanItems.toArray(),
   ]);
   return {
+    recipeGroups,
     recipeCategories,
     recipes,
     recipeIngredients,
@@ -417,7 +678,7 @@ export async function exportKitchenTables() {
 
 export async function importKitchenTables(payload) {
   const tables = [
-    'recipeCategories', 'recipes', 'recipeIngredients',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients',
     'supplierCategories', 'suppliers', 'rawMaterials',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
@@ -427,12 +688,41 @@ export async function importKitchenTables(payload) {
       const rows = payload[t];
       if (Array.isArray(rows) && rows.length) await db[t].bulkPut(rows);
     }
+    await ensureRecipeHierarchyInTx(db);
   });
+}
+
+async function ensureRecipeHierarchyInTx(dbRef) {
+  const groups = await dbRef.recipeGroups.count();
+  if (groups > 0) return;
+  const olds = await dbRef.recipeCategories.toArray();
+  if (!olds.length || olds[0].groupId != null) return;
+  const recipes = await dbRef.recipes.toArray();
+  const catMap = new Map();
+  await dbRef.recipeCategories.clear();
+  for (const old of olds.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const groupId = await dbRef.recipeGroups.add({
+      name: old.name,
+      sortOrder: old.sortOrder ?? 0,
+      linkedCategoryGroupId: null,
+    });
+    const subId = await dbRef.recipeCategories.add({
+      groupId,
+      name: 'ראשי',
+      sortOrder: 1,
+      linkedCategoryId: null,
+    });
+    catMap.set(old.id, subId);
+  }
+  for (const recipe of recipes) {
+    const newCatId = catMap.get(recipe.categoryId);
+    if (newCatId) await dbRef.recipes.update(recipe.id, { categoryId: newCatId });
+  }
 }
 
 export async function clearKitchenTables() {
   await db.transaction('rw',
-    db.recipeCategories, db.recipes, db.recipeIngredients,
+    db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients,
     db.supplierCategories, db.suppliers, db.rawMaterials,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
@@ -440,9 +730,10 @@ export async function clearKitchenTables() {
       await db.weeklyProductionPlans.clear();
       await db.recipeIngredients.clear();
       await db.recipes.clear();
+      await db.recipeCategories.clear();
+      await db.recipeGroups.clear();
       await db.rawMaterials.clear();
       await db.suppliers.clear();
-      await db.recipeCategories.clear();
       await db.supplierCategories.clear();
     });
 }

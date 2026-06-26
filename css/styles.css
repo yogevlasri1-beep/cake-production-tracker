@@ -4004,3 +4004,108 @@ body {
   margin-top: 4px;
 }
 
+/* ── מתכונים ── */
+.recipe-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recipe-drag-handle {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  cursor: grab;
+  font-size: 1.1rem;
+  padding: 4px 6px;
+  color: var(--text-muted);
+  touch-action: none;
+}
+
+.recipe-order-num {
+  flex: 0 0 1.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.recipe-list-item.is-dragging {
+  opacity: 0.85;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+body.recipe-drag-active {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.recipe-book-group-title {
+  color: var(--primary);
+  margin: 24px 0 12px;
+  font-size: 1.25rem;
+}
+
+.recipe-book-sub-title {
+  color: var(--text-muted);
+  margin: 16px 0 8px;
+  font-size: 1.05rem;
+}
+
+.recipe-book-item {
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.recipe-book-item h4 {
+  margin: 0 0 8px;
+}
+
+.recipe-book-ingredients {
+  margin: 0;
+  padding-right: 20px;
+  font-size: 0.92rem;
+}
+
+.recipe-book-notes {
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0 0 8px;
+}
+
+.ratio-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.ratio-table th,
+.ratio-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.ratio-anchor-row {
+  background: #eff6ff;
+}
+
+@media print {
+  .app-header,
+  .bottom-nav,
+  .header-menu-btn,
+  .btn {
+    display: none !important;
+  }
+
+  #main-content {
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  .recipe-book-view {
+    box-shadow: none;
+    border: none;
+  }
+}
+

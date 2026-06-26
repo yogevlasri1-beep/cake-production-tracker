@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=128';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=128';
-import { defaultColorForIndex } from './chart.js?v=128';
+} from './validators.js?v=129';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=129';
+import { defaultColorForIndex } from './chart.js?v=129';
 
 export { ValidationError };
 
@@ -645,6 +645,105 @@ db.version(25).stores({
   }
 });
 
+db.version(26).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  flowPreparations: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const groups = await tx.table('recipeGroups').count();
+  if (groups > 0) return;
+
+  const olds = await tx.table('recipeCategories').toArray();
+  if (!olds.length) return;
+
+  const recipes = await tx.table('recipes').toArray();
+  const catMap = new Map();
+
+  await tx.table('recipeCategories').clear();
+
+  for (const old of olds.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const groupId = await tx.table('recipeGroups').add({
+      name: old.name,
+      sortOrder: old.sortOrder ?? 0,
+      linkedCategoryGroupId: null,
+    });
+    const subId = await tx.table('recipeCategories').add({
+      groupId,
+      name: 'ראשי',
+      sortOrder: 1,
+      linkedCategoryId: null,
+    });
+    catMap.set(old.id, subId);
+  }
+
+  for (const recipe of recipes) {
+    const newCatId = catMap.get(recipe.categoryId);
+    if (newCatId) {
+      await tx.table('recipes').update(recipe.id, { categoryId: newCatId });
+    }
+  }
+});
+
+async function migrateLegacyRecipeCategoriesIfNeeded(tx) {
+  const groups = await tx.table('recipeGroups').count();
+  if (groups > 0) return;
+  const olds = await tx.table('recipeCategories').toArray();
+  if (!olds.length || olds[0].groupId != null) return;
+  const recipes = await tx.table('recipes').toArray();
+  const catMap = new Map();
+  await tx.table('recipeCategories').clear();
+  for (const old of olds.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const groupId = await tx.table('recipeGroups').add({
+      name: old.name,
+      sortOrder: old.sortOrder ?? 0,
+      linkedCategoryGroupId: null,
+    });
+    const subId = await tx.table('recipeCategories').add({
+      groupId,
+      name: 'ראשי',
+      sortOrder: 1,
+      linkedCategoryId: null,
+    });
+    catMap.set(old.id, subId);
+  }
+  for (const recipe of recipes) {
+    const newCatId = catMap.get(recipe.categoryId);
+    if (newCatId) await tx.table('recipes').update(recipe.id, { categoryId: newCatId });
+  }
+}
+
 async function resolveCategoryGroupIdForFlow(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return null;
@@ -933,12 +1032,13 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeCategories, db.recipes, db.recipeIngredients, db.supplierCategories, db.suppliers, db.rawMaterials, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.supplierCategories, db.suppliers, db.rawMaterials, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
     await db.recipeIngredients.clear();
     await db.recipes.clear();
     await db.recipeCategories.clear();
+    await db.recipeGroups.clear();
     await db.rawMaterials.clear();
     await db.suppliers.clear();
     await db.supplierCategories.clear();
@@ -971,7 +1071,10 @@ export async function resetAllData() {
       await db.managerDepartments.add({ ...d, active: true });
     }
     const recipeDefaults = ['מפעל', 'מאפייה', 'פרטי', 'מהאינטרנט', 'אחר'];
-    await db.recipeCategories.bulkAdd(recipeDefaults.map((name, i) => ({ name, sortOrder: i + 1 })));
+    for (let i = 0; i < recipeDefaults.length; i++) {
+      const groupId = await db.recipeGroups.add({ name: recipeDefaults[i], sortOrder: i + 1, linkedCategoryGroupId: null });
+      await db.recipeCategories.add({ groupId, name: 'ראשי', sortOrder: 1, linkedCategoryId: null });
+    }
     const supplierDefaults = ['חומרי גלם יבשים', 'חלב ומוצריו', 'ירקות ופירות', 'אריזה', 'אחר'];
     await db.supplierCategories.bulkAdd(supplierDefaults.map((name, i) => ({ name, sortOrder: i + 1 })));
   });
@@ -1044,6 +1147,7 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    recipeGroups,
     recipeCategories,
     recipes,
     recipeIngredients,
@@ -1078,6 +1182,7 @@ export async function exportAllData() {
     db.managerResponsibilityAreas.toArray(),
     db.managerEmployees.toArray(),
     db.managerDepartments?.toArray?.() ?? Promise.resolve([]),
+    db.recipeGroups.toArray(),
     db.recipeCategories.toArray(),
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
@@ -1112,6 +1217,7 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    recipeGroups,
     recipeCategories,
     recipes,
     recipeIngredients,
@@ -1153,6 +1259,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
   if (!Array.isArray(payload.runPreparationChecks)) payload.runPreparationChecks = [];
   if (!Array.isArray(payload.weeklyProductionPlanItems)) payload.weeklyProductionPlanItems = [];
+  if (!Array.isArray(payload.recipeGroups)) payload.recipeGroups = [];
   if (!Array.isArray(payload.recipeCategories)) payload.recipeCategories = [];
   if (!Array.isArray(payload.recipes)) payload.recipes = [];
   if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
@@ -1213,6 +1320,7 @@ export async function importAllData(payload) {
     db.managerResponsibilityAreas,
     db.managerEmployees,
     db.managerDepartments,
+    db.recipeGroups,
     db.recipeCategories,
     db.recipes,
     db.recipeIngredients,
@@ -1229,6 +1337,7 @@ export async function importAllData(payload) {
       await db.recipeIngredients.clear();
       await db.recipes.clear();
       await db.recipeCategories.clear();
+      await db.recipeGroups.clear();
       await db.rawMaterials.clear();
       await db.suppliers.clear();
       await db.supplierCategories.clear();
@@ -1273,9 +1382,11 @@ export async function importAllData(payload) {
       if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
       if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
       if (payload.runPreparationChecks.length) await db.runPreparationChecks.bulkPut(payload.runPreparationChecks);
+      if (payload.recipeGroups.length) await db.recipeGroups.bulkPut(payload.recipeGroups);
       if (payload.recipeCategories.length) await db.recipeCategories.bulkPut(payload.recipeCategories);
       if (payload.recipes.length) await db.recipes.bulkPut(payload.recipes);
       if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
+      await migrateLegacyRecipeCategoriesIfNeeded(tx);
       if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
       if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);
       if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
