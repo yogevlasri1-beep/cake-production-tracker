@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=114';
-import { APP_VERSION } from './version.js?v=114';
-import { defaultColorForIndex } from './chart.js?v=114';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=114';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=114';
-import { ValidationError } from './validators.js?v=114';
+import { exportAllData, importAllData } from './db.js?v=116';
+import { APP_VERSION } from './version.js?v=116';
+import { defaultColorForIndex } from './chart.js?v=116';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=116';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=116';
+import { ValidationError } from './validators.js?v=116';
 
 export const BACKUP_VERSION = 3;
 
@@ -181,6 +181,7 @@ export function enrichBackupData(raw) {
     managerShiftNotes: raw.managerShiftNotes || [],
     managerResponsibilityAreas: raw.managerResponsibilityAreas || [],
     managerEmployees: raw.managerEmployees || [],
+    managerDepartments: raw.managerDepartments || [],
     settings: raw.settings || [],
   };
 }
@@ -207,6 +208,7 @@ export function summarizeBackupData(data) {
     managerShiftNotes: data.managerShiftNotes?.length || 0,
     managerResponsibilityAreas: data.managerResponsibilityAreas?.length || 0,
     managerEmployees: data.managerEmployees?.length || 0,
+    managerDepartments: data.managerDepartments?.length || 0,
     settings: data.settings?.length || 0,
   };
 }
@@ -277,6 +279,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.managerShiftNotes)) data.managerShiftNotes = [];
   if (!Array.isArray(data.managerResponsibilityAreas)) data.managerResponsibilityAreas = [];
   if (!Array.isArray(data.managerEmployees)) data.managerEmployees = [];
+  if (!Array.isArray(data.managerDepartments)) data.managerDepartments = [];
   return enrichBackupData(data);
 }
 

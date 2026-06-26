@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=114';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=114';
-import { defaultColorForIndex } from './chart.js?v=114';
+} from './validators.js?v=116';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=116';
+import { defaultColorForIndex } from './chart.js?v=116';
 
 export { ValidationError };
 
@@ -467,6 +467,38 @@ db.version(20).stores({
   }
 });
 
+db.version(21).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const count = await tx.table('managerDepartments').count();
+  if (count > 0) return;
+  for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
+    await tx.table('managerDepartments').add({ ...d, active: true });
+  }
+});
+
 async function resolveCategoryGroupIdForFlow(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return null;
@@ -755,7 +787,7 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.productionRuns, db.runStepStates, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.productionEntries.clear();
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
@@ -771,6 +803,7 @@ export async function resetAllData() {
     await db.managerShiftNotes.clear();
     await db.managerEmployees.clear();
     await db.managerResponsibilityAreas.clear();
+    await db.managerDepartments.clear();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -778,6 +811,9 @@ export async function resetAllData() {
     const defaults = ['הכנת בצק', 'שקילות', 'אריזה', 'אפייה', 'קישוט', 'ערבוב', 'קירור'];
     await db.activityPresets.clear();
     await db.activityPresets.bulkAdd(defaults.map((name) => ({ categoryId: 0, name })));
+    for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
+      await db.managerDepartments.add({ ...d, active: true });
+    }
   });
 }
 
@@ -844,6 +880,7 @@ export async function exportAllData() {
     managerShiftNotes,
     managerResponsibilityAreas,
     managerEmployees,
+    managerDepartments,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -866,6 +903,7 @@ export async function exportAllData() {
     db.managerShiftNotes.toArray(),
     db.managerResponsibilityAreas.toArray(),
     db.managerEmployees.toArray(),
+    db.managerDepartments?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -888,6 +926,7 @@ export async function exportAllData() {
     managerShiftNotes,
     managerResponsibilityAreas,
     managerEmployees,
+    managerDepartments,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -924,6 +963,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerShiftNotes)) payload.managerShiftNotes = [];
   if (!Array.isArray(payload.managerResponsibilityAreas)) payload.managerResponsibilityAreas = [];
   if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
+  if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -965,6 +1005,7 @@ export async function importAllData(payload) {
     db.managerShiftNotes,
     db.managerResponsibilityAreas,
     db.managerEmployees,
+    db.managerDepartments,
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
@@ -1012,6 +1053,13 @@ export async function importAllData(payload) {
         await db.managerResponsibilityAreas.bulkPut(payload.managerResponsibilityAreas);
       }
       if (payload.managerEmployees.length) await db.managerEmployees.bulkPut(payload.managerEmployees);
+      if (payload.managerDepartments.length) {
+        await db.managerDepartments.bulkPut(payload.managerDepartments);
+      } else {
+        for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
+          await db.managerDepartments.add({ ...d, active: true });
+        }
+      }
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
       } else {
@@ -1238,6 +1286,38 @@ export async function removeRunStepProductionEntry(runId, stepIndex, entryId) {
   await deleteProductionEntry(Number(entryId));
   const ids = (step.productionEntryIds || []).filter((id) => id !== Number(entryId));
   await db.runStepStates.update(step.id, { productionEntryIds: ids });
+}
+
+export async function getRunProductionEntries(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) return [];
+  const run = await getProductionRun(rid);
+  const seen = new Set();
+  const entries = [];
+
+  const byRunId = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
+  for (const e of byRunId) {
+    if (!seen.has(e.id)) {
+      seen.add(e.id);
+      entries.push(e);
+    }
+  }
+
+  if (run) {
+    for (const step of run.steps) {
+      for (const eid of step.productionEntryIds || []) {
+        if (seen.has(eid)) continue;
+        const e = await db.productionEntries.get(eid);
+        if (e) {
+          seen.add(e.id);
+          entries.push(e);
+        }
+      }
+    }
+  }
+
+  entries.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
+  return entries;
 }
 
 export async function getEntriesForDate(date) {
@@ -2781,25 +2861,118 @@ export async function updateProductionRunDetails(runId, { batchNumber, startedDa
 }
 
 export async function deleteProductionRun(runId) {
-  await db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
-    await db.runStepStates.where('runId').equals(runId).delete();
-    await db.productionRuns.delete(runId);
+  const rid = sanitizeProductId(runId);
+  if (!rid) return;
+
+  const entryIds = new Set();
+  const run = await getProductionRun(rid);
+  if (run) {
+    for (const step of run.steps) {
+      for (const id of step.productionEntryIds || []) entryIds.add(Number(id));
+    }
+  }
+  const byRun = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
+  byRun.forEach((e) => entryIds.add(e.id));
+
+  await db.transaction('rw', db.productionRuns, db.runStepStates, db.productionEntries, async () => {
+    for (const id of entryIds) {
+      await db.productionEntries.delete(id);
+    }
+    await db.runStepStates.where('runId').equals(rid).delete();
+    await db.productionRuns.delete(rid);
   });
 }
 
 // ── ניהול מנהל ──
 
-export const MANAGER_DEPARTMENTS = [
-  { id: 'production', label: 'ייצור', icon: '🏭' },
-  { id: 'sales', label: 'מכירות', icon: '🛒' },
-  { id: 'maintenance', label: 'ניקיון ואחזקה', icon: '🧹' },
-  { id: 'general', label: 'כללי', icon: '📋' },
+const DEFAULT_MANAGER_DEPARTMENTS = [
+  { deptKey: 'production', label: 'ייצור', icon: '🏭', isBuiltin: true, sortOrder: 1 },
+  { deptKey: 'sales', label: 'מכירות', icon: '🛒', isBuiltin: true, sortOrder: 2 },
+  { deptKey: 'maintenance', label: 'ניקיון ואחזקה', icon: '🧹', isBuiltin: true, sortOrder: 3 },
+  { deptKey: 'general', label: 'כללי', icon: '📋', isBuiltin: true, sortOrder: 4 },
 ];
 
-const MANAGER_DEPT_IDS = new Set(MANAGER_DEPARTMENTS.map((d) => d.id));
+/** @deprecated — use getManagerDepartments() */
+export const MANAGER_DEPARTMENTS = DEFAULT_MANAGER_DEPARTMENTS.map((d) => ({
+  id: d.deptKey,
+  label: d.label,
+  icon: d.icon,
+}));
 
-function sanitizeManagerDepartment(dept) {
-  return MANAGER_DEPT_IDS.has(dept) ? dept : 'general';
+let managerDeptKeysCache = null;
+
+async function refreshManagerDeptKeysCache() {
+  const rows = await db.managerDepartments?.toArray?.() || [];
+  managerDeptKeysCache = new Set(rows.map((d) => d.deptKey));
+  if (!managerDeptKeysCache.size) {
+    managerDeptKeysCache = new Set(DEFAULT_MANAGER_DEPARTMENTS.map((d) => d.deptKey));
+  }
+}
+
+async function validateManagerDepartment(dept) {
+  if (!managerDeptKeysCache) await refreshManagerDeptKeysCache();
+  return managerDeptKeysCache.has(dept) ? dept : 'general';
+}
+
+export async function getManagerDepartments() {
+  if (!db.managerDepartments) {
+    return DEFAULT_MANAGER_DEPARTMENTS.map((d, i) => ({ id: i + 1, ...d, active: true }));
+  }
+  const rows = await db.managerDepartments.toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  await refreshManagerDeptKeysCache();
+  return rows.filter((d) => d.active !== false);
+}
+
+export async function addManagerDepartment({ label, icon } = {}) {
+  const cleanLabel = sanitizeName(label, 40);
+  if (!cleanLabel) throw new ValidationError('שם מחלקה לא תקין');
+  const cleanIcon = String(icon || '📋').trim().slice(0, 8) || '📋';
+  const existing = await db.managerDepartments.toArray();
+  const maxOrder = existing.reduce((m, d) => Math.max(m, d.sortOrder ?? 0), 0);
+  const deptKey = `dept_${Date.now()}`;
+  const id = await db.managerDepartments.add({
+    deptKey,
+    label: cleanLabel,
+    icon: cleanIcon,
+    isBuiltin: false,
+    sortOrder: maxOrder + 1,
+    active: true,
+  });
+  await refreshManagerDeptKeysCache();
+  return id;
+}
+
+export async function updateManagerDepartment(id, { label, icon } = {}) {
+  const row = await db.managerDepartments.get(Number(id));
+  if (!row) throw new ValidationError('מחלקה לא נמצאה');
+  const patch = {};
+  if (label != null) {
+    const clean = sanitizeName(label, 40);
+    if (!clean) throw new ValidationError('שם מחלקה לא תקין');
+    patch.label = clean;
+  }
+  if (icon != null) patch.icon = String(icon || '📋').trim().slice(0, 8) || '📋';
+  if (!Object.keys(patch).length) return;
+  await db.managerDepartments.update(row.id, patch);
+  await refreshManagerDeptKeysCache();
+}
+
+export async function deleteManagerDepartment(id) {
+  const row = await db.managerDepartments.get(Number(id));
+  if (!row) throw new ValidationError('מחלקה לא נמצאה');
+  if (row.isBuiltin) throw new ValidationError('לא ניתן למחוק מחלקת ברירת מחדל');
+
+  await db.transaction('rw', db.managerDepartments, db.managerTasks, db.managerIncidents, db.managerShiftNotes, async () => {
+    const tasks = await db.managerTasks.where('department').equals(row.deptKey).toArray();
+    for (const t of tasks) await db.managerTasks.update(t.id, { department: 'general' });
+    const incidents = await db.managerIncidents.where('department').equals(row.deptKey).toArray();
+    for (const i of incidents) await db.managerIncidents.update(i.id, { department: 'general' });
+    const notes = await db.managerShiftNotes.where('department').equals(row.deptKey).toArray();
+    for (const n of notes) await db.managerShiftNotes.update(n.id, { department: 'general' });
+    await db.managerDepartments.delete(row.id);
+  });
+  await refreshManagerDeptKeysCache();
 }
 
 function managerNowISO() {
@@ -3028,7 +3201,7 @@ export async function addManagerTask({
   const validKind = ['task', 'improvement', 'checklist'].includes(kind) ? kind : 'task';
   const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
   return db.managerTasks.add({
-    department: sanitizeManagerDepartment(department),
+    department: await validateManagerDepartment(department),
     kind: validKind,
     title: t,
     body: String(body || '').trim().slice(0, 1000),
@@ -3080,7 +3253,7 @@ export async function addManagerIncident({
   const sev = ['minor', 'major', 'critical'].includes(severity) ? severity : 'minor';
   const when = occurredAt && isValidISODate(occurredAt) ? occurredAt : todayISOFromDate();
   return db.managerIncidents.add({
-    department: sanitizeManagerDepartment(department),
+    department: await validateManagerDepartment(department),
     title: t,
     description: String(description || '').trim().slice(0, 2000),
     severity: sev,
@@ -3134,7 +3307,7 @@ export async function addManagerShiftNote({ date, department, kind = 'shift', co
   const validKind = ['shift', 'briefing', 'checklist'].includes(kind) ? kind : 'shift';
   return db.managerShiftNotes.add({
     date: date && isValidISODate(date) ? date : todayISOFromDate(),
-    department: sanitizeManagerDepartment(department),
+    department: await validateManagerDepartment(department),
     kind: validKind,
     content: text,
     createdAt: managerNowISO(),

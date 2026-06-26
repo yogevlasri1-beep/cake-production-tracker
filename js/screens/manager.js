@@ -1,5 +1,5 @@
 import {
-  MANAGER_DEPARTMENTS,
+  getManagerDepartments, addManagerDepartment, updateManagerDepartment, deleteManagerDepartment,
   getProducts, getCategories, getAllFlowPortionPresetsWithContext,
   getAllFlowsOverview, getFlowStepsForFlow,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
@@ -10,15 +10,15 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=114';
+} from '../db.js?v=116';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=114';
-import { openModal, closeModal } from '../modal.js?v=114';
-import { renderTargets } from './targets.js?v=114';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=114';
-import { APP_VERSION } from '../version.js?v=114';
+} from '../utils.js?v=116';
+import { openModal, closeModal } from '../modal.js?v=116';
+import { renderTargets } from './targets.js?v=116';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=116';
+import { APP_VERSION } from '../version.js?v=116';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -37,18 +37,25 @@ const STATUS_LABELS = { open: 'פתוח', progress: 'בתהליך', done: 'הו�
 const SEVERITY_LABELS = { minor: 'קל', major: 'חמור', critical: 'קריטי' };
 const INCIDENT_STATUS_LABELS = { open: 'פתוח', investigating: 'בבדיקה', resolved: 'טופל' };
 
+let managerDeptsCache = [];
+
 function deptLabel(id) {
-  return MANAGER_DEPARTMENTS.find((d) => d.id === id)?.label || id;
+  return managerDeptsCache.find((d) => d.deptKey === id)?.label || id;
 }
 
 function deptIcon(id) {
-  return MANAGER_DEPARTMENTS.find((d) => d.id === id)?.icon || '📋';
+  return managerDeptsCache.find((d) => d.deptKey === id)?.icon || '📋';
 }
 
 function deptOptions(selected = '') {
-  return MANAGER_DEPARTMENTS.map((d) =>
-    `<option value="${d.id}" ${d.id === selected ? 'selected' : ''}>${d.icon} ${escapeHtml(d.label)}</option>`
+  return managerDeptsCache.map((d) =>
+    `<option value="${d.deptKey}" ${d.deptKey === selected ? 'selected' : ''}>${d.icon} ${escapeHtml(d.label)}</option>`
   ).join('');
+}
+
+async function loadManagerDepartments() {
+  managerDeptsCache = await getManagerDepartments();
+  return managerDeptsCache;
 }
 
 function managerTabsHTML(active, badges = {}) {
@@ -938,14 +945,37 @@ async function renderNotes(container) {
 }
 
 async function renderTeam(container) {
-  const [areas, employees] = await Promise.all([
+  const [areas, employees, departments] = await Promise.all([
     getManagerResponsibilityAreas(),
     getManagerEmployees(),
+    getManagerDepartments(),
   ]);
+  managerDeptsCache = departments;
   const areaMap = new Map(areas.map((a) => [a.id, a.name]));
 
   container.innerHTML = `
     ${managerTabsHTML('team')}
+    <div class="card">
+      <div class="card-title">מחלקות</div>
+      <p class="form-hint" style="margin-bottom:10px">הגדר מחלקות לשיוך משימות, תקלות והערות משמרת</p>
+      <div class="filter-row" style="margin-bottom:8px">
+        <input type="text" id="new-dept-name" placeholder="שם מחלקה חדשה" style="flex:1">
+        <input type="text" id="new-dept-icon" placeholder="אייקון" value="📋" maxlength="4" style="width:4rem;text-align:center">
+        <button type="button" class="btn btn-primary btn-sm" id="add-dept-btn">+ הוסף</button>
+      </div>
+      ${departments.length ? `
+        <ul class="manager-area-list">
+          ${departments.map((d) => `
+            <li class="manager-area-item manager-dept-item${d.isBuiltin ? ' manager-dept-item--builtin' : ''}" data-id="${d.id}">
+              <span class="manager-dept-icon">${d.icon}</span>
+              <span class="manager-area-name">${escapeHtml(d.label)}</span>
+              ${d.isBuiltin ? '<span class="form-hint" style="margin:0;font-size:0.72rem">ברירת מחדל</span>' : `
+                <button type="button" class="btn btn-secondary btn-sm dept-edit" data-id="${d.id}" data-label="${escapeHtml(d.label)}" data-icon="${d.icon}" title="ערוך">✏️</button>
+                <button type="button" class="btn btn-danger btn-sm dept-del" data-id="${d.id}" title="מחק">🗑</button>`}
+            </li>`).join('')}
+        </ul>` : '<p class="form-hint">אין מחלקות</p>'}
+    </div>
+
     <div class="card">
       <div class="card-title">תחומי אחריות</div>
       <p class="form-hint" style="margin-bottom:10px">הגדר תחומים (למשל: אפייה, קישוט, אריזה) ושייך לכל עובד</p>
@@ -995,6 +1025,58 @@ async function renderTeam(container) {
     </div>`;
 
   bindManagerTabs(container);
+
+  document.getElementById('add-dept-btn')?.addEventListener('click', async () => {
+    try {
+      await addManagerDepartment({
+        label: document.getElementById('new-dept-name')?.value,
+        icon: document.getElementById('new-dept-icon')?.value,
+      });
+      showToast('מחלקה נוספה ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.dept-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal({
+        title: 'עריכת מחלקה',
+        bodyHTML: `
+          <div class="form-group"><label>שם</label><input type="text" id="edit-dept-name" value="${btn.dataset.label}"></div>
+          <div class="form-group"><label>אייקון</label><input type="text" id="edit-dept-icon" value="${btn.dataset.icon}" maxlength="4"></div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-dept">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-dept')?.addEventListener('click', async () => {
+        try {
+          await updateManagerDepartment(btn.dataset.id, {
+            label: document.getElementById('edit-dept-name').value,
+            icon: document.getElementById('edit-dept-icon').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderManager(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  container.querySelectorAll('.dept-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק מחלקה?')) return;
+      try {
+        await deleteManagerDepartment(btn.dataset.id);
+        showToast('נמחק');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
 
   document.getElementById('add-area-btn')?.addEventListener('click', async () => {
     try {
@@ -1069,6 +1151,7 @@ async function renderTeam(container) {
 }
 
 export async function renderManager(container) {
+  await loadManagerDepartments();
   const tab = container.dataset.managerTab || 'overview';
 
   if (tab === 'targets') {

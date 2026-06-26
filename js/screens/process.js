@@ -11,12 +11,12 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-  getEntriesForDate, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
-} from '../db.js?v=114';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=114';
-import { openModal, closeModal } from '../modal.js?v=114';
-import { requestAutoBackupNow } from '../backup-service.js?v=114';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=114';
+  getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
+} from '../db.js?v=116';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=116';
+import { openModal, closeModal } from '../modal.js?v=116';
+import { requestAutoBackupNow } from '../backup-service.js?v=116';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=116';
 
 function parseIdList(str) {
   try {
@@ -304,6 +304,21 @@ function runProdCategoryKey(stepIndex) {
   return `runProdCat_${stepIndex}`;
 }
 
+async function confirmDeleteRun(container, run) {
+  if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו — פעולה זו לא ניתנת לביטול.')) return;
+  try {
+    await deleteProductionRun(run.id);
+    requestAutoBackupNow().catch(() => {});
+    showToast('התהליך ורישומי הייצור נמחקו');
+    container.dataset.view = 'list';
+    delete container.dataset.runId;
+    delete container.dataset.runEditAll;
+    renderProcess(container);
+  } catch (err) {
+    showToast(err.message || 'שגיאה');
+  }
+}
+
 function flowStepProductionSummary(step) {
   if (!step.tracksProduction) return '';
   const count = step.productionEntryIds?.length || 0;
@@ -315,32 +330,50 @@ function stepProductionPanelHTML({
   stepIndex,
   prodDate,
   selectedCategory,
+  selectedFormProduct,
+  listProductFilter,
   scopedCategories,
   scopedProducts,
-  entriesForDate,
+  runEntries,
   catMap,
   productMap,
   canAdd,
+  canManageEntries,
 }) {
+  const multiProducts = scopedProducts.length > 1;
+  const singleProduct = scopedProducts.length === 1 ? scopedProducts[0] : null;
   const filteredProducts = selectedCategory
     ? scopedProducts.filter((p) => String(p.categoryId) === selectedCategory)
-    : [];
-  const singleProduct = scopedProducts.length === 1 ? scopedProducts[0] : null;
-  const productOptions = (selectedCategory || singleProduct
-    ? (singleProduct ? scopedProducts : filteredProducts)
-    : [])
-    .map((p) => `<option value="${p.id}"${String(p.id) === String(singleProduct?.id || '') ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    : scopedProducts;
+  const formProducts = multiProducts ? filteredProducts : (singleProduct ? [singleProduct] : []);
+  const productOptions = formProducts
+    .map((p) => `<option value="${p.id}" ${String(p.id) === String(selectedFormProduct || '') ? 'selected' : ''}>${escapeHtml(p.name)}</option>`)
     .join('');
 
-  const entries = entriesForDate
-    .filter((e) => scopedProducts.some((p) => p.id === e.productId))
-    .sort((a, b) => b.id - a.id);
+  let entries = runEntries.filter((e) => scopedProducts.some((p) => p.id === e.productId));
+  if (listProductFilter) {
+    entries = entries.filter((e) => String(e.productId) === listProductFilter);
+  }
+
+  const formProduct = multiProducts
+    ? productMap.get(Number(selectedFormProduct || formProducts[0]?.id))
+    : singleProduct;
+  const qtyIsKg = productRecordUsesKg(formProduct);
+
+  const listFilterHTML = multiProducts ? `
+    <div class="form-group" style="margin-bottom:8px">
+      <label for="step-${stepIndex}-prod-filter">סינון רשימה לפי מוצר</label>
+      <select id="step-${stepIndex}-prod-filter" class="flow-prod-list-filter" data-step="${stepIndex}">
+        <option value="">הכל (${runEntries.filter((e) => scopedProducts.some((p) => p.id === e.productId)).length})</option>
+        ${scopedProducts.map((p) => `<option value="${p.id}" ${String(p.id) === listProductFilter ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>` : '';
 
   return `
     <div class="flow-production-panel" data-step-production="${stepIndex}">
       <div class="flow-production-panel-header">
         <span class="flow-production-panel-title">📦 תיעוד ייצור</span>
-        <span class="flow-production-panel-hint">כל הרישומים נשמרים לדוחות — אפשר להוסיף כמה שרוצים</span>
+        <span class="flow-production-panel-hint">כל הרישומים בתהליך — כולל תאריכים שונים</span>
       </div>
       ${canAdd ? `
         <form class="flow-production-form" data-step="${stepIndex}">
@@ -348,43 +381,45 @@ function stepProductionPanelHTML({
             <label for="step-${stepIndex}-prod-date">תאריך</label>
             <input type="date" id="step-${stepIndex}-prod-date" class="flow-prod-date" value="${prodDate}" required>
           </div>
-          ${!singleProduct ? `
+          ${multiProducts ? `
+            ${scopedCategories.length > 1 ? `
             <div class="form-group">
               <label for="step-${stepIndex}-prod-category">קטגוריה</label>
-              <select id="step-${stepIndex}-prod-category" class="flow-prod-category" required ${scopedCategories.length === 0 ? 'disabled' : ''}>
-                <option value="">בחר קטגוריה...</option>
+              <select id="step-${stepIndex}-prod-category" class="flow-prod-category" ${scopedCategories.length === 0 ? 'disabled' : ''}>
+                <option value="">כל הקטגוריות</option>
                 ${scopedCategories.map((c) => `<option value="${c.id}" ${String(c.id) === selectedCategory ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
               </select>
-            </div>
+            </div>` : ''}
             <div class="form-group">
               <label for="step-${stepIndex}-prod-product">מוצר</label>
-              <select id="step-${stepIndex}-prod-product" class="flow-prod-product" required ${!selectedCategory || filteredProducts.length === 0 ? 'disabled' : ''}>
-                <option value="">${selectedCategory ? 'בחר מוצר...' : 'קודם בחר קטגוריה'}</option>
+              <select id="step-${stepIndex}-prod-product" class="flow-prod-product" required ${formProducts.length === 0 ? 'disabled' : ''}>
+                <option value="">${formProducts.length ? 'בחר מוצר...' : 'אין מוצרים'}</option>
                 ${productOptions}
               </select>
             </div>` : `
             <input type="hidden" id="step-${stepIndex}-prod-product" class="flow-prod-product" value="${singleProduct.id}">
             <p class="form-hint" style="margin-bottom:8px">מוצר: <strong>${escapeHtml(singleProduct.name)}</strong></p>`}
           <div class="form-group">
-            <label for="step-${stepIndex}-prod-qty" class="flow-prod-qty-label">${singleProduct && productRecordUsesKg(singleProduct) ? 'משקל (ק"ג)' : "כמות (יח')"}</label>
-            <input type="number" id="step-${stepIndex}-prod-qty" class="flow-prod-qty" min="${singleProduct && productRecordUsesKg(singleProduct) ? '0.001' : '1'}" step="${singleProduct && productRecordUsesKg(singleProduct) ? '0.001' : '1'}" placeholder="${singleProduct && productRecordUsesKg(singleProduct) ? '2.5' : '50'}" required>
+            <label for="step-${stepIndex}-prod-qty" class="flow-prod-qty-label">${qtyIsKg ? 'משקל (ק"ג)' : "כמות (יח')"}</label>
+            <input type="number" id="step-${stepIndex}-prod-qty" class="flow-prod-qty" min="${qtyIsKg ? '0.001' : '1'}" step="${qtyIsKg ? '0.001' : '1'}" placeholder="${qtyIsKg ? '2.5' : '50'}" required>
           </div>
           <button type="submit" class="btn btn-primary btn-sm flow-prod-submit" style="width:100%">+ הוסף רישום ייצור</button>
         </form>` : ''}
       <div class="flow-production-entries">
-        <div class="flow-production-entries-title">רישומים ל-${formatDate(prodDate)}</div>
+        <div class="flow-production-entries-title">כל הרישומים בתהליך (${entries.length})</div>
+        ${listFilterHTML}
         ${entries.length === 0
-    ? '<p class="form-hint" style="margin:8px 0 0">אין רישומים לתאריך זה</p>'
+    ? '<p class="form-hint" style="margin:8px 0 0">אין רישומים עדיין</p>'
     : entries.map((e) => {
       const p = productMap.get(e.productId);
       return `<div class="list-item flow-production-entry" data-entry-id="${e.id}">
         <div class="list-item-info">
           <div class="list-item-name">${escapeHtml(p?.name || '—')}</div>
-          <div class="list-item-meta">${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
+          <div class="list-item-meta">${formatDate(e.date)} · ${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
         </div>
         <div class="list-item-actions">
           <strong>${formatProductQuantity(p, e.quantity)}</strong>
-          ${canAdd ? `
+          ${canManageEntries ? `
             <button type="button" class="btn btn-secondary btn-sm btn-icon flow-prod-edit" data-step="${stepIndex}" data-id="${e.id}" title="ערוך">✏️</button>
             <button type="button" class="btn btn-danger btn-sm btn-icon flow-prod-del" data-step="${stepIndex}" data-id="${e.id}" title="מחק">🗑</button>` : ''}
         </div>
@@ -406,6 +441,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
   const showPreview = hasNotes && !isActive && !editAllMode;
   const runActive = run?.status === 'active';
+  const showTopProduction = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
@@ -413,21 +449,22 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
-    if (runActive && showTopProduction) {
-      if (stepIndex === productionStepIdx) {
-        prodPanel = '<p class="flow-production-inline-hint"><a href="#flow-production-anchor">↑ טופס תיעוד ייצור — למעלה</a></p>';
-      }
-    } else {
+    if (showTopProduction && stepIndex === productionStepIdx) {
+      prodPanel = '<p class="flow-production-inline-hint"><a href="#flow-production-anchor">↑ טופס תיעוד ייצור — למעלה</a></p>';
+    } else if (!showTopProduction) {
       prodPanel = stepProductionPanelHTML({
         stepIndex,
         prodDate: productionCtx.prodDate,
         selectedCategory: productionCtx.selectedCategories[stepIndex] || '',
+        selectedFormProduct: productionCtx.selectedFormProducts[stepIndex] || '',
+        listProductFilter: productionCtx.listProductFilter,
         scopedCategories: productionCtx.scopedCategories,
         scopedProducts: productionCtx.scopedProducts,
-        entriesForDate: productionCtx.entriesForDate,
+        runEntries: productionCtx.runEntries,
         catMap: productionCtx.catMap,
         productMap: productionCtx.productMap,
         canAdd: runActive,
+        canManageEntries: true,
       });
     }
   }
@@ -507,14 +544,15 @@ async function renderRunView(container, runId, ctx) {
   let productionCtx = null;
 
   if (hasProductionSteps) {
-    const [products, categories, entriesForDate] = await Promise.all([
+    const [products, categories, runEntries] = await Promise.all([
       getProducts(true),
       getCategories(),
-      getEntriesForDate(prodDate),
+      getRunProductionEntries(runId),
     ]);
     const scopedCategories = filterCategoriesForRun(run, categories);
     const scopedProducts = filterProductsForRun(run, products, categories);
     const selectedCategories = {};
+    const selectedFormProducts = {};
     run.steps.forEach((step, i) => {
       if (!step.tracksProduction) return;
       const key = runProdCategoryKey(i);
@@ -525,31 +563,37 @@ async function renderRunView(container, runId, ctx) {
         if (p) cat = String(p.categoryId);
       }
       selectedCategories[i] = cat;
+      selectedFormProducts[i] = container.dataset[`runProdFormProduct_${i}`] || '';
     });
     productionCtx = {
       prodDate,
       selectedCategories,
+      selectedFormProducts,
+      listProductFilter: container.dataset.runProdFilter || '',
       scopedCategories,
       scopedProducts,
-      entriesForDate,
+      runEntries,
       catMap,
       productMap,
     };
   }
 
   const productionStepIdx = run.steps.findIndex((s) => s.tracksProduction);
-  const showTopProduction = productionStepIdx >= 0 && run.status === 'active' && productionCtx;
+  const showTopProduction = productionStepIdx >= 0 && productionCtx;
   const topProductionHTML = showTopProduction
     ? stepProductionPanelHTML({
       stepIndex: productionStepIdx,
       prodDate: productionCtx.prodDate,
       selectedCategory: productionCtx.selectedCategories[productionStepIdx] || '',
+      selectedFormProduct: productionCtx.selectedFormProducts[productionStepIdx] || '',
+      listProductFilter: productionCtx.listProductFilter,
       scopedCategories: productionCtx.scopedCategories,
       scopedProducts: productionCtx.scopedProducts,
-      entriesForDate: productionCtx.entriesForDate,
+      runEntries: productionCtx.runEntries,
       catMap: productionCtx.catMap,
       productMap: productionCtx.productMap,
-      canAdd: true,
+      canAdd: run.status === 'active',
+      canManageEntries: true,
     })
     : '';
 
@@ -587,8 +631,8 @@ async function renderRunView(container, runId, ctx) {
     ${showTopProduction ? `
     <div class="card flow-production-always-card" id="flow-production-anchor">
       <div class="flow-production-always-header">
-        <span class="flow-production-always-title">📦 תיעוד ייצור — זמין תמיד</span>
-        <span class="flow-production-always-hint">אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב</span>
+        <span class="flow-production-always-title">📦 תיעוד ייצור${run.status === 'active' ? ' — זמין תמיד' : ''}</span>
+        <span class="flow-production-always-hint">${run.status === 'active' ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב' : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'}</span>
       </div>
       ${topProductionHTML}
     </div>` : ''}
@@ -604,7 +648,11 @@ async function renderRunView(container, runId, ctx) {
 
     ${run.status === 'completed'
       ? `<div class="card"><p class="flow-complete-msg">✓ התהליך הושלם${run.batchNumber ? ` · אצווה ${escapeHtml(run.batchNumber)}` : ''}</p></div>`
-      : ''}`;
+      : ''}
+
+    <div class="card flow-run-delete-footer">
+      <button type="button" class="btn btn-danger btn-sm" id="delete-run-footer" style="width:100%">🗑 מחק תהליך (כולל רישומי ייצור)</button>
+    </div>`;
 
   document.getElementById('toggle-edit-all')?.addEventListener('click', () => {
     container.dataset.runEditAll = editAllMode ? '' : '1';
@@ -617,19 +665,12 @@ async function renderRunView(container, runId, ctx) {
     openRunDetailsModal(container, run, ctx);
   });
 
-  document.getElementById('delete-run-in-view')?.addEventListener('click', async () => {
-    if (!confirm('למחוק את התהליך הזה? פעולה זו לא ניתנת לביטול.')) return;
-    try {
-      await deleteProductionRun(run.id);
-      requestAutoBackupNow().catch(() => {});
-      showToast('התהליך נמחק');
-      container.dataset.view = 'list';
-      delete container.dataset.runId;
-      delete container.dataset.runEditAll;
-      renderProcess(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+  document.getElementById('delete-run-in-view')?.addEventListener('click', () => {
+    confirmDeleteRun(container, run);
+  });
+
+  document.getElementById('delete-run-footer')?.addEventListener('click', () => {
+    confirmDeleteRun(container, run);
   });
 
   document.getElementById('save-all-steps')?.addEventListener('click', async () => {
@@ -836,6 +877,16 @@ function bindRunProductionPanels(container, run, productionCtx) {
       const stepIndex = e.target.closest('[data-step-production]')?.dataset.stepProduction;
       if (stepIndex == null) return;
       container.dataset[runProdCategoryKey(stepIndex)] = e.target.value;
+      delete container.dataset[`runProdFormProduct_${stepIndex}`];
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    });
+  });
+
+  container.querySelectorAll('.flow-prod-list-filter').forEach((select) => {
+    select.addEventListener('change', (e) => {
+      container.dataset.runProdFilter = e.target.value;
       container.dataset.runId = String(run.id);
       container.dataset.view = 'run';
       renderProcess(container);
@@ -845,6 +896,10 @@ function bindRunProductionPanels(container, run, productionCtx) {
   container.querySelectorAll('.flow-prod-product').forEach((select) => {
     if (select.tagName !== 'SELECT') return;
     select.addEventListener('change', () => {
+      const stepIndex = select.closest('[data-step-production]')?.dataset.stepProduction;
+      if (stepIndex != null) {
+        container.dataset[`runProdFormProduct_${stepIndex}`] = select.value;
+      }
       syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
     });
     syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
@@ -896,7 +951,7 @@ function bindRunProductionPanels(container, run, productionCtx) {
   container.querySelectorAll('.flow-prod-edit').forEach((btn) => {
     btn.addEventListener('click', () => {
       const entryId = Number(btn.dataset.id);
-      const entry = productionCtx.entriesForDate.find((e) => e.id === entryId);
+      const entry = productionCtx.runEntries.find((e) => e.id === entryId);
       if (!entry) return;
       const p = productMap.get(entry.productId);
       const isKg = productRecordUsesKg(p);
@@ -2022,9 +2077,9 @@ export async function renderProcess(container) {
 
   container.querySelectorAll('.delete-run').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm('למחוק תהליך זה?')) return;
+      if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו.')) return;
       await deleteProductionRun(Number(btn.dataset.id));
-      showToast('נמחק');
+      showToast('התהליך ורישומי הייצור נמחקו');
       renderProcess(container);
     });
   });
