@@ -13,11 +13,11 @@ import {
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
-} from '../db.js?v=119';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=119';
-import { openModal, closeModal } from '../modal.js?v=119';
-import { requestAutoBackupNow } from '../backup-service.js?v=119';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=119';
+} from '../db.js?v=120';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=120';
+import { openModal, closeModal } from '../modal.js?v=120';
+import { requestAutoBackupNow } from '../backup-service.js?v=120';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=120';
 
 function parseIdList(str) {
   try {

@@ -1,16 +1,16 @@
-import { initDB } from './db.js?v=119';
-import { renderHome, homeMeta } from './screens/home.js?v=119';
-import { renderProducts, productsMeta } from './screens/products.js?v=119';
-import { renderManager, managerMeta } from './screens/manager.js?v=119';
-import { renderProcess, processMeta } from './screens/process.js?v=119';
-import { renderReports, reportsMeta } from './screens/reports.js?v=119';
-import { renderBackup, backupMeta } from './screens/backup.js?v=119';
-import { initIOSInstallPrompt } from './ios-install.js?v=119';
-import { initNetworkCheck } from './network.js?v=119';
-import { registerServiceWorker } from './sw-register.js?v=119';
-import { APP_VERSION } from './version.js?v=119';
-import { showToast } from './utils.js?v=119';
-import './modal.js?v=119';
+import { initDB } from './db.js?v=120';
+import { renderHome, homeMeta } from './screens/home.js?v=120';
+import { renderProducts, productsMeta } from './screens/products.js?v=120';
+import { renderManager, managerMeta } from './screens/manager.js?v=120';
+import { renderProcess, processMeta } from './screens/process.js?v=120';
+import { renderReports, reportsMeta } from './screens/reports.js?v=120';
+import { renderBackup, backupMeta } from './screens/backup.js?v=120';
+import { initIOSInstallPrompt } from './ios-install.js?v=120';
+import { initNetworkCheck } from './network.js?v=120';
+import { registerServiceWorker } from './sw-register.js?v=120';
+import { APP_VERSION } from './version.js?v=120';
+import { showToast } from './utils.js?v=120';
+import './modal.js?v=120';
 
 const SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -31,10 +31,17 @@ async function navigate(screen) {
   currentScreen = screen;
 
   const main = document.getElementById('main-content');
+  const header = document.querySelector('.app-header');
+  main.classList.toggle('home-screen', screen === 'home');
+  header?.classList.toggle('app-header--centered', screen === 'home');
+
   if (screen === 'home') {
     delete main.dataset.homeCategoryHistory;
+    delete main.dataset.homeProductionList;
     delete main.dataset.view;
     delete main.dataset.runId;
+  } else {
+    delete main.dataset.homeProductionList;
   }
 
   document.querySelectorAll('.nav-btn').forEach((btn) => {
@@ -68,11 +75,11 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=119');
+        const { forceAppUpdate } = await import('./sw-register.js?v=120');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=119').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=120').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -84,7 +91,7 @@ async function boot() {
 
     await initDB();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=119');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=120');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 

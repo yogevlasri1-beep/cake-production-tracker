@@ -1935,10 +1935,108 @@ table.report-table tfoot td {
 
 .home-view-tabs {
   margin-bottom: 12px;
+  justify-content: center;
 }
 
 .home-date-field {
   margin-bottom: 0;
+  text-align: center;
+}
+
+.home-date-field label {
+  display: block;
+  text-align: center;
+}
+
+/* ── בית: כותרות ממורכזות ── */
+.app-header--centered {
+  text-align: center;
+}
+
+.home-screen .home-section-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+  text-align: center;
+  margin: 4px 0 4px;
+  letter-spacing: -0.02em;
+}
+
+.home-screen .home-section-subtitle {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0 0 12px;
+}
+
+.home-screen .home-section-header {
+  justify-content: center;
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.home-screen .home-section-header h2 {
+  text-align: center;
+  width: 100%;
+  font-size: 1rem;
+}
+
+.home-screen .card-title {
+  text-align: center;
+}
+
+.home-screen .home-target-title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.home-screen .home-target-period {
+  margin-bottom: 12px;
+}
+
+.home-screen .home-cat-header {
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+}
+
+.home-screen .home-cat-totals {
+  text-align: center;
+}
+
+.home-screen .home-cat-qty {
+  font-size: 1.1rem;
+  color: var(--primary);
+  display: block;
+}
+
+.home-screen .home-cat-target-badge {
+  text-align: center;
+  margin-bottom: 10px;
+}
+
+.home-screen .home-cat-open-hint {
+  display: block;
+  margin-top: 4px;
+  white-space: normal;
+}
+
+.home-screen .home-charts-card .card-title,
+.home-screen .history-card .card-title {
+  text-align: center;
+}
+
+.home-screen .chart-summary {
+  text-align: center;
+}
+
+.home-screen #chart-tabs {
+  justify-content: center;
 }
 
 .process-date-label {

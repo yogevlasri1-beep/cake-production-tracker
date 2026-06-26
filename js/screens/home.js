@@ -3,17 +3,17 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=119';
+} from '../db.js?v=120';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
-} from '../utils.js?v=119';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=119';
+} from '../utils.js?v=120';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=120';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=119';
-import { requestAutoBackupNow } from '../backup-service.js?v=119';
+} from '../calc.js?v=120';
+import { requestAutoBackupNow } from '../backup-service.js?v=120';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -74,7 +74,7 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
   if (!activeRuns.length) return '';
 
   return `
-    <div class="section-header" style="margin-top:0">
+    <div class="section-header home-section-header">
       <h2>תזרימי יצור פעילים</h2>
     </div>
     ${activeRuns.map((run) => `
@@ -331,13 +331,13 @@ async function buildCategorySections(categories, allProducts, activeProducts, to
       <div class="card home-cat-card" data-cat-id="${cat.id}" role="button" tabindex="0" aria-label="היסטוריית ייצור — ${escapeHtml(cat.name)}">
         <div class="section-header home-cat-header">
           <span class="category-chip" style="${categoryChipStyle(cat.color, cat.id)}">${escapeHtml(cat.name)}</span>
-          <div style="text-align:left">
-            <strong style="font-size:1.1rem;color:var(--primary);display:block">${qty} יח' · ${formatMoney(catValue)}</strong>
+          <div class="home-cat-totals">
+            <strong class="home-cat-qty">${qty} יח' · ${formatMoney(catValue)}</strong>
             <span class="home-cat-open-hint">לחץ לצפייה בהיסטוריה ›</span>
           </div>
         </div>
         ${catTarget > 0 ? `
-          <div style="margin-bottom:10px">
+          <div class="home-cat-target-badge">
             <span class="badge ${catBadge.cls}">${catBadge.text} · ${catPct}% מהיעד</span>
           </div>
           ${progressBar(qty, catTarget, targetLabel)}
@@ -366,9 +366,10 @@ function buildProcessSection(processLogs, catMap, viewMode, periodLabel) {
 
   if (viewMode === 'day') {
     return `
-      <div class="section-header" style="margin-top:8px">
-        <h2>תיעוד תהליכים — ${periodLabel}</h2>
+      <div class="section-header home-section-header">
+        <h2>תיעוד תהליכים</h2>
       </div>
+      <p class="home-section-subtitle">${periodLabel}</p>
       <div class="card process-card">${sorted.map(renderLog).join('')}</div>`;
   }
 
@@ -383,9 +384,10 @@ function buildProcessSection(processLogs, catMap, viewMode, periodLabel) {
   }
 
   return `
-    <div class="section-header" style="margin-top:8px">
-      <h2>תיעוד תהליכים — ${periodLabel}</h2>
+    <div class="section-header home-section-header">
+      <h2>תיעוד תהליכים</h2>
     </div>
+    <p class="home-section-subtitle">${periodLabel}</p>
     <div class="card process-card">${body}</div>`;
 }
 
@@ -483,7 +485,8 @@ export async function renderHome(container) {
       </div>
     </div>
 
-    <p class="stats-block-label">${periodLabel}</p>
+    <h2 class="home-section-title">${isDay ? 'ייצור יומי' : 'ייצור חודשי'}</h2>
+    <p class="home-section-subtitle">${periodLabel}</p>
     <div class="stat-grid">
       <div class="stat-box stat-box-clickable ${isDay ? 'stat-box-day' : ''}" id="home-open-prod-list" role="button" tabindex="0" title="לחץ לרשימת ייצור">
         <div class="stat-value">${totals.total}</div>
@@ -497,15 +500,16 @@ export async function renderHome(container) {
     </div>
 
     ${totalTarget > 0 ? `
-    <div class="card">
-      <div class="card-title">${targetTitle} · ${periodLabel}
-        <span class="badge ${totalBadge.cls}" style="float:left">${totalBadge.text}</span>
+    <div class="card home-target-card">
+      <div class="card-title home-target-title">${targetTitle}
+        <span class="badge ${totalBadge.cls}">${totalBadge.text}</span>
       </div>
+      <p class="home-section-subtitle home-target-period">${periodLabel}</p>
       ${progressBar(totals.total, totalTarget, 'התקדמות')}
     </div>` : ''}
 
-    <div class="section-header" style="margin-top:4px">
-      <h2>${categorySectionTitle} · ${periodLabel}</h2>
+    <div class="section-header home-section-header">
+      <h2>${categorySectionTitle}</h2>
     </div>
     ${categories.length === 0
       ? '<div class="empty-state"><p>הוסף קטגוריות במסך מוצרים</p></div>'
@@ -567,13 +571,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=119');
+      const { navigate } = await import('../app.js?v=120');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=119');
+    const { navigate } = await import('../app.js?v=120');
     navigate('backup');
   });
 
