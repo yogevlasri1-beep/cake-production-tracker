@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=125';
+} from '../db.js?v=126';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount,
-} from '../utils.js?v=125';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=125';
+} from '../utils.js?v=126';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=126';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=125';
-import { requestAutoBackupNow } from '../backup-service.js?v=125';
+} from '../calc.js?v=126';
+import { requestAutoBackupNow } from '../backup-service.js?v=126';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -605,13 +605,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=125');
+      const { navigate } = await import('../app.js?v=126');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=125');
+    const { navigate } = await import('../app.js?v=126');
     navigate('backup');
   });
 

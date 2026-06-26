@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=125';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=126';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -59,7 +59,7 @@ export function formatDuration(ms) {
   if (days > 0) parts.push(days === 1 ? '1 יום' : `${days} ימים`);
   if (hours > 0) parts.push(`${hours} שע'`);
   if (mins > 0) parts.push(`${mins} דק'`);
-  if (!parts.length) return '0 דק'';
+  if (!parts.length) return "0 דק'";
 
   return parts.join(' ');
 }

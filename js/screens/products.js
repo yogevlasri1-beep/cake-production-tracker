@@ -7,12 +7,12 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getProductPreparations, addProductPreparation, deleteProductPreparation,
   importProductPreparationsFromActivityPresets,
-} from '../db.js?v=125';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=125';
-import { openModal, closeModal } from '../modal.js?v=125';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=125';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=125';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=125';
+} from '../db.js?v=126';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=126';
+import { openModal, closeModal } from '../modal.js?v=126';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=126';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=126';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=126';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -345,7 +345,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=125');
+    const { navigate } = await import('../app.js?v=126');
     navigate('backup');
   });
 
@@ -1098,7 +1098,7 @@ async function showProductForm(container, opts) {
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}
       ${opts.id ? `
       <div class="form-group product-prep-section">
-        <label>הכנות לתזרים (צ'קליסט)</label>
+        <label>הכנות לתזרים (צ׳קליסט)</label>
         <p class="form-hint" style="margin-bottom:8px">מופיעות בראש תזרים ייצור כשבוחרים מוצר זה</p>
         <ul class="product-prep-list" id="product-prep-list">
           ${preps.length
