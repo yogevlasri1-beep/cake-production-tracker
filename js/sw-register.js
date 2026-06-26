@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=117';
+import { APP_VERSION } from './version.js?v=118';
 
 const SW_URL = `./sw.js?v=${APP_VERSION}`;
 
@@ -9,6 +9,7 @@ export function isStandaloneApp() {
 
 let updateBannerEl = null;
 let pendingUpdate = false;
+let updateInProgress = false;
 
 function ensureUpdateBanner() {
   if (updateBannerEl) return updateBannerEl;
@@ -22,11 +23,22 @@ function ensureUpdateBanner() {
       <button type="button" id="app-update-dismiss" class="app-update-dismiss" aria-label="סגור">×</button>
     </div>`;
   document.body.prepend(updateBannerEl);
-  document.getElementById('app-update-btn')?.addEventListener('click', () => applyAppUpdate());
+  document.getElementById('app-update-btn')?.addEventListener('click', () => {
+    applyAppUpdate().catch(() => {
+      hardReloadForUpdate();
+    });
+  });
   document.getElementById('app-update-dismiss')?.addEventListener('click', () => {
     updateBannerEl?.classList.add('hidden');
   });
   return updateBannerEl;
+}
+
+function setUpdateButtonBusy(busy) {
+  const btn = document.getElementById('app-update-btn');
+  if (!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? 'מעדכן...' : 'עדכן עכשיו';
 }
 
 export function showUpdateBanner(latestVersion) {
@@ -39,29 +51,16 @@ export function showUpdateBanner(latestVersion) {
       : 'גרסה חדשה זמינה — לחץ לעדכון';
   }
   banner.classList.remove('hidden');
-}
+  document.body.classList.add('has-update-banner');
 
-export async function applyAppUpdate() {
   if ('serviceWorker' in navigator) {
-    const reg = await navigator.serviceWorker.getRegistration();
-    if (reg?.waiting) {
-      reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-      await new Promise((resolve) => {
-        const timer = setTimeout(resolve, 800);
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          clearTimeout(timer);
-          resolve();
-        }, { once: true });
-      });
-    }
+    navigator.serviceWorker.getRegistration()
+      .then((reg) => reg?.update())
+      .catch(() => {});
   }
-  const url = new URL(location.href);
-  url.searchParams.set('v', APP_VERSION);
-  url.searchParams.delete('force-update');
-  location.replace(url.toString());
 }
 
-export async function forceAppUpdate() {
+async function clearAllAppCaches() {
   if ('serviceWorker' in navigator) {
     const regs = await navigator.serviceWorker.getRegistrations();
     await Promise.all(regs.map((r) => r.unregister()));
@@ -70,10 +69,63 @@ export async function forceAppUpdate() {
     const keys = await caches.keys();
     await Promise.all(keys.map((k) => caches.delete(k)));
   }
+}
+
+async function tryActivateWaitingWorker() {
+  if (!('serviceWorker' in navigator)) return false;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg?.waiting || !navigator.serviceWorker.controller) return false;
+  reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 1500);
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+  return true;
+}
+
+function hardReloadForUpdate() {
   const url = new URL(location.href);
-  url.searchParams.delete('force-update');
-  url.searchParams.set('v', APP_VERSION);
+  url.searchParams.set('force-update', '1');
+  url.searchParams.set('t', String(Date.now()));
+  url.searchParams.delete('v');
   location.replace(url.toString());
+}
+
+/** ניקוי מטמון מלא + טעינה מחדש דרך bootGate ב-index.html */
+export async function forceAppUpdate() {
+  if (updateInProgress) return;
+  updateInProgress = true;
+  try {
+    await clearAllAppCaches();
+  } catch (err) {
+    console.warn('forceAppUpdate cache clear failed', err);
+  }
+  hardReloadForUpdate();
+}
+
+/** כפתור «עדכן עכשיו» בבאנר העליון */
+export async function applyAppUpdate() {
+  if (updateInProgress) return;
+  updateInProgress = true;
+  setUpdateButtonBusy(true);
+  try {
+    if ('serviceWorker' in navigator) {
+      try {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      } catch {
+        /* continue to hard refresh */
+      }
+      await tryActivateWaitingWorker();
+    }
+    await clearAllAppCaches();
+  } catch (err) {
+    console.warn('applyAppUpdate partial fail', err);
+  }
+  hardReloadForUpdate();
 }
 
 function watchRegistration(reg) {
@@ -112,17 +164,30 @@ export async function checkForAppUpdate() {
   }
 }
 
-/** בדיקה מול שרver — האם יש גרסה חדשה יותר מהמותקנת */
+/** בדיקה מול השרת — האם יש גרסה חדשה יותר מהמותקנת */
 export async function detectRemoteVersion() {
+  const bust = `check=${Date.now()}`;
   try {
-    const res = await fetch(`./js/version.js?check=${Date.now()}`, { cache: 'no-store' });
-    if (!res.ok) return null;
-    const text = await res.text();
-    const match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
-    return match ? match[1] : null;
+    const res = await fetch(`./js/version.js?${bust}`, { cache: 'no-store' });
+    if (res.ok) {
+      const text = await res.text();
+      const match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
+      if (match) return match[1];
+    }
   } catch {
-    return null;
+    /* fall through */
   }
+  try {
+    const res = await fetch(`./index.html?${bust}`, { cache: 'no-store' });
+    if (res.ok) {
+      const text = await res.text();
+      const match = text.match(/__APP_BUILD__\s*=\s*['"](\d+)['"]/);
+      if (match) return match[1];
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 export async function initAppUpdateCheck() {

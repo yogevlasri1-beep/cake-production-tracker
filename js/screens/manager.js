@@ -10,15 +10,14 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=117';
+} from '../db.js?v=118';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=117';
-import { openModal, closeModal } from '../modal.js?v=117';
-import { renderTargets } from './targets.js?v=117';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion } from '../sw-register.js?v=117';
-import { APP_VERSION } from '../version.js?v=117';
+} from '../utils.js?v=118';
+import { openModal, closeModal } from '../modal.js?v=118';
+import { renderTargets } from './targets.js?v=118';
+import { forceAppUpdate } from '../sw-register.js?v=118';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -196,18 +195,20 @@ async function renderOverview(container) {
   container.querySelector('[data-quick="incident"]')?.addEventListener('click', () => openIncidentModal(container));
   container.querySelector('[data-quick="improvement"]')?.addEventListener('click', () => openTaskModal(container, 'improvement'));
   document.getElementById('manager-force-update')?.addEventListener('click', async () => {
-    const remote = await detectRemoteVersion();
-    if (remote && remote !== APP_VERSION) {
-      if (confirm(`גרסה ${remote} זמינה (מותקנת: ${APP_VERSION}). לעדכן עכשיו?`)) {
-        showToast('מעדכן...');
-        await forceAppUpdate();
+    const btn = document.getElementById('manager-force-update');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'מעדכן...';
+    }
+    try {
+      showToast('מעדכן...');
+      await forceAppUpdate();
+    } catch {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔄 עדכן אפליקציה';
       }
-    } else {
-      const found = await checkForAppUpdate();
-      if (found || confirm('לנקות מטמון ולטעון מחדש?')) {
-        showToast('מעדכן...');
-        await forceAppUpdate();
-      }
+      showToast('שגיאה — נסה «גיבוי → נקה מטמון ועדכן»');
     }
   });
 }
