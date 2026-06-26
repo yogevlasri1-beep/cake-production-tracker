@@ -2299,9 +2299,27 @@ table.report-table tfoot td {
   text-align: center;
 }
 
-/* ── בית: כותרות ממורכזות ── */
-.app-header--centered {
+/* ── בית: כותרות ממורכזות (מאוזן מול כפתור התפריט) ── */
+.app-header--centered .app-header-row {
+  position: relative;
+  min-height: 44px;
+}
+
+.app-header--centered .app-header-titles {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
+  padding-inline: 56px;
+  pointer-events: none;
+}
+
+.app-header--centered .header-menu-btn {
+  position: relative;
+  z-index: 1;
 }
 
 .home-screen .home-section-title {
