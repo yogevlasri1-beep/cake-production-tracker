@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=122';
+} from '../db.js?v=123';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
-  showToast, escapeHtml, formatPortionCount,
-} from '../utils.js?v=122';
+  showToast, escapeHtml, formatPortionCount, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
+} from '../utils.js?v=123';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=122';
-import { openModal, closeModal } from '../modal.js?v=122';
+} from '../export.js?v=123';
+import { openModal, closeModal } from '../modal.js?v=123';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=122';
-import { isSheetsConfigured } from '../google-sheets.js?v=122';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=122';
-import { defaultColorForIndex } from '../chart.js?v=122';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=122';
+} from '../sheets-flow.js?v=123';
+import { isSheetsConfigured } from '../google-sheets.js?v=123';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=123';
+import { defaultColorForIndex } from '../chart.js?v=123';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=123';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -219,9 +219,17 @@ function reportRunEndDate(run) {
 function reportRunDatesLabel(run) {
   const start = reportRunStartDate(run);
   const end = reportRunEndDate(run);
-  if (start && end) return `${formatDate(start)} → ${formatDate(end)}`;
-  if (start) return formatDate(start);
+  const dur = formatDuration(runDurationMs(run));
+  const durSuffix = dur !== '—' ? ` · ⏱ ${dur}${run.status === 'active' ? ' (בתהליך)' : ''}` : '';
+  if (start && end) return `${formatDate(start)} → ${formatDate(end)}${durSuffix}`;
+  if (start) return `${formatDate(start)}${durSuffix}`;
   return '—';
+}
+
+function reportRunDurationLabel(run) {
+  const dur = runDurationMs(run);
+  if (dur == null) return '—';
+  return `${formatDuration(dur)}${run.status === 'active' ? ' (בתהליך)' : ''}`;
 }
 
 function reportFlowTimelineSlot(step, role, emptyLabel) {
@@ -475,17 +483,22 @@ function renderProductionRunsStepsTable(run) {
   return `
     <div class="report-table-wrap" style="margin-top:8px">
     <table class="report-table report-flow-steps-table">
-      <thead><tr><th>#</th><th>שלב</th><th>סטטוס</th><th>מנות</th></tr></thead>
+      <thead><tr><th>#</th><th>שלב</th><th>סטטוס</th><th>הושלם</th><th>משך שלב</th><th>מנות</th></tr></thead>
       <tbody>
         ${run.steps.map((step, i) => {
           let status = 'ממתין';
           if (step.status === 'completed' || i < currentIndex) status = '✓ בוצע';
           else if (i === currentIndex && run.status === 'active') status = '● פעיל';
           const portions = formatStepPortionsReport(step);
+          const prev = i > 0 ? run.steps[i - 1] : null;
+          const stepDur = formatDuration(stepDurationMs(step, prev?.completedAt, run.startedAt));
+          const completedAt = step.completedAt ? formatDateTime(step.completedAt) : '—';
           return `<tr class="report-flow-step-row report-flow-step-row--${step.status || 'pending'}">
             <td class="report-cell-num">${i + 1}</td>
             <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
             <td class="report-cell-num">${status}</td>
+            <td class="report-cell-text">${completedAt}</td>
+            <td class="report-cell-num">${stepDur}</td>
             <td class="report-cell-text">${portions}</td>
           </tr>`;
         }).join('')}
@@ -508,7 +521,7 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
     <p class="report-preview-note" style="margin-bottom:10px">${activeCount} פעילים · ${doneCount} הושלמו</p>
     <div class="report-table-wrap">
     <table class="report-table">
-      <thead><tr><th>תאריך התחלה</th><th>תאריך סיום</th><th>אצווה</th><th>תזרים / יעד</th><th>סטטוס</th><th>שלב</th></tr></thead>
+      <thead><tr><th>תאריך התחלה</th><th>תאריך סיום</th><th>משך</th><th>אצווה</th><th>תזרים / יעד</th><th>סטטוס</th><th>שלב</th></tr></thead>
       <tbody>
         ${productionRuns.map((run) => {
           const info = reportRunStepInfo(run);
@@ -519,6 +532,7 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
           return `<tr>
             <td class="report-cell-num">${startDate ? formatDate(startDate) : '—'}${dateNote ? `<span class="report-flow-date-note">${dateNote.trim()}</span>` : ''}</td>
             <td class="report-cell-num">${endDate ? formatDate(endDate) : '—'}</td>
+            <td class="report-cell-num">${reportRunDurationLabel(run)}</td>
             <td class="report-cell-text">${batch}</td>
             <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
             <td class="report-cell-num"><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>

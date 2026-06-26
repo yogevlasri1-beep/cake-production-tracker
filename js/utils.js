@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=122';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=123';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -43,6 +43,61 @@ export function formatProductQuantity(product, qty) {
   if (qty == null || qty === '') return '—';
   if (product?.priceUnit === 'kg') return `${qty} ק"ג`;
   return `${qty} יח'`;
+}
+
+/** משך זמן קריא (ms → "2 שע' 15 דק'") */
+export function formatDuration(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
+  const totalMin = Math.round(ms / 60000);
+  if (totalMin < 1) return 'פחות מדקה';
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours === 0) return `${mins} דק'`;
+  if (mins === 0) return `${hours} שע'`;
+  return `${hours} שע' ${mins} דק'`;
+}
+
+export function runDurationMs(run) {
+  const start = run?.startedAt ? Date.parse(run.startedAt) : NaN;
+  if (!Number.isFinite(start)) return null;
+  const end = run?.completedAt ? Date.parse(run.completedAt) : Date.now();
+  if (!Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+export function stepDurationMs(step, prevCompletedAt, runStartedAt) {
+  if (!step?.completedAt) return null;
+  const end = Date.parse(step.completedAt);
+  if (!Number.isFinite(end)) return null;
+  const start = prevCompletedAt
+    ? Date.parse(prevCompletedAt)
+    : (runStartedAt ? Date.parse(runStartedAt) : NaN);
+  if (!Number.isFinite(start)) return null;
+  return Math.max(0, end - start);
+}
+
+export function isoToDateInput(iso) {
+  if (!iso) return '';
+  return String(iso).slice(0, 10);
+}
+
+export function isoToTimeInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    const part = String(iso).slice(11, 16);
+    return /^\d{2}:\d{2}$/.test(part) ? part : '';
+  }
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+export function formatDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const date = d.toLocaleDateString('he-IL');
+  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  return `${date} · ${time}`;
 }
 
 export { pct, pctDisplay, progressClass, progressBadge };

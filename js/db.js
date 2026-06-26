@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=122';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=122';
-import { defaultColorForIndex } from './chart.js?v=122';
+} from './validators.js?v=123';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=123';
+import { defaultColorForIndex } from './chart.js?v=123';
 
 export { ValidationError };
 
@@ -2442,6 +2442,65 @@ function mergeDateIntoIso(dateStr, existingIso) {
   return `${dateStr}T${time}`;
 }
 
+function isoTimePart(iso) {
+  if (!iso || String(iso).length < 16) return '12:00:00';
+  return String(iso).slice(11, 19);
+}
+
+function mergeDateTimeIntoIso(dateStr, timeStr, existingIso) {
+  const date = dateStr || isoDatePart(existingIso);
+  if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
+  let time = '12:00:00';
+  if (timeStr) {
+    const t = String(timeStr).trim();
+    if (/^\d{2}:\d{2}$/.test(t)) time = `${t}:00`;
+    else if (/^\d{2}:\d{2}:\d{2}$/.test(t)) time = t;
+    else throw new ValidationError('שעה לא תקינה');
+  } else if (existingIso) {
+    time = isoTimePart(existingIso);
+  }
+  return `${date}T${time}`;
+}
+
+function resolveFlowStepsParamsFromRun(run) {
+  const ids = run.categoryIds?.length ? run.categoryIds : (run.categoryId ? [run.categoryId] : []);
+  return {
+    categoryId: ids.length === 1 ? ids[0] : (run.categoryId || null),
+    categoryGroupId: run.categoryGroupId || null,
+    flowId: run.flowId || null,
+  };
+}
+
+function flowStepMetaFromTemplate(tpl) {
+  return {
+    stepName: tpl.name,
+    tracksPortions: !!tpl.tracksPortions,
+    tracksProduction: !!tpl.tracksProduction,
+    portionUnit: tpl.tracksPortions && tpl.portionUnit ? tpl.portionUnit : null,
+    portionSize: tpl.tracksPortions && tpl.portionSize != null ? tpl.portionSize : null,
+  };
+}
+
+function validateStepCompletedAtOrder(run, stepIndex, completedAtIso) {
+  if (!completedAtIso) return;
+  const t = Date.parse(completedAtIso);
+  if (!Number.isFinite(t)) throw new ValidationError('תאריך/שעה לא תקינים');
+  if (run.startedAt && t < Date.parse(run.startedAt)) {
+    throw new ValidationError('שעת השלמה לפני תחילת התהליך');
+  }
+  const prev = run.steps[stepIndex - 1];
+  if (prev?.completedAt && t < Date.parse(prev.completedAt)) {
+    throw new ValidationError('שעת השלמה לפני השלב הקודם');
+  }
+  const next = run.steps[stepIndex + 1];
+  if (next?.completedAt && t > Date.parse(next.completedAt)) {
+    throw new ValidationError('שעת השלמה אחרי השלב הבא');
+  }
+  if (run.completedAt && t > Date.parse(run.completedAt)) {
+    throw new ValidationError('שעת השלמה אחרי סיום התהליך');
+  }
+}
+
 export async function startProductionRun({
   date, batchNumber, categoryId, categoryIds, productId, categoryGroupId,
   scopeMode, portionUnit, portionSize, portionCount, flowId,
@@ -2935,7 +2994,10 @@ export async function reopenRunStep(runId, targetStepIndex) {
   });
 }
 
-export async function updateRunStepFields(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
+export async function updateRunStepFields(runId, stepIndex, {
+  notes, issues, improvements, portionUnit, portionSize, portionCount,
+  completedDate, completedTime, clearCompletedAt,
+} = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   const step = run.steps[stepIndex];
@@ -2962,8 +3024,106 @@ export async function updateRunStepFields(runId, stepIndex, { notes, issues, imp
       patch.portionCount = pCount;
     }
   }
+  if (clearCompletedAt) {
+    patch.completedAt = null;
+  } else if (completedDate !== undefined || completedTime !== undefined) {
+    const nextIso = mergeDateTimeIntoIso(
+      completedDate !== undefined ? completedDate : isoDatePart(step.completedAt),
+      completedTime !== undefined ? completedTime : undefined,
+      step.completedAt,
+    );
+    validateStepCompletedAtOrder(run, stepIndex, nextIso);
+    patch.completedAt = nextIso;
+    if (step.status !== 'completed' && step.status !== 'active') {
+      patch.status = 'completed';
+    }
+  }
   if (!Object.keys(patch).length) return;
   return db.runStepStates.update(step.id, patch);
+}
+
+/** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרim העדכניות (שלבים, דגלים, שמות) */
+export async function syncProductionRunWithFlow(runId) {
+  const run = await getProductionRun(runId, { normalize: false });
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (!run.flowId) return { updated: false, reason: 'no-flow' };
+
+  await ensureFlowProductionStep(run.flowId);
+  const flow = await db.flows.get(run.flowId);
+  const templateSteps = await resolveFlowSteps(resolveFlowStepsParamsFromRun(run));
+  if (!templateSteps.length) return { updated: false, reason: 'no-steps' };
+
+  let changed = false;
+  await db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    const existing = [...run.steps].sort((a, b) => a.stepIndex - b.stepIndex);
+
+    if (flow?.name && flow.name !== run.flowName) {
+      await db.productionRuns.update(run.id, { flowName: flow.name });
+      changed = true;
+    }
+
+    for (let i = 0; i < templateSteps.length; i++) {
+      const tpl = templateSteps[i];
+      const meta = flowStepMetaFromTemplate(tpl);
+      const ex = existing[i];
+
+      if (ex) {
+        const patch = {};
+        for (const [k, v] of Object.entries(meta)) {
+          if (ex[k] !== v) patch[k] = v;
+        }
+        if (Object.keys(patch).length) {
+          await db.runStepStates.update(ex.id, patch);
+          changed = true;
+        }
+      } else {
+        let stepStatus = 'pending';
+        if (run.status === 'completed') stepStatus = 'completed';
+        else if (i < run.currentStepIndex) stepStatus = 'completed';
+        else if (i === run.currentStepIndex) stepStatus = 'active';
+
+        await db.runStepStates.add({
+          runId: run.id,
+          stepIndex: i,
+          stepName: meta.stepName,
+          status: stepStatus,
+          completedAt: stepStatus === 'completed'
+            ? (run.completedAt || (i === run.currentStepIndex ? null : nowISO()))
+            : null,
+          notes: '',
+          issues: '',
+          improvements: '',
+          tracksPortions: meta.tracksPortions,
+          tracksProduction: meta.tracksProduction,
+          portionUnit: meta.portionUnit,
+          portionSize: meta.portionSize,
+          portionCount: null,
+          portionBatches: [],
+          productionEntryIds: [],
+        });
+        changed = true;
+      }
+    }
+  });
+
+  const refreshed = await getProductionRun(runId, { normalize: false });
+  if (await normalizeRunProductionSteps(refreshed)) changed = true;
+
+  return { updated: changed };
+}
+
+export async function syncAllActiveProductionRuns() {
+  const runs = await getActiveProductionRuns();
+  let updated = 0;
+  for (const run of runs) {
+    try {
+      const res = await syncProductionRunWithFlow(run.id);
+      if (res.updated) updated += 1;
+    } catch {
+      /* skip broken runs */
+    }
+  }
+  return { total: runs.length, updated };
 }
 
 export async function updateProductionRunDates(runId, { startedDate, completedDate } = {}) {

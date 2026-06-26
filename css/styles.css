@@ -427,9 +427,39 @@ body {
   flex: 1;
 }
 
-.flow-step-time {
+.flow-step-time,
+.flow-step-datetime {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
+
+.flow-step-duration {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary-dark);
+  background: color-mix(in srgb, var(--primary) 10%, white);
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.flow-step-datetime-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.flow-run-duration-value {
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.flow-step-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
 }
 
 .flow-step-notes-preview {

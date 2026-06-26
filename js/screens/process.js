@@ -8,16 +8,17 @@ import {
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
+  syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
-} from '../db.js?v=122';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=122';
-import { openModal, closeModal } from '../modal.js?v=122';
-import { requestAutoBackupNow } from '../backup-service.js?v=122';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=122';
+} from '../db.js?v=123';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=123';
+import { openModal, closeModal } from '../modal.js?v=123';
+import { requestAutoBackupNow } from '../backup-service.js?v=123';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=123';
 
 function parseIdList(str) {
   try {
@@ -252,10 +253,26 @@ function readStepInlineFields(stepIndex) {
     issues: document.getElementById(`step-${stepIndex}-issues`)?.value ?? '',
     improvements: document.getElementById(`step-${stepIndex}-improvements`)?.value ?? '',
     portionCount: document.getElementById(`step-${stepIndex}-portion-count`)?.value,
+    completedDate: document.getElementById(`step-${stepIndex}-completed-date`)?.value,
+    completedTime: document.getElementById(`step-${stepIndex}-completed-time`)?.value,
   };
 }
 
-function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions = false, presets = [] } = {}) {
+function stepDatetimeFieldsHTML(step, stepIndex) {
+  return `
+    <div class="flow-step-datetime-row">
+      <div class="form-group">
+        <label for="step-${stepIndex}-completed-date">תאריך השלמה</label>
+        <input type="date" id="step-${stepIndex}-completed-date" value="${isoToDateInput(step.completedAt)}">
+      </div>
+      <div class="form-group">
+        <label for="step-${stepIndex}-completed-time">שעת השלמה</label>
+        <input type="time" id="step-${stepIndex}-completed-time" value="${isoToTimeInput(step.completedAt)}">
+      </div>
+    </div>`;
+}
+
+function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions = false, presets = [], showDatetime = false } = {}) {
   return `
     <div class="flow-step-edit${expanded ? '' : ' hidden'}" data-step-edit="${stepIndex}">
       <div class="form-group">
@@ -270,6 +287,7 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions
         <label for="step-${stepIndex}-improvements">נקודות לשיפור</label>
         <textarea id="step-${stepIndex}-improvements" rows="2" placeholder="מה אפשר לשפר">${escapeHtml(step.improvements || '')}</textarea>
       </div>
+      ${showDatetime ? stepDatetimeFieldsHTML(step, stepIndex) : ''}
       ${includePortions ? stepPortionFieldsHTML(step, stepIndex, presets) : ''}
       <button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור שינויים</button>
     </div>`;
@@ -458,6 +476,10 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const timeLabel = step.completedAt
     ? new Date(step.completedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
     : '';
+  const prevStep = stepIndex > 0 ? run.steps[stepIndex - 1] : null;
+  const stepDurMs = stepDurationMs(step, prevStep?.completedAt, run.startedAt);
+  const stepDurationLabel = stepDurMs != null ? formatDuration(stepDurMs) : '';
+  const stepCompletedLabel = step.completedAt ? formatDateTime(step.completedAt) : '';
   const isActive = visual === 'active';
   const isDone = visual === 'done';
   const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
@@ -497,7 +519,8 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
         <div class="flow-step-header">
           <span class="flow-step-num">${stepIndex + 1}</span>
           <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
-          ${timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : ''}
+          ${stepCompletedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepCompletedLabel)}</span>` : (timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : '')}
+          ${stepDurationLabel ? `<span class="flow-step-duration">⏱ ${stepDurationLabel}</span>` : ''}
           ${flowStepProductionSummary(step)}
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽 מנות</span>' : ''}
         </div>
@@ -515,6 +538,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
     expanded: isActive || editAllMode,
     includePortions: true,
     presets: portionPresets,
+    showDatetime: isDone || step.status === 'completed' || editAllMode,
   }) : ''}
         <div class="flow-step-actions">
           ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור לשלב</button>` : ''}
@@ -550,6 +574,12 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
 }
 
 async function renderRunView(container, runId, ctx) {
+  try {
+    await syncProductionRunWithFlow(runId);
+  } catch {
+    /* continue with current snapshot */
+  }
+
   const run = await getProductionRun(runId);
   if (!run) {
     container.dataset.view = 'list';
@@ -616,6 +646,11 @@ async function renderRunView(container, runId, ctx) {
     })
     : '';
 
+  const runDurMs = runDurationMs(run);
+  const runDurationLabel = runDurMs != null
+    ? `${formatDuration(runDurMs)}${run.status === 'active' ? ' (בתהליך)' : ''}`
+    : '—';
+
   container.innerHTML = `
     <div class="card flow-run-header-card">
       <button type="button" class="btn btn-secondary btn-sm" id="back-to-list">← חזרה</button>
@@ -632,9 +667,14 @@ async function renderRunView(container, runId, ctx) {
           <span class="flow-run-dates-label">סיום</span>
           <span class="flow-run-dates-value">${run.completedAt ? formatRunTimestamp(run.completedAt) : '—'}</span>
         </div>
+        <div class="flow-run-dates-row">
+          <span class="flow-run-dates-label">משך כולל</span>
+          <span class="flow-run-dates-value flow-run-duration-value">⏱ ${runDurationLabel}</span>
+        </div>
       </div>
       <div class="flow-run-header-actions filter-row" style="margin-top:12px;flex-wrap:wrap">
         <button type="button" class="btn btn-secondary btn-sm" id="toggle-edit-all">${editAllMode ? 'סיום עריכה' : '✏️ ערוך הכל'}</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="sync-run-flow">🔄 רענן מתבנית</button>
         <button type="button" class="btn btn-secondary btn-sm" id="edit-run-details">📋 פרטי תהליך</button>
         <button type="button" class="btn btn-danger btn-sm" id="delete-run-in-view">🗑 מחק תהליך</button>
       </div>
@@ -682,6 +722,19 @@ async function renderRunView(container, runId, ctx) {
 
   document.getElementById('edit-run-details')?.addEventListener('click', () => {
     openRunDetailsModal(container, run, ctx);
+  });
+
+  document.getElementById('sync-run-flow')?.addEventListener('click', async () => {
+    try {
+      const res = await syncProductionRunWithFlow(run.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast(res.updated ? 'התזרים עודכן מההגדרות ✓' : 'כבר מעודכן');
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('delete-run-in-view')?.addEventListener('click', () => {
@@ -2005,12 +2058,14 @@ export async function renderProcess(container) {
     getAllFlowsOverview(),
     renderSheetsStatusHTML(),
   ]);
+  syncAllActiveProductionRuns().catch(() => {});
   const doneRuns = dateRuns.filter((r) => r.status === 'completed');
 
   container.innerHTML = `
     <div class="section-header">
       <h2 style="font-size:1rem">תזרימי יצור</h2>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" id="sync-all-active-runs">🔄 רענן פעילים</button>
         <button type="button" class="btn btn-secondary btn-sm" id="manage-flow">⚙️ נהל תזרים</button>
         <button type="button" class="btn btn-primary btn-sm" id="new-run">+ תהליך חדש</button>
       </div>
@@ -2073,6 +2128,19 @@ export async function renderProcess(container) {
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
     renderProcess(container);
+  });
+
+  document.getElementById('sync-all-active-runs')?.addEventListener('click', async () => {
+    try {
+      const res = await syncAllActiveProductionRuns();
+      requestAutoBackupNow().catch(() => {});
+      showToast(res.updated
+        ? `עודכנו ${res.updated} מתוך ${res.total} תזרימים פעילים ✓`
+        : (res.total ? 'כל התזרימים הפעילים מעודכנים' : 'אין תזרימים פעילים'));
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('new-run')?.addEventListener('click', () => {
