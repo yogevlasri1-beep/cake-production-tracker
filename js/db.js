@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=126';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=126';
-import { defaultColorForIndex } from './chart.js?v=126';
+} from './validators.js?v=127';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=127';
+import { defaultColorForIndex } from './chart.js?v=127';
 
 export { ValidationError };
 
@@ -564,6 +564,35 @@ db.version(23).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
 });
 
+db.version(24).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  flowPreparations: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
 async function resolveCategoryGroupIdForFlow(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return null;
@@ -852,11 +881,12 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.productionEntries.clear();
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
     await db.groupPortionPresets.clear();
+    await db.flowPreparations.clear();
     await db.flowSteps.clear();
     await db.flows.clear();
     await db.runPreparationChecks.clear();
@@ -936,6 +966,7 @@ export async function exportAllData() {
     flows,
     flowPortionPresets,
     groupPortionPresets,
+    flowPreparations,
     productionRuns,
     runStepStates,
     productPreparations,
@@ -961,6 +992,7 @@ export async function exportAllData() {
     db.flows.toArray(),
     db.flowPortionPresets.toArray(),
     db.groupPortionPresets.toArray(),
+    db.flowPreparations.toArray(),
     db.productionRuns.toArray(),
     db.runStepStates.toArray(),
     db.productPreparations.toArray(),
@@ -987,6 +1019,7 @@ export async function exportAllData() {
     flows,
     flowPortionPresets,
     groupPortionPresets,
+    flowPreparations,
     productionRuns,
     runStepStates,
     productPreparations,
@@ -1026,6 +1059,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.flows)) payload.flows = [];
   if (!Array.isArray(payload.flowPortionPresets)) payload.flowPortionPresets = [];
   if (!Array.isArray(payload.groupPortionPresets)) payload.groupPortionPresets = [];
+  if (!Array.isArray(payload.flowPreparations)) payload.flowPreparations = [];
   if (!Array.isArray(payload.productionRuns)) payload.productionRuns = [];
   if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
   if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
@@ -1069,6 +1103,7 @@ export async function importAllData(payload) {
     db.flows,
     db.flowPortionPresets,
     db.groupPortionPresets,
+    db.flowPreparations,
     db.productionRuns,
     db.runStepStates,
     db.productPreparations,
@@ -1090,6 +1125,7 @@ export async function importAllData(payload) {
       await db.productionRuns.clear();
       await db.flowPortionPresets.clear();
       await db.groupPortionPresets.clear();
+      await db.flowPreparations.clear();
       await db.flowSteps.clear();
       await db.flows.clear();
       await db.managerPlanItems.clear();
@@ -1120,6 +1156,7 @@ export async function importAllData(payload) {
       } else {
         await migrateImportedFlowPresetsToGroup(tx);
       }
+      if (payload.flowPreparations.length) await db.flowPreparations.bulkPut(payload.flowPreparations);
       if (payload.productionRuns.length) await db.productionRuns.bulkPut(payload.productionRuns);
       if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
       if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
@@ -1852,61 +1889,74 @@ export async function getProcessLogsForMonth(year, month) {
   return all.filter((e) => e.date.startsWith(prefix));
 }
 
-/* ── הכנות למוצר (צ'קליסט בתזרים) ── */
+/* ── הכנות לתזרים (צ׳קליסט) ── */
 
-export async function getProductPreparations(productId) {
-  const pid = sanitizeProductId(productId);
-  if (!pid) return [];
-  const rows = await db.productPreparations.where('productId').equals(pid).toArray();
+export async function getFlowPreparations(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const rows = await db.flowPreparations.where('flowId').equals(fid).toArray();
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
 }
 
-export async function addProductPreparation(productId, name) {
-  const pid = sanitizeProductId(productId);
+export async function addFlowPreparation(flowId, name) {
+  const fid = sanitizeProductId(flowId);
   const trimmed = sanitizeName(name, 80);
-  if (!pid) throw new ValidationError('מוצר לא תקין');
+  if (!fid) throw new ValidationError('תזרים לא תקין');
   if (!trimmed) throw new ValidationError('שם הכנה לא תקין');
-  const existing = await getProductPreparations(pid);
+  const existing = await getFlowPreparations(fid);
   if (existing.some((p) => p.name === trimmed)) {
-    throw new ValidationError('הכנה זו כבר קיימת למוצר');
+    throw new ValidationError('הכנה זו כבר קיימת בתזרים');
   }
   const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
-  return db.productPreparations.add({ productId: pid, name: trimmed, sortOrder: maxOrder + 1 });
+  return db.flowPreparations.add({ flowId: fid, name: trimmed, sortOrder: maxOrder + 1 });
 }
 
-export async function deleteProductPreparation(id) {
+export async function deleteFlowPreparation(id) {
   const prepId = sanitizeProductId(id);
   if (!prepId) return;
-  await db.productPreparations.delete(prepId);
+  await db.flowPreparations.delete(prepId);
 }
 
-export async function importProductPreparationsFromActivityPresets(productId, categoryId) {
-  const pid = sanitizeProductId(productId);
-  if (!pid) throw new ValidationError('מוצר לא תקין');
+async function resolveFlowCategoryIdForPresets(flowId) {
+  const flow = await db.flows.get(Number(flowId));
+  if (!flow) return 0;
+  if (flow.categoryId) return flow.categoryId;
+  if (flow.categoryGroupId) {
+    const cats = await db.categories.where('groupId').equals(flow.categoryGroupId).toArray();
+    cats.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+    return cats[0]?.id || 0;
+  }
+  return 0;
+}
+
+export async function importFlowPreparationsFromActivityPresets(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  const categoryId = await resolveFlowCategoryIdForPresets(fid);
   const presets = await getActivityPresets(categoryId);
-  const existing = await getProductPreparations(pid);
+  const existing = await getFlowPreparations(fid);
   const names = new Set(existing.map((p) => p.name));
   let added = 0;
   for (const name of presets) {
     if (names.has(name)) continue;
-    await addProductPreparation(pid, name);
+    await addFlowPreparation(fid, name);
     names.add(name);
     added += 1;
   }
   return added;
 }
 
-async function seedRunPreparationChecksInTx(tx, runId, productId) {
-  const pid = sanitizeProductId(productId);
+async function seedRunPreparationChecksInTx(tx, runId, flowId) {
+  const fid = sanitizeProductId(flowId);
   const rid = sanitizeProductId(runId);
-  if (!pid || !rid) return;
-  const preps = await tx.table('productPreparations').where('productId').equals(pid).toArray();
+  if (!fid || !rid) return;
+  const preps = await tx.table('flowPreparations').where('flowId').equals(fid).toArray();
   preps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   for (const prep of preps) {
     await tx.table('runPreparationChecks').add({
       runId: rid,
-      productPreparationId: prep.id,
+      flowPreparationId: prep.id,
       name: prep.name,
       sortOrder: prep.sortOrder ?? 0,
       checked: false,
@@ -1927,12 +1977,12 @@ export async function ensureRunPreparationChecks(runId) {
   const rid = sanitizeProductId(runId);
   if (!rid) return [];
   const run = await db.productionRuns.get(rid);
-  if (!run?.productId) return [];
+  if (!run?.flowId) return [];
 
-  const preps = await getProductPreparations(run.productId);
+  const preps = await getFlowPreparations(run.flowId);
   const existing = await getRunPreparationChecks(rid);
   const byPrepId = new Map(
-    existing.filter((c) => c.productPreparationId).map((c) => [c.productPreparationId, c]),
+    existing.filter((c) => c.flowPreparationId).map((c) => [c.flowPreparationId, c]),
   );
 
   await db.transaction('rw', db.runPreparationChecks, async () => {
@@ -1945,7 +1995,7 @@ export async function ensureRunPreparationChecks(runId) {
       } else {
         await db.runPreparationChecks.add({
           runId: rid,
-          productPreparationId: prep.id,
+          flowPreparationId: prep.id,
           name: prep.name,
           sortOrder: prep.sortOrder ?? 0,
           checked: false,
@@ -1967,17 +2017,17 @@ export async function setRunPreparationChecked(checkId, checked) {
   });
 }
 
-export async function addRunPreparationFromProduct(productId, name, runId) {
-  const prepId = await addProductPreparation(productId, name);
+export async function addRunPreparationFromFlow(flowId, name, runId) {
+  const prepId = await addFlowPreparation(flowId, name);
   const rid = sanitizeProductId(runId);
   if (!rid) return prepId;
-  const prep = await db.productPreparations.get(prepId);
+  const prep = await db.flowPreparations.get(prepId);
   if (prep) {
     const existing = await getRunPreparationChecks(rid);
-    if (!existing.some((c) => c.productPreparationId === prep.id)) {
+    if (!existing.some((c) => c.flowPreparationId === prep.id)) {
       await db.runPreparationChecks.add({
         runId: rid,
-        productPreparationId: prep.id,
+        flowPreparationId: prep.id,
         name: prep.name,
         sortOrder: prep.sortOrder ?? 0,
         checked: false,
@@ -2234,7 +2284,7 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
   ]);
   const maxOrder = existing.reduce((m, f) => Math.max(m, f.sortOrder ?? 0), 0);
 
-  return db.transaction('rw', db.flows, db.flowSteps, async () => {
+  return db.transaction('rw', db.flows, db.flowSteps, db.flowPreparations, async () => {
     const newFlowId = await db.flows.add({
       categoryId: isCategoryTarget ? cid : null,
       categoryGroupId: isCategoryTarget ? null : gid,
@@ -2254,6 +2304,15 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
         tracksProduction: !!s.tracksProduction,
         portionUnit: s.portionUnit || null,
         portionSize: s.portionSize ?? null,
+      });
+    }
+
+    const sourcePreps = await getFlowPreparations(sourceId);
+    for (const prep of sourcePreps) {
+      await db.flowPreparations.add({
+        flowId: newFlowId,
+        name: prep.name,
+        sortOrder: prep.sortOrder ?? 0,
       });
     }
 
@@ -2306,7 +2365,8 @@ export async function deleteFlow(flowId) {
     throw new ValidationError('לא ניתן למחוק את התזרים האחרון');
   }
 
-  await db.transaction('rw', db.flows, db.flowSteps, async () => {
+  await db.transaction('rw', db.flows, db.flowSteps, db.flowPreparations, async () => {
+    await db.flowPreparations.where('flowId').equals(fid).delete();
     await db.flowSteps.where('flowId').equals(fid).delete();
     await db.flows.delete(fid);
     if (flow.isDefault) {
@@ -2803,8 +2863,8 @@ export async function startProductionRun({
         productionEntryIds: [],
       });
     }
-    if (pid) {
-      await seedRunPreparationChecksInTx(db, runId, pid);
+    if (resolvedFlowId) {
+      await seedRunPreparationChecksInTx(db, runId, resolvedFlowId);
     }
     if (runSettings.autoBatchEnabled) {
       const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
@@ -3291,7 +3351,7 @@ export async function syncProductionRunWithFlow(runId) {
   const refreshed = await getProductionRun(runId, { normalize: false });
   if (await normalizeRunProductionSteps(refreshed)) changed = true;
 
-  if (run.productId) {
+  if (run.flowId) {
     const before = (await getRunPreparationChecks(runId)).length;
     const after = (await ensureRunPreparationChecks(runId)).length;
     if (after > before) changed = true;

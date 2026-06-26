@@ -6,6 +6,7 @@ import {
   addFlowStepToFlow, updateFlowStep, deleteFlowStep,
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
+  getFlowPreparations, addFlowPreparation, deleteFlowPreparation, importFlowPreparationsFromActivityPresets,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
@@ -14,12 +15,12 @@ import {
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
-  ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromProduct,
-} from '../db.js?v=126';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=126';
-import { openModal, closeModal } from '../modal.js?v=126';
-import { requestAutoBackupNow } from '../backup-service.js?v=126';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=126';
+  ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
+} from '../db.js?v=127';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=127';
+import { openModal, closeModal } from '../modal.js?v=127';
+import { requestAutoBackupNow } from '../backup-service.js?v=127';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=127';
 
 function parseIdList(str) {
   try {
@@ -574,14 +575,14 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
     </div>`;
 }
 
-function flowPreparationsPanelHTML({ checks, productName, runStatus, canManageList }) {
-  if (!productName) {
+function flowPreparationsPanelHTML({ checks, flowLabel, canManageList }) {
+  if (!flowLabel) {
     return `
       <div class="card flow-preparations-card">
         <div class="flow-preparations-header">
           <span class="flow-preparations-title">🧁 הכנות</span>
         </div>
-        <p class="form-hint">לא נבחר מוצר בתהליך — אין רשימת הכנות</p>
+        <p class="form-hint">אין תזרים משויך — אין רשימת הכנות</p>
       </div>`;
   }
 
@@ -592,11 +593,11 @@ function flowPreparationsPanelHTML({ checks, productName, runStatus, canManageLi
   return `
     <div class="card flow-preparations-card">
       <div class="flow-preparations-header">
-        <span class="flow-preparations-title">🧁 הכנות — ${escapeHtml(productName)}</span>
+        <span class="flow-preparations-title">🧁 הכנות — ${escapeHtml(flowLabel)}</span>
         <span class="flow-preparations-progress">${progress}</span>
       </div>
       ${total === 0
-    ? `<p class="form-hint" style="margin-bottom:10px">אין הכנות למוצר זה. הוסף למטה או ב«מוצרים» → עריכת מוצר.</p>`
+    ? `<p class="form-hint" style="margin-bottom:10px">אין הכנות בתזרים זה. הגדר ב«נהל תזרים» או הוסף למטה.</p>`
     : `<ul class="flow-prep-checklist">
           ${checks.map((c) => `
             <li class="flow-prep-item${c.checked ? ' is-checked' : ''}">
@@ -610,7 +611,7 @@ function flowPreparationsPanelHTML({ checks, productName, runStatus, canManageLi
       ${canManageList ? `
         <div class="flow-prep-add-row filter-row" style="margin-top:12px">
           <input type="text" class="flow-prep-add-input" id="flow-prep-add-input" placeholder="הכנה חדשה (למשל: הכנת בצק)">
-          <button type="button" class="btn btn-secondary btn-sm" id="flow-prep-add-btn">+ הוסף</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="flow-prep-add-btn">+ הוסף לתזרים</button>
         </div>` : ''}
     </div>`;
 }
@@ -631,16 +632,14 @@ async function renderRunView(container, runId, ctx) {
   const { catMap, productMap, groupMap } = ctx;
 
   let prepChecks = [];
-  if (run.productId) {
+  if (run.flowId) {
     try {
       prepChecks = await ensureRunPreparationChecks(run.id);
     } catch {
       prepChecks = [];
     }
   }
-  const prepProductName = run.productId && productMap.get(run.productId)
-    ? productMap.get(run.productId).name
-    : null;
+  const prepFlowLabel = run.flowName || (run.flowId ? 'תזרים' : null);
 
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
@@ -686,9 +685,8 @@ async function renderRunView(container, runId, ctx) {
   const showTopProduction = productionStepIdx >= 0 && productionCtx;
   const prepPanelHTML = flowPreparationsPanelHTML({
     checks: prepChecks,
-    productName: prepProductName,
-    runStatus: run.status,
-    canManageList: run.status === 'active' && !!run.productId,
+    flowLabel: prepFlowLabel,
+    canManageList: run.status === 'active' && !!run.flowId,
   });
   const topProductionHTML = showTopProduction
     ? stepProductionPanelHTML({
@@ -864,7 +862,7 @@ async function renderRunView(container, runId, ctx) {
     const name = input?.value?.trim();
     if (!name) return showToast('הזן שם הכנה');
     try {
-      await addRunPreparationFromProduct(run.productId, name, run.id);
+      await addRunPreparationFromFlow(run.flowId, name, run.id);
       requestAutoBackupNow().catch(() => {});
       showToast('הכנה נוספה ✓');
       container.dataset.runId = String(run.id);
@@ -1261,8 +1259,9 @@ async function renderManageView(container, ctx) {
   if (activeFlow) {
     await ensureFlowProductionStep(activeFlow.id);
   }
-  const [steps, portionPresets, allFlows] = await Promise.all([
+  const [steps, flowPreps, portionPresets, allFlows] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
+    activeFlow ? getFlowPreparations(activeFlow.id) : Promise.resolve([]),
     portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),
     getAllFlowsOverview(),
   ]);
@@ -1319,6 +1318,25 @@ async function renderManageView(container, ctx) {
         </div>
 
         ${activeFlow ? `
+        <div class="flow-prep-manage-card">
+          <div class="card-title" style="margin-bottom:6px">🧁 צ׳קליסט הכנות</div>
+          <p class="form-hint" style="margin-bottom:10px">מופיע בראש כל תהליך שמשתמש בתזרים «${escapeHtml(activeFlow.name)}»</p>
+          ${flowPreps.length ? `
+            <ul class="product-prep-list flow-prep-manage-list">
+              ${flowPreps.map((p, i) => `
+                <li class="product-prep-item" data-prep-id="${p.id}">
+                  <span class="flow-prep-manage-num">${i + 1}.</span>
+                  <span style="flex:1">${escapeHtml(p.name)}</span>
+                  <button type="button" class="btn btn-danger btn-sm delete-flow-prep" data-id="${p.id}">🗑</button>
+                </li>`).join('')}
+            </ul>` : '<p class="form-hint" style="margin-bottom:8px">אין הכנות — הוסף למטה</p>'}
+          <div class="filter-row" style="margin-top:10px">
+            <input type="text" id="new-flow-prep-name" placeholder="למשל: הכנת בצק, שקילות...">
+            <button type="button" class="btn btn-secondary btn-sm" id="add-flow-prep-btn">+ הוסף</button>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" id="import-flow-prep-btn" style="width:100%;margin-top:8px">ייבא מסוגי הכנה בקטגוריה</button>
+        </div>
+
         <div class="flow-new-step-card">
           <p class="form-hint" style="margin-bottom:8px">כל תזרים כולל שלב <strong>תיעוד ייצור</strong> אוטומטי בסוף — שם מתועדים המוצרים</p>
           <div class="form-group" style="margin-bottom:8px">
@@ -1463,6 +1481,53 @@ async function renderManageView(container, ctx) {
   document.getElementById('manage-flow-select')?.addEventListener('change', (e) => {
     container.dataset.manageFlowId = e.target.value;
     renderProcess(container);
+  });
+
+  document.getElementById('add-flow-prep-btn')?.addEventListener('click', async () => {
+    const name = document.getElementById('new-flow-prep-name')?.value?.trim();
+    if (!name) return showToast('הזן שם הכנה');
+    if (!activeFlow) return;
+    try {
+      await addFlowPreparation(activeFlow.id, name);
+      requestAutoBackupNow().catch(() => {});
+      showToast('הכנה נוספה ✓');
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('new-flow-prep-name')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('add-flow-prep-btn')?.click();
+    }
+  });
+
+  document.getElementById('import-flow-prep-btn')?.addEventListener('click', async () => {
+    if (!activeFlow) return;
+    try {
+      const added = await importFlowPreparationsFromActivityPresets(activeFlow.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast(added ? `${added} הכנות יובאו ✓` : 'אין הכנות חדשות לייבוא');
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.delete-flow-prep').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק הכנה זו מהתזרים?')) return;
+      try {
+        await deleteFlowPreparation(Number(btn.dataset.id));
+        requestAutoBackupNow().catch(() => {});
+        showToast('נמחק');
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
   });
 
   document.getElementById('new-flow-btn')?.addEventListener('click', () => {

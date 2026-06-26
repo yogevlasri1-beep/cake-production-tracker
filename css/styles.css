@@ -403,6 +403,25 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.flow-prep-manage-card {
+  margin: 16px 0;
+  padding: 14px;
+  border-radius: 12px;
+  border: 2px solid #c4b5fd;
+  background: linear-gradient(180deg, #faf5ff 0%, var(--surface) 100%);
+}
+
+.flow-prep-manage-list .product-prep-item {
+  align-items: center;
+}
+
+.flow-prep-manage-num {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 700;
+  min-width: 1.5em;
+}
+
 .flow-production-always-card {
   margin-top: 12px;
   margin-bottom: 14px;

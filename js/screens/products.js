@@ -5,14 +5,12 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-  getProductPreparations, addProductPreparation, deleteProductPreparation,
-  importProductPreparationsFromActivityPresets,
-} from '../db.js?v=126';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=126';
-import { openModal, closeModal } from '../modal.js?v=126';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=126';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=126';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=126';
+} from '../db.js?v=127';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=127';
+import { openModal, closeModal } from '../modal.js?v=127';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=127';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=127';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=127';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -345,7 +343,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=126');
+    const { navigate } = await import('../app.js?v=127');
     navigate('backup');
   });
 
@@ -1077,7 +1075,6 @@ function optionalPriceInput(id, label, value) {
 async function showProductForm(container, opts) {
   const layout = await getProductsCatalogLayout();
   const categories = layout.allCategories.map((c) => ({ id: c.id, name: c.name }));
-  const preps = opts.id ? await getProductPreparations(opts.id) : [];
 
   openModal({
     title: opts.id ? 'עריכת מוצר' : `מוצר חדש — ${opts.categoryName || ''}`,
@@ -1095,34 +1092,13 @@ async function showProductForm(container, opts) {
       ${productPriceUnitFieldsHTML(opts)}
       ${optionalPriceInput('prod-raw', 'מחיר חומרי גלם (₪)', opts.rawMaterialsCost)}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
-      ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}
-      ${opts.id ? `
-      <div class="form-group product-prep-section">
-        <label>הכנות לתזרים (צ׳קליסט)</label>
-        <p class="form-hint" style="margin-bottom:8px">מופיעות בראש תזרים ייצור כשבוחרים מוצר זה</p>
-        <ul class="product-prep-list" id="product-prep-list">
-          ${preps.length
-    ? preps.map((p) => `
-              <li class="product-prep-item" data-prep-id="${p.id}">
-                <span>${escapeHtml(p.name)}</span>
-                <button type="button" class="btn btn-danger btn-sm product-prep-delete" data-id="${p.id}">🗑</button>
-              </li>`).join('')
-    : '<li class="form-hint product-prep-empty">אין הכנות — הוסף למטה</li>'}
-        </ul>
-        <div class="filter-row" style="margin-top:8px">
-          <input type="text" id="product-prep-new" placeholder="למשל: הכנת בצק">
-          <button type="button" class="btn btn-secondary btn-sm" id="product-prep-add">+ הוסף</button>
-        </div>
-        <button type="button" class="btn btn-secondary btn-sm" id="product-prep-import" style="margin-top:8px;width:100%">ייבא מסוגי הכנה בקטגוריה</button>
-      </div>` : `
-      <p class="form-hint">לאחר שמירה — ערוך את המוצר כדי להגדיר רשימת הכנות לתזרים</p>`}`,
+      ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-prod">שמור</button>`,
   });
 
   bindProductPriceUnitFields();
-  bindProductPreparationControls(container, opts);
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('save-prod').addEventListener('click', async () => {
     const name = document.getElementById('prod-name').value.trim();
@@ -1146,75 +1122,6 @@ async function showProductForm(container, opts) {
       closeModal();
       showToast('נשמר ✓');
       renderProducts(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-}
-
-function bindProductPreparationControls(container, opts) {
-  if (!opts.id) return;
-
-  const listEl = document.getElementById('product-prep-list');
-  const renderPrepItem = (p) => {
-    const empty = listEl.querySelector('.product-prep-empty');
-    if (empty) empty.remove();
-    const li = document.createElement('li');
-    li.className = 'product-prep-item';
-    li.dataset.prepId = String(p.id);
-    li.innerHTML = `
-      <span>${escapeHtml(p.name)}</span>
-      <button type="button" class="btn btn-danger btn-sm product-prep-delete" data-id="${p.id}">🗑</button>`;
-    listEl.appendChild(li);
-    li.querySelector('.product-prep-delete')?.addEventListener('click', async () => {
-      await deleteProductPreparation(p.id);
-      li.remove();
-      if (!listEl.querySelector('.product-prep-item')) {
-        const hint = document.createElement('li');
-        hint.className = 'form-hint product-prep-empty';
-        hint.textContent = 'אין הכנות — הוסף למטה';
-        listEl.appendChild(hint);
-      }
-      showToast('נמחק');
-    });
-  };
-
-  listEl?.querySelectorAll('.product-prep-delete').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = Number(btn.dataset.id);
-      await deleteProductPreparation(id);
-      btn.closest('.product-prep-item')?.remove();
-      if (listEl && !listEl.querySelector('.product-prep-item')) {
-        const hint = document.createElement('li');
-        hint.className = 'form-hint product-prep-empty';
-        hint.textContent = 'אין הכנות — הוסף למטה';
-        listEl.appendChild(hint);
-      }
-      showToast('נמחק');
-    });
-  });
-
-  document.getElementById('product-prep-add')?.addEventListener('click', async () => {
-    const input = document.getElementById('product-prep-new');
-    const name = input?.value?.trim();
-    if (!name) return showToast('הזן שם הכנה');
-    try {
-      const id = await addProductPreparation(opts.id, name);
-      input.value = '';
-      renderPrepItem({ id, name });
-      showToast('נוסף ✓');
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-
-  document.getElementById('product-prep-import')?.addEventListener('click', async () => {
-    const categoryId = Number(document.getElementById('prod-cat')?.value || opts.categoryId);
-    try {
-      const added = await importProductPreparationsFromActivityPresets(opts.id, categoryId);
-      showToast(added ? `${added} הכנות יובאו ✓` : 'אין הכנות חדשות לייבוא');
-      closeModal();
-      showProductForm(container, { ...opts, categoryId });
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
