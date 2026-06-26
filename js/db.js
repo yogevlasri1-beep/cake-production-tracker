@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=111';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=111';
-import { defaultColorForIndex } from './chart.js?v=111';
+} from './validators.js?v=112';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=112';
+import { defaultColorForIndex } from './chart.js?v=112';
 
 export { ValidationError };
 
@@ -402,6 +402,39 @@ db.version(18).stores({
       sortOrder: p.sortOrder ?? 0,
     });
   }
+});
+
+db.version(19).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+}).upgrade(async (tx) => {
+  await tx.table('flowSteps').toCollection().modify((s) => {
+    if (s.tracksProduction === undefined) s.tracksProduction = false;
+  });
+  await tx.table('runStepStates').toCollection().modify((s) => {
+    if (s.tracksProduction === undefined) s.tracksProduction = false;
+    if (!Array.isArray(s.productionEntryIds)) s.productionEntryIds = [];
+  });
 });
 
 async function resolveCategoryGroupIdForFlow(flowId) {
@@ -1096,7 +1129,7 @@ export async function toggleProductActive(id) {
   return db.products.update(id, { active: !p.active });
 }
 
-export async function addProductionEntry({ date, productId, quantity }, { merge = false } = {}) {
+export async function addProductionEntry({ date, productId, quantity, runId, stepIndex }, { merge = false } = {}) {
   if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
   const pid = sanitizeProductId(productId);
   if (!pid) throw new ValidationError('מוצר לא תקין');
@@ -1123,7 +1156,11 @@ export async function addProductionEntry({ date, productId, quantity }, { merge 
     }
   }
 
-  return db.productionEntries.add({ date, productId: pid, quantity: qty });
+  const record = { date, productId: pid, quantity: qty };
+  const rid = sanitizeProductId(runId);
+  if (rid) record.runId = rid;
+  if (stepIndex != null && !Number.isNaN(Number(stepIndex))) record.stepIndex = Number(stepIndex);
+  return db.productionEntries.add(record);
 }
 
 export async function updateProductionEntry(id, data) {
@@ -1147,6 +1184,29 @@ export async function updateProductionEntry(id, data) {
 
 export async function deleteProductionEntry(id) {
   return db.productionEntries.delete(id);
+}
+
+export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity }) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  if (!step.tracksProduction) throw new ValidationError('שלב זה אינו שלב תיעוד ייצור');
+
+  const entryId = await addProductionEntry({ date, productId, quantity, runId, stepIndex });
+  const ids = [...(step.productionEntryIds || []), entryId];
+  await db.runStepStates.update(step.id, { productionEntryIds: ids });
+  return entryId;
+}
+
+export async function removeRunStepProductionEntry(runId, stepIndex, entryId) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  await deleteProductionEntry(Number(entryId));
+  const ids = (step.productionEntryIds || []).filter((id) => id !== Number(entryId));
+  await db.runStepStates.update(step.id, { productionEntryIds: ids });
 }
 
 export async function getEntriesForDate(date) {
@@ -1812,6 +1872,7 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
         name: s.name,
         sortOrder: s.sortOrder ?? 0,
         tracksPortions: !!s.tracksPortions,
+        tracksProduction: !!s.tracksProduction,
         portionUnit: s.portionUnit || null,
         portionSize: s.portionSize ?? null,
       });
@@ -1874,7 +1935,7 @@ export async function deleteFlow(flowId) {
   });
 }
 
-async function addFlowStepRecord({ flowId, name, tracksPortions = false, portionUnit = null, portionSize = null }) {
+async function addFlowStepRecord({ flowId, name, tracksPortions = false, tracksProduction = false, portionUnit = null, portionSize = null }) {
   const clean = sanitizeName(name, 80);
   if (!clean) throw new ValidationError('שם שלב לא תקין');
   const fid = sanitizeProductId(flowId);
@@ -1890,6 +1951,7 @@ async function addFlowStepRecord({ flowId, name, tracksPortions = false, portion
     name: clean,
     sortOrder: maxOrder + 1,
     tracksPortions: !!tracksPortions,
+    tracksProduction: !!tracksProduction,
     portionUnit: null,
     portionSize: null,
   };
@@ -1904,8 +1966,8 @@ async function addFlowStepRecord({ flowId, name, tracksPortions = false, portion
   return db.flowSteps.add(record);
 }
 
-export async function addFlowStepToFlow(flowId, name, { tracksPortions, portionUnit, portionSize } = {}) {
-  return addFlowStepRecord({ flowId, name, tracksPortions, portionUnit, portionSize });
+export async function addFlowStepToFlow(flowId, name, { tracksPortions, tracksProduction, portionUnit, portionSize } = {}) {
+  return addFlowStepRecord({ flowId, name, tracksPortions, tracksProduction, portionUnit, portionSize });
 }
 
 export async function addFlowStep(categoryId, name) {
@@ -1922,7 +1984,7 @@ export async function addFlowStepToGroup(categoryGroupId, name) {
   return addFlowStepRecord({ flowId: flow.id, name });
 }
 
-export async function updateFlowStep(id, { name, tracksPortions, portionUnit, portionSize } = {}) {
+export async function updateFlowStep(id, { name, tracksPortions, tracksProduction, portionUnit, portionSize } = {}) {
   const existing = await db.flowSteps.get(id);
   if (!existing) throw new ValidationError('שלב לא נמצא');
   const patch = {};
@@ -1932,6 +1994,7 @@ export async function updateFlowStep(id, { name, tracksPortions, portionUnit, po
     patch.name = clean;
   }
   if (tracksPortions !== undefined) patch.tracksPortions = !!tracksPortions;
+  if (tracksProduction !== undefined) patch.tracksProduction = !!tracksProduction;
   if (portionUnit !== undefined) patch.portionUnit = portionUnit === 'weight' ? 'weight' : 'units';
   if (portionSize !== undefined) {
     patch.portionSize = portionSize === '' || portionSize == null
@@ -2240,10 +2303,12 @@ export async function startProductionRun({
         issues: '',
         improvements: '',
         tracksPortions: !!fs.tracksPortions,
+        tracksProduction: !!fs.tracksProduction,
         portionUnit: fs.tracksPortions && fs.portionUnit ? fs.portionUnit : null,
         portionSize: fs.tracksPortions && fs.portionSize != null ? fs.portionSize : null,
         portionCount: null,
         portionBatches: [],
+        productionEntryIds: [],
       });
     }
     if (runSettings.autoBatchEnabled) {

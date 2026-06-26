@@ -1,5 +1,5 @@
 import {
-  getProductsCatalogLayout, getCategoryGroups, getProducts, getAllFlowsOverview,
+  getProductsCatalogLayout, getCategoryGroups, getProducts, getCategories, getAllFlowsOverview,
   getFlowsForCategory, getFlowsForGroup, getFlowStepsForFlow, resolveFlows, resolveFlowSteps,
   resolveFlowsForCategorySelection,
   createFlow, updateFlow, deleteFlow, duplicateFlow,
@@ -11,10 +11,11 @@ import {
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
   getRunSettings, setRunSettings,
-} from '../db.js?v=111';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount } from '../utils.js?v=111';
-import { openModal, closeModal } from '../modal.js?v=111';
-import { requestAutoBackupNow } from '../backup-service.js?v=111';
+  getEntriesForDate, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
+} from '../db.js?v=112';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=112';
+import { openModal, closeModal } from '../modal.js?v=112';
+import { requestAutoBackupNow } from '../backup-service.js?v=112';
 
 function parseIdList(str) {
   try {
@@ -272,7 +273,146 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions
     </div>`;
 }
 
-function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets = [], runStatus = 'active', editAllMode = false) {
+function resolveRunCategoryIds(run) {
+  if (run.categoryIds?.length) return run.categoryIds.map(Number).filter(Boolean);
+  if (run.categoryId) return [Number(run.categoryId)];
+  return [];
+}
+
+function filterCategoriesForRun(run, categories) {
+  const catIds = resolveRunCategoryIds(run);
+  if (catIds.length) {
+    const set = new Set(catIds);
+    return categories.filter((c) => set.has(c.id));
+  }
+  if (run.categoryGroupId) {
+    return categories.filter((c) => Number(c.groupId) === Number(run.categoryGroupId));
+  }
+  return categories;
+}
+
+function filterProductsForRun(run, products, categories) {
+  const scopedCats = filterCategoriesForRun(run, categories);
+  const catSet = new Set(scopedCats.map((c) => c.id));
+  let list = products.filter((p) => catSet.has(p.categoryId));
+  if (run.productId) list = list.filter((p) => p.id === run.productId);
+  return list;
+}
+
+function runProdCategoryKey(stepIndex) {
+  return `runProdCat_${stepIndex}`;
+}
+
+function flowStepProductionSummary(step) {
+  if (!step.tracksProduction) return '';
+  const count = step.productionEntryIds?.length || 0;
+  if (!count) return ' <span class="flow-step-production-badge">📦 ייצור</span>';
+  return ` <span class="flow-step-production-badge">📦 ${count} רישומים</span>`;
+}
+
+function flowStepConfigHTML(step, idPrefix) {
+  const tracksPortions = !!step?.tracksPortions;
+  const tracksProduction = !!step?.tracksProduction;
+  return `
+    ${flowStepPortionConfigHTML(step, idPrefix)}
+    <label class="group-category-option flow-production-toggle" style="margin-top:8px">
+      <input type="checkbox" id="${idPrefix}-production" ${tracksProduction ? 'checked' : ''}>
+      <span>תיעוד ייצור בשלב זה</span>
+    </label>
+    <p class="form-hint" style="margin-top:4px">בזמן תזרים פעיל — רישום מוצרים וכמויות (כמו עמדת ייצור), ללא הגבלה</p>`;
+}
+
+function readFlowStepConfig(idPrefix) {
+  return {
+    ...readFlowStepPortionConfig(idPrefix),
+    tracksProduction: !!document.getElementById(`${idPrefix}-production`)?.checked,
+  };
+}
+
+function stepProductionPanelHTML({
+  stepIndex,
+  prodDate,
+  selectedCategory,
+  scopedCategories,
+  scopedProducts,
+  entriesForDate,
+  catMap,
+  productMap,
+  canAdd,
+}) {
+  const filteredProducts = selectedCategory
+    ? scopedProducts.filter((p) => String(p.categoryId) === selectedCategory)
+    : [];
+  const singleProduct = scopedProducts.length === 1 ? scopedProducts[0] : null;
+  const productOptions = (selectedCategory || singleProduct
+    ? (singleProduct ? scopedProducts : filteredProducts)
+    : [])
+    .map((p) => `<option value="${p.id}"${String(p.id) === String(singleProduct?.id || '') ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    .join('');
+
+  const entries = entriesForDate
+    .filter((e) => scopedProducts.some((p) => p.id === e.productId))
+    .sort((a, b) => b.id - a.id);
+
+  return `
+    <div class="flow-production-panel" data-step-production="${stepIndex}">
+      <div class="flow-production-panel-header">
+        <span class="flow-production-panel-title">📦 תיעוד ייצור</span>
+        <span class="flow-production-panel-hint">כל הרישומים נשמרים לדוחות — אפשר להוסיף כמה שרוצים</span>
+      </div>
+      ${canAdd ? `
+        <form class="flow-production-form" data-step="${stepIndex}">
+          <div class="form-group">
+            <label for="step-${stepIndex}-prod-date">תאריך</label>
+            <input type="date" id="step-${stepIndex}-prod-date" class="flow-prod-date" value="${prodDate}" required>
+          </div>
+          ${!singleProduct ? `
+            <div class="form-group">
+              <label for="step-${stepIndex}-prod-category">קטגוריה</label>
+              <select id="step-${stepIndex}-prod-category" class="flow-prod-category" required ${scopedCategories.length === 0 ? 'disabled' : ''}>
+                <option value="">בחר קטגוריה...</option>
+                ${scopedCategories.map((c) => `<option value="${c.id}" ${String(c.id) === selectedCategory ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="step-${stepIndex}-prod-product">מוצר</label>
+              <select id="step-${stepIndex}-prod-product" class="flow-prod-product" required ${!selectedCategory || filteredProducts.length === 0 ? 'disabled' : ''}>
+                <option value="">${selectedCategory ? 'בחר מוצר...' : 'קודם בחר קטגוריה'}</option>
+                ${productOptions}
+              </select>
+            </div>` : `
+            <input type="hidden" id="step-${stepIndex}-prod-product" class="flow-prod-product" value="${singleProduct.id}">
+            <p class="form-hint" style="margin-bottom:8px">מוצר: <strong>${escapeHtml(singleProduct.name)}</strong></p>`}
+          <div class="form-group">
+            <label for="step-${stepIndex}-prod-qty" class="flow-prod-qty-label">${singleProduct && productRecordUsesKg(singleProduct) ? 'משקל (ק"ג)' : "כמות (יח')"}</label>
+            <input type="number" id="step-${stepIndex}-prod-qty" class="flow-prod-qty" min="${singleProduct && productRecordUsesKg(singleProduct) ? '0.001' : '1'}" step="${singleProduct && productRecordUsesKg(singleProduct) ? '0.001' : '1'}" placeholder="${singleProduct && productRecordUsesKg(singleProduct) ? '2.5' : '50'}" required>
+          </div>
+          <button type="submit" class="btn btn-primary btn-sm flow-prod-submit" style="width:100%">+ הוסף רישום ייצור</button>
+        </form>` : ''}
+      <div class="flow-production-entries">
+        <div class="flow-production-entries-title">רישומים ל-${formatDate(prodDate)}</div>
+        ${entries.length === 0
+    ? '<p class="form-hint" style="margin:8px 0 0">אין רישומים לתאריך זה</p>'
+    : entries.map((e) => {
+      const p = productMap.get(e.productId);
+      return `<div class="list-item flow-production-entry" data-entry-id="${e.id}">
+        <div class="list-item-info">
+          <div class="list-item-name">${escapeHtml(p?.name || '—')}</div>
+          <div class="list-item-meta">${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
+        </div>
+        <div class="list-item-actions">
+          <strong>${formatProductQuantity(p, e.quantity)}</strong>
+          ${canAdd ? `
+            <button type="button" class="btn btn-secondary btn-sm btn-icon flow-prod-edit" data-step="${stepIndex}" data-id="${e.id}" title="ערוך">✏️</button>
+            <button type="button" class="btn btn-danger btn-sm btn-icon flow-prod-del" data-step="${stepIndex}" data-id="${e.id}" title="מחק">🗑</button>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
+      </div>
+    </div>`;
+}
+
+function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPresets, runStatus, editAllMode, run, productionCtx) {
   const visual = stepVisualState(stepIndex, currentIndex, totalSteps, step.status);
   const hasNotes = step.notes || step.issues || step.improvements;
   const portionText = stepPortionLabel(step);
@@ -283,17 +423,33 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const isDone = visual === 'done';
   const reachable = isActive || isDone;
   const showPreview = hasNotes && !isActive && !editAllMode;
+  const canProdAdd = step.tracksProduction && run?.status === 'active' && reachable;
+  const prodPanel = step.tracksProduction && reachable && productionCtx
+    ? stepProductionPanelHTML({
+      stepIndex,
+      prodDate: productionCtx.prodDate,
+      selectedCategory: productionCtx.selectedCategories[stepIndex] || '',
+      scopedCategories: productionCtx.scopedCategories,
+      scopedProducts: productionCtx.scopedProducts,
+      entriesForDate: productionCtx.entriesForDate,
+      catMap: productionCtx.catMap,
+      productMap: productionCtx.productMap,
+      canAdd: canProdAdd,
+    })
+    : '';
 
   return `
-    <div class="flow-step flow-step--${visual}" data-step-index="${stepIndex}">
+    <div class="flow-step flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
       <div class="flow-step-marker" aria-hidden="true"></div>
       <div class="flow-step-body">
         <div class="flow-step-header">
           <span class="flow-step-num">${stepIndex + 1}</span>
           <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
           ${timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : ''}
+          ${flowStepProductionSummary(step)}
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽 מנות</span>' : ''}
         </div>
+        ${prodPanel}
         ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${step.tracksPortions && reachable
     ? stepPortionBatchesHTML(step, stepIndex, { canAdd: reachable, canEdit: reachable, presets: portionPresets }) : ''}
@@ -350,6 +506,40 @@ async function renderRunView(container, runId, ctx) {
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
   const editAllMode = container.dataset.runEditAll === '1';
+  const hasProductionSteps = run.steps.some((s) => s.tracksProduction);
+  const prodDate = container.dataset.runProdDate || todayISO();
+  let productionCtx = null;
+
+  if (hasProductionSteps) {
+    const [products, categories, entriesForDate] = await Promise.all([
+      getProducts(true),
+      getCategories(),
+      getEntriesForDate(prodDate),
+    ]);
+    const scopedCategories = filterCategoriesForRun(run, categories);
+    const scopedProducts = filterProductsForRun(run, products, categories);
+    const selectedCategories = {};
+    run.steps.forEach((step, i) => {
+      if (!step.tracksProduction) return;
+      const key = runProdCategoryKey(i);
+      let cat = container.dataset[key] || '';
+      if (!cat && scopedCategories.length === 1) cat = String(scopedCategories[0].id);
+      if (!cat && run.productId) {
+        const p = productMap.get(run.productId);
+        if (p) cat = String(p.categoryId);
+      }
+      selectedCategories[i] = cat;
+    });
+    productionCtx = {
+      prodDate,
+      selectedCategories,
+      scopedCategories,
+      scopedProducts,
+      entriesForDate,
+      catMap,
+      productMap,
+    };
+  }
 
   container.innerHTML = `
     <div class="card flow-run-header-card">
@@ -378,11 +568,12 @@ async function renderRunView(container, runId, ctx) {
         <span class="flow-legend-item flow-legend-item--done">✓ בוצע</span>
         <span class="flow-legend-item flow-legend-item--active">● פעיל</span>
         <span class="flow-legend-item flow-legend-item--next">○ הבא</span>
+        ${hasProductionSteps ? '<span class="flow-legend-item flow-legend-item--production">📦 ייצור</span>' : ''}
       </div>
     </div>
 
     <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
-      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode)).join('')}
+      ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx)).join('')}
     </div>
 
     ${editAllMode ? `
@@ -571,6 +762,135 @@ async function renderRunView(container, runId, ctx) {
       }
     });
   });
+
+  bindRunProductionPanels(container, run, productionCtx);
+}
+
+function syncFlowProdQtyField(panel, productMap) {
+  const productInput = panel.querySelector('.flow-prod-product');
+  const qtyInput = panel.querySelector('.flow-prod-qty');
+  const qtyLabel = panel.querySelector('.flow-prod-qty-label');
+  if (!productInput || !qtyInput || !qtyLabel) return;
+  const p = productMap.get(Number(productInput.value));
+  const isKg = productRecordUsesKg(p);
+  qtyLabel.textContent = isKg ? 'משקל (ק"ג)' : "כמות (יח')";
+  qtyInput.min = isKg ? '0.001' : '1';
+  qtyInput.step = isKg ? '0.001' : '1';
+  qtyInput.placeholder = isKg ? '2.5' : '50';
+}
+
+function bindRunProductionPanels(container, run, productionCtx) {
+  if (!productionCtx) return;
+  const { productMap } = productionCtx;
+
+  container.querySelectorAll('.flow-prod-date').forEach((input) => {
+    input.addEventListener('change', (e) => {
+      container.dataset.runProdDate = e.target.value;
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    });
+  });
+
+  container.querySelectorAll('.flow-prod-category').forEach((select) => {
+    select.addEventListener('change', (e) => {
+      const stepIndex = e.target.closest('[data-step-production]')?.dataset.stepProduction;
+      if (stepIndex == null) return;
+      container.dataset[runProdCategoryKey(stepIndex)] = e.target.value;
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    });
+  });
+
+  container.querySelectorAll('.flow-prod-product').forEach((select) => {
+    if (select.tagName !== 'SELECT') return;
+    select.addEventListener('change', () => {
+      syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
+    });
+    syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
+  });
+
+  container.querySelectorAll('.flow-production-form').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const stepIndex = Number(form.dataset.step);
+      const panel = form.closest('.flow-production-panel');
+      const date = panel.querySelector('.flow-prod-date')?.value;
+      const productId = panel.querySelector('.flow-prod-product')?.value;
+      const quantity = panel.querySelector('.flow-prod-qty')?.value;
+      if (!productId) return showToast('בחר קטגוריה ומוצר');
+      try {
+        await addRunStepProductionEntry(run.id, stepIndex, { date, productId, quantity });
+        requestAutoBackupNow().catch(() => {});
+        showToast('ייצור נרשם ✓');
+        container.dataset.runProdDate = date;
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        const qtyInput = panel.querySelector('.flow-prod-qty');
+        if (qtyInput) qtyInput.value = '';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.flow-prod-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const stepIndex = Number(btn.dataset.step);
+      const entryId = Number(btn.dataset.id);
+      if (!confirm('למחוק את הרישום?')) return;
+      try {
+        await removeRunStepProductionEntry(run.id, stepIndex, entryId);
+        requestAutoBackupNow().catch(() => {});
+        showToast('נמחק');
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.flow-prod-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const entryId = Number(btn.dataset.id);
+      const entry = productionCtx.entriesForDate.find((e) => e.id === entryId);
+      if (!entry) return;
+      const p = productMap.get(entry.productId);
+      const isKg = productRecordUsesKg(p);
+      openModal({
+        title: 'עריכת רישום ייצור',
+        bodyHTML: `
+          <div class="form-group">
+            <label>מוצר</label>
+            <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
+          </div>
+          <div class="form-group">
+            <label for="flow-edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
+            <input type="number" id="flow-edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${entry.quantity}">
+          </div>`,
+        footerHTML: `
+          <button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="flow-edit-save">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('flow-edit-save')?.addEventListener('click', async () => {
+        try {
+          await updateProductionEntry(entryId, { quantity: document.getElementById('flow-edit-qty').value });
+          closeModal();
+          showToast('עודכן ✓');
+          container.dataset.runId = String(run.id);
+          container.dataset.view = 'run';
+          renderProcess(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
 }
 
 function openRunDetailsModal(container, run, ctx) {
@@ -726,7 +1046,7 @@ async function renderManageView(container, ctx) {
             <label for="new-step-name">שלב חדש</label>
             <input type="text" id="new-step-name" placeholder="שם השלב">
           </div>
-          ${flowStepPortionConfigHTML(null, 'new-step')}
+          ${flowStepConfigHTML(null, 'new-step')}
           <button class="btn btn-primary btn-sm" id="add-step" style="width:100%;margin-top:8px">+ הוסף שלב</button>
         </div>
         ${steps.length === 0
@@ -740,10 +1060,10 @@ async function renderManageView(container, ctx) {
                      <span class="product-drag-handle flow-step-drag-handle" role="button" tabindex="0">⠿</span>
                    </div>
                    <div class="list-item-info">
-                     <div class="list-item-name">${escapeHtml(s.name)}${s.tracksPortions ? ' <span class="flow-step-portion-badge">🍽 מנות</span>' : ''}</div>
+                     <div class="list-item-name">${escapeHtml(s.name)}${s.tracksProduction ? ' <span class="flow-step-production-badge">📦 ייצור</span>' : ''}${s.tracksPortions ? ' <span class="flow-step-portion-badge">🍽 מנות</span>' : ''}</div>
                    </div>
                    <div class="list-item-actions">
-                     <button class="btn btn-secondary btn-sm edit-step" data-id="${s.id}" data-name="${escapeHtml(s.name)}" data-tracks-portions="${s.tracksPortions ? '1' : ''}" data-portion-unit="${s.portionUnit || 'units'}" data-portion-size="${s.portionSize ?? ''}">✏️</button>
+                     <button class="btn btn-secondary btn-sm edit-step" data-id="${s.id}" data-name="${escapeHtml(s.name)}" data-tracks-portions="${s.tracksPortions ? '1' : ''}" data-tracks-production="${s.tracksProduction ? '1' : ''}" data-portion-unit="${s.portionUnit || 'units'}" data-portion-size="${s.portionSize ?? ''}">✏️</button>
                      <button class="btn btn-danger btn-sm delete-step" data-id="${s.id}">🗑</button>
                    </div>
                  </div>`).join('')}
@@ -953,7 +1273,7 @@ async function renderManageView(container, ctx) {
     if (!name) return showToast('הזן שם שלב');
     if (!activeFlow) return showToast('בחר תזרים');
     try {
-      await addFlowStepToFlow(activeFlow.id, name, readFlowStepPortionConfig('new-step'));
+      await addFlowStepToFlow(activeFlow.id, name, readFlowStepConfig('new-step'));
       showToast('נוסף ✓');
       renderProcess(container);
     } catch (err) {
@@ -1021,8 +1341,9 @@ async function renderManageView(container, ctx) {
         title: 'עריכת שלב',
         bodyHTML: `
           <div class="form-group"><label>שם</label><input type="text" id="edit-step-name" value="${btn.dataset.name}"></div>
-          ${flowStepPortionConfigHTML({
+          ${flowStepConfigHTML({
             tracksPortions: !!btn.dataset.tracksPortions,
+            tracksProduction: !!btn.dataset.tracksProduction,
             portionUnit: btn.dataset.portionUnit || 'units',
             portionSize: btn.dataset.portionSize || '',
           }, 'edit-step')}`,
@@ -1034,7 +1355,7 @@ async function renderManageView(container, ctx) {
         try {
           await updateFlowStep(Number(btn.dataset.id), {
             name: document.getElementById('edit-step-name').value,
-            ...readFlowStepPortionConfig('edit-step'),
+            ...readFlowStepConfig('edit-step'),
           });
           closeModal();
           showToast('עודכן ✓');
