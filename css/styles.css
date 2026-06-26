@@ -4075,6 +4075,20 @@ body.supplier-drag-active {
   cursor: pointer;
 }
 
+.recipe-product-cat-block {
+  margin-bottom: 8px;
+}
+
+.recipe-product-pick {
+  display: flex;
+  padding: 4px 0;
+  font-size: 0.88rem;
+}
+
+.recipe-product-picker details {
+  margin-bottom: 8px;
+}
+
 .recipe-book-group-title {
   color: var(--primary);
   margin: 24px 0 12px;

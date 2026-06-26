@@ -323,15 +323,19 @@ function bindCategoryGroupList(list, saveOrder) {
 }
 
 export function bindRecipeDragList(container, categoryId, saveOrder) {
-  const list = container.querySelector('.recipe-list');
-  if (!list) return;
-  bindGenericDragList(list, {
-    itemSelector: '.recipe-list-item',
-    handleSelector: '.recipe-drag-handle',
-    idAttr: 'recipeId',
-    orderNumSelector: '.recipe-order-num',
-    bodyClass: 'recipe-drag-active',
-    saveOrder: (ids) => saveOrder(ids, categoryId),
+  bindRecipeDragLists(container, (ids, subId) => saveOrder(ids, subId ?? categoryId));
+}
+
+export function bindRecipeDragLists(container, saveOrder) {
+  container.querySelectorAll('.recipe-list[data-sub-id]').forEach((list) => {
+    bindGenericDragList(list, {
+      itemSelector: '.recipe-list-item',
+      handleSelector: '.recipe-drag-handle',
+      idAttr: 'recipeId',
+      orderNumSelector: '.recipe-order-num',
+      bodyClass: 'recipe-drag-active',
+      saveOrder: (ids) => saveOrder(ids, Number(list.dataset.subId)),
+    });
   });
 }
 
