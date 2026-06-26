@@ -441,17 +441,16 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
   const showPreview = hasNotes && !isActive && !editAllMode;
   const runActive = run?.status === 'active';
-  const showTopProduction = productionStepIdx >= 0 && productionCtx;
+  const useTopProductionPanel = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
-  const showTopProduction = productionStepIdx >= 0 && runActive && productionCtx;
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
-    if (showTopProduction && stepIndex === productionStepIdx) {
+    if (useTopProductionPanel && stepIndex === productionStepIdx) {
       prodPanel = '<p class="flow-production-inline-hint"><a href="#flow-production-anchor">↑ טופס תיעוד ייצור — למעלה</a></p>';
-    } else if (!showTopProduction) {
+    } else if (!useTopProductionPanel) {
       prodPanel = stepProductionPanelHTML({
         stepIndex,
         prodDate: productionCtx.prodDate,
