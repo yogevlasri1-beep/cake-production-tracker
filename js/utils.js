@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=123';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=124';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -45,16 +45,23 @@ export function formatProductQuantity(product, qty) {
   return `${qty} יח'`;
 }
 
-/** משך זמן קריא (ms → "2 שע' 15 דק'") */
+/** משך זמן קריא (ms → "2 ימים 3 שע' 15 דק'") */
 export function formatDuration(ms) {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
   const totalMin = Math.round(ms / 60000);
   if (totalMin < 1) return 'פחות מדקה';
-  const hours = Math.floor(totalMin / 60);
+
+  const days = Math.floor(totalMin / 1440);
+  const hours = Math.floor((totalMin % 1440) / 60);
   const mins = totalMin % 60;
-  if (hours === 0) return `${mins} דק'`;
-  if (mins === 0) return `${hours} שע'`;
-  return `${hours} שע' ${mins} דק'`;
+
+  const parts = [];
+  if (days > 0) parts.push(days === 1 ? '1 יום' : `${days} ימים`);
+  if (hours > 0) parts.push(`${hours} שע'`);
+  if (mins > 0) parts.push(`${mins} דק'`);
+  if (!parts.length) return '0 דק'';
+
+  return parts.join(' ');
 }
 
 export function runDurationMs(run) {

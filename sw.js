@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '123';
+const VERSION = '124';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {

@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=123';
+} from '../db.js?v=124';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
-} from '../utils.js?v=123';
+} from '../utils.js?v=124';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=123';
-import { openModal, closeModal } from '../modal.js?v=123';
+} from '../export.js?v=124';
+import { openModal, closeModal } from '../modal.js?v=124';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=123';
-import { isSheetsConfigured } from '../google-sheets.js?v=123';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=123';
-import { defaultColorForIndex } from '../chart.js?v=123';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=123';
+} from '../sheets-flow.js?v=124';
+import { isSheetsConfigured } from '../google-sheets.js?v=124';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=124';
+import { defaultColorForIndex } from '../chart.js?v=124';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=124';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
