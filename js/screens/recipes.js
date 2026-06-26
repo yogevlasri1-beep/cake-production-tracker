@@ -266,7 +266,6 @@ export async function renderRecipes(container) {
       groups: layout.groups,
       productGroups,
       productCats,
-      groupId: layout.groups[0]?.id,
     });
   });
 
@@ -506,40 +505,58 @@ async function renderRecipeBook(container, { groups, allSubs, products, productM
   });
 }
 
-function openCategoryManager(container, { groups, productGroups, productCats, groupId }) {
-  getRecipeSubCategories(groupId).then((subs) => {
-    openModal({
-      title: 'ייבוא קטגוריות',
-      bodyHTML: `
-        <button type="button" class="btn btn-secondary btn-sm" id="import-groups-from-products" style="width:100%;margin-bottom:8px">
-          ייבוא קטגוריות כלליות ממוצרים
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm" id="import-subs-from-products" style="width:100%">
-          ייבוא קטגוריות ממוצרים (קבוצה: ${escapeHtml(groups.find((g) => g.id === groupId)?.name || '')})
-        </button>`,
-      footerHTML: '<button class="btn btn-primary modal-cancel">סגור</button>',
-    });
-    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-    document.getElementById('import-groups-from-products')?.addEventListener('click', async () => {
-      try {
-        const n = await importRecipeGroupsFromProducts();
-        closeModal();
-        showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
-        renderRecipes(container);
-      } catch (err) {
-        showToast(err.message || 'שגיאה');
-      }
-    });
-    document.getElementById('import-subs-from-products')?.addEventListener('click', async () => {
-      try {
-        const n = await importRecipeSubCategoriesFromProducts(groupId);
-        closeModal();
-        showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
-        renderRecipes(container);
-      } catch (err) {
-        showToast(err.message || 'שגיאה');
-      }
-    });
+function openCategoryManager(container, { groups, productGroups, productCats }) {
+  openModal({
+    title: 'ייבוא קטגוריות',
+    bodyHTML: `
+      <button type="button" class="btn btn-secondary btn-sm" id="import-groups-from-products" style="width:100%;margin-bottom:12px">
+        ייבוא קטגוריות כלליות ממוצרים
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm" id="repair-recipe-placement" style="width:100%;margin-bottom:12px">
+        תקן סידור — העבר קטגוריות לקבוצה הנכונה
+      </button>
+      <div class="form-group">
+        <label>ייבוא קטגוריות ממוצרים לקבוצה:</label>
+        <select id="import-subs-target-group">
+          ${groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="import-subs-from-products" style="width:100%">
+        ייבוא קטגוריות ממוצרים
+      </button>`,
+    footerHTML: '<button class="btn btn-primary modal-cancel">סגור</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('import-groups-from-products')?.addEventListener('click', async () => {
+    try {
+      const n = await importRecipeGroupsFromProducts();
+      closeModal();
+      showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+  document.getElementById('repair-recipe-placement')?.addEventListener('click', async () => {
+    try {
+      const n = await repairRecipeCategoryPlacement();
+      closeModal();
+      showToast(n ? `תוקנו ${n} קטגוריות ✓` : 'הסידור כבר תקין');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+  document.getElementById('import-subs-from-products')?.addEventListener('click', async () => {
+    const groupId = Number(document.getElementById('import-subs-target-group')?.value);
+    try {
+      const n = await importRecipeSubCategoriesFromProducts(groupId);
+      closeModal();
+      showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }
 
