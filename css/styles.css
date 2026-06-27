@@ -149,6 +149,130 @@ body {
   display: none !important;
 }
 
+#app.has-recipes-sub-nav #main-content {
+  padding-bottom: 8px;
+}
+
+.recipes-sub-nav {
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 480px;
+  height: calc(var(--nav-height) + var(--safe-bottom));
+  padding-bottom: var(--safe-bottom);
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  z-index: 20;
+  box-shadow: 0 -4px 20px rgba(91, 33, 182, 0.08);
+}
+
+.recipes-nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.56rem;
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1.15;
+  transition: color 0.2s, background 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 0;
+  border-radius: 10px;
+  margin: 4px 2px;
+}
+
+.recipes-nav-btn.active {
+  color: #5b21b6;
+  background: #f5f3ff;
+}
+
+.recipes-nav-btn.active .recipes-nav-icon {
+  transform: scale(1.08);
+}
+
+.recipes-nav-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  transition: transform 0.2s;
+}
+
+.recipes-nav-label {
+  text-align: center;
+  max-width: 100%;
+  padding: 0 2px;
+}
+
+.recipe-row-browse {
+  cursor: pointer;
+}
+
+.recipe-row-browse .recipe-browse-chevron {
+  color: var(--text-muted);
+  font-size: 1.25rem;
+  transform: rotate(180deg);
+  flex-shrink: 0;
+  opacity: 0.45;
+}
+
+.recipe-browse-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.recipe-browse-search {
+  flex: 1;
+  min-width: 140px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  background: var(--surface);
+}
+
+.recipe-ratio-card .card-title {
+  margin-bottom: 4px;
+}
+
+.recipe-ratio-card #ratio-tab-host {
+  margin-top: 8px;
+}
+
+.category-card--browse .category-actions,
+.category-group-card--browse .category-actions,
+.category-card--browse .add-recipe,
+.category-card--browse .category-order-col,
+.category-group-card--browse .category-order-col {
+  display: none;
+}
+
+.category-card--browse .category-card-header,
+.category-group-card--browse .category-group-header {
+  padding-left: 4px;
+}
+
+@media print {
+  .recipes-sub-nav {
+    display: none !important;
+  }
+}
+
 .workspace-chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -4570,6 +4694,7 @@ body.supplier-drag-active {
 @media print {
   .app-header,
   .bottom-nav,
+  .recipes-sub-nav,
   .header-menu-btn,
   .btn {
     display: none !important;
