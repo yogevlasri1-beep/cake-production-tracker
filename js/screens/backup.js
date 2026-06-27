@@ -14,12 +14,12 @@ import {
   supportsBackupLocationPicker,
   pickJsonFileFromDevice,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=158';
-import { describeDownloadMethod } from '../download.js?v=158';
-import { showToast, escapeHtml } from '../utils.js?v=158';
-import { openModal, closeModal } from '../modal.js?v=158';
-import { APP_VERSION } from '../version.js?v=158';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=158';
+} from '../backup-service.js?v=159';
+import { describeDownloadMethod } from '../download.js?v=159';
+import { showToast, escapeHtml } from '../utils.js?v=159';
+import { openModal, closeModal } from '../modal.js?v=159';
+import { APP_VERSION } from '../version.js?v=159';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=159';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -53,6 +53,10 @@ export async function renderBackup(container, { navigate } = {}) {
       <div class="card-title">🔄 עדכון אפליקציה</div>
       <p class="form-hint">גרסה מותקנת: <strong>${APP_VERSION}</strong>${isStandaloneApp() ? ' · מהאייקון במסך הבית' : ''}</p>
       <p class="form-hint" id="backup-remote-version" style="margin-top:4px"></p>
+      <p class="form-hint" style="margin-top:6px">
+        אם Vercel לא מתעדכן — פתח ב-Safari:
+        <a href="https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1" target="_blank" rel="noopener">GitHub Pages (עדכני)</a>
+      </p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button type="button" class="btn btn-primary btn-sm" id="check-app-update">בדוק עדכון</button>
         <button type="button" class="btn btn-secondary btn-sm" id="force-app-update">נקה מטמון ועדכן</button>

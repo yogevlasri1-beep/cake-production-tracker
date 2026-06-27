@@ -1,0 +1,22 @@
+name: Deploy Vercel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel deploy hook
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -n "$VERCEL_DEPLOY_HOOK" ]; then
+            curl -fsS -X POST "$VERCEL_DEPLOY_HOOK"
+            echo "✓ Vercel deploy hook triggered"
+          else
+            echo "::warning::VERCEL_DEPLOY_HOOK לא מוגדר — Vercel לא יתעדכן אוטומטית"
+            echo "GitHub Pages מתעדכן דרך Deploy GitHub Pages workflow"
+          fi

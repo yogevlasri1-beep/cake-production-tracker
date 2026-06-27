@@ -32,11 +32,23 @@ git push origin main
 
 VER=$(grep "APP_VERSION = '" js/version.js | sed "s/.*'\([^']*\)'.*/\1/")
 echo ""
-echo "✓ נדחף ל-GitHub. Vercel יפרוס אוטומטית תוך 1–2 דקות (אם הפרויקט מחובר ל-GitHub)."
+echo "✓ נדחף ל-GitHub. GitHub Pages יתעדכן תוך ~1 דקה."
 echo "  גרסה: $VER"
 echo ""
+echo "→ ממתין ל-GitHub Pages..."
+sleep 45
+if ./scripts/verify-deploy.sh; then
+  echo ""
+  echo "✓ פריסה תקינה"
+else
+  echo ""
+  echo "⚠️ Vercel לא מקבל push מ-GitHub — השתמש ב-GitHub Pages (מעודכן):"
+  echo "  https://yogevlasri1-beep.github.io/cake-production-tracker/"
+fi
+echo ""
 echo "בדיקה: https://vercel.com/dashboard → Deployments → Ready"
-echo "באייפון: https://YOUR-URL.vercel.app/?force-update=1"
+echo "GitHub Pages: https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1"
+echo "Vercel:       https://cake-production-tracker.vercel.app/?force-update=1"
 
 if [[ "$MAKE_ZIP" -eq 1 ]]; then
   echo ""
