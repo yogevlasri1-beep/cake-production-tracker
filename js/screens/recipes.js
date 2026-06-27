@@ -568,7 +568,7 @@ async function renderRecipesRatio(container, { layout }) {
   container.innerHTML = `
     <div class="card recipe-ratio-card">
       <div class="card-title">מחשבון יחס</div>
-      <p class="form-hint" style="margin-bottom:12px">בחר מתכון וחומר בסיס — הזן כמות יעד ושאר החומרים יחושבו אוטומטית.</p>
+      <p class="form-hint" style="margin-bottom:12px">סמן חומר גלם לשינוי, הזן כמות יעד — או חשב לפי משקל עוגה ומספר עוגות.</p>
       ${options ? `
       <div class="form-group">
         <label>מתכון</label>
@@ -1198,58 +1198,232 @@ function refreshRecipeTotalDisplay(baseIngredients, baseRecipe) {
   );
 }
 
+function formatRatioFactor(r) {
+  if (!Number.isFinite(r) || r <= 0) return '—';
+  const rounded = Math.round(r * 1000) / 1000;
+  if (Math.abs(rounded - 1) < 0.001) return '1';
+  return String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
+
 function bindRatioCalculator(recipe, hostEl) {
   const ingredients = recipe.ingredients || [];
   if (!ingredients.length) {
     hostEl.innerHTML = '<p class="form-hint">אין חומרים במתכון זה</p>';
     return;
   }
-  const renderTable = (anchorId, targetQty) => {
-    try {
-      const scaled = scaleRecipeIngredients(ingredients, anchorId, targetQty);
-      const rows = scaled.map((ing) => `
-        <tr${ing.id === Number(anchorId) ? ' class="ratio-anchor-row"' : ''}>
-          <td>${escapeHtml(ing.name)}</td>
-          <td>${ing.quantity} ${escapeHtml(ing.unit)}</td>
-          <td><strong>${ing.scaledQuantity}</strong> ${escapeHtml(ing.unit)}</td>
-        </tr>`).join('');
-      const totalHtml = renderRecipeWeightSummaryHTML(scaled, recipe, { useScaled: true });
-      const totalRow = totalHtml
-        ? `<tr class="recipe-total-row"><td colspan="3">${totalHtml}</td></tr>`
-        : '';
-      return rows + totalRow;
-    } catch {
-      return '';
-    }
+
+  const state = {
+    anchorId: ingredients[0].id,
+    targetQty: Number(ingredients[0].quantity),
+    cakeWeightGrams: recipe.portionWeightGrams ? String(recipe.portionWeightGrams) : '',
+    cakeCount: '',
+    scaleFromCakes: false,
   };
-  const defaultAnchor = ingredients[0].id;
+
+  const getAnchor = () => ingredients.find((i) => i.id === Number(state.anchorId));
+
+  const getOriginalTotalGrams = () => {
+    const { totalRecipeKg } = getRecipeWeightSummary(ingredients);
+    return totalRecipeKg > 0 ? totalRecipeKg * 1000 : 0;
+  };
+
+  const applyScaleFromCakes = () => {
+    const cakeW = Number(state.cakeWeightGrams);
+    const count = Number(state.cakeCount);
+    const origG = getOriginalTotalGrams();
+    const anchor = getAnchor();
+    if (!cakeW || !count || !origG || !anchor) return false;
+    const targetTotalG = count * cakeW;
+    const ratio = targetTotalG / origG;
+    state.targetQty = Math.round(Number(anchor.quantity) * ratio * 1000) / 1000;
+    state.scaleFromCakes = true;
+    return true;
+  };
+
+  const render = () => {
+    const anchor = getAnchor();
+    if (!anchor) return;
+
+    const baseQty = Number(anchor.quantity);
+    const targetQty = Number(state.targetQty);
+    let scaled;
+    let ratio = 1;
+    try {
+      scaled = scaleRecipeIngredients(ingredients, state.anchorId, targetQty);
+      ratio = targetQty / baseQty;
+    } catch (err) {
+      hostEl.querySelector('#ratio-tbody')?.replaceChildren();
+      hostEl.querySelector('#ratio-change-banner')?.replaceChildren();
+      const errEl = hostEl.querySelector('#ratio-error');
+      if (errEl) errEl.textContent = err.message || 'שגיאה';
+      return;
+    }
+
+    const errEl = hostEl.querySelector('#ratio-error');
+    if (errEl) errEl.textContent = '';
+
+    const origTotalG = getOriginalTotalGrams();
+    const cakeW = Number(state.cakeWeightGrams);
+    const unitsFromRecipe = cakeW && origTotalG
+      ? Math.round((origTotalG / cakeW) * 10) / 10
+      : null;
+
+    const scaledSummary = getRecipeWeightSummary(scaled, { useScaled: true });
+    const scaledTotalG = scaledSummary.totalRecipeKg * 1000;
+    const cakeCountNum = Number(state.cakeCount);
+
+    const bannerEl = hostEl.querySelector('#ratio-change-banner');
+    if (bannerEl) {
+      bannerEl.innerHTML = `
+        <div class="ratio-change-banner-inner">
+          <span class="ratio-change-label">שינוי יחס — ${escapeHtml(anchor.name)}</span>
+          <span class="ratio-change-values">
+            מ-<strong>${baseQty}</strong> ${escapeHtml(anchor.unit)}
+            ל-<strong>${targetQty}</strong> ${escapeHtml(anchor.unit)}
+          </span>
+          <span class="ratio-factor-badge">×${formatRatioFactor(ratio)}</span>
+        </div>`;
+    }
+
+    const tbody = hostEl.querySelector('#ratio-tbody');
+    if (tbody) {
+      tbody.innerHTML = scaled.map((ing) => {
+        const isAnchor = ing.id === Number(state.anchorId);
+        const orig = ingredients.find((i) => i.id === ing.id);
+        return `
+        <tr class="ratio-ing-row${isAnchor ? ' ratio-anchor-row is-anchor-selected' : ''}" data-ing-id="${ing.id}">
+          <td class="ratio-pick-col">
+            <input type="radio" name="ratio-anchor-pick" value="${ing.id}" ${isAnchor ? 'checked' : ''} aria-label="שנה לפי ${escapeHtml(ing.name)}">
+          </td>
+          <td>${escapeHtml(ing.name)}</td>
+          <td class="ratio-col-orig">${orig?.quantity} ${escapeHtml(ing.unit)}</td>
+          <td class="ratio-col-calc"><strong>${ing.scaledQuantity}</strong> ${escapeHtml(ing.unit)}</td>
+        </tr>`;
+      }).join('') + (() => {
+        const totalHtml = renderRecipeWeightSummaryHTML(scaled, recipe, { useScaled: true });
+        return totalHtml
+          ? `<tr class="recipe-total-row"><td colspan="4">${totalHtml}</td></tr>`
+          : '';
+      })();
+    }
+
+    const yieldEl = hostEl.querySelector('#ratio-yield-result');
+    if (yieldEl) {
+      if (unitsFromRecipe != null) {
+        yieldEl.innerHTML = `ממתכון בסיס יוצא: <strong>${unitsFromRecipe}</strong> יחידות (עוגות) במשקל ${cakeW} גרם`;
+        yieldEl.hidden = false;
+      } else {
+        yieldEl.hidden = true;
+        yieldEl.innerHTML = '';
+      }
+    }
+
+    const cakesResultEl = hostEl.querySelector('#ratio-cakes-result');
+    if (cakesResultEl) {
+      if (state.scaleFromCakes && cakeCountNum > 0 && cakeW > 0) {
+        cakesResultEl.innerHTML = `
+          המתכון מותאם ל-<strong>${cakeCountNum}</strong> עוגות × ${cakeW} גרם
+          = <strong>${Math.round(cakeCountNum * cakeW)}</strong> גרם
+          (סה"כ מחושב: ${Math.round(scaledTotalG)} גרם)`;
+        cakesResultEl.hidden = false;
+      } else {
+        cakesResultEl.hidden = true;
+        cakesResultEl.innerHTML = '';
+      }
+    }
+
+    hostEl.querySelectorAll('.ratio-ing-row').forEach((row) => {
+      row.addEventListener('click', (e) => {
+        if (e.target.closest('input[type="radio"]')) return;
+        const id = Number(row.dataset.ingId);
+        state.anchorId = id;
+        state.scaleFromCakes = false;
+        const ing = ingredients.find((i) => i.id === id);
+        state.targetQty = Number(ing?.quantity) || state.targetQty;
+        hostEl.querySelector(`input[name="ratio-anchor-pick"][value="${id}"]`)?.click();
+        render();
+      });
+    });
+
+    hostEl.querySelectorAll('input[name="ratio-anchor-pick"]').forEach((radio) => {
+      radio.onclick = (e) => e.stopPropagation();
+      radio.onchange = () => {
+        state.anchorId = Number(radio.value);
+        state.scaleFromCakes = false;
+        const ing = ingredients.find((i) => i.id === state.anchorId);
+        state.targetQty = Number(ing?.quantity) || 1;
+        const targetInput = hostEl.querySelector('#ratio-target');
+        if (targetInput) targetInput.value = state.targetQty;
+        render();
+      };
+    });
+  };
+
   hostEl.innerHTML = `
+    <p class="form-hint ratio-intro">סמן את חומר הגלם שברצונך לשנות — שאר הכמויות יתעדכנו אוטומטית.</p>
+    <div id="ratio-change-banner" class="ratio-change-banner"></div>
+    <div id="ratio-error" class="ratio-error" role="alert"></div>
     <div class="form-group">
-      <label>חומר בסיס</label>
-      <select id="ratio-anchor">${ingredients.map((ing) => `
-        <option value="${ing.id}">${escapeHtml(ing.name)} (${ing.quantity} ${escapeHtml(ing.unit)})</option>`).join('')}
-      </select>
-    </div>
-    <div class="form-group">
-      <label>כמות יעד</label>
+      <label>כמות יעד לחומר שנבחר</label>
       <input type="number" id="ratio-target" min="0.001" step="0.001" value="${ingredients[0].quantity}">
     </div>
-    <table class="ratio-table"><thead><tr><th>חומר</th><th>מקור</th><th>מחושב</th></tr></thead>
-    <tbody id="ratio-tbody">${renderTable(defaultAnchor, ingredients[0].quantity)}</tbody></table>`;
-  const refresh = () => {
-    const tbody = hostEl.querySelector('#ratio-tbody');
-    if (!tbody) return;
-    try {
-      tbody.innerHTML = renderTable(
-        hostEl.querySelector('#ratio-anchor')?.value,
-        hostEl.querySelector('#ratio-target')?.value,
-      );
-    } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="3">${escapeHtml(err.message)}</td></tr>`;
+    <div class="ratio-table-wrap">
+      <table class="ratio-table">
+        <thead>
+          <tr>
+            <th class="ratio-pick-col" scope="col"></th>
+            <th scope="col">חומר גלם</th>
+            <th scope="col">מקור</th>
+            <th scope="col">מחושב</th>
+          </tr>
+        </thead>
+        <tbody id="ratio-tbody"></tbody>
+      </table>
+    </div>
+    <div class="ratio-cake-tools">
+      <h3 class="ratio-cake-tools-title">חישוב לפי עוגות</h3>
+      <div class="ratio-cake-grid">
+        <div class="form-group">
+          <label>משקל עוגה (גרם)</label>
+          <input type="number" id="ratio-cake-weight" min="1" step="1" placeholder="למשל: 900" value="${escapeHtml(state.cakeWeightGrams)}">
+        </div>
+        <div class="form-group">
+          <label>כמה עוגות רוצה?</label>
+          <input type="number" id="ratio-cake-count" min="0.1" step="0.1" placeholder="למשל: 10" value="">
+        </div>
+      </div>
+      <p id="ratio-yield-result" class="ratio-yield-result" hidden></p>
+      <p id="ratio-cakes-result" class="ratio-cakes-result" hidden></p>
+    </div>`;
+
+  hostEl.querySelector('#ratio-target')?.addEventListener('input', (e) => {
+    state.scaleFromCakes = false;
+    state.targetQty = Number(e.target.value);
+    state.cakeCount = '';
+    const countInput = hostEl.querySelector('#ratio-cake-count');
+    if (countInput) countInput.value = '';
+    render();
+  });
+
+  hostEl.querySelector('#ratio-cake-weight')?.addEventListener('input', (e) => {
+    state.cakeWeightGrams = e.target.value;
+    if (state.cakeCount) applyScaleFromCakes();
+    render();
+  });
+
+  hostEl.querySelector('#ratio-cake-count')?.addEventListener('input', (e) => {
+    state.cakeCount = e.target.value;
+    if (state.cakeCount && state.cakeWeightGrams) {
+      applyScaleFromCakes();
+      const targetInput = hostEl.querySelector('#ratio-target');
+      if (targetInput) targetInput.value = state.targetQty;
+    } else {
+      state.scaleFromCakes = false;
     }
-  };
-  hostEl.querySelector('#ratio-anchor')?.addEventListener('change', refresh);
-  hostEl.querySelector('#ratio-target')?.addEventListener('input', refresh);
+    render();
+  });
+
+  render();
 }
 
 function findRecipeCategoryPath(layout, categoryId) {
