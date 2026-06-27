@@ -469,6 +469,33 @@ export function scaleRecipeIngredients(ingredients, anchorIngredientId, targetQu
   }));
 }
 
+/** @returns {{ totalKg: number, totalLiters: number }} */
+export function computeRecipeIngredientsTotal(ingredients, { useScaled = false } = {}) {
+  let totalKg = 0;
+  let totalLiters = 0;
+  for (const ing of ingredients || []) {
+    const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+    const rawQty = useScaled && ing.scaledQuantity != null ? ing.scaledQuantity : ing.quantity;
+    const qty = Number(rawQty);
+    if (!qty || qty <= 0) continue;
+    if (kind === 'g') totalKg += qty / 1000;
+    else if (kind === 'l') totalLiters += qty;
+    else totalKg += qty;
+  }
+  return { totalKg: roundQty(totalKg), totalLiters: roundQty(totalLiters) };
+}
+
+export function formatRecipeIngredientsTotal(ingredients, options) {
+  const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, options);
+  const parts = [];
+  if (totalKg > 0) {
+    if (totalKg >= 1) parts.push(`${roundQty(totalKg)} ק"ג`);
+    else parts.push(`${Math.round(totalKg * 1000)} גרם`);
+  }
+  if (totalLiters > 0) parts.push(`${roundQty(totalLiters)} ליטר (נוזלים)`);
+  return parts.length ? parts.join(' · ') : '';
+}
+
 export async function findOrCreateWordImportCategory() {
   const groups = await getRecipeGroups();
   let group = groups.find((g) => g.name === IMPORT_WORD_GROUP);

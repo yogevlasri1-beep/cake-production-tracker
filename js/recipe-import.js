@@ -1,4 +1,5 @@
 import { loadFFlate } from './docx-loader.js';
+import { formatRecipeIngredientsTotal } from './kitchen-db.js';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
@@ -526,6 +527,8 @@ export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDeta
             body += `<li><span class="ing-name">${escapeHtml(ing.name)}</span> — <strong>${ing.quantity}</strong> ${escapeHtml(ing.unit)}</li>`;
           }
           body += '</ul>';
+          const totalText = formatRecipeIngredientsTotal(detail.ingredients);
+          if (totalText) body += `<p class="book-recipe-total"><strong>סה"כ:</strong> ${escapeHtml(totalText)}</p>`;
         }
         body += '</article>';
       }
@@ -548,6 +551,7 @@ export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDeta
     .book-notes { color: #64748b; font-style: italic; }
     .book-ingredients { list-style: none; padding: 0; }
     .book-ingredients li { padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
+    .book-recipe-total { margin-top: 8px; padding-top: 8px; border-top: 2px solid #2563eb; font-weight: 600; }
     .ing-name { font-weight: 500; }
     @media print { body { padding: 12px; } h1 { page-break-before: always; } h1:first-child { page-break-before: avoid; } }
   </style>

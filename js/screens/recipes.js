@@ -7,7 +7,7 @@ import {
   setRecipeOrder, setRecipeGroupOrder, setRecipeSubCategoryOrder, moveRecipesToCategory,
   importParsedRecipes, scaleRecipeIngredients,
   findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
-  getExistingRecipeNameKeys, normalizeRecipeImportKey,
+  getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind,
 } from '../kitchen-db.js';
 import { getProducts, getProductsCatalogLayout, getCategoryGroups, getCategories } from '../db.js';
@@ -557,6 +557,7 @@ async function renderRecipeBook(container, { groups, allSubs, productMap }) {
         const detail = details.find((d) => d.id === r.id);
         const linked = detail?.linkedProductIds || [];
         const prodNames = linked.map((id) => productMap.get(id)?.name).filter(Boolean);
+        const ingTotal = detail?.ingredients?.length ? renderRecipeTotalHTML(detail.ingredients) : '';
         return `
                 <article class="recipe-book-item">
                   <h4>${escapeHtml(r.name)}</h4>
@@ -566,7 +567,8 @@ async function renderRecipeBook(container, { groups, allSubs, productMap }) {
                   <ul class="recipe-book-ingredients">
                     ${detail.ingredients.map((ing) => `
                       <li>${escapeHtml(ing.name)} — <strong>${ing.quantity}</strong> ${escapeHtml(ing.unit)}</li>`).join('')}
-                  </ul>` : ''}
+                  </ul>
+                  ${renderRecipeTotalHTML(detail.ingredients) ? `<p class="recipe-ingredients-total">${renderRecipeTotalHTML(detail.ingredients)}</p>` : ''}` : ''}
                 </article>`;
       }).join('')}
             </section>`;
@@ -788,6 +790,29 @@ function openImportPreview(container, parsed, { groups, subs }) {
   });
 }
 
+function renderRecipeTotalHTML(ingredients, options) {
+  const text = formatRecipeIngredientsTotal(ingredients, options);
+  if (!text) return '';
+  return `סה"כ: <strong>${escapeHtml(text)}</strong>`;
+}
+
+function readIngredientsFromForm(baseIngredients) {
+  return (baseIngredients || []).map((ing) => {
+    const row = document.querySelector(`.recipe-ing-row[data-ing-id="${ing.id}"]`);
+    return {
+      ...ing,
+      quantity: row?.querySelector('.ing-qty')?.value ?? ing.quantity,
+      unitKind: row?.querySelector('.ing-unit')?.value ?? ing.unitKind ?? normalizeRecipeUnitKind(ing.unit),
+    };
+  });
+}
+
+function refreshRecipeTotalDisplay(baseIngredients) {
+  const el = document.getElementById('recipe-ing-total');
+  if (!el) return;
+  el.innerHTML = renderRecipeTotalHTML(readIngredientsFromForm(baseIngredients));
+}
+
 function bindRatioCalculator(recipe, hostEl) {
   const ingredients = recipe.ingredients || [];
   if (!ingredients.length) {
@@ -796,12 +821,18 @@ function bindRatioCalculator(recipe, hostEl) {
   }
   const renderTable = (anchorId, targetQty) => {
     try {
-      return scaleRecipeIngredients(ingredients, anchorId, targetQty).map((ing) => `
+      const scaled = scaleRecipeIngredients(ingredients, anchorId, targetQty);
+      const rows = scaled.map((ing) => `
         <tr${ing.id === Number(anchorId) ? ' class="ratio-anchor-row"' : ''}>
           <td>${escapeHtml(ing.name)}</td>
           <td>${ing.quantity} ${escapeHtml(ing.unit)}</td>
           <td><strong>${ing.scaledQuantity}</strong> ${escapeHtml(ing.unit)}</td>
         </tr>`).join('');
+      const total = formatRecipeIngredientsTotal(scaled, { useScaled: true });
+      const totalRow = total
+        ? `<tr class="recipe-total-row"><td colspan="2"><strong>סה"כ</strong></td><td><strong>${escapeHtml(total)}</strong></td></tr>`
+        : '';
+      return rows + totalRow;
     } catch {
       return '';
     }
@@ -904,6 +935,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog })
             <button type="button" class="btn btn-danger btn-sm del-ing" data-id="${ing.id}">🗑</button>
           </div>`;
   }).join('') : '<p class="form-hint">אין חומרים</p>'}
+        ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeTotalHTML(ingredients)}</div>` : ''}
         <div class="filter-row" style="margin-top:8px">
           <select id="new-ing-mat" style="flex:1">
             <option value="">מחסן...</option>
@@ -932,10 +964,13 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog })
     row.querySelector('.ing-qty')?.addEventListener('change', async (e) => {
       try { await updateRecipeIngredient(ingId, { quantity: e.target.value }); }
       catch (err) { showToast(err.message || 'שגיאה'); }
+      refreshRecipeTotalDisplay(ingredients);
     });
+    row.querySelector('.ing-qty')?.addEventListener('input', () => refreshRecipeTotalDisplay(ingredients));
     row.querySelector('.ing-unit')?.addEventListener('change', async (e) => {
       try { await updateRecipeIngredient(ingId, { unitKind: e.target.value }); }
       catch (err) { showToast(err.message || 'שגיאה'); }
+      refreshRecipeTotalDisplay(ingredients);
     });
   });
 

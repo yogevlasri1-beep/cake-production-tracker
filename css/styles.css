@@ -4212,6 +4212,27 @@ body.supplier-drag-active {
   color: #b45309;
 }
 
+.recipe-ingredients-total {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  text-align: left;
+}
+
+.ratio-table .recipe-total-row td {
+  border-top: 2px solid var(--primary, #2563eb);
+  padding-top: 10px;
+  font-size: 0.95rem;
+}
+
+.recipe-book-view .recipe-ingredients-total {
+  margin-top: 6px;
+  margin-bottom: 0;
+}
+
 .recipe-book-group-title {
   color: var(--primary);
   margin: 24px 0 12px;
