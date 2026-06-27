@@ -2,7 +2,7 @@ import { db, ValidationError } from './db.js';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity,
 } from './validators.js';
-import { weekStartISO } from './utils.js';
+import { weekStartISO, todayISO } from './utils.js';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1019,14 +1019,25 @@ export async function addRawMaterial({ supplierCategoryId, name, unit, unitPrice
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
   const inCat = await getRawMaterials(cid);
   const maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
-  return db.rawMaterials.add({
+  const price = sanitizeMoney(unitPrice);
+  const sid = supplierId ? sanitizeProductId(supplierId) : null;
+  const id = await db.rawMaterials.add({
     supplierCategoryId: cid,
     name: trimmed,
     unit: String(unit || 'ק"ג').trim().slice(0, 20),
-    unitPrice: sanitizeMoney(unitPrice),
-    supplierId: supplierId ? sanitizeProductId(supplierId) : null,
+    unitPrice: price,
+    supplierId: sid,
     sortOrder: maxOrder + 1,
   });
+  if (price > 0) {
+    await db.rawMaterialPriceHistory.add({
+      rawMaterialId: id,
+      price,
+      effectiveDate: todayISO(),
+      createdAt: new Date().toISOString(),
+    });
+  }
+  return id;
 }
 
 export async function updateRawMaterial(id, patch) {
@@ -1035,15 +1046,211 @@ export async function updateRawMaterial(id, patch) {
   const data = { ...patch };
   if ('name' in data) data.name = sanitizeName(data.name, 80);
   if ('supplierCategoryId' in data) data.supplierCategoryId = sanitizeProductId(data.supplierCategoryId);
-  if ('unitPrice' in data) data.unitPrice = sanitizeMoney(data.unitPrice);
+  if ('unitPrice' in data) {
+    const newPrice = sanitizeMoney(data.unitPrice);
+    const current = await db.rawMaterials.get(mid);
+    if (current && newPrice !== sanitizeMoney(current.unitPrice)) {
+      await addRawMaterialPriceEntry(mid, { price: newPrice, effectiveDate: todayISO() });
+      delete data.unitPrice;
+    } else {
+      data.unitPrice = newPrice;
+    }
+  }
   if ('supplierId' in data) data.supplierId = data.supplierId ? sanitizeProductId(data.supplierId) : null;
   if ('unit' in data) data.unit = String(data.unit || '').trim().slice(0, 20);
-  await db.rawMaterials.update(mid, data);
+  if (Object.keys(data).length) await db.rawMaterials.update(mid, data);
 }
 
 export async function deleteRawMaterial(id) {
   const mid = sanitizeProductId(id);
-  if (mid) await db.rawMaterials.delete(mid);
+  if (!mid) return;
+  await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
+  await db.rawMaterials.delete(mid);
+}
+
+export function normalizeMaterialKey(name) {
+  const s = sanitizeName(name, 80);
+  return s ? s.toLocaleLowerCase('he') : '';
+}
+
+export async function getPriceHistory(rawMaterialId) {
+  const mid = sanitizeProductId(rawMaterialId);
+  if (!mid) return [];
+  const rows = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
+  rows.sort((a, b) => {
+    const d = b.effectiveDate.localeCompare(a.effectiveDate);
+    if (d !== 0) return d;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  return rows;
+}
+
+async function syncRawMaterialLatestPrice(rawMaterialId) {
+  const history = await getPriceHistory(rawMaterialId);
+  if (!history.length) return;
+  await db.rawMaterials.update(rawMaterialId, { unitPrice: history[0].price });
+}
+
+export async function addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate } = {}) {
+  const mid = sanitizeProductId(rawMaterialId);
+  if (!mid) throw new ValidationError('חומר לא תקין');
+  const p = sanitizeMoney(price);
+  const date = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate))
+    ? String(effectiveDate)
+    : todayISO();
+  await db.rawMaterialPriceHistory.add({
+    rawMaterialId: mid,
+    price: p,
+    effectiveDate: date,
+    createdAt: new Date().toISOString(),
+  });
+  await syncRawMaterialLatestPrice(mid);
+}
+
+export async function setRawMaterialPrice(rawMaterialId, price, effectiveDate) {
+  await addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate });
+}
+
+export async function findRawMaterialBySupplierAndName(supplierId, name) {
+  const sid = sanitizeProductId(supplierId);
+  const key = normalizeMaterialKey(name);
+  if (!sid || !key) return null;
+  const mats = await db.rawMaterials.where('supplierId').equals(sid).toArray();
+  return mats.find((m) => normalizeMaterialKey(m.name) === key) || null;
+}
+
+export async function getMaterialsWithSameName(materialId) {
+  const mat = await db.rawMaterials.get(Number(materialId));
+  if (!mat) return [];
+  const key = normalizeMaterialKey(mat.name);
+  const all = await db.rawMaterials.toArray();
+  return all.filter((m) => normalizeMaterialKey(m.name) === key);
+}
+
+export async function findOrCreateSupplierCategory(name) {
+  const trimmed = sanitizeName(name, 40);
+  if (!trimmed) throw new ValidationError('שם קטגוריה לא תקין');
+  const existing = (await getSupplierCategories()).find((c) => c.name === trimmed);
+  if (existing) return existing.id;
+  return addSupplierCategory(trimmed);
+}
+
+export async function findOrCreateSupplier(categoryId, name) {
+  const cid = sanitizeProductId(categoryId);
+  const trimmed = sanitizeName(name, 60);
+  if (!cid || !trimmed) throw new ValidationError('ספק לא תקין');
+  const inCat = await getSuppliers(cid);
+  const found = inCat.find((s) => s.name === trimmed);
+  if (found) return found.id;
+  return addSupplier({ categoryId: cid, name: trimmed });
+}
+
+export async function getSuppliersBrowseLayout() {
+  const [categories, suppliers, materials] = await Promise.all([
+    getSupplierCategories(),
+    getSuppliers(),
+    db.rawMaterials.toArray(),
+  ]);
+  const matsBySupplier = new Map();
+  for (const m of materials) {
+    if (!m.supplierId) continue;
+    if (!matsBySupplier.has(m.supplierId)) matsBySupplier.set(m.supplierId, []);
+    matsBySupplier.get(m.supplierId).push(m);
+  }
+  for (const list of matsBySupplier.values()) {
+    list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  }
+  const grouped = categories.map((cat) => ({
+    ...cat,
+    suppliers: suppliers
+      .filter((s) => s.categoryId === cat.id)
+      .map((s) => ({
+        ...s,
+        materials: matsBySupplier.get(s.id) || [],
+      })),
+  }));
+  return { categories: grouped, allMaterials: materials };
+}
+
+export async function importSupplierExcelEntries(entries, { defaultCategoryId } = {}) {
+  if (!entries?.length) throw new ValidationError('אין נתונים לייבוא');
+  let defaultCatId = sanitizeProductId(defaultCategoryId);
+  if (!defaultCatId) {
+    const cats = await getSupplierCategories();
+    defaultCatId = cats[0]?.id;
+    if (!defaultCatId) defaultCatId = await addSupplierCategory('ייבוא Excel');
+  }
+
+  const stats = { suppliersAdded: 0, materialsAdded: 0, priceEntries: 0 };
+  const supplierCache = new Map();
+
+  for (const entry of entries) {
+    const materialName = sanitizeName(entry.materialName, 80);
+    const supplierName = sanitizeName(entry.supplierName, 60);
+    if (!materialName || !supplierName) continue;
+
+    let catId = defaultCatId;
+    if (entry.categoryName) {
+      catId = await findOrCreateSupplierCategory(entry.categoryName);
+    }
+
+    const supKey = `${catId}|${supplierName.toLocaleLowerCase('he')}`;
+    let supplierId = supplierCache.get(supKey);
+    if (!supplierId) {
+      const inCat = await getSuppliers(catId);
+      const existing = inCat.find((s) => s.name === supplierName);
+      if (existing) {
+        supplierId = existing.id;
+      } else {
+        supplierId = await addSupplier({ categoryId: catId, name: supplierName });
+        stats.suppliersAdded += 1;
+      }
+      supplierCache.set(supKey, supplierId);
+    }
+
+    let mat = await findRawMaterialBySupplierAndName(supplierId, materialName);
+    if (!mat) {
+      const mid = await addRawMaterial({
+        supplierCategoryId: catId,
+        name: materialName,
+        unit: entry.unit || 'ק"ג',
+        unitPrice: 0,
+        supplierId,
+      });
+      mat = await db.rawMaterials.get(mid);
+      stats.materialsAdded += 1;
+    } else if (entry.unit && entry.unit !== mat.unit) {
+      await updateRawMaterial(mat.id, { unit: entry.unit });
+    }
+
+    const price = entry.price != null ? sanitizeMoney(entry.price) : null;
+    if (price != null && price >= 0) {
+      await addRawMaterialPriceEntry(mat.id, {
+        price,
+        effectiveDate: entry.effectiveDate || todayISO(),
+      });
+      stats.priceEntries += 1;
+    }
+  }
+  return stats;
+}
+
+export async function backfillRawMaterialPriceHistory() {
+  const count = await db.rawMaterialPriceHistory.count();
+  if (count > 0) return;
+  const mats = await db.rawMaterials.toArray();
+  const today = todayISO();
+  const now = new Date().toISOString();
+  for (const m of mats) {
+    if ((m.unitPrice || 0) <= 0) continue;
+    await db.rawMaterialPriceHistory.add({
+      rawMaterialId: m.id,
+      price: m.unitPrice,
+      effectiveDate: today,
+      createdAt: now,
+      source: 'migration',
+    });
+  }
 }
 
 /* ── תוכנית ייצור שבועית ── */
@@ -1161,7 +1368,7 @@ export function formatWhatsAppOrderText({ weekStart, categories }) {
 export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
-    supplierCategories, suppliers, rawMaterials,
+    supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
     db.recipeGroups.toArray(),
@@ -1172,6 +1379,7 @@ export async function exportKitchenTables() {
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
+    db.rawMaterialPriceHistory.toArray(),
     db.weeklyProductionPlans.toArray(),
     db.weeklyProductionPlanItems.toArray(),
   ]);
@@ -1184,6 +1392,7 @@ export async function exportKitchenTables() {
     supplierCategories,
     suppliers,
     rawMaterials,
+    rawMaterialPriceHistory,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
   };
@@ -1192,7 +1401,7 @@ export async function exportKitchenTables() {
 export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
-    'supplierCategories', 'suppliers', 'rawMaterials',
+    'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
   await db.transaction('rw', ...tables.map((t) => db[t]), async () => {
@@ -1236,7 +1445,7 @@ async function ensureRecipeHierarchyInTx(dbRef) {
 export async function clearKitchenTables() {
   await db.transaction('rw',
     db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
-    db.supplierCategories, db.suppliers, db.rawMaterials,
+    db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
       await db.weeklyProductionPlanItems.clear();
@@ -1246,6 +1455,7 @@ export async function clearKitchenTables() {
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
+      await db.rawMaterialPriceHistory.clear();
       await db.rawMaterials.clear();
       await db.suppliers.clear();
       await db.supplierCategories.clear();

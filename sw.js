@@ -44,6 +44,7 @@ const PRECACHE = [
   v('./js/kitchen-db.js'),
   v('./js/docx-loader.js'),
   v('./js/recipe-import.js'),
+  v('./js/supplier-import.js'),
   v('./js/screens/home.js'),
   v('./js/screens/process.js'),
   v('./js/screens/products.js'),

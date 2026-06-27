@@ -181,6 +181,7 @@ export function enrichBackupData(raw) {
     supplierCategories: raw.supplierCategories || [],
     suppliers: raw.suppliers || [],
     rawMaterials: raw.rawMaterials || [],
+    rawMaterialPriceHistory: raw.rawMaterialPriceHistory || [],
     weeklyProductionPlans: raw.weeklyProductionPlans || [],
     weeklyProductionPlanItems: raw.weeklyProductionPlanItems || [],
     productionRuns: raw.productionRuns || [],
@@ -305,6 +306,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
   if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];
+  if (!Array.isArray(data.rawMaterialPriceHistory)) data.rawMaterialPriceHistory = [];
   if (!Array.isArray(data.weeklyProductionPlans)) data.weeklyProductionPlans = [];
   if (!Array.isArray(data.weeklyProductionPlanItems)) data.weeklyProductionPlanItems = [];
   if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];

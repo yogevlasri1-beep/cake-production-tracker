@@ -153,7 +153,12 @@ body {
   padding-bottom: 8px;
 }
 
-.recipes-sub-nav {
+#app.has-suppliers-sub-nav #main-content {
+  padding-bottom: 8px;
+}
+
+.recipes-sub-nav,
+.suppliers-sub-nav {
   position: relative;
   flex-shrink: 0;
   width: 100%;
@@ -171,7 +176,8 @@ body {
   box-shadow: 0 -4px 20px rgba(91, 33, 182, 0.08);
 }
 
-.recipes-nav-btn {
+.recipes-nav-btn,
+.suppliers-nav-btn {
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -194,22 +200,26 @@ body {
   margin: 4px 2px;
 }
 
-.recipes-nav-btn.active {
+.recipes-nav-btn.active,
+.suppliers-nav-btn.active {
   color: #5b21b6;
   background: #f5f3ff;
 }
 
-.recipes-nav-btn.active .recipes-nav-icon {
+.recipes-nav-btn.active .recipes-nav-icon,
+.suppliers-nav-btn.active .suppliers-nav-icon {
   transform: scale(1.08);
 }
 
-.recipes-nav-icon {
+.recipes-nav-icon,
+.suppliers-nav-icon {
   font-size: 1.2rem;
   line-height: 1;
   transition: transform 0.2s;
 }
 
-.recipes-nav-label {
+.recipes-nav-label,
+.suppliers-nav-label {
   text-align: center;
   max-width: 100%;
   padding: 0 2px;
@@ -416,7 +426,8 @@ body {
 }
 
 @media print {
-  .recipes-sub-nav {
+  .recipes-sub-nav,
+  .suppliers-sub-nav {
     display: none !important;
   }
 }
@@ -5128,10 +5139,195 @@ body.supplier-drag-active {
   font-weight: 600;
 }
 
+/* ── עמדת ספקים ── */
+.supplier-browse-intro {
+  margin-bottom: 12px;
+}
+
+.supplier-browse-cat {
+  margin-bottom: 10px;
+}
+
+.supplier-browse-cat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  text-align: right;
+}
+
+.supplier-browse-cat-name {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.supplier-browse-cat-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.supplier-browse-block {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.supplier-browse-block:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.supplier-browse-sup-name {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: #0f766e;
+}
+
+.browse-material-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8fafc;
+  cursor: pointer;
+  font: inherit;
+  text-align: right;
+  touch-action: manipulation;
+}
+
+.browse-material-row:hover {
+  background: #ecfdf5;
+  border-color: #6ee7b7;
+}
+
+.browse-mat-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.browse-mat-price {
+  font-size: 0.88rem;
+  color: #0f766e;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.material-detail-current {
+  padding: 14px;
+  border-radius: 12px;
+  background: #ecfdf5;
+  border: 1px solid #6ee7b7;
+  margin-bottom: 14px;
+}
+
+.material-detail-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.material-detail-price {
+  font-size: 1.35rem;
+  color: #047857;
+}
+
+.material-detail-subtitle {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.material-others-list {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.material-others-list li {
+  margin-bottom: 6px;
+}
+
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: right;
+}
+
+.price-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.price-history-table th,
+.price-history-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.price-history-table tr.is-current td {
+  background: #ecfdf5;
+  font-weight: 600;
+}
+
+.price-history-mini {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.price-history-mini li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-supplier-preview {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.88rem;
+}
+
+.import-supplier-preview li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.suppliers-sub-nav {
+  box-shadow: 0 -4px 20px rgba(15, 118, 110, 0.08);
+}
+
+.suppliers-nav-btn.active {
+  color: #0f766e;
+  background: #ecfdf5;
+}
+
 @media print {
   .app-header,
   .bottom-nav,
   .recipes-sub-nav,
+  .suppliers-sub-nav,
   .header-menu-btn,
   .btn {
     display: none !important;

@@ -6,7 +6,7 @@ import { renderProcess, processMeta } from './screens/process.js?v=132';
 import { renderReports, reportsMeta } from './screens/reports.js?v=132';
 import { renderBackup, backupMeta } from './screens/backup.js?v=132';
 import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=132';
-import { renderSuppliers, suppliersMeta } from './screens/suppliers.js?v=132';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=132';
 import { getSavedWorkspace, saveWorkspace, WORKSPACES } from './workspaces.js?v=132';
 import { initIOSInstallPrompt } from './ios-install.js?v=132';
 import { initNetworkCheck } from './network.js?v=132';
@@ -51,6 +51,10 @@ function updateWorkspaceChrome() {
   const recipesNav = document.getElementById('recipes-sub-nav');
   recipesNav?.classList.toggle('hidden', currentWorkspace !== 'recipes');
   document.getElementById('app')?.classList.toggle('has-recipes-sub-nav', currentWorkspace === 'recipes');
+
+  const suppliersNav = document.getElementById('suppliers-sub-nav');
+  suppliersNav?.classList.toggle('hidden', currentWorkspace !== 'suppliers');
+  document.getElementById('app')?.classList.toggle('has-suppliers-sub-nav', currentWorkspace === 'suppliers');
 
   document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.workspace === currentWorkspace);
@@ -178,6 +182,7 @@ async function boot() {
 
     initWorkspaceMenu();
     initRecipesSubNav();
+    initSuppliersSubNav();
     updateWorkspaceChrome();
 
     await initDB();

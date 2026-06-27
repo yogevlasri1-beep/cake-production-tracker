@@ -3,32 +3,75 @@ import {
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
+  getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
+  importSupplierExcelEntries,
 } from '../kitchen-db.js';
 import { getProducts } from '../db.js';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate } from '../utils.js';
+import { parseSupplierFile } from '../supplier-import.js';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js';
 import { openModal, closeModal } from '../modal.js';
 import { requestAutoBackupNow } from '../backup-service.js';
 import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js';
 
-export function suppliersMeta() {
-  return { title: 'ספקים', subtitle: 'חומרי גלם, תוכנית שבועית והזמנות' };
+const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
+
+export const SUPPLIER_TABS = {
+  browse: { id: 'browse', label: 'ספקים', subtitle: 'רשימת ספקים, תמחור והיסטוריית מחירים' },
+  edit: { id: 'edit', label: 'עריכה', subtitle: 'עריכת ספקים, חומרי גלם, מחירים וייבוא Excel' },
+  order: { id: 'order', label: 'הזמנה', subtitle: 'תוכנית שבועית ובניית הזמנה' },
+};
+
+function getSupplierTab(container) {
+  const tab = container?.dataset?.supplierTab || sessionStorage.getItem(SUPPLIER_TAB_KEY) || 'browse';
+  return SUPPLIER_TABS[tab] ? tab : 'browse';
 }
 
-const TABS = [
-  { id: 'materials', label: 'חומרי גלם' },
-  { id: 'suppliers', label: 'ספקים' },
-  { id: 'plan', label: 'תוכנית שבועית' },
-  { id: 'order', label: 'רשימת הזמנה' },
-];
+export function syncSuppliersSubNav(activeTab) {
+  document.querySelectorAll('.suppliers-nav-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.supplierTab === activeTab);
+  });
+}
+
+export function updateSuppliersHeader() {
+  const tab = sessionStorage.getItem(SUPPLIER_TAB_KEY) || 'browse';
+  const meta = SUPPLIER_TABS[tab];
+  const el = document.getElementById('page-subtitle');
+  if (el && meta) el.textContent = meta.subtitle;
+}
+
+export function switchSupplierTab(tab) {
+  if (!SUPPLIER_TABS[tab]) return;
+  const main = document.getElementById('main-content');
+  main.dataset.supplierTab = tab;
+  sessionStorage.setItem(SUPPLIER_TAB_KEY, tab);
+  syncSuppliersSubNav(tab);
+  updateSuppliersHeader();
+  renderSuppliers(main);
+}
+
+export function initSuppliersSubNav() {
+  document.querySelectorAll('.suppliers-nav-btn').forEach((btn) => {
+    btn.addEventListener('click', () => switchSupplierTab(btn.dataset.supplierTab));
+  });
+}
+
+export function suppliersMeta() {
+  const tab = sessionStorage.getItem(SUPPLIER_TAB_KEY) || 'browse';
+  const meta = SUPPLIER_TABS[tab];
+  return { title: 'ספקים', subtitle: meta?.subtitle || '' };
+}
 
 export async function renderSuppliers(container) {
-  const tab = container.dataset.supplierTab || 'plan';
+  const tab = getSupplierTab(container);
+  container.dataset.supplierTab = tab;
+  syncSuppliersSubNav(tab);
+  updateSuppliersHeader();
+
   const weekStart = container.dataset.planWeek || weekStartISO();
   const selectedMatCat = container.dataset.matCat || '';
   const selectedSupCat = container.dataset.supCat || '';
 
-  const [supCats, matCats, products] = await Promise.all([
-    getSupplierCategories(),
+  const [supCats, products] = await Promise.all([
     getSupplierCategories(),
     getProducts(true),
   ]);
@@ -36,212 +79,306 @@ export async function renderSuppliers(container) {
   if (!selectedMatCat && supCats.length) container.dataset.matCat = String(supCats[0].id);
   if (!selectedSupCat && supCats.length) container.dataset.supCat = String(supCats[0].id);
 
-  container.innerHTML = `
-    <div class="card workspace-tabs-card">
-      <div class="workspace-tab-row">
-        ${TABS.map((t) => `
-          <button type="button" class="workspace-tab${tab === t.id ? ' active' : ''}" data-tab="${t.id}">
-            ${t.label}
-          </button>`).join('')}
-      </div>
-    </div>
-    <div id="supplier-tab-body"><p style="text-align:center;padding:24px;color:var(--text-muted)">טוען...</p></div>`;
-
-  container.querySelectorAll('[data-tab]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      container.dataset.supplierTab = btn.dataset.tab;
-      renderSuppliers(container);
-    });
-  });
-
+  container.innerHTML = `<div id="supplier-tab-body"><p style="text-align:center;padding:24px;color:var(--text-muted)">טוען...</p></div>`;
   const body = document.getElementById('supplier-tab-body');
-  if (tab === 'materials') await renderMaterialsTab(body, container, supCats, selectedMatCat || container.dataset.matCat);
-  else if (tab === 'suppliers') await renderSuppliersTab(body, container, supCats, selectedSupCat || container.dataset.supCat);
-  else if (tab === 'plan') await renderPlanTab(body, container, products, weekStart);
-  else await renderOrderTab(body, container, weekStart);
+
+  if (tab === 'browse') await renderBrowseTab(body, container);
+  else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat || container.dataset.matCat, selectedSupCat || container.dataset.supCat);
+  else await renderOrderTab(body, container, products, weekStart);
 }
 
-async function renderMaterialsTab(body, container, categories, selectedCat) {
-  const [materials, suppliers] = await Promise.all([
-    getRawMaterials(Number(selectedCat)),
+/* ── צפייה: ספקים + תמחור ── */
+
+async function renderBrowseTab(body, container) {
+  const layout = await getSuppliersBrowseLayout();
+  const hasData = layout.categories.some((c) => c.suppliers.length);
+
+  body.innerHTML = `
+    <div class="card supplier-browse-intro">
+      <div class="card-title">ספקים ותמחור</div>
+      <p class="form-hint" style="margin:0">לחץ על חומר גלם לצפייה בהיסטוריית מחירים · אותו מוצר אצל כמה ספקים מוצג בנפרד</p>
+    </div>
+    ${hasData ? layout.categories.map(renderBrowseCategoryBlock).join('') : `
+    <div class="empty-state">
+      <div class="empty-state-icon">🚚</div>
+      <p>אין ספקים עדיין</p>
+      <button type="button" class="btn btn-primary btn-sm" id="browse-go-edit">עבור לעריכה</button>
+    </div>`}`;
+
+  document.getElementById('browse-go-edit')?.addEventListener('click', () => switchSupplierTab('edit'));
+
+  body.querySelectorAll('.browse-material-row').forEach((row) => {
+    row.addEventListener('click', () => openMaterialDetailModal(container, Number(row.dataset.materialId)));
+  });
+
+  body.querySelectorAll('.category-toggle-browse').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      btn.closest('.supplier-browse-cat')?.classList.toggle('is-collapsed');
+    });
+  });
+}
+
+function renderBrowseCategoryBlock(cat) {
+  if (!cat.suppliers.length) return '';
+  const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0);
+  return `
+    <div class="card supplier-browse-cat">
+      <button type="button" class="supplier-browse-cat-header category-toggle-browse">
+        <span class="supplier-browse-cat-name">${escapeHtml(cat.name)}</span>
+        <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} חומרים</span>
+      </button>
+      <div class="supplier-browse-cat-body">
+        ${cat.suppliers.map(renderBrowseSupplierBlock).join('')}
+      </div>
+    </div>`;
+}
+
+function renderBrowseSupplierBlock(supplier) {
+  return `
+    <section class="supplier-browse-block">
+      <h3 class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</h3>
+      ${supplier.materials.length
+    ? `<div class="supplier-browse-mats">
+        ${supplier.materials.map((m) => `
+        <button type="button" class="browse-material-row" data-material-id="${m.id}">
+          <span class="browse-mat-name">${escapeHtml(m.name)}</span>
+          <span class="browse-mat-price">${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}</span>
+        </button>`).join('')}
+      </div>`
+    : '<p class="form-hint">אין חומרי גלם</p>'}
+    </section>`;
+}
+
+async function openMaterialDetailModal(container, materialId) {
+  const mat = (await getRawMaterials()).find((m) => m.id === materialId);
+  if (!mat) return showToast('חומר לא נמצא');
+
+  const [history, sameName, suppliers] = await Promise.all([
+    getPriceHistory(materialId),
+    getMaterialsWithSameName(materialId),
     getSuppliers(),
   ]);
   const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
-  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const others = sameName.filter((m) => m.id !== materialId);
 
+  openModal({
+    title: escapeHtml(mat.name),
+    modalClass: 'modal-material-detail',
+    bodyHTML: `
+      <div class="material-detail-current">
+        <span class="material-detail-label">מחיר נוכחי</span>
+        <strong class="material-detail-price">${formatMoney(mat.unitPrice)}/${escapeHtml(mat.unit)}</strong>
+        ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
+      </div>
+      ${others.length ? `
+      <div class="material-detail-others">
+        <h4 class="material-detail-subtitle">אותו מוצר אצל ספקים נוספים</h4>
+        <ul class="material-others-list">
+          ${others.map((m) => `
+          <li>
+            <button type="button" class="link-btn browse-other-sup" data-id="${m.id}">
+              ${escapeHtml(supMap.get(m.supplierId) || 'ללא ספק')} — ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}
+            </button>
+          </li>`).join('')}
+        </ul>
+      </div>` : ''}
+      <div class="material-detail-history">
+        <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
+        ${history.length
+    ? `<table class="price-history-table">
+          <thead><tr><th>תאריך</th><th>מחיר</th></tr></thead>
+          <tbody>
+            ${history.map((h, i) => `
+            <tr class="${i === 0 ? 'is-current' : ''}">
+              <td>${formatDate(h.effectiveDate)}</td>
+              <td><strong>${formatMoney(h.price)}</strong></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`
+    : '<p class="form-hint">אין היסטוריה — עדכן מחיר בעריכה</p>'}
+      </div>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-primary" id="mat-detail-edit">✏️ עריכה</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('mat-detail-edit')?.addEventListener('click', () => {
+    closeModal();
+    switchSupplierTab('edit');
+    setTimeout(() => openEditMaterialModal(container, mat), 300);
+  });
+  document.querySelectorAll('.browse-other-sup').forEach((btn) => {
+    btn.addEventListener('click', () => openMaterialDetailModal(container, Number(btn.dataset.id)));
+  });
+}
+
+/* ── עריכה ── */
+
+async function renderEditTab(body, container, categories, selectedMatCat, selectedSupCat) {
   body.innerHTML = `
     <div class="card">
-      <div class="card-title">קטגוריות חומרי גלם</div>
+      <div class="filter-row" style="margin-bottom:8px">
+        <div class="card-title" style="margin:0;flex:1">עריכת ספקים וחומרי גלם</div>
+        <button type="button" class="btn btn-secondary btn-sm" id="supplier-import-btn">📊 Excel</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="add-sup-cat-edit">+ קטגוריה</button>
+      </div>
+      <p class="form-hint" style="margin:0">ייבוא Excel: עמודות חומר גלם · ספק · מחיר · תאריך — או ספקים בעמודות ותאריכים בשורה שנייה</p>
+    </div>
+    <div class="supplier-edit-sections" id="supplier-edit-sections">טוען...</div>
+    <input type="file" id="supplier-excel-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`;
+
+  document.getElementById('supplier-import-btn')?.addEventListener('click', () => {
+    document.getElementById('supplier-excel-file')?.click();
+  });
+
+  document.getElementById('supplier-excel-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = await parseSupplierFile(file);
+      openImportPreview(container, parsed, categories, selectedMatCat);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('add-sup-cat-edit')?.addEventListener('click', () => {
+    const name = prompt('שם קטגוריית ספקים:');
+    if (!name?.trim()) return;
+    addSupplierCategory(name.trim())
+      .then(() => { showToast('נוסף ✓'); renderSuppliers(container); })
+      .catch((err) => showToast(err.message || 'שגיאה'));
+  });
+
+  await renderEditSections(document.getElementById('supplier-edit-sections'), container, categories, selectedMatCat, selectedSupCat);
+}
+
+async function renderEditSections(host, container, categories, selectedMatCat, selectedSupCat) {
+  const [materials, suppliers] = await Promise.all([
+    getRawMaterials(Number(selectedMatCat)),
+    getSuppliers(Number(selectedSupCat)),
+  ]);
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+  const supMap = new Map((await getSuppliers()).map((s) => [s.id, s.name]));
+
+  host.innerHTML = `
+    <div class="card">
+      <div class="card-title">קטגוריות</div>
       <div class="workspace-chip-row">
         ${categories.map((c) => `
-          <button type="button" class="workspace-chip${String(c.id) === String(selectedCat) ? ' active' : ''}"
+          <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
             data-mat-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-        <button type="button" class="workspace-chip workspace-chip--add" id="add-sup-cat-mat">+ קטגוריה</button>
       </div>
     </div>
     <div class="card">
       <div class="filter-row" style="margin-bottom:12px">
-        <div class="card-title" style="margin:0;flex:1">${escapeHtml(catMap.get(Number(selectedCat)) || 'חומרים')}</div>
+        <div class="card-title" style="margin:0;flex:1">חומרי גלם · ${escapeHtml(catMap.get(Number(selectedMatCat)) || '')}</div>
         <button type="button" class="btn btn-primary btn-sm" id="add-material">+ חומר</button>
       </div>
-      <p class="form-hint" style="margin-bottom:8px">גרור ☰ לשינוי סדר חומרי גלם</p>
       ${materials.length === 0
-    ? '<p class="form-hint">אין חומרים — הוסף חומרי גלם לפי קטגוריה</p>'
-    : `<div class="material-list" data-cat-id="${selectedCat}">
+    ? '<p class="form-hint">אין חומרים — ייבא מ-Excel או הוסף ידנית</p>'
+    : `<div class="material-list" data-cat-id="${selectedMatCat}">
         ${materials.map((m, i) => `
         <div class="list-item material-list-item" data-material-id="${m.id}">
-          <button type="button" class="material-drag-handle" aria-label="גרור לשינוי סדר">☰</button>
-          <span class="material-order-num" aria-hidden="true">${i + 1}</span>
-          <div class="list-item-info">
+          <button type="button" class="material-drag-handle" aria-label="גרור">☰</button>
+          <span class="material-order-num">${i + 1}</span>
+          <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
             <div class="list-item-name">${escapeHtml(m.name)}</div>
             <div class="list-item-meta">
               ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}
               ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
             </div>
-          </div>
+          </button>
           <div class="list-item-actions">
+            <button type="button" class="btn btn-secondary btn-sm dup-mat-sup" data-id="${m.id}" title="הוסף אצל ספק נוסף">+ספק</button>
             <button type="button" class="btn btn-danger btn-sm del-mat" data-id="${m.id}">🗑</button>
           </div>
         </div>`).join('')}
       </div>`}
-    </div>`;
-
-  body.querySelectorAll('[data-mat-cat]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      container.dataset.matCat = btn.dataset.matCat;
-      renderSuppliers(container);
-    });
-  });
-
-  document.getElementById('add-sup-cat-mat')?.addEventListener('click', () => {
-    const name = prompt('שם קטגוריית ספקים:');
-    if (!name?.trim()) return;
-    addSupplierCategory(name.trim()).then(() => renderSuppliers(container)).catch((e) => showToast(e.message));
-  });
-
-  document.getElementById('add-material')?.addEventListener('click', () => {
-    openModal({
-      title: 'חומר גלם חדש',
-      bodyHTML: `
-        <div class="form-group"><label>שם</label><input type="text" id="mat-name"></div>
-        <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="ק&quot;ג" placeholder="ק&quot;ג / יח"></div>
-        <div class="form-group"><label>מחיר ליחידה (₪)</label><input type="number" id="mat-price" min="0" step="0.01"></div>
-        <div class="form-group"><label>ספק (רשות)</label>
-          <select id="mat-supplier"><option value="">—</option>
-            ${suppliers.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
-          </select>
-        </div>`,
-      footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
-    });
-    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-    document.getElementById('save-mat')?.addEventListener('click', async () => {
-      try {
-        await addRawMaterial({
-          supplierCategoryId: Number(selectedCat),
-          name: document.getElementById('mat-name').value,
-          unit: document.getElementById('mat-unit').value,
-          unitPrice: document.getElementById('mat-price').value,
-          supplierId: document.getElementById('mat-supplier').value || null,
-        });
-        closeModal();
-        showToast('נוסף ✓');
-        requestAutoBackupNow().catch(() => {});
-        renderSuppliers(container);
-      } catch (e) {
-        showToast(e.message || 'שגיאה');
-      }
-    });
-  });
-
-  body.querySelectorAll('.del-mat').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('למחוק?')) return;
-      await deleteRawMaterial(Number(btn.dataset.id));
-      renderSuppliers(container);
-    });
-  });
-
-  if (materials.length) {
-    bindMaterialDragList(body, Number(selectedCat), async (orderedIds) => {
-      await setRawMaterialOrder(Number(selectedCat), orderedIds);
-    });
-  }
-}
-
-async function renderSuppliersTab(body, container, categories, selectedCat) {
-  const suppliers = await getSuppliers(Number(selectedCat));
-  const catMap = new Map(categories.map((c) => [c.id, c.name]));
-
-  body.innerHTML = `
-    <div class="card">
-      <div class="workspace-chip-row">
-        ${categories.map((c) => `
-          <button type="button" class="workspace-chip${String(c.id) === String(selectedCat) ? ' active' : ''}"
-            data-sup-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-      </div>
     </div>
     <div class="card">
       <div class="filter-row" style="margin-bottom:12px">
-        <div class="card-title" style="margin:0;flex:1">ספקים · ${escapeHtml(catMap.get(Number(selectedCat)) || '')}</div>
+        <div class="card-title" style="margin:0;flex:1">ספקים · ${escapeHtml(catMap.get(Number(selectedSupCat)) || '')}</div>
         <button type="button" class="btn btn-primary btn-sm" id="add-supplier">+ ספק</button>
       </div>
-      <p class="form-hint" style="margin-bottom:8px">גרור ☰ לשינוי סדר ספקים</p>
+      <div class="workspace-chip-row" style="margin-bottom:10px">
+        ${categories.map((c) => `
+          <button type="button" class="workspace-chip${String(c.id) === String(selectedSupCat) ? ' active' : ''}"
+            data-sup-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
+      </div>
       ${suppliers.length === 0
-    ? '<p class="form-hint">אין ספקים בקטגוריה</p>'
-    : `<div class="supplier-list" data-cat-id="${selectedCat}">
+    ? '<p class="form-hint">אין ספקים — ייבא מ-Excel או הוסף ידנית</p>'
+    : `<div class="supplier-list" data-cat-id="${selectedSupCat}">
         ${suppliers.map((s, i) => `
         <div class="list-item supplier-list-item" data-supplier-id="${s.id}">
-          <button type="button" class="supplier-drag-handle" aria-label="גרור לשינוי סדר">☰</button>
-          <span class="supplier-order-num" aria-hidden="true">${i + 1}</span>
-          <div class="list-item-info">
+          <button type="button" class="supplier-drag-handle" aria-label="גרור">☰</button>
+          <span class="supplier-order-num">${i + 1}</span>
+          <button type="button" class="list-item-info edit-sup-open" data-id="${s.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
             <div class="list-item-name">${escapeHtml(s.name)}</div>
-            <div class="list-item-meta">
-              ${s.whatsapp ? `📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? `📞 ${escapeHtml(s.phone)}` : 'ללא טלפון')}
-            </div>
-          </div>
+            <div class="list-item-meta">${s.whatsapp ? `📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? `📞 ${escapeHtml(s.phone)}` : 'ללא טלפון')}</div>
+          </button>
           <div class="list-item-actions">
-            ${s.whatsapp ? `<a class="btn btn-secondary btn-sm" href="https://wa.me/${s.whatsapp.replace(/\D/g, '')}" target="_blank" rel="noopener">וואטסאפ</a>` : ''}
             <button type="button" class="btn btn-danger btn-sm del-sup" data-id="${s.id}">🗑</button>
           </div>
         </div>`).join('')}
       </div>`}
     </div>`;
 
-  body.querySelectorAll('[data-sup-cat]').forEach((btn) => {
+  host.querySelectorAll('[data-mat-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.matCat = btn.dataset.matCat;
+      container.dataset.supCat = btn.dataset.matCat;
+      renderSuppliers(container);
+    });
+  });
+  host.querySelectorAll('[data-sup-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       container.dataset.supCat = btn.dataset.supCat;
       renderSuppliers(container);
     });
   });
 
-  document.getElementById('add-supplier')?.addEventListener('click', () => {
-    openModal({
-      title: 'ספק חדש',
-      bodyHTML: `
-        <div class="form-group"><label>שם</label><input type="text" id="sup-name"></div>
-        <div class="form-group"><label>וואטסאפ / טלפון</label><input type="tel" id="sup-wa" placeholder="972501234567"></div>
-        <div class="form-group"><label>הערות</label><input type="text" id="sup-notes"></div>`,
-      footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-sup">שמור</button>`,
-    });
-    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-    document.getElementById('save-sup')?.addEventListener('click', async () => {
-      try {
-        await addSupplier({
-          categoryId: Number(selectedCat),
-          name: document.getElementById('sup-name').value,
-          whatsapp: document.getElementById('sup-wa').value,
-          notes: document.getElementById('sup-notes').value,
-        });
-        closeModal();
-        showToast('נוסף ✓');
-        renderSuppliers(container);
-      } catch (e) {
-        showToast(e.message || 'שגיאה');
-      }
+  document.getElementById('add-material')?.addEventListener('click', async () => {
+    openAddMaterialModal(container, Number(selectedMatCat), await getSuppliers());
+  });
+
+  host.querySelectorAll('.edit-mat-open').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
+      if (mat) openEditMaterialModal(container, mat);
     });
   });
 
-  body.querySelectorAll('.del-sup').forEach((btn) => {
+  host.querySelectorAll('.dup-mat-sup').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
+      if (mat) openDuplicateMaterialModal(container, mat, Number(selectedMatCat));
+    });
+  });
+
+  host.querySelectorAll('.del-mat').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק חומר גלם?')) return;
+      await deleteRawMaterial(Number(btn.dataset.id));
+      showToast('נמחק');
+      renderSuppliers(container);
+    });
+  });
+
+  document.getElementById('add-supplier')?.addEventListener('click', () => {
+    openAddSupplierModal(container, Number(selectedSupCat));
+  });
+
+  host.querySelectorAll('.edit-sup-open').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const s = suppliers.find((x) => x.id === Number(btn.dataset.id));
+      if (s) openEditSupplierModal(container, s);
+    });
+  });
+
+  host.querySelectorAll('.del-sup').forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (!confirm('למחוק ספק?')) return;
       await deleteSupplier(Number(btn.dataset.id));
@@ -249,39 +386,271 @@ async function renderSuppliersTab(body, container, categories, selectedCat) {
     });
   });
 
+  if (materials.length) {
+    bindMaterialDragList(host, Number(selectedMatCat), async (orderedIds) => {
+      await setRawMaterialOrder(Number(selectedMatCat), orderedIds);
+    });
+  }
   if (suppliers.length) {
-    bindSupplierDragList(body, Number(selectedCat), async (orderedIds) => {
-      await setSupplierOrder(Number(selectedCat), orderedIds);
+    bindSupplierDragList(host, Number(selectedSupCat), async (orderedIds) => {
+      await setSupplierOrder(Number(selectedSupCat), orderedIds);
     });
   }
 }
 
-async function renderPlanTab(body, container, products, weekStart) {
+function openAddMaterialModal(container, categoryId, suppliers) {
+  openModal({
+    title: 'חומר גלם חדש',
+    bodyHTML: materialFormHTML(null, suppliers),
+    footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
+  });
+  bindMaterialForm(container, categoryId, null);
+}
+
+function openEditMaterialModal(container, mat) {
+  getSuppliers().then((suppliers) => {
+    openModal({
+      title: `עריכה · ${escapeHtml(mat.name)}`,
+      bodyHTML: `${materialFormHTML(mat, suppliers)}
+        <div class="form-group" style="margin-top:12px">
+          <label>עדכון מחיר (שומר היסטוריה)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="number" id="mat-new-price" min="0" step="0.01" placeholder="מחיר חדש" style="flex:1">
+            <input type="date" id="mat-price-date" value="${todayISO()}" style="flex:1">
+          </div>
+        </div>
+        <div id="mat-history-host"></div>`,
+      footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
+    });
+    bindMaterialForm(container, mat.supplierCategoryId, mat.id);
+    loadMaterialHistory(mat.id);
+  });
+}
+
+async function loadMaterialHistory(materialId) {
+  const host = document.getElementById('mat-history-host');
+  if (!host) return;
+  const history = await getPriceHistory(materialId);
+  host.innerHTML = history.length
+    ? `<div class="form-group"><label>היסטוריה</label>
+        <ul class="price-history-mini">${history.slice(0, 8).map((h) => `
+          <li>${formatDate(h.effectiveDate)} — <strong>${formatMoney(h.price)}</strong></li>`).join('')}
+        </ul></div>`
+    : '';
+}
+
+function materialFormHTML(mat, suppliers) {
+  return `
+    <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+    <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : 'ק&quot;ג'}"></div>
+    <div class="form-group"><label>מחיר נוכחי (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
+    <div class="form-group"><label>ספק</label>
+      <select id="mat-supplier"><option value="">—</option>
+        ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+      </select>
+    </div>`;
+}
+
+function bindMaterialForm(container, categoryId, materialId) {
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-mat')?.addEventListener('click', async () => {
+    try {
+      const payload = {
+        name: document.getElementById('mat-name')?.value,
+        unit: document.getElementById('mat-unit')?.value,
+        supplierId: document.getElementById('mat-supplier')?.value || null,
+      };
+      if (materialId) {
+        await updateRawMaterial(materialId, payload);
+        const newPrice = document.getElementById('mat-new-price')?.value;
+        const priceDate = document.getElementById('mat-price-date')?.value;
+        if (newPrice !== '' && newPrice != null) {
+          await setRawMaterialPrice(materialId, newPrice, priceDate || todayISO());
+        } else {
+          const basePrice = document.getElementById('mat-price')?.value;
+          const current = await getRawMaterials();
+          const m = current.find((x) => x.id === materialId);
+          if (m && basePrice !== '' && Number(basePrice) !== Number(m.unitPrice)) {
+            await setRawMaterialPrice(materialId, basePrice, todayISO());
+          }
+        }
+      } else {
+        await addRawMaterial({
+          supplierCategoryId: categoryId,
+          ...payload,
+          unitPrice: document.getElementById('mat-price')?.value,
+        });
+      }
+      closeModal();
+      showToast('נשמר ✓');
+      requestAutoBackupNow().catch(() => {});
+      renderSuppliers(container);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
+function openDuplicateMaterialModal(container, mat, categoryId) {
+  getSuppliers().then((suppliers) => {
+    const others = suppliers.filter((s) => s.id !== mat.supplierId);
+    openModal({
+      title: `אותו מוצר אצל ספק נוסף`,
+      bodyHTML: `
+        <p class="form-hint">ייווצר «${escapeHtml(mat.name)}» אצל ספק אחר — מחיר נפרד לכל ספק</p>
+        <div class="form-group"><label>ספק</label>
+          <select id="dup-supplier">${others.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
+        </div>
+        <div class="form-group"><label>מחיר (₪)</label><input type="number" id="dup-price" min="0" step="0.01" value="${mat.unitPrice || ''}"></div>
+        <div class="form-group"><label>תאריך מחיר</label><input type="date" id="dup-date" value="${todayISO()}"></div>`,
+      footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-dup">שמור</button>`,
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('save-dup')?.addEventListener('click', async () => {
+      try {
+        const sid = Number(document.getElementById('dup-supplier')?.value);
+        const mid = await addRawMaterial({
+          supplierCategoryId: categoryId,
+          name: mat.name,
+          unit: mat.unit,
+          unitPrice: 0,
+          supplierId: sid,
+        });
+        const price = document.getElementById('dup-price')?.value;
+        if (price !== '') {
+          await setRawMaterialPrice(mid, price, document.getElementById('dup-date')?.value || todayISO());
+        }
+        closeModal();
+        showToast('נוסף אצל ספק נוסף ✓');
+        renderSuppliers(container);
+      } catch (e) {
+        showToast(e.message || 'שגיאה');
+      }
+    });
+  });
+}
+
+function openAddSupplierModal(container, categoryId) {
+  openModal({
+    title: 'ספק חדש',
+    bodyHTML: supplierFormHTML(null),
+    footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-sup">שמור</button>`,
+  });
+  bindSupplierForm(container, categoryId, null);
+}
+
+function openEditSupplierModal(container, supplier) {
+  openModal({
+    title: `עריכה · ${escapeHtml(supplier.name)}`,
+    bodyHTML: supplierFormHTML(supplier),
+    footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-sup">שמור</button>`,
+  });
+  bindSupplierForm(container, supplier.categoryId, supplier.id);
+}
+
+function supplierFormHTML(s) {
+  return `
+    <div class="form-group"><label>שם</label><input type="text" id="sup-name" value="${s ? escapeHtml(s.name) : ''}"></div>
+    <div class="form-group"><label>וואטסאפ / טלפון</label><input type="tel" id="sup-wa" value="${s ? escapeHtml(s.whatsapp || s.phone || '') : ''}"></div>
+    <div class="form-group"><label>הערות</label><input type="text" id="sup-notes" value="${s ? escapeHtml(s.notes || '') : ''}"></div>`;
+}
+
+function bindSupplierForm(container, categoryId, supplierId) {
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-sup')?.addEventListener('click', async () => {
+    try {
+      const payload = {
+        name: document.getElementById('sup-name')?.value,
+        whatsapp: document.getElementById('sup-wa')?.value,
+        notes: document.getElementById('sup-notes')?.value,
+      };
+      if (supplierId) await updateSupplier(supplierId, payload);
+      else await addSupplier({ categoryId, ...payload });
+      closeModal();
+      showToast('נשמר ✓');
+      renderSuppliers(container);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
+function openImportPreview(container, parsed, categories, defaultCatId) {
+  const { entries, format } = parsed;
+  const preview = entries.slice(0, 12);
+  openModal({
+    title: `ייבוא ${entries.length} רשומות (${format === 'wide' ? 'טבלת ספקים' : 'רשימה'})`,
+    bodyHTML: `
+      <p class="form-hint">ייווצרו/יעודכנו ספקים, חומרי גלם ומחירים (עם תאריך כשיש)</p>
+      <div class="form-group">
+        <label>קטגוריית ברירת מחדל</label>
+        <select id="import-sup-cat">
+          ${categories.map((c) => `<option value="${c.id}"${String(c.id) === String(defaultCatId) ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <ul class="import-supplier-preview">
+        ${preview.map((e) => `
+          <li><strong>${escapeHtml(e.materialName)}</strong> · ${escapeHtml(e.supplierName)} · ${formatMoney(e.price || 0)}${e.effectiveDate ? ` · ${formatDate(e.effectiveDate)}` : ''}</li>`).join('')}
+        ${entries.length > preview.length ? `<li class="form-hint">+ עוד ${entries.length - preview.length}...</li>` : ''}
+      </ul>`,
+    footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="confirm-sup-import">ייבוא ✓</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('confirm-sup-import')?.addEventListener('click', async () => {
+    try {
+      const catId = Number(document.getElementById('import-sup-cat')?.value);
+      const stats = await importSupplierExcelEntries(entries, { defaultCategoryId: catId });
+      closeModal();
+      showToast(`יובאו: ${stats.suppliersAdded} ספקים · ${stats.materialsAdded} חומרים · ${stats.priceEntries} מחירים ✓`);
+      requestAutoBackupNow().catch(() => {});
+      renderSuppliers(container);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
+/* ── הזמנה ── */
+
+async function renderOrderTab(body, container, products, weekStart) {
   const plan = await getWeeklyPlan(weekStart);
   const planMap = new Map(plan.items.map((i) => [i.productId, i.plannedPortions]));
+  const { categories } = await computeWeeklyMaterialNeeds(weekStart);
+  const text = formatWhatsAppOrderText({ weekStart, categories });
 
   body.innerHTML = `
     <div class="card">
       <div class="card-title">תוכנית ייצור שבועית</div>
-      <p class="form-hint" style="margin-bottom:10px">שבוע שמתחיל ב-${formatDate(weekStart)} — הזן כמה מנות מתכנן לייצר</p>
+      <p class="form-hint" style="margin-bottom:10px">שבוע שמתחיל ב-${formatDate(weekStart)}</p>
       <div class="form-group">
         <label>תחילת שבוע</label>
         <input type="date" id="plan-week" value="${weekStart}">
       </div>
       ${products.length === 0
-    ? '<p class="form-hint">אין מוצרים — הוסף במסך מוצרים (תיעוד יצור)</p>'
-    : products.map((p) => {
-      const recipe = planMap.has(p.id);
-      return `
+    ? '<p class="form-hint">אין מוצרים — הוסף במסך מוצרים</p>'
+    : products.slice(0, 40).map((p) => `
         <div class="list-item plan-product-row">
           <div class="list-item-info">
             <div class="list-item-name">${escapeHtml(p.name)}</div>
-            <div class="list-item-meta plan-recipe-hint" data-pid="${p.id}">בודק מתכון...</div>
+            <div class="list-item-meta plan-recipe-hint" data-pid="${p.id}">...</div>
           </div>
           <input type="number" class="plan-portions-input" data-pid="${p.id}" min="0" step="1"
             value="${planMap.get(p.id) ?? ''}" placeholder="0">
-        </div>`;
-    }).join('')}
+        </div>`).join('')}
+    </div>
+    <div class="card">
+      <div class="card-title">רשימת הזמנה</div>
+      ${categories.length === 0
+    ? '<p class="form-hint">מלא תוכנית שבועית וקשר מתכונים למוצרים</p>'
+    : categories.map((cat) => `
+        <div class="order-category-block">
+          <h3 class="order-category-title">${escapeHtml(cat.categoryName)}</h3>
+          <ul class="order-items-list">
+            ${cat.items.map((item) => `<li><strong>${escapeHtml(item.name)}</strong>: ${item.totalQty} ${escapeHtml(item.unit)}</li>`).join('')}
+          </ul>
+        </div>`).join('')}
+      <textarea id="wa-order-text" class="wa-order-text" rows="8" readonly>${escapeHtml(text)}</textarea>
+      <button type="button" class="btn btn-primary" id="copy-wa-order" style="width:100%;margin-top:8px">📋 העתק לוואטסאפ</button>
     </div>`;
 
   document.getElementById('plan-week')?.addEventListener('change', (e) => {
@@ -290,9 +659,8 @@ async function renderPlanTab(body, container, products, weekStart) {
   });
 
   for (const el of body.querySelectorAll('.plan-recipe-hint')) {
-    const pid = Number(el.dataset.pid);
-    const r = await getRecipeForProduct(pid);
-    el.textContent = r ? `📒 ${r.name} (${r.yieldPortions} מנות)` : '⚠️ אין מתכון מקושר';
+    const r = await getRecipeForProduct(Number(el.dataset.pid));
+    el.textContent = r ? `📒 ${r.name}` : '⚠️ אין מתכון';
   }
 
   body.querySelectorAll('.plan-portions-input').forEach((input) => {
@@ -301,58 +669,22 @@ async function renderPlanTab(body, container, products, weekStart) {
         await setWeeklyPlanItem(plan.id, Number(input.dataset.pid), input.value);
         requestAutoBackupNow().catch(() => {});
         showToast('נשמר ✓');
+        renderSuppliers(container);
       } catch (e) {
         showToast(e.message || 'שגיאה');
       }
     });
   });
-}
-
-async function renderOrderTab(body, container, weekStart) {
-  const { categories } = await computeWeeklyMaterialNeeds(weekStart);
-  const text = formatWhatsAppOrderText({ weekStart, categories });
-
-  body.innerHTML = `
-    <div class="card">
-      <div class="card-title">רשימת הזמנה — שבוע ${formatDate(weekStart)}</div>
-      <p class="form-hint" style="margin-bottom:12px">מחושב מתוכנית השבועית + מתכונים מקושרים למוצרים</p>
-      ${categories.length === 0
-    ? '<p class="form-hint">אין פריטים — מלא תוכנית שבועית וקשר מתכונים למוצרים</p>'
-    : categories.map((cat) => `
-        <div class="order-category-block">
-          <h3 class="order-category-title">${escapeHtml(cat.categoryName)}</h3>
-          <ul class="order-items-list">
-            ${cat.items.map((item) => `
-              <li><strong>${escapeHtml(item.name)}</strong>: ${item.totalQty} ${escapeHtml(item.unit)}</li>`).join('')}
-          </ul>
-        </div>`).join('')}
-      <textarea id="wa-order-text" class="wa-order-text" rows="10" readonly>${escapeHtml(text)}</textarea>
-      <button type="button" class="btn btn-primary" id="copy-wa-order" style="width:100%;margin-top:8px">📋 העתק לוואטסאפ</button>
-      <button type="button" class="btn btn-secondary" id="share-wa-order" style="width:100%;margin-top:8px">שתף...</button>
-    </div>`;
 
   document.getElementById('copy-wa-order')?.addEventListener('click', async () => {
     const ta = document.getElementById('wa-order-text');
     try {
       await navigator.clipboard.writeText(ta.value);
-      showToast('הועתק ✓ — הדבק בוואטסאפ');
+      showToast('הועתק ✓');
     } catch {
       ta.select();
       document.execCommand('copy');
       showToast('הועתק ✓');
-    }
-  });
-
-  document.getElementById('share-wa-order')?.addEventListener('click', async () => {
-    const ta = document.getElementById('wa-order-text');
-    if (navigator.share) {
-      try {
-        await navigator.share({ title: 'הזמנת חומרי גלם', text: ta.value });
-      } catch {
-        /* cancelled */
-      }
-    } else {
-      document.getElementById('copy-wa-order')?.click();
     }
   });
 }
