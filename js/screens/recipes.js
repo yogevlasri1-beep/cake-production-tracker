@@ -8,6 +8,7 @@ import {
   importParsedRecipes, scaleRecipeIngredients,
   findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
   getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
+  getRecipeWeightSummary, formatKgWeight,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
 } from '../kitchen-db.js';
 import { getProducts, getProductsCatalogLayout } from '../db.js';
@@ -1133,10 +1134,38 @@ function openImportPreview(container, parsed, { groups, subs }) {
   });
 }
 
-function renderRecipeTotalHTML(ingredients, options) {
-  const text = formatRecipeIngredientsTotal(ingredients, options);
-  if (!text) return '';
-  return `סה"כ: <strong>${escapeHtml(text)}</strong>`;
+function renderRecipeWeightSummaryHTML(ingredients, recipe, options) {
+  const summary = getRecipeWeightSummary(ingredients, options);
+  if (!summary.mainText) return '';
+
+  const portionGrams = recipe?.portionWeightGrams ? Number(recipe.portionWeightGrams) : null;
+  const yieldP = Number(recipe?.yieldPortions) || 1;
+  let estimateHtml = '';
+  if (!portionGrams && summary.totalRecipeKg > 0 && yieldP > 1) {
+    const gPerPortion = Math.round((summary.totalRecipeKg * 1000) / yieldP);
+    if (gPerPortion > 0) {
+      estimateHtml = `<p class="recipe-weight-estimate">משקל משוער למנה: ${gPerPortion} גרם (${yieldP} מנות)</p>`;
+    }
+  }
+
+  const portionHtml = portionGrams
+    ? `<div class="recipe-portion-weight-line"><span>משקל מנה:</span> <strong>${portionGrams} גרם</strong></div>`
+    : '';
+
+  return `
+    <div class="recipe-weight-summary">
+      <div class="recipe-weight-main">
+        <span class="recipe-weight-label">סה"כ משקל מתכון</span>
+        <strong class="recipe-weight-value">${escapeHtml(summary.mainText)}</strong>
+      </div>
+      ${summary.breakdownText ? `<div class="recipe-weight-breakdown">${escapeHtml(summary.breakdownText)}</div>` : ''}
+      ${portionHtml}
+      ${estimateHtml}
+    </div>`;
+}
+
+function renderRecipeTotalHTML(ingredients, recipe, options) {
+  return renderRecipeWeightSummaryHTML(ingredients, recipe, options);
 }
 
 function readIngredientsFromForm(baseIngredients) {
@@ -1150,10 +1179,22 @@ function readIngredientsFromForm(baseIngredients) {
   });
 }
 
-function refreshRecipeTotalDisplay(baseIngredients) {
+function getRecipeFormContext(baseRecipe) {
+  const portionRaw = document.getElementById('recipe-portion-weight')?.value;
+  return {
+    ...(baseRecipe || {}),
+    yieldPortions: document.getElementById('recipe-yield')?.value,
+    portionWeightGrams: portionRaw ? Number(portionRaw) : null,
+  };
+}
+
+function refreshRecipeTotalDisplay(baseIngredients, baseRecipe) {
   const el = document.getElementById('recipe-ing-total');
   if (!el) return;
-  el.innerHTML = renderRecipeTotalHTML(readIngredientsFromForm(baseIngredients));
+  el.innerHTML = renderRecipeTotalHTML(
+    readIngredientsFromForm(baseIngredients),
+    getRecipeFormContext(baseRecipe),
+  );
 }
 
 function bindRatioCalculator(recipe, hostEl) {
@@ -1171,9 +1212,9 @@ function bindRatioCalculator(recipe, hostEl) {
           <td>${ing.quantity} ${escapeHtml(ing.unit)}</td>
           <td><strong>${ing.scaledQuantity}</strong> ${escapeHtml(ing.unit)}</td>
         </tr>`).join('');
-      const total = formatRecipeIngredientsTotal(scaled, { useScaled: true });
-      const totalRow = total
-        ? `<tr class="recipe-total-row"><td colspan="2"><strong>סה"כ</strong></td><td><strong>${escapeHtml(total)}</strong></td></tr>`
+      const totalHtml = renderRecipeWeightSummaryHTML(scaled, recipe, { useScaled: true });
+      const totalRow = totalHtml
+        ? `<tr class="recipe-total-row"><td colspan="3">${totalHtml}</td></tr>`
         : '';
       return rows + totalRow;
     } catch {
@@ -1240,7 +1281,7 @@ function findProductCategoryName(productCatalog, categoryId) {
 
 function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName }) {
   const ingredients = recipe.ingredients || [];
-  const totalText = formatRecipeIngredientsTotal(ingredients);
+  const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
   const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
     ? `${recipe.yieldPortions} מנות`
     : 'מתכון בסיס';
@@ -1278,15 +1319,9 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
                 <td class="col-unit">${escapeHtml(ing.unit)}</td>
               </tr>`).join('')}
             </tbody>
-            ${totalText ? `
-            <tfoot>
-              <tr class="recipe-sheet-total-row">
-                <td colspan="2">סה"כ משקל</td>
-                <td colspan="2"><strong>${escapeHtml(totalText)}</strong></td>
-              </tr>
-            </tfoot>` : ''}
           </table>
-        </div>` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
+        </div>
+        ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
       </section>
       ${recipe.notes?.trim() ? `
       <section class="recipe-sheet-section recipe-sheet-notes-block">
@@ -1378,6 +1413,10 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>מנות למתכון (בסיס)</label>
         <input type="number" id="recipe-yield" min="0.1" step="0.1" value="${recipe?.yieldPortions ?? 1}">
       </div>
+      <div class="form-group">
+        <label>משקל מנה (גרם) — אופציונלי</label>
+        <input type="number" id="recipe-portion-weight" min="1" step="1" placeholder="למשל: 85 — כדור בצק / מנת שקילה" value="${recipe?.portionWeightGrams ?? ''}">
+      </div>
       <div class="form-group recipe-product-link-block">
         ${buildOptionalProductLinkerHTML(catalog, {
     linkedProductCategoryId: recipe?.linkedProductCategoryId,
@@ -1404,7 +1443,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
             <button type="button" class="btn btn-danger btn-sm del-ing" data-id="${ing.id}">🗑</button>
           </div>`;
   }).join('') : '<p class="form-hint">אין חומרים</p>'}
-        ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeTotalHTML(ingredients)}</div>` : ''}
+        ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeTotalHTML(ingredients, recipe)}</div>` : ''}
         <div class="filter-row" style="margin-top:8px">
           <select id="new-ing-mat" style="flex:1">
             <option value="">מחסן...</option>
@@ -1438,14 +1477,21 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     row.querySelector('.ing-qty')?.addEventListener('change', async (e) => {
       try { await updateRecipeIngredient(ingId, { quantity: e.target.value }); }
       catch (err) { showToast(err.message || 'שגיאה'); }
-      refreshRecipeTotalDisplay(ingredients);
+      refreshRecipeTotalDisplay(ingredients, recipe);
     });
-    row.querySelector('.ing-qty')?.addEventListener('input', () => refreshRecipeTotalDisplay(ingredients));
+    row.querySelector('.ing-qty')?.addEventListener('input', () => refreshRecipeTotalDisplay(ingredients, recipe));
     row.querySelector('.ing-unit')?.addEventListener('change', async (e) => {
       try { await updateRecipeIngredient(ingId, { unitKind: e.target.value }); }
       catch (err) { showToast(err.message || 'שגיאה'); }
-      refreshRecipeTotalDisplay(ingredients);
+      refreshRecipeTotalDisplay(ingredients, recipe);
     });
+  });
+
+  document.getElementById('recipe-yield')?.addEventListener('input', () => {
+    if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe);
+  });
+  document.getElementById('recipe-portion-weight')?.addEventListener('input', () => {
+    if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe);
   });
 
   document.getElementById('add-ing-btn')?.addEventListener('click', async () => {
@@ -1492,9 +1538,11 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       .map((cb) => Number(cb.value));
     const linkedProductCategoryId = document.getElementById('recipe-product-category')?.value || null;
     const recipeCategoryId = Number(document.getElementById('recipe-category')?.value) || categoryId;
+    const portionRaw = document.getElementById('recipe-portion-weight')?.value?.trim();
     const data = {
       name: document.getElementById('recipe-name').value.trim(),
       yieldPortions: document.getElementById('recipe-yield').value,
+      portionWeightGrams: portionRaw || null,
       linkedProductIds,
       linkedProductCategoryId: linkedProductCategoryId || null,
       notes: document.getElementById('recipe-notes').value,

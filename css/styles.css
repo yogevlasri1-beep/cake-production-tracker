@@ -2589,6 +2589,81 @@ table.report-table tfoot td {
   color: var(--primary, #2563eb);
 }
 
+.recipe-weight-summary {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+}
+
+.recipe-weight-summary--compact {
+  margin-top: 0;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-color: var(--border);
+}
+
+.recipe-total-row .recipe-weight-summary {
+  margin-top: 0;
+  background: #f8fafc;
+  border-color: var(--border);
+}
+
+.recipe-weight-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.recipe-weight-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.recipe-weight-value {
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--primary, #2563eb);
+  font-variant-numeric: tabular-nums;
+}
+
+.recipe-weight-breakdown {
+  margin-top: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.recipe-portion-weight-line {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #bfdbfe;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.recipe-portion-weight-line strong {
+  font-size: 1.05rem;
+  color: #5b21b6;
+}
+
+.recipe-weight-estimate {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.recipe-ingredients-total .recipe-weight-summary {
+  margin-top: 10px;
+}
+
 .recipe-sheet-empty {
   margin: 0;
   padding: 20px;
