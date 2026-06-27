@@ -3,21 +3,21 @@ description: Auto-publish app changes to Vercel via GitHub push
 alwaysApply: true
 ---
 
-# פרסום אוטומטי ל-Vercel
+# פרסום אוטומטי
 
-הפרויקט מחובר ל-Vercel דרך GitHub: **כל push ל-`main` מפריס אוטומטית** תוך 1–2 דקות.
+## GitHub Pages (עובד תמיד)
 
-## אחרי כל שינוי משמעותי בקוד
+כל push ל-`main` מפריס ל-GitHub Pages תוך ~1 דקה.
 
-1. הרץ `./scripts/bump-version.sh` (אם שינית קבצי אפליקציה — cache bust + PWA).
-2. הרץ `./scripts/publish-to-vercel.sh "תיאור קצר של השינוי"` — זה עושה commit + push ל-GitHub.
-3. אל תשאיר שינויים רק מקומיים — המשתמש רואה ב-Vercel/אייפון רק מה שב-GitHub.
+- **URL עדכני:** `https://yogevlasri1-beep.github.io/cake-production-tracker/`
 
-## URL
+## Vercel (דורש חיבור)
 
-- Production: `https://cake-production-tracker.vercel.app`
-- אחרי deploy: המשתמש יכול לרענן עם `/?force-update=1` אם ה-PWA נתקע על גרסה ישנה.
+`https://cake-production-tracker.vercel.app` — **לא מתעדכן אוטומטית** אם חיבור Git נותק.
 
-## אל תשתמש ב-Vercel Drop
+אחרי שינוי משמעותי:
+1. `./scripts/bump-version.sh`
+2. `./scripts/publish-to-vercel.sh "תיאור"`
+3. `./scripts/verify-deploy.sh` — אם Vercel לא מעודכן, ראה `scripts/FIX-VERCEL.md`
 
-הפריסה הרשמית היא דרך GitHub → Vercel, לא zip ידני.
+`vercel.json` מוגדר ל-proxy ל-GitHub Pages — אחרי Redeploy חד-פעמי ב-Vercel, שני ה-URLים יציגו אותה גרסה.

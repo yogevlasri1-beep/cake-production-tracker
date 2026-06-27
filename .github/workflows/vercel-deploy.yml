@@ -9,14 +9,31 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Vercel deploy hook
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
         env:
           VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: |
           if [ -n "$VERCEL_DEPLOY_HOOK" ]; then
+            echo "→ Deploy hook..."
             curl -fsS -X POST "$VERCEL_DEPLOY_HOOK"
-            echo "✓ Vercel deploy hook triggered"
+            echo "✓ Deploy hook triggered"
+          elif [ -n "$VERCEL_TOKEN" ]; then
+            npm install -g vercel@latest
+            vercel deploy --prod --token "$VERCEL_TOKEN" --yes --confirm
           else
-            echo "::warning::VERCEL_DEPLOY_HOOK לא מוגדר — Vercel לא יתעדכן אוטומטית"
-            echo "GitHub Pages מתעדכן דרך Deploy GitHub Pages workflow"
+            echo "::warning::VERCEL_DEPLOY_HOOK / VERCEL_TOKEN לא מוגדרים — Vercel לא יתעדכן"
+            echo "GitHub Pages מתעדכן אוטומטית"
+          fi
+
+      - name: Verify Vercel version
+        run: |
+          sleep 30
+          REMOTE=$(curl -fsS "https://cake-production-tracker.vercel.app/js/version.js?b=$(date +%s)" | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
+          LOCAL=$(grep "APP_VERSION = '" js/version.js | sed "s/.*'\([^']*\)'.*/\1/")
+          echo "Vercel: $REMOTE · GitHub: $LOCAL"
+          if [ "$REMOTE" != "$LOCAL" ]; then
+            echo "::warning::Vercel עדיין על $REMOTE (צפוי $LOCAL) — ראה scripts/FIX-VERCEL.md"
           fi

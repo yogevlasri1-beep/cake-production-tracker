@@ -4,6 +4,12 @@
   "installCommand": "",
   "buildCommand": "",
   "outputDirectory": ".",
+  "rewrites": [
+    {
+      "source": "/:path*",
+      "destination": "https://yogevlasri1-beep.github.io/cake-production-tracker/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/",
