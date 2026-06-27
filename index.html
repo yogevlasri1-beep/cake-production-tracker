@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="css/styles.css?v=132">
+  <link rel="stylesheet" href="css/styles.css?v=157">
   <script type="importmap">
   {
     "imports": {
@@ -132,7 +132,7 @@
   </div>
 
   <script>
-    window.__APP_BUILD__ = '132';
+    window.__APP_BUILD__ = '157';
 
     function isIOSStandalone() {
       return (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
@@ -143,7 +143,7 @@
       var main = document.getElementById('main-content');
       if (!main) return;
       var iosHint = isIOSStandalone()
-        ? '<p style="font-size:0.85rem;color:#64748b;margin:12px 0;line-height:1.6"><strong>באייפון מהאייקון?</strong> סגור את האפליקציה, פתח <strong>Safari</strong> (לא האייקון), הקלד את כתובת ה-Mac עם <code>?force-update=1</code>, ואז «נקה מטמון ועדכן». אחרי שרואים «גרסה 91» — מחק את האייקון הישן והוסף מחדש למסך הבית.</p>'
+        ? '<p style="font-size:0.85rem;color:#64748b;margin:12px 0;line-height:1.6"><strong>באייפון מהאייקון?</strong> לחץ «נקה מטמון ועדכן» — או סגור את האפליקציה, פתח <strong>Safari</strong> וגש לכתובת עם <code>?force-update=1</code></p>'
         : '';
       main.innerHTML =
         '<div class="card" style="margin:16px;border:2px solid #ef4444">' +
@@ -186,6 +186,7 @@
           var u = new URL(location.href);
           u.searchParams.delete('force-update');
           u.searchParams.set('v', BUILD);
+          u.searchParams.set('t', String(Date.now()));
           location.replace(u.toString());
         });
         return;
@@ -198,19 +199,36 @@
         });
       }
 
-      var stored = null;
-      try { stored = localStorage.getItem('appBuild'); } catch (e) { /* ignore */ }
+      function finishBoot() {
+        var stored = null;
+        try { stored = localStorage.getItem('appBuild'); } catch (e) { /* ignore */ }
 
-      if (stored && Number(stored) < Number(BUILD)) {
-        clearAllCaches().then(function () {
-          try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
-          loadApp();
-        });
-        return;
+        if (stored && Number(stored) < Number(BUILD)) {
+          clearAllCaches().then(function () {
+            try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+            loadApp();
+          });
+          return;
+        }
+
+        try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+        loadApp();
       }
 
-      try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
-      loadApp();
+      fetch('./js/version.js?gate=' + Date.now(), { cache: 'no-store' })
+        .then(function (res) { return res.ok ? res.text() : ''; })
+        .then(function (text) {
+          var match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
+          var remote = match ? match[1] : null;
+          if (remote && Number(remote) > Number(BUILD)) {
+            clearAllCaches().then(function () {
+              location.replace(location.pathname + '?force-update=1&t=' + Date.now());
+            });
+            return;
+          }
+          finishBoot();
+        })
+        .catch(function () { finishBoot(); });
     })();
 
     window.addEventListener('error', function (e) {
@@ -225,7 +243,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=132"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=132"></script>
+  <script src="js/vendor/dexie.min.js?v=157"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=157"></script>
 </body>
 </html>

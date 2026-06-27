@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=132';
+import { APP_VERSION } from './version.js?v=157';
 
 const SW_URL = `./sw.js?v=${APP_VERSION}`;
 
@@ -208,6 +208,11 @@ export async function initAppUpdateCheck() {
     const remote = await detectRemoteVersion();
     if (remote && remote !== APP_VERSION) {
       showUpdateBanner(remote);
+      if (isStandaloneApp()) {
+        setTimeout(() => {
+          if (pendingUpdate) applyAppUpdate().catch(() => forceAppUpdate());
+        }, 1200);
+      }
     }
 
     document.addEventListener('visibilitychange', () => {
