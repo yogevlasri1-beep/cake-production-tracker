@@ -407,5 +407,48 @@ export async function runAllTests() {
     assertEqual(recipes[0].ingredients[0].name, 'תפוחים');
   });
 
+  test('parseRecipesFromDocumentXml — כמה מתכונים בטבלה אחת', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>מתכון א</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>5 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>קמח</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>מתכון ב</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>2 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>סוכר</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>מתכון ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>1 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>חמאה</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body>
+</w:document>`;
+    const recipes = parseRecipesFromDocumentXml(xml);
+    assertEqual(recipes.length, 3);
+    assertEqual(recipes[0].title, 'מתכון א');
+    assertEqual(recipes[1].title, 'מתכון ב');
+    assertEqual(recipes[2].title, 'מתכון ג');
+  });
+
+  test('parseRecipesFromDocumentXml — כותרת עם שורת חומר גלם לפני טבלה', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:r><w:t>עוגת שוקולד</w:t></w:r></w:p>
+<w:p><w:r><w:t>חומר גלם:</w:t></w:r></w:p>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>10 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>קמח</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+<w:p><w:r><w:t>עוגת וניל</w:t></w:r></w:p>
+<w:p><w:r><w:t>חומר גלם</w:t></w:r></w:p>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>8 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>קמח</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body>
+</w:document>`;
+    const recipes = parseRecipesFromDocumentXml(xml);
+    assertEqual(recipes.length, 2);
+    assertEqual(recipes[0].title, 'עוגת שוקולד');
+    assertEqual(recipes[1].title, 'עוגת וניל');
+  });
+
   await flushTests();
 }

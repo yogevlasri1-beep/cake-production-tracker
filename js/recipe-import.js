@@ -156,12 +156,35 @@ function paragraphHeadingLevel(p) {
   return 0;
 }
 
-function nextMeaningfulBlock(blocks, fromIndex) {
-  for (let i = fromIndex + 1; i < blocks.length; i++) {
+function isSkippableBetweenTitleAndTable(text) {
+  const t = String(text || '').trim();
+  if (!t) return true;
+  if (/^(חומר\s*גלם|מרכיבים|כמות|רכיבים|חומרים|רשימת\s*חומרים)\s*:?\s*$/i.test(t)) return true;
+  if (/^[-—–_=]{2,}$/.test(t)) return true;
+  return false;
+}
+
+function findNextTable(blocks, fromIndex, maxLookahead = 8) {
+  let skipped = 0;
+  for (let i = fromIndex + 1; i < blocks.length && skipped < maxLookahead; i++) {
     if (isTableTag(blocks[i])) return blocks[i];
-    if (isParagraphTag(blocks[i]) && paragraphText(blocks[i])) return null;
+    if (isParagraphTag(blocks[i])) {
+      const text = paragraphText(blocks[i]);
+      if (!text) continue;
+      if (isSkippableBetweenTitleAndTable(text)) {
+        skipped += 1;
+        continue;
+      }
+      if (parseIngredientLine(text)) return null;
+      return null;
+    }
+    skipped += 1;
   }
   return null;
+}
+
+function nextMeaningfulBlock(blocks, fromIndex) {
+  return findNextTable(blocks, fromIndex);
 }
 
 function assignHeadingAsCategory(text, level, state) {
@@ -324,12 +347,13 @@ function getRowCells(row) {
   return [...row.querySelectorAll('w\\:tc, tc')].map(cellText);
 }
 
-function parseRecipeTable(table, title) {
+function parseRecipeTablesFromTable(table, title) {
   const rows = getTableRows(table);
-  if (!rows.length) return null;
+  if (!rows.length) return [];
 
-  const ingredients = [];
+  const results = [];
   let recipeTitle = title?.trim() || '';
+  let ingredients = [];
   let startRow = 0;
 
   const firstCells = getRowCells(rows[0]);
@@ -353,14 +377,32 @@ function parseRecipeTable(table, title) {
     ({ qtyCol, nameCol } = detectColumnsFromRows(rows, startRow));
   }
 
+  const flush = () => {
+    if (!recipeTitle && !ingredients.length) return;
+    results.push({
+      title: recipeTitle || 'מתכון ללא שם',
+      groupName: '',
+      subName: '',
+      ingredients: ingredients.slice(),
+      notes: '',
+    });
+    ingredients = [];
+  };
+
   for (let ri = dataStart; ri < rows.length; ri++) {
     const cells = getRowCells(rows[ri]);
     if (!cells.length) continue;
     if (isTotalRow(cells)) continue;
     if (isHeaderRow(cells)) continue;
 
-    if (isTitleRow(cells) && !ingredients.length) {
-      recipeTitle = recipeTitle || cells.filter((c) => c.trim()).join(' ').trim();
+    if (isTitleRow(cells)) {
+      const rowTitle = cells.filter((c) => c.trim()).join(' ').trim();
+      if (ingredients.length) {
+        flush();
+        recipeTitle = rowTitle;
+        continue;
+      }
+      recipeTitle = recipeTitle || rowTitle;
       continue;
     }
 
@@ -368,14 +410,13 @@ function parseRecipeTable(table, title) {
     if (ing?.name && ing.quantity != null) ingredients.push(ing);
   }
 
-  if (!recipeTitle) recipeTitle = 'מתכון ללא שם';
-  return {
-    title: recipeTitle,
-    groupName: '',
-    subName: '',
-    ingredients,
-    notes: '',
-  };
+  flush();
+  return results;
+}
+
+function parseRecipeTable(table, title) {
+  const recipes = parseRecipeTablesFromTable(table, title);
+  return recipes[0] || null;
 }
 
 function collectBlocksInOrder(root) {
@@ -404,6 +445,20 @@ export function parseRecipesFromDocumentXml(xml) {
     pendingTitle: null,
     pendingGroup: '',
     pendingSub: '',
+    pendingIngredients: [],
+  };
+
+  const flushPendingRecipe = () => {
+    if (!state.pendingTitle && !state.pendingIngredients.length) return;
+    recipes.push({
+      title: state.pendingTitle || 'מתכון ללא שם',
+      groupName: state.pendingGroup,
+      subName: state.pendingSub,
+      ingredients: state.pendingIngredients.slice(),
+      notes: '',
+    });
+    state.pendingTitle = null;
+    state.pendingIngredients = [];
   };
 
   const blocks = collectBlocksInOrder(body);
@@ -416,44 +471,58 @@ export function parseRecipesFromDocumentXml(xml) {
 
       const groupM = text.match(GROUP_HEADER_RE);
       if (groupM) {
+        flushPendingRecipe();
         state.pendingGroup = groupM[1].trim();
         state.pendingSub = '';
         continue;
       }
       const subM = text.match(SUB_HEADER_RE);
       if (subM) {
+        flushPendingRecipe();
         state.pendingSub = subM[1].trim();
         continue;
       }
       const recipeM = text.match(RECIPE_HEADER_RE);
       if (recipeM) {
+        flushPendingRecipe();
         state.pendingTitle = recipeM[1].trim();
         continue;
       }
       if (SKIP_TITLE_RE.test(text)) continue;
-      if (parseIngredientLine(text)) continue;
 
-      const nextBlock = nextMeaningfulBlock(blocks, i);
+      const ingLine = parseIngredientLine(text);
+      if (ingLine) {
+        if (!state.pendingTitle) state.pendingTitle = state.pendingSub || null;
+        state.pendingIngredients.push(ingLine);
+        continue;
+      }
+
+      const nextBlock = findNextTable(blocks, i);
       const nextIsTable = nextBlock && isTableTag(nextBlock);
       if (nextIsTable && text.length <= 120) {
         const level = paragraphHeadingLevel(block);
         if (level === 1 && !RECIPE_HEADER_RE.test(text)) {
+          flushPendingRecipe();
           assignHeadingAsCategory(text, 1, state);
           state.pendingTitle = null;
         } else {
+          flushPendingRecipe();
           state.pendingTitle = text.trim();
         }
         continue;
       }
 
-      if (text.length <= 120) state.pendingTitle = text;
+      if (!state.pendingIngredients.length && text.length <= 120) {
+        state.pendingTitle = text;
+      }
       continue;
     }
 
     if (isTableTag(block)) {
-      const recipe = parseRecipeTable(block, state.pendingTitle);
+      flushPendingRecipe();
+      const parsed = parseRecipeTablesFromTable(block, state.pendingTitle);
       state.pendingTitle = null;
-      if (recipe) {
+      for (const recipe of parsed) {
         recipe.groupName = state.pendingGroup;
         recipe.subName = state.pendingSub;
         recipes.push(recipe);
@@ -461,6 +530,7 @@ export function parseRecipesFromDocumentXml(xml) {
     }
   }
 
+  flushPendingRecipe();
   return recipes;
 }
 
