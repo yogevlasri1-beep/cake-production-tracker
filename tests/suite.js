@@ -10,6 +10,8 @@ import {
 } from '../js/calc.js?v=132';
 import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=132';
 import { enrichBackupData } from '../js/backup.js?v=132';
+import { normalizeRecipeImportKey } from '../js/kitchen-db.js?v=132';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=132';
 
 export async function runAllTests() {
   /* validators */
@@ -329,6 +331,33 @@ export async function runAllTests() {
     const parsed = await parseImportFile(file);
     assertOk(parsed.rows.length >= 1);
     assertEqual(parsed.rows[0].quantity, 50);
+  });
+
+  test('normalizeRecipeImportKey — ריק לא זורק', () => {
+    assertEqual(normalizeRecipeImportKey(''), '');
+    assertEqual(normalizeRecipeImportKey('   '), '');
+  });
+
+  test('normalizeRecipeImportKey — מפתח עקבי', () => {
+    assertEqual(normalizeRecipeImportKey('  מילוי תפוחים '), normalizeRecipeImportKey('מילוי תפוחים'));
+  });
+
+  test('parseRecipesFromDocumentXml — טבלה בלי כותרות', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:r><w:t>מילוי תפוחים- עם סוכר</w:t></w:r></w:p>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>103.6 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>תפוחים</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>15 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>סוכר</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body>
+</w:document>`;
+    const recipes = parseRecipesFromDocumentXml(xml);
+    assertEqual(recipes.length, 1);
+    assertEqual(recipes[0].title, 'מילוי תפוחים- עם סוכר');
+    assertEqual(recipes[0].ingredients.length, 2);
+    assertEqual(recipes[0].ingredients[0].name, 'תפוחים');
   });
 
   await flushTests();

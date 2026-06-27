@@ -4848,6 +4848,17 @@ body.supplier-drag-active {
   font: inherit;
   color: inherit;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.import-recipe-cb {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  accent-color: var(--primary, #2563eb);
+  cursor: pointer;
 }
 
 .import-recipe-pick.is-selected {
@@ -4857,33 +4868,12 @@ body.supplier-drag-active {
 }
 
 .import-recipe-pick.is-duplicate {
-  opacity: 0.75;
-  cursor: not-allowed;
-  background: #fef3c7;
-  border-color: #fcd34d;
+  background: #fffbeb;
+  border-color: #fde68a;
 }
 
 .import-pick-check {
-  flex: 0 0 26px;
-  width: 26px;
-  height: 26px;
-  border: 2px solid #cbd5e1;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  font-weight: 700;
-  line-height: 1;
-  color: transparent;
-  background: #fff;
-  margin-top: 1px;
-}
-
-.import-recipe-pick.is-selected .import-pick-check {
-  background: var(--primary, #2563eb);
-  border-color: var(--primary, #2563eb);
-  color: #fff;
+  display: none;
 }
 
 .import-pick-body {

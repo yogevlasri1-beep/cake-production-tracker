@@ -746,7 +746,8 @@ export async function ensureRawMaterialByName(name, { supplierCategoryId, unit }
 }
 
 export function normalizeRecipeImportKey(name) {
-  return sanitizeName(name, 80).trim().toLowerCase();
+  const s = sanitizeName(name, 80);
+  return s ? s.toLocaleLowerCase('he') : '';
 }
 
 export async function getExistingRecipeNameKeys() {

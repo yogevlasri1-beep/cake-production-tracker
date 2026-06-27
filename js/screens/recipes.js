@@ -1153,14 +1153,12 @@ function formatImportRecipePath(r) {
 
 function renderImportRecipePick(r, i, existingNames) {
   const isDup = existingNames.has(normalizeRecipeImportKey(r.title));
-  const selected = !isDup;
+  const selected = true;
   return `
-    <button type="button"
+    <label
       class="import-recipe-pick${selected ? ' is-selected' : ''}${isDup ? ' is-duplicate' : ''}"
-      data-idx="${i}"
-      data-duplicate="${isDup ? '1' : '0'}"
-      ${isDup ? 'disabled' : ''}>
-      <span class="import-pick-check" aria-hidden="true">✓</span>
+      data-idx="${i}">
+      <input type="checkbox" class="import-recipe-cb" data-idx="${i}" ${selected ? 'checked' : ''} aria-label="בחר ${escapeHtml(r.title)}">
       <span class="import-pick-body">
         <strong>${escapeHtml(r.title)}</strong>
         <span class="form-hint"> · ${escapeHtml(formatImportRecipePath(r))}</span>
@@ -1168,42 +1166,61 @@ function renderImportRecipePick(r, i, existingNames) {
         ${isDup ? ' · <span class="import-dup-badge">קיים</span>' : ''}
         ${!(r.ingredients || []).length ? ' · <span class="import-warn-badge">ללא חומרים</span>' : ''}
       </span>
-    </button>`;
+    </label>`;
 }
 
 function bindImportRecipePickers() {
-  const picks = document.querySelectorAll('.import-recipe-pick:not(.is-duplicate)');
+  const list = document.querySelector('.import-recipe-pick-list');
   const selectAll = document.getElementById('import-select-all');
-  const syncSelectAll = () => {
-    if (!selectAll) return;
-    const all = [...picks];
-    const selected = all.filter((el) => el.classList.contains('is-selected'));
-    selectAll.checked = all.length > 0 && selected.length === all.length;
-    selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+  const getCheckboxes = () => [...document.querySelectorAll('.import-recipe-cb')];
+
+  const syncRowStyles = () => {
+    document.querySelectorAll('.import-recipe-pick').forEach((row) => {
+      const cb = row.querySelector('.import-recipe-cb');
+      row.classList.toggle('is-selected', !!cb?.checked);
+    });
   };
-  picks.forEach((el) => {
-    el.addEventListener('click', () => {
-      el.classList.toggle('is-selected');
-      syncSelectAll();
-    });
-  });
-  selectAll?.addEventListener('change', (e) => {
-    picks.forEach((el) => {
-      if (e.target.checked) el.classList.add('is-selected');
-      else el.classList.remove('is-selected');
-    });
+
+  const syncSelectAll = () => {
+    const all = getCheckboxes();
+    if (!selectAll) return;
+    if (!all.length) {
+      selectAll.checked = false;
+      selectAll.indeterminate = false;
+      return;
+    }
+    const checked = all.filter((cb) => cb.checked);
+    selectAll.checked = checked.length === all.length;
+    selectAll.indeterminate = checked.length > 0 && checked.length < all.length;
+  };
+
+  list?.addEventListener('change', (e) => {
+    if (!e.target.classList.contains('import-recipe-cb')) return;
+    syncRowStyles();
     syncSelectAll();
   });
+
+  selectAll?.addEventListener('change', () => {
+    getCheckboxes().forEach((cb) => { cb.checked = selectAll.checked; });
+    syncRowStyles();
+    syncSelectAll();
+  });
+
+  syncRowStyles();
   syncSelectAll();
 }
 
 function getSelectedImportRecipes(parsed) {
-  return [...document.querySelectorAll('.import-recipe-pick.is-selected')]
-    .map((el) => parsed[Number(el.dataset.idx)])
+  return [...document.querySelectorAll('.import-recipe-cb:checked')]
+    .map((cb) => parsed[Number(cb.dataset.idx)])
     .filter(Boolean);
 }
 
 function openImportPreview(container, parsed, { groups, subs }) {
+  if (!Array.isArray(parsed) || !parsed.length) {
+    showToast('לא נמצאו מתכונים בקובץ');
+    return;
+  }
   getExistingRecipeNameKeys().then((existingNames) => {
     const newCount = parsed.filter((r) => !existingNames.has(normalizeRecipeImportKey(r.title))).length;
     const dupCount = parsed.length - newCount;
@@ -1211,9 +1228,9 @@ function openImportPreview(container, parsed, { groups, subs }) {
       title: `ייבוא ${parsed.length} מתכונים`,
       bodyHTML: `
         <p class="form-hint" style="margin-bottom:10px">
-          לחץ על מתכון לסימון ✓ · כותרות מהקובץ יהפכו ל<strong>קטגוריות</strong>.
-          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — לא ניתן לייבא שוב.` : ''}
-          ${newCount ? `<br>חדשים: <strong>${newCount}</strong> (מסומנים ✓)` : ''}
+          סמן ✓ את המתכונים לייבוא · כותרות מהקובץ יהפכו ל<strong>קטגוריות</strong>.
+          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — יסומנו «קיים» (ניתן לייבא כעותק).` : ''}
+          ${newCount ? `<br>חדשים: <strong>${newCount}</strong>` : ''}
         </p>
         <div class="form-group">
           <label>קבוצת סידור (אם אין בקובץ)</label>
@@ -1227,6 +1244,12 @@ function openImportPreview(container, parsed, { groups, subs }) {
           <label class="checkbox-label">
             <input type="checkbox" id="import-add-materials" checked>
             הוסף חומרי גלם לספקים
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="import-skip-dupes" checked>
+            דלג על מתכונים קיימים (בזמן ייבוא)
           </label>
         </div>
         <div class="form-group">
@@ -1247,8 +1270,19 @@ function openImportPreview(container, parsed, { groups, subs }) {
     document.getElementById('confirm-recipe-import')?.addEventListener('click', async () => {
       let gid = document.getElementById('import-group')?.value;
       const addRawMaterials = document.getElementById('import-add-materials')?.checked !== false;
-      const selected = getSelectedImportRecipes(parsed);
+      const skipDupes = document.getElementById('import-skip-dupes')?.checked !== false;
+      let selected = getSelectedImportRecipes(parsed);
       if (!selected.length) return showToast('סמן לפחות מתכון אחד ✓');
+      if (skipDupes) {
+        const before = selected.length;
+        selected = selected.filter((r) => !existingNames.has(normalizeRecipeImportKey(r.title)));
+        if (!selected.length) {
+          return showToast('כל המסומנים כבר קיימים — בטל «דלג על קיימים» לייבוא כעותק');
+        }
+        if (before > selected.length) {
+          showToast(`דולגו ${before - selected.length} מתכונים קיימים`);
+        }
+      }
       try {
         let defaultGroupId;
         let defaultSubId;
@@ -1265,7 +1299,7 @@ function openImportPreview(container, parsed, { groups, subs }) {
           groupId: defaultGroupId,
           subCategoryId: defaultSubId,
           addRawMaterials,
-          skipDuplicates: true,
+          skipDuplicates: skipDupes,
         });
         closeModal();
         const parts = [`יובאו ${result.imported}`];
@@ -1276,6 +1310,8 @@ function openImportPreview(container, parsed, { groups, subs }) {
         showToast(err.message || 'שגיאה');
       }
     });
+  }).catch((err) => {
+    showToast(err?.message || 'שגיאה בפתיחת תצוגת ייבוא');
   });
 }
 
