@@ -1,16 +1,16 @@
 import {
-  getRecipeGroups, getRecipeSubCategories, getRecipes, getRecipe, getRecipesCatalogLayout, repairRecipeCategoryPlacement,
-  addRecipeGroup, addRecipeSubCategory, importRecipeGroupsFromProducts,
-  importRecipeSubCategoriesFromProducts, deleteRecipeGroup, deleteRecipeSubCategory,
+  getRecipeGroups, getRecipeSubCategories, getRecipes, getRecipe, getRecipesCatalogLayout,
+  addRecipeGroup, addRecipeSubCategory, updateRecipeGroup, updateRecipeSubCategory,
+  deleteRecipeGroup, deleteRecipeSubCategory, ensureRecipeTypeCatalog,
   addRecipe, updateRecipe, deleteRecipe, addRecipeIngredient, deleteRecipeIngredient,
   updateRecipeIngredient, syncProductCostFromRecipe, getRawMaterials,
   setRecipeOrder, setRecipeGroupOrder, setRecipeSubCategoryOrder, moveRecipesToCategory,
   importParsedRecipes, scaleRecipeIngredients,
   findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
   getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
-  RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind,
+  RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
 } from '../kitchen-db.js';
-import { getProducts, getProductsCatalogLayout, getCategoryGroups, getCategories } from '../db.js';
+import { getProducts, getProductsCatalogLayout } from '../db.js';
 import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js';
 import { escapeHtml, showToast, formatMoney } from '../utils.js';
 import { openModal, closeModal } from '../modal.js';
@@ -126,6 +126,7 @@ function renderRecipeSubCategoryCard(cat, catIndex) {
           </button>
         </div>
         <div class="category-actions">
+          <button type="button" class="btn btn-secondary btn-sm btn-icon edit-recipe-sub" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" title="עריכה">✏️</button>
           <button type="button" class="btn btn-danger btn-sm btn-icon delete-recipe-sub" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-count="${cat.recipes.length}">🗑</button>
         </div>
       </div>
@@ -158,17 +159,18 @@ function renderRecipeGroupCard(group, groupIndex) {
           </div>
           <button type="button" class="category-toggle category-group-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
             <span class="category-chevron" aria-hidden="true"></span>
-            <span class="category-group-chip" style="${categoryChipStyle(color)}">📁 ${escapeHtml(group.name)}</span>
-            <span class="category-summary">${group.categories.length} קטגוריות · ${totalRecipes} מתכונים</span>
+            <span class="category-group-chip" style="${categoryChipStyle(color)}">📂 ${escapeHtml(group.name)}</span>
+            <span class="category-summary">${group.categories.length} קטגוריות · ${totalRecipes} מתכונים · גרור לסידור</span>
           </button>
         </div>
         <div class="category-actions">
+          <button type="button" class="btn btn-secondary btn-sm btn-icon edit-recipe-group" data-id="${group.id}" data-name="${escapeHtml(group.name)}" title="עריכה">✏️</button>
           <button type="button" class="btn btn-danger btn-sm btn-icon delete-recipe-group" data-id="${group.id}" data-name="${escapeHtml(group.name)}">🗑</button>
         </div>
       </div>
       <div class="category-group-body">
         ${group.categories.length === 0
-    ? '<p class="category-products-empty">אין קטגוריות — הוסף קטגוריה או ייבא ממוצרים</p>'
+    ? '<p class="category-products-empty">אין קטגוריות — הוסף מילית, בצק וכו׳</p>'
     : `<div class="category-list" data-group-id="${group.id}">
             ${group.categories.map((cat, i) => renderRecipeSubCategoryCard(cat, i)).join('')}
           </div>`}
@@ -180,21 +182,22 @@ function renderRecipeCatalogHTML(layout) {
   if (!layout.allSubCategories.length) {
     return `<div class="empty-state">
       <div class="empty-state-icon">📒</div>
-      <p>הוסף קטגוריה כללית וקטגוריה, או ייבא מ-Word</p>
+      <p>הוסף קטגוריה (מילית, בצק...) או ייבא מ-Word</p>
     </div>`;
   }
   return `
-    <p class="product-drag-hint">קטגוריות כלליות — לחץ לפתיחה · גרור ⠿ לשינוי סדר</p>
+    <p class="product-drag-hint">קבוצות סידור — לחץ לפתיחה · גרור ⠿ · קטגוריות: מילית, בצק...</p>
     <div class="category-group-list">
       ${layout.groups.map((g, i) => renderRecipeGroupCard(g, i)).join('')}
     </div>`;
 }
 
-function buildCategorySelectOptions(groups) {
+function buildCategorySelectOptions(groups, selectedId) {
   const parts = [];
   for (const group of groups) {
     for (const cat of group.categories) {
-      parts.push(`<option value="${cat.id}">${escapeHtml(group.name)} › ${escapeHtml(cat.name)}</option>`);
+      const sel = Number(selectedId) === cat.id ? ' selected' : '';
+      parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(group.name)} › ${escapeHtml(cat.name)}</option>`);
     }
   }
   return parts.join('');
@@ -213,28 +216,18 @@ function buildRecipeSelectOptions(layout) {
 }
 
 export function recipesMeta() {
-  return { title: 'מתכונים', subtitle: 'צפייה מקצועית, עריכה וקישור למוצרים' };
+  return { title: 'מתכונים', subtitle: 'קטגוריות חופשיות (מילית, בצק) + קישור למוצרים' };
 }
 
 export async function renderRecipes(container) {
   const viewMode = container.dataset.recipeView || 'manage';
-  if (!container.dataset.recipePlacementChecked) {
-    container.dataset.recipePlacementChecked = '1';
-    try {
-      await repairRecipeCategoryPlacement();
-    } catch {
-      /* ignore — migration may have already run */
-    }
-  }
-  const [layout, productCatalog, productGroups, productCats] = await Promise.all([
+  const [layout, productCatalog] = await Promise.all([
     getRecipesCatalogLayout(),
     getProductsCatalogLayout(),
-    getCategoryGroups(),
-    getCategories(),
   ]);
 
   if (!layout.groups.length) {
-    await addRecipeGroup({ name: 'כללי', linkedCategoryGroupId: null });
+    await ensureRecipeTypeCatalog();
     return renderRecipes(container);
   }
 
@@ -255,9 +248,9 @@ export async function renderRecipes(container) {
       </div>
     </div>
     <div class="section-header products-toolbar">
-      <h2>קטגוריות ומתכונים</h2>
+      <h2>מתכונים לפי קטגוריה</h2>
       <div class="products-toolbar-actions">
-        <button type="button" class="btn btn-secondary btn-sm" id="add-recipe-group-btn">+ קטגוריה כללית</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="add-recipe-group-btn">+ קבוצת סידור</button>
         <button type="button" class="btn btn-primary btn-sm" id="add-recipe-sub-btn">+ קטגוריה</button>
       </div>
     </div>
@@ -297,15 +290,11 @@ export async function renderRecipes(container) {
   });
 
   document.getElementById('manage-recipe-cats')?.addEventListener('click', () => {
-    openCategoryManager(container, {
-      groups: layout.groups,
-      productGroups,
-      productCats,
-    });
+    openCategoryManager(container, { groups: layout.groups });
   });
 
   document.getElementById('add-recipe-group-btn')?.addEventListener('click', () => {
-    const name = prompt('שם קטגוריה כללית:');
+    const name = prompt('שם קבוצת סידור:', RECIPE_SORT_GROUP_DEFAULT);
     if (!name?.trim()) return;
     addRecipeGroup({ name: name.trim(), linkedCategoryGroupId: null })
       .then(() => { showToast('נוסף ✓'); renderRecipes(container); })
@@ -395,9 +384,19 @@ export async function renderRecipes(container) {
     });
   });
 
+  container.querySelectorAll('.edit-recipe-group').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditSortGroupForm(container, {
+        id: Number(btn.dataset.id),
+        name: btn.dataset.name,
+      });
+    });
+  });
+
   container.querySelectorAll('.delete-recipe-group').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm(`למחוק קטגוריה "${btn.dataset.name}"?`)) return;
+      if (!confirm(`למחוק קבוצת סידור "${btn.dataset.name}"?`)) return;
       try {
         await deleteRecipeGroup(Number(btn.dataset.id));
         showToast('נמחק');
@@ -405,6 +404,17 @@ export async function renderRecipes(container) {
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
+    });
+  });
+
+  container.querySelectorAll('.edit-recipe-sub').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openEditSubCategoryForm(container, {
+        id: Number(btn.dataset.id),
+        name: btn.dataset.name,
+        groups: layout.groups,
+      });
     });
   });
 
@@ -469,17 +479,17 @@ function openMoveRecipesModal(container, groups, recipeIds) {
 
 function openSubCategoryForm(container, groups) {
   openModal({
-    title: 'קטגוריה מתכונים חדשה',
+    title: 'קטגוריה חדשה',
     bodyHTML: `
       <div class="form-group">
-        <label>קטגוריה כללית</label>
+        <label>קבוצת סידור</label>
         <select id="new-sub-group">
           ${groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
       <div class="form-group">
         <label>שם קטגוריה</label>
-        <input type="text" id="new-sub-name" placeholder="למשל: עוגות, לקחים...">
+        <input type="text" id="new-sub-name" placeholder="למשל: מילית, בצק, קרם...">
       </div>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
@@ -503,29 +513,149 @@ function openSubCategoryForm(container, groups) {
   });
 }
 
-function buildProductPickerHTML(productCatalog, selectedIds) {
-  const selected = new Set(selectedIds || []);
-  const parts = [];
-  const renderCat = (cat) => {
-    if (!cat.products?.length) return '';
-    return `
-      <div class="recipe-product-cat-block">
-        <div class="form-hint" style="font-weight:600;margin:8px 0 4px">${escapeHtml(cat.name)}</div>
-        ${cat.products.map((p) => `
+function openEditSubCategoryForm(container, { id, name, groups }) {
+  openModal({
+    title: 'עריכת קטגוריה',
+    bodyHTML: `
+      <div class="form-group">
+        <label>קבוצת סידור</label>
+        <select id="edit-sub-group">
+          ${groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>שם קטגוריה</label>
+        <input type="text" id="edit-sub-name" value="${escapeHtml(name)}">
+      </div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-edit-sub">שמור</button>`,
+  });
+  const current = groups.flatMap((g) => g.categories.map((c) => ({ ...c, groupId: g.id })))
+    .find((c) => c.id === id);
+  const groupSelect = document.getElementById('edit-sub-group');
+  if (groupSelect && current) groupSelect.value = String(current.groupId);
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-edit-sub')?.addEventListener('click', async () => {
+    const groupId = Number(document.getElementById('edit-sub-group')?.value);
+    const newName = document.getElementById('edit-sub-name')?.value.trim();
+    if (!newName) return showToast('הזן שם');
+    try {
+      await updateRecipeSubCategory(id, { name: newName, groupId });
+      closeModal();
+      showToast('נשמר ✓');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
+function openEditSortGroupForm(container, { id, name }) {
+  openModal({
+    title: 'עריכת קבוצת סידור',
+    bodyHTML: `
+      <div class="form-group">
+        <label>שם קבוצת סידור</label>
+        <input type="text" id="edit-group-name" value="${escapeHtml(name)}">
+      </div>
+      <p class="form-hint">קבוצות סידור משמשות רק לסדר ברשימה — לא משפיעות על סוג המתכון.</p>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-edit-group">שמור</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-edit-group')?.addEventListener('click', async () => {
+    const newName = document.getElementById('edit-group-name')?.value.trim();
+    if (!newName) return showToast('הזן שם');
+    try {
+      await updateRecipeGroup(id, { name: newName });
+      closeModal();
+      showToast('נשמר ✓');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
+function buildProductCategorySelectHTML(productCatalog, selectedId) {
+  const parts = ['<option value="">— ללא (אופציונלי) —</option>'];
+  const addCat = (cat, groupName) => {
+    const sel = Number(selectedId) === cat.id ? 'selected' : '';
+    const prefix = groupName ? `${groupName} › ` : '';
+    parts.push(`<option value="${cat.id}" ${sel}>${escapeHtml(prefix)}${escapeHtml(cat.name)}</option>`);
+  };
+  for (const group of productCatalog.groups) {
+    for (const cat of group.categories) addCat(cat, group.name);
+  }
+  for (const cat of productCatalog.ungrouped || []) addCat(cat, '');
+  return parts.join('');
+}
+
+function collectProductsFromCatalog(productCatalog, categoryId) {
+  const products = [];
+  const pushCat = (cat) => {
+    if (categoryId && Number(cat.id) !== Number(categoryId)) return;
+    for (const p of cat.products || []) products.push(p);
+  };
+  for (const group of productCatalog.groups) {
+    for (const cat of group.categories) pushCat(cat);
+  }
+  for (const cat of productCatalog.ungrouped || []) pushCat(cat);
+  products.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return products;
+}
+
+function buildOptionalProductLinkerHTML(productCatalog, { linkedProductCategoryId, linkedProductIds }) {
+  const categoryId = linkedProductCategoryId || '';
+  const selected = new Set(linkedProductIds || []);
+  const products = collectProductsFromCatalog(productCatalog, categoryId || null);
+  const productList = categoryId
+    ? (products.length
+      ? products.map((p) => `
           <label class="checkbox-label recipe-product-pick">
             <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
             ${escapeHtml(p.name)}
-          </label>`).join('')}
-      </div>`;
+          </label>`).join('')
+      : '<p class="form-hint">אין מוצרים בקטגוריה זו</p>')
+    : '<p class="form-hint">בחר קטגוריית מוצר (אופציונלי) כדי לקשר מוצרים</p>';
+  return `
+    <div class="form-group" style="margin-bottom:8px">
+      <label>קטגוריית מוצר (אופציונלי)</label>
+      <select id="recipe-product-category">${buildProductCategorySelectHTML(productCatalog, categoryId)}</select>
+    </div>
+    <div class="form-group" style="margin-bottom:0">
+      <label>מוצרים מקושרים (אופציונלי)</label>
+      <div class="recipe-product-picker" id="recipe-product-list" style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        ${productList}
+      </div>
+    </div>`;
+}
+
+function bindOptionalProductLinker(productCatalog, { linkedProductCategoryId, linkedProductIds }) {
+  const catSelect = document.getElementById('recipe-product-category');
+  const listHost = document.getElementById('recipe-product-list');
+  if (!catSelect || !listHost) return;
+  const refreshList = () => {
+    const categoryId = catSelect.value ? Number(catSelect.value) : null;
+    const selected = [...listHost.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value));
+    const products = collectProductsFromCatalog(productCatalog, categoryId);
+    if (!categoryId) {
+      listHost.innerHTML = '<p class="form-hint">בחר קטגוריית מוצר (אופציונלי) כדי לקשר מוצרים</p>';
+      return;
+    }
+    if (!products.length) {
+      listHost.innerHTML = '<p class="form-hint">אין מוצרים בקטגוריה זו</p>';
+      return;
+    }
+    listHost.innerHTML = products.map((p) => `
+      <label class="checkbox-label recipe-product-pick">
+        <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.includes(p.id) ? 'checked' : ''}>
+        ${escapeHtml(p.name)}
+      </label>`).join('');
   };
-  for (const group of productCatalog.groups) {
-    if (!group.categories.some((c) => c.products.length)) continue;
-    parts.push(`<details open><summary style="font-weight:700;margin:8px 0">${escapeHtml(group.name)}</summary>`);
-    for (const cat of group.categories) parts.push(renderCat(cat));
-    parts.push('</details>');
-  }
-  for (const cat of productCatalog.ungrouped) parts.push(renderCat(cat));
-  return parts.join('') || '<p class="form-hint">אין מוצרים — הוסף במסך מוצרים</p>';
+  catSelect.addEventListener('change', refreshList);
 }
 
 async function renderRecipeBook(container, { groups, allSubs, productMap }) {
@@ -602,58 +732,100 @@ async function renderRecipeBook(container, { groups, allSubs, productMap }) {
   });
 }
 
-function openCategoryManager(container, { groups, productGroups, productCats }) {
+function openCategoryManager(container, { groups }) {
+  const groupRows = groups.map((g) => `
+    <div class="filter-row recipe-mgr-row">
+      <span style="flex:1">📂 ${escapeHtml(g.name)}</span>
+      <button type="button" class="btn btn-secondary btn-sm mgr-edit-group" data-id="${g.id}" data-name="${escapeHtml(g.name)}">✏️</button>
+      <button type="button" class="btn btn-danger btn-sm mgr-del-group" data-id="${g.id}" data-name="${escapeHtml(g.name)}">🗑</button>
+    </div>`).join('');
+
+  const catRows = groups.flatMap((g) => g.categories.map((cat) => `
+    <div class="filter-row recipe-mgr-row">
+      <span style="flex:1">${escapeHtml(g.name)} › <strong>${escapeHtml(cat.name)}</strong> · ${cat.recipes.length} מתכונים</span>
+      <button type="button" class="btn btn-secondary btn-sm mgr-edit-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}">✏️</button>
+      <button type="button" class="btn btn-danger btn-sm mgr-del-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-count="${cat.recipes.length}">🗑</button>
+    </div>`)).join('');
+
   openModal({
-    title: 'ייבוא קטגוריות',
+    title: 'ניהול קטגוריות וסידור',
     bodyHTML: `
-      <button type="button" class="btn btn-secondary btn-sm" id="import-groups-from-products" style="width:100%;margin-bottom:12px">
-        ייבוא קטגוריות כלליות ממוצרים
-      </button>
-      <button type="button" class="btn btn-secondary btn-sm" id="repair-recipe-placement" style="width:100%;margin-bottom:12px">
-        תקן סידור — העבר קטגוריות לקבוצה הנכונה
-      </button>
-      <div class="form-group">
-        <label>ייבוא קטגוריות ממוצרים לקבוצה:</label>
-        <select id="import-subs-target-group">
-          ${groups.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
-        </select>
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="import-subs-from-products" style="width:100%">
-        ייבוא קטגוריות ממוצרים
-      </button>`,
+      <p class="form-hint" style="margin-bottom:12px">
+        <strong>קבוצות סידור</strong> — רק לסדר ברשימה (גרירה במסך הראשי).<br>
+        <strong>קטגוריות</strong> — סוג המתכון: מילית, בצק, קרם... ניתן להוסיף ולערוך בחופשיות.
+      </p>
+      <h3 class="recipe-mgr-heading">קבוצות סידור</h3>
+      ${groupRows || '<p class="form-hint">אין קבוצות</p>'}
+      <button type="button" class="btn btn-secondary btn-sm" id="mgr-add-group" style="width:100%;margin:8px 0 16px">+ קבוצת סידור</button>
+      <h3 class="recipe-mgr-heading">קטגוריות מתכונים</h3>
+      ${catRows || '<p class="form-hint">אין קטגוריות</p>'}
+      <button type="button" class="btn btn-primary btn-sm" id="mgr-add-cat" style="width:100%;margin-top:8px">+ קטגוריה</button>`,
     footerHTML: '<button class="btn btn-primary modal-cancel">סגור</button>',
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('import-groups-from-products')?.addEventListener('click', async () => {
-    try {
-      const n = await importRecipeGroupsFromProducts();
-      closeModal();
-      showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
-      renderRecipes(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+
+  document.getElementById('mgr-add-group')?.addEventListener('click', () => {
+    closeModal();
+    const name = prompt('שם קבוצת סידור:', RECIPE_SORT_GROUP_DEFAULT);
+    if (!name?.trim()) return;
+    addRecipeGroup({ name: name.trim(), linkedCategoryGroupId: null })
+      .then(() => { showToast('נוסף ✓'); renderRecipes(container); })
+      .catch((e) => showToast(e.message || 'שגיאה'));
   });
-  document.getElementById('repair-recipe-placement')?.addEventListener('click', async () => {
-    try {
-      const n = await repairRecipeCategoryPlacement();
-      closeModal();
-      showToast(n ? `תוקנו ${n} קטגוריות ✓` : 'הסידור כבר תקין');
-      renderRecipes(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+
+  document.getElementById('mgr-add-cat')?.addEventListener('click', () => {
+    closeModal();
+    openSubCategoryForm(container, groups);
   });
-  document.getElementById('import-subs-from-products')?.addEventListener('click', async () => {
-    const groupId = Number(document.getElementById('import-subs-target-group')?.value);
-    try {
-      const n = await importRecipeSubCategoriesFromProducts(groupId);
+
+  document.querySelectorAll('.mgr-edit-group').forEach((btn) => {
+    btn.addEventListener('click', () => {
       closeModal();
-      showToast(n ? `יובאו ${n} ✓` : 'אין חדשות');
-      renderRecipes(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+      openEditSortGroupForm(container, { id: Number(btn.dataset.id), name: btn.dataset.name });
+    });
+  });
+
+  document.querySelectorAll('.mgr-del-group').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`למחוק קבוצת סידור "${btn.dataset.name}"?`)) return;
+      try {
+        await deleteRecipeGroup(Number(btn.dataset.id));
+        closeModal();
+        showToast('נמחק');
+        renderRecipes(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.querySelectorAll('.mgr-edit-cat').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeModal();
+      openEditSubCategoryForm(container, {
+        id: Number(btn.dataset.id),
+        name: btn.dataset.name,
+        groups,
+      });
+    });
+  });
+
+  document.querySelectorAll('.mgr-del-cat').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (Number(btn.dataset.count) > 0) {
+        showToast('יש מתכונים בקטגוריה — העבר או מחק קודם');
+        return;
+      }
+      if (!confirm(`למחוק קטגוריה "${btn.dataset.name}"?`)) return;
+      try {
+        await deleteRecipeSubCategory(Number(btn.dataset.id));
+        closeModal();
+        showToast('נמחק');
+        renderRecipes(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
   });
 }
 
@@ -729,7 +901,7 @@ function openImportPreview(container, parsed, { groups, subs }) {
           ${newCount ? `<br>חדשים: <strong>${newCount}</strong> (מסומנים ✓)` : ''}
         </p>
         <div class="form-group">
-          <label>קטגוריה כללית (אם אין בקובץ)</label>
+          <label>קבוצת סידור (אם אין בקובץ)</label>
           <select id="import-group">
             <option value="word-import" selected>${escapeHtml(IMPORT_WORD_GROUP)}</option>
             ${groups.filter((g) => g.name !== IMPORT_WORD_GROUP).map((g) => `
@@ -874,14 +1046,30 @@ function findRecipeCategoryPath(layout, categoryId) {
   for (const group of layout.groups) {
     for (const cat of group.categories) {
       if (Number(cat.id) === Number(categoryId)) {
-        return `${group.name} › ${cat.name}`;
+        if (layout.groups.length > 1) return `${group.name} › ${cat.name}`;
+        return cat.name;
       }
     }
   }
   return '';
 }
 
-function buildRecipeViewHTML(recipe, { categoryPath, linkedNames }) {
+function findProductCategoryName(productCatalog, categoryId) {
+  if (!categoryId || !productCatalog) return '';
+  for (const group of productCatalog.groups) {
+    for (const cat of group.categories) {
+      if (Number(cat.id) === Number(categoryId)) {
+        return group.name ? `${group.name} › ${cat.name}` : cat.name;
+      }
+    }
+  }
+  for (const cat of productCatalog.ungrouped || []) {
+    if (Number(cat.id) === Number(categoryId)) return cat.name;
+  }
+  return '';
+}
+
+function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName }) {
   const ingredients = recipe.ingredients || [];
   const totalText = formatRecipeIngredientsTotal(ingredients);
   const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
@@ -895,6 +1083,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames }) {
         <h1 class="recipe-sheet-title">${escapeHtml(recipe.name)}</h1>
         <div class="recipe-sheet-meta">
           <span class="recipe-meta-pill">${escapeHtml(yieldLabel)}</span>
+          ${productCategoryName ? `<span class="recipe-meta-pill">🏷️ ${escapeHtml(productCategoryName)}</span>` : ''}
           ${linkedNames?.length ? `<span class="recipe-meta-pill recipe-meta-products">🔗 ${linkedNames.map((n) => escapeHtml(n)).join(' · ')}</span>` : ''}
         </div>
       </header>
@@ -943,11 +1132,12 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   const productMap = new Map(products.map((p) => [p.id, p]));
   const linkedNames = (recipe.linkedProductIds || []).map((id) => productMap.get(id)?.name).filter(Boolean);
   const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
+  const productCategoryName = findProductCategoryName(productCatalog, recipe.linkedProductCategoryId);
 
   openModal({
     title: '',
     modalClass: 'modal-recipe-view',
-    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames }),
+    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
@@ -1003,6 +1193,10 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   const mats = await getRawMaterials();
   const catalog = productCatalog || await getProductsCatalogLayout();
   const catalogLayout = layout || container._recipeLayout;
+  const selectedCategoryId = recipe?.categoryId || categoryId || '';
+  const categoryOptions = catalogLayout
+    ? buildCategorySelectOptions(catalogLayout.groups, selectedCategoryId)
+    : '';
 
   openModal({
     title: isEdit ? 'עריכת מתכון' : 'מתכון חדש',
@@ -1012,15 +1206,20 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>שם מתכון</label>
         <input type="text" id="recipe-name" value="${recipe ? escapeHtml(recipe.name) : ''}">
       </div>
+      ${categoryOptions ? `
+      <div class="form-group">
+        <label>קטגוריית מתכון</label>
+        <select id="recipe-category">${categoryOptions}</select>
+      </div>` : ''}
       <div class="form-group">
         <label>מנות למתכון (בסיס)</label>
         <input type="number" id="recipe-yield" min="0.1" step="0.1" value="${recipe?.yieldPortions ?? 1}">
       </div>
-      <div class="form-group">
-        <label>מוצרים מקושרים (ניתן לבחור כמה)</label>
-        <div class="recipe-product-picker" style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
-          ${buildProductPickerHTML(catalog, recipe?.linkedProductIds)}
-        </div>
+      <div class="form-group recipe-product-link-block">
+        ${buildOptionalProductLinkerHTML(catalog, {
+    linkedProductCategoryId: recipe?.linkedProductCategoryId,
+    linkedProductIds: recipe?.linkedProductIds,
+  })}
       </div>
       <div class="form-group">
         <label>הערות</label>
@@ -1065,6 +1264,11 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  bindOptionalProductLinker(catalog, {
+    linkedProductCategoryId: recipe?.linkedProductCategoryId,
+    linkedProductIds: recipe?.linkedProductIds,
+  });
 
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ingId = Number(row.dataset.ingId);
@@ -1123,14 +1327,18 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   document.getElementById('save-recipe')?.addEventListener('click', async () => {
     const linkedProductIds = [...document.querySelectorAll('.recipe-product-cb:checked')]
       .map((cb) => Number(cb.value));
+    const linkedProductCategoryId = document.getElementById('recipe-product-category')?.value || null;
+    const recipeCategoryId = Number(document.getElementById('recipe-category')?.value) || categoryId;
     const data = {
       name: document.getElementById('recipe-name').value.trim(),
       yieldPortions: document.getElementById('recipe-yield').value,
       linkedProductIds,
+      linkedProductCategoryId: linkedProductCategoryId || null,
       notes: document.getElementById('recipe-notes').value,
     };
     try {
       if (isEdit) {
+        if (recipeCategoryId) data.categoryId = recipeCategoryId;
         await updateRecipe(recipe.id, data);
         closeModal();
         showToast('נשמר ✓');
@@ -1141,9 +1349,9 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
           renderRecipes(container);
         }
       } else {
-        await addRecipe({ ...data, categoryId });
+        await addRecipe({ ...data, categoryId: recipeCategoryId });
         closeModal();
-        if (categoryId) expandRecipeCategory(categoryId);
+        if (recipeCategoryId) expandRecipeCategory(recipeCategoryId);
         showToast('נשמר ✓');
         renderRecipes(container);
       }

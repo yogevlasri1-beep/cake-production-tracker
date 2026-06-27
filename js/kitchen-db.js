@@ -32,6 +32,8 @@ export function formatRecipeUnitKind(kind) {
 export const IMPORT_WORD_GROUP = 'ייבוא Word';
 export const IMPORT_WORD_SUB = 'ללא סיווג';
 export const IMPORT_MATERIALS_CAT = 'ייבוא ממתכונים';
+export const RECIPE_SORT_GROUP_DEFAULT = 'סידור';
+export const DEFAULT_RECIPE_TYPES = ['מילית', 'בצק', 'קרם', 'רטבים', 'תוספת', 'אחר'];
 
 /* ── קטגוריות כלליות (קבוצות) ── */
 
@@ -53,13 +55,33 @@ export async function addRecipeGroup({ name, linkedCategoryGroupId }) {
     sortOrder: maxOrder + 1,
     linkedCategoryGroupId: linkId,
   });
-  await db.recipeCategories.add({
-    groupId,
-    name: 'ראשי',
-    sortOrder: 1,
-    linkedCategoryId: null,
-  });
   return groupId;
+}
+
+export async function updateRecipeGroup(id, patch) {
+  const gid = sanitizeProductId(id);
+  if (!gid) return;
+  const data = { ...patch };
+  if ('name' in data) {
+    data.name = sanitizeName(data.name, 40);
+    if (!data.name) throw new ValidationError('שם לא תקין');
+  }
+  if (Object.keys(data).length) await db.recipeGroups.update(gid, data);
+}
+
+export async function updateRecipeSubCategory(id, patch) {
+  const cid = sanitizeProductId(id);
+  if (!cid) return;
+  const data = { ...patch };
+  if ('name' in data) {
+    data.name = sanitizeName(data.name, 40);
+    if (!data.name) throw new ValidationError('שם קטגוריה לא תקין');
+  }
+  if ('groupId' in data) {
+    data.groupId = sanitizeProductId(data.groupId);
+    if (!data.groupId) throw new ValidationError('קבוצת סידור לא תקינה');
+  }
+  if (Object.keys(data).length) await db.recipeCategories.update(cid, data);
 }
 
 export async function importRecipeGroupsFromProducts() {
@@ -118,7 +140,7 @@ export async function getRecipeCategories(groupId) {
 export async function addRecipeSubCategory({ groupId, name, linkedCategoryId }) {
   const gid = sanitizeProductId(groupId);
   const trimmed = sanitizeName(name, 40);
-  if (!gid) throw new ValidationError('קטגוריה כללית לא תקינה');
+  if (!gid) throw new ValidationError('קבוצת סידור לא תקינה');
   if (!trimmed) throw new ValidationError('שם תת-קטגוריה לא תקין');
   const existing = await getRecipeSubCategories(gid);
   if (existing.some((c) => c.name === trimmed)) throw new ValidationError('תת-קטגוריה כבר קיימת');
@@ -195,7 +217,80 @@ async function mergeSubIntoTarget(misplacedSub, targetGroupId, subsInTx) {
   return true;
 }
 
-/** מעביר תת-קטגוריות שנמצאות תחת קבוצה שגויה (למשל הכל תחת «מפעל») לקבוצה הכללית המתאימה */
+/** מעבר למבנה: קבוצות סידור + קטגוריות חופשיות (מילית, בצק...) */
+export async function migrateToRecipeTypeCatalog() {
+  const flag = await db.settings.get('recipeCatalogV29');
+  if (flag?.value === 'done') return false;
+
+  const recipes = await db.recipes.toArray();
+  const oldSubs = await db.recipeCategories.toArray();
+  const oldSubById = new Map(oldSubs.map((s) => [s.id, s]));
+
+  await db.transaction('rw', db.recipeGroups, db.recipeCategories, db.recipes, db.settings, async () => {
+    await db.recipeCategories.clear();
+    await db.recipeGroups.clear();
+
+    const groupId = await db.recipeGroups.add({
+      name: RECIPE_SORT_GROUP_DEFAULT,
+      sortOrder: 1,
+      linkedCategoryGroupId: null,
+    });
+
+    const typeIds = new Map();
+    for (let i = 0; i < DEFAULT_RECIPE_TYPES.length; i++) {
+      const typeName = DEFAULT_RECIPE_TYPES[i];
+      const id = await db.recipeCategories.add({
+        groupId,
+        name: typeName,
+        sortOrder: i + 1,
+        linkedCategoryId: null,
+      });
+      typeIds.set(typeName, id);
+    }
+
+    const fallbackId = typeIds.get('אחר');
+
+    for (const recipe of recipes) {
+      const oldSub = oldSubById.get(recipe.categoryId);
+      let targetId = fallbackId;
+      if (oldSub) {
+        const name = oldSub.name.trim();
+        if (typeIds.has(name)) targetId = typeIds.get(name);
+        else if (/מיל/i.test(name)) targetId = typeIds.get('מילית') || fallbackId;
+        else if (/בצק/i.test(name)) targetId = typeIds.get('בצק') || fallbackId;
+        else if (/קרם/i.test(name)) targetId = typeIds.get('קרם') || fallbackId;
+        else if (/רטב|רוטב/i.test(name)) targetId = typeIds.get('רטבים') || fallbackId;
+      }
+      await db.recipes.update(recipe.id, { categoryId: targetId });
+    }
+
+    await db.settings.put({ key: 'recipeCatalogV29', value: 'done' });
+  });
+  return true;
+}
+
+export async function ensureRecipeTypeCatalog() {
+  const groups = await getRecipeGroups();
+  if (groups.length) return false;
+  await db.transaction('rw', db.recipeGroups, db.recipeCategories, async () => {
+    const groupId = await db.recipeGroups.add({
+      name: RECIPE_SORT_GROUP_DEFAULT,
+      sortOrder: 1,
+      linkedCategoryGroupId: null,
+    });
+    for (let i = 0; i < DEFAULT_RECIPE_TYPES.length; i++) {
+      await db.recipeCategories.add({
+        groupId,
+        name: DEFAULT_RECIPE_TYPES[i],
+        sortOrder: i + 1,
+        linkedCategoryId: null,
+      });
+    }
+  });
+  return true;
+}
+
+/** @deprecated — מבנה ישן; השתמש ב-migrateToRecipeTypeCatalog */
 export async function repairRecipeCategoryPlacement() {
   await importRecipeGroupsFromProducts();
 
@@ -266,11 +361,9 @@ export async function deleteRecipeSubCategory(id) {
   const cid = sanitizeProductId(id);
   if (!cid) return;
   const recipes = await db.recipes.where('categoryId').equals(cid).count();
-  if (recipes > 0) throw new ValidationError('יש מתכונים בתת-קטגוריה — העבר או מחק אותם קודם');
-  const sub = await db.recipeCategories.get(cid);
-  if (!sub) return;
-  const siblingCount = await db.recipeCategories.where('groupId').equals(sub.groupId).count();
-  if (siblingCount <= 1) throw new ValidationError('חייבת להישאר לפחות תת-קטגוריה אחת');
+  if (recipes > 0) throw new ValidationError('יש מתכונים בקטגוריה — העבר או מחק אותם קודם');
+  const total = await db.recipeCategories.count();
+  if (total <= 1) throw new ValidationError('חייבת להישאר לפחות קטגוריה אחת');
   await db.recipeCategories.delete(cid);
 }
 
@@ -386,7 +479,7 @@ export async function getRecipeForProduct(productId) {
   return getRecipe(legacy.id);
 }
 
-export async function addRecipe({ categoryId, name, linkedProductId, linkedProductIds, yieldPortions, notes }) {
+export async function addRecipe({ categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId, yieldPortions, notes }) {
   const cid = sanitizeProductId(categoryId);
   const trimmed = sanitizeName(name, 80);
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
@@ -396,10 +489,12 @@ export async function addRecipe({ categoryId, name, linkedProductId, linkedProdu
   const yp = yieldPortions != null && yieldPortions !== ''
     ? sanitizeQuantity(yieldPortions, { allowZero: false })
     : DEFAULT_RECIPE_YIELD;
+  const linkCatId = linkedProductCategoryId ? sanitizeProductId(linkedProductCategoryId) : null;
   const recipeId = await db.recipes.add({
     categoryId: cid,
     name: trimmed,
     linkedProductId: null,
+    linkedProductCategoryId: linkCatId,
     yieldPortions: yp,
     notes: String(notes || '').trim().slice(0, 2000),
     sortOrder: maxOrder + 1,
@@ -429,6 +524,11 @@ export async function updateRecipe(id, patch) {
   if ('linkedProductIds' in data) {
     await setRecipeProductLinks(rid, data.linkedProductIds);
     delete data.linkedProductIds;
+  }
+  if ('linkedProductCategoryId' in data) {
+    data.linkedProductCategoryId = data.linkedProductCategoryId
+      ? sanitizeProductId(data.linkedProductCategoryId)
+      : null;
   }
   if ('yieldPortions' in data) {
     data.yieldPortions = sanitizeQuantity(data.yieldPortions, { allowZero: false });
