@@ -1,46 +1,56 @@
-# Vercel תקוע — פרויקט yogevcakee
+# תיקון yogevcakee — מ-153 לגרסה עדכנית
 
+**פרויקט:** yogevcakee  
 **URL:** https://yogevcakee.vercel.app  
-**Redeploy** = מפרס מחדש את **אותה גרסה ישנה** — לא מושך מ-GitHub.
+**GitHub Pages (עובד):** https://yogevlasri1-beep.github.io/cake-production-tracker/
 
-GitHub Pages (תמיד עדכני):  
-https://yogevlasri1-beep.github.io/cake-production-tracker/
+Redeploy **לא עוזר** — הוא מפרס מחדש 153.
 
 ---
 
-## שלב 1 — חבר Git מחדש (yogevcakee)
+## דרך 1 — Deploy Hook + GitHub Actions (5 דקות, מומלץ)
 
-1. [Vercel Dashboard](https://vercel.com/dashboard) → **yogevcakee**
-2. **Settings → Git**
-3. אם מחובר — **Disconnect**
-4. **Connect Git Repository** → `yogevlasri1-beep/cake-production-tracker`
-5. Production Branch: **main** → Deploy
+### א. צור Hook ב-Vercel
+1. https://vercel.com/dashboard → **yogevcakee**
+2. **Settings → Git → Deploy Hooks**
+3. **Create Hook** · שם: `github-main` · Branch: **main**
+4. **העתק את ה-URL** (מתחיל ב-`https://api.vercel.com/v1/integrations/deploy/`)
 
-## שלב 2 — Create Deployment
+### ב. הרץ ב-GitHub
+1. https://github.com/yogevlasri1-beep/cake-production-tracker/actions/workflows/vercel-deploy-manual.yml
+2. **Run workflow** (ימין)
+3. הדבק את ה-URL בשדה **deploy_hook_url**
+4. **Run workflow**
+5. אחרי ~2 דקות: https://yogevcakee.vercel.app/js/version.js
 
-1. **Deployments** → **Create Deployment** (לא Redeploy!)
-2. Branch: **main**
-3. Deploy
+### ג. לעתיד (אוטומטי)
+GitHub → repo → **Settings → Secrets → Actions** → New secret:
+- Name: `VERCEL_DEPLOY_HOOK`
+- Value: אותו URL
 
-## שלb 3 — Deploy Hook
+---
 
-1. **yogevcakee** → **Settings → Git → Deploy Hooks** → Create (branch: `main`)
-2. GitHub Secrets → `VERCEL_DEPLOY_HOOK` = ה-URL
-3. Actions → **Deploy Vercel** → Run workflow
+## דרך 2 — חבר Git מחדש
 
-או:
-```bash
-curl -X POST "הדבק_כאן_Deploy_Hook_URL"
+1. **yogevcakee** → **Settings → Git**
+2. **Disconnect**
+3. **Connect** → `yogevlasri1-beep/cake-production-tracker` · branch **main**
+4. המתן ל-Deployment חדש (לא Redeploy!)
+
+---
+
+## דרך 3 — באייפון (עובד עכשיו, בלי Vercel)
+
 ```
+https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1
+```
+
+הוסף למסך הבית · מחק אייקון yogevcakee ישן.
+
+---
 
 ## בדיקה
 
 ```bash
 ./scripts/verify-deploy.sh
 ```
-
-https://yogevcakee.vercel.app/js/version.js — צריך להתאים לגרסה ב-GitHub Pages.
-
-## באייפון (עד ש-Vercel מתוקן)
-
-https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1

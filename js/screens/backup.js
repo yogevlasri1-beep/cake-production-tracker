@@ -14,12 +14,12 @@ import {
   supportsBackupLocationPicker,
   pickJsonFileFromDevice,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=161';
-import { describeDownloadMethod } from '../download.js?v=161';
-import { showToast, escapeHtml } from '../utils.js?v=161';
-import { openModal, closeModal } from '../modal.js?v=161';
-import { APP_VERSION } from '../version.js?v=161';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=161';
+} from '../backup-service.js?v=162';
+import { describeDownloadMethod } from '../download.js?v=162';
+import { showToast, escapeHtml } from '../utils.js?v=162';
+import { openModal, closeModal } from '../modal.js?v=162';
+import { APP_VERSION } from '../version.js?v=162';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=162';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -54,8 +54,11 @@ export async function renderBackup(container, { navigate } = {}) {
       <p class="form-hint">גרסה מותקנת: <strong>${APP_VERSION}</strong>${isStandaloneApp() ? ' · מהאייקון במסך הבית' : ''}</p>
       <p class="form-hint" id="backup-remote-version" style="margin-top:4px"></p>
       <p class="form-hint" style="margin-top:6px;color:var(--danger)">
-        <strong>Vercel (yogevcakee) תקוע?</strong> Redeploy לא מספיק — חבר Git מחדש בפרויקט yogevcakee.
-        <a href="https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1" target="_blank" rel="noopener">GitHub Pages (עדכני)</a>
+        <strong>yogevcakee תקוע על 153?</strong>
+        Redeploy לא עוזר — צור Deploy Hook ב-Vercel והרץ
+        <a href="https://github.com/yogevlasri1-beep/cake-production-tracker/actions/workflows/vercel-deploy-manual.yml" target="_blank" rel="noopener">Deploy Vercel (Manual)</a>
+        · או
+        <a href="https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1" target="_blank" rel="noopener">GitHub Pages</a>
       </p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         <button type="button" class="btn btn-primary btn-sm" id="check-app-update">בדוק עדכון</button>

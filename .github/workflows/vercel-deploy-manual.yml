@@ -1,0 +1,35 @@
+name: Deploy Vercel (Manual)
+
+# הרץ ידנית עם Deploy Hook URL מפרויקט yogevcakee
+# Vercel → yogevcakee → Settings → Git → Deploy Hooks → Create Hook (main)
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_hook_url:
+        description: 'Deploy Hook URL (https://api.vercel.com/v1/integrations/deploy/...)'
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Vercel deploy (yogevcakee)
+        run: |
+          echo "→ מפעיל Deploy Hook..."
+          curl -fsS -X POST "${{ github.event.inputs.deploy_hook_url }}"
+          echo ""
+          echo "✓ Hook נשלח — המתן 1–2 דקות"
+
+      - name: Verify yogevcakee version
+        run: |
+          sleep 90
+          REMOTE=$(curl -fsS "https://yogevcakee.vercel.app/js/version.js?b=$(date +%s)" | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
+          LOCAL=$(curl -fsS "https://yogevlasri1-beep.github.io/cake-production-tracker/js/version.js?b=$(date +%s)" | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
+          echo "yogevcakee: $REMOTE · GitHub Pages: $LOCAL"
+          if [ "$REMOTE" = "$LOCAL" ] && [ "$REMOTE" != "?" ]; then
+            echo "✓ Vercel מעודכן!"
+          else
+            echo "::warning::Vercel עדיין $REMOTE (צפוי $LOCAL) — נסה Disconnect+Connect Git ב-yogevcakee"
+          fi
