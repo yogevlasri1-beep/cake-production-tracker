@@ -7,6 +7,7 @@ import {
   setRecipeOrder, setRecipeGroupOrder, setRecipeSubCategoryOrder, moveRecipesToCategory,
   importParsedRecipes, scaleRecipeIngredients,
   findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
+  getExistingRecipeNameKeys, normalizeRecipeImportKey,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind,
 } from '../kitchen-db.js';
 import { getProducts, getProductsCatalogLayout, getCategoryGroups, getCategories } from '../db.js';
@@ -289,8 +290,7 @@ export async function renderRecipes(container) {
       const parsed = await parseRecipesFromDocxFile(file);
       if (parsed._parseWarning) showToast(parsed._parseWarning);
       const groups = await getRecipeGroups();
-      const subs = await getRecipeSubCategories(groups[0]?.id);
-      openImportPreview(container, parsed, { groupId: groups[0]?.id, subId: subs[0]?.id, groups, subs });
+      openImportPreview(container, parsed, { groups, subs: [] });
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
@@ -653,76 +653,105 @@ function openCategoryManager(container, { groups, productGroups, productCats }) 
   });
 }
 
-function openImportPreview(container, parsed, { groupId, subId, groups, subs }) {
-  openModal({
-    title: `ייבוא ${parsed.length} מתכונים`,
-    bodyHTML: `
-      <div class="form-group">
-        <label>יעד (ניתן למיין אחר כך)</label>
-        <select id="import-group">
-          <option value="word-import" selected>${escapeHtml(IMPORT_WORD_GROUP)} · ${escapeHtml(IMPORT_WORD_SUB)}</option>
-          ${groups.filter((g) => g.name !== IMPORT_WORD_GROUP).map((g) => `
-            <option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="import-add-materials" checked>
-          הוסף חומרי גלם לספקים
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="import-select-all" checked>
-          ייבא את כל המתכונים המסומנים
-        </label>
-      </div>
-      <div class="form-group" style="max-height:240px;overflow:auto">
-        ${parsed.map((r, i) => `
-          <label class="checkbox-label recipe-import-pick" style="display:flex;gap:8px;margin-bottom:8px;padding:8px;background:#f8fafc;border-radius:8px">
-            <input type="checkbox" class="import-recipe-cb" data-idx="${i}" checked>
+function formatImportRecipePath(r) {
+  const parts = [];
+  if (r.groupName) parts.push(r.groupName);
+  if (r.subName) parts.push(r.subName);
+  return parts.length ? parts.join(' › ') : IMPORT_WORD_GROUP;
+}
+
+function openImportPreview(container, parsed, { groups, subs }) {
+  getExistingRecipeNameKeys().then((existingNames) => {
+    const newCount = parsed.filter((r) => !existingNames.has(normalizeRecipeImportKey(r.title))).length;
+    const dupCount = parsed.length - newCount;
+    openModal({
+      title: `ייבוא ${parsed.length} מתכונים`,
+      bodyHTML: `
+        <p class="form-hint" style="margin-bottom:10px">
+          כותרות לפני טבלאות ייובאו כ<strong>קטגוריות</strong> (ניתן לערוך אחר כך).
+          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — לא ייובאו שוב.` : ''}
+          ${newCount ? `<br>חדשים לייבוא: <strong>${newCount}</strong>` : ''}
+        </p>
+        <div class="form-group">
+          <label>קטגוריה כללית (אם אין בקובץ)</label>
+          <select id="import-group">
+            <option value="word-import" selected>${escapeHtml(IMPORT_WORD_GROUP)}</option>
+            ${groups.filter((g) => g.name !== IMPORT_WORD_GROUP).map((g) => `
+              <option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="import-add-materials" checked>
+            הוסף חומרי גלם לספקים
+          </label>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="import-select-all" checked>
+            סמן הכל (רק חדשים)
+          </label>
+        </div>
+        <div class="form-group" style="max-height:240px;overflow:auto">
+          ${parsed.map((r, i) => {
+    const isDup = existingNames.has(normalizeRecipeImportKey(r.title));
+    return `
+          <label class="checkbox-label recipe-import-pick" style="display:flex;gap:8px;margin-bottom:8px;padding:8px;background:${isDup ? '#fef3c7' : '#f8fafc'};border-radius:8px;opacity:${isDup ? '0.85' : '1'}">
+            <input type="checkbox" class="import-recipe-cb" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''}>
             <span>
               <strong>${escapeHtml(r.title)}</strong>
-              — ${(r.ingredients || []).length} חומרים
-              ${!(r.ingredients || []).length ? '<em style="color:#b45309"> (ללא חומרים)</em>' : ''}
+              <span class="form-hint"> · ${escapeHtml(formatImportRecipePath(r))}</span>
+              · ${(r.ingredients || []).length} חומרים
+              ${isDup ? ' · <em style="color:#b45309">קיים</em>' : ''}
+              ${!(r.ingredients || []).length ? ' · <em style="color:#b45309">ללא חומרים</em>' : ''}
             </span>
-          </label>`).join('')}
-      </div>`,
-    footerHTML: `
-      <button class="btn btn-secondary modal-cancel">ביטול</button>
-      <button class="btn btn-primary" id="confirm-recipe-import">ייבוא מסומנים</button>`,
-  });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('import-select-all')?.addEventListener('change', (e) => {
-    document.querySelectorAll('.import-recipe-cb').forEach((cb) => {
-      cb.checked = e.target.checked;
+          </label>`;
+  }).join('')}
+        </div>`,
+      footerHTML: `
+        <button class="btn btn-secondary modal-cancel">ביטול</button>
+        <button class="btn btn-primary" id="confirm-recipe-import">ייבוא חדשים</button>`,
     });
-  });
-  document.getElementById('confirm-recipe-import')?.addEventListener('click', async () => {
-    let gid = document.getElementById('import-group')?.value;
-    const addRawMaterials = document.getElementById('import-add-materials')?.checked !== false;
-    const selected = [...document.querySelectorAll('.import-recipe-cb:checked')]
-      .map((cb) => parsed[Number(cb.dataset.idx)])
-      .filter(Boolean);
-    if (!selected.length) return showToast('לא נבחרו מתכונים');
-    try {
-      let sid;
-      if (gid === 'word-import' || !gid) {
-        const loc = await findOrCreateWordImportCategory();
-        gid = loc.groupId;
-        sid = loc.subCategoryId;
-      } else {
-        gid = Number(gid);
-        const subList = await getRecipeSubCategories(gid);
-        sid = subList[0]?.id;
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('import-select-all')?.addEventListener('change', (e) => {
+      document.querySelectorAll('.import-recipe-cb:not(:disabled)').forEach((cb) => {
+        cb.checked = e.target.checked;
+      });
+    });
+    document.getElementById('confirm-recipe-import')?.addEventListener('click', async () => {
+      let gid = document.getElementById('import-group')?.value;
+      const addRawMaterials = document.getElementById('import-add-materials')?.checked !== false;
+      const selected = [...document.querySelectorAll('.import-recipe-cb:checked')]
+        .map((cb) => parsed[Number(cb.dataset.idx)])
+        .filter(Boolean);
+      if (!selected.length) return showToast('אין מתכונים חדשים לייבוא');
+      try {
+        let defaultGroupId;
+        let defaultSubId;
+        if (gid === 'word-import' || !gid) {
+          const loc = await findOrCreateWordImportCategory();
+          defaultGroupId = loc.groupId;
+          defaultSubId = loc.subCategoryId;
+        } else {
+          defaultGroupId = Number(gid);
+          const subList = await getRecipeSubCategories(defaultGroupId);
+          defaultSubId = subList[0]?.id;
+        }
+        const result = await importParsedRecipes(selected, {
+          groupId: defaultGroupId,
+          subCategoryId: defaultSubId,
+          addRawMaterials,
+          skipDuplicates: true,
+        });
+        closeModal();
+        const parts = [`יובאו ${result.imported}`];
+        if (result.skipped) parts.push(`דולגו ${result.skipped} קיימים`);
+        showToast(`${parts.join(' · ')} ✓`);
+        renderRecipes(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
       }
-      const result = await importParsedRecipes(selected, { groupId: gid, subCategoryId: sid, addRawMaterials });
-      closeModal();
-      showToast(`יובאו ${result.imported} מתכונים ✓`);
-      renderRecipes(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+    });
   });
 }
 

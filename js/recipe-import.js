@@ -89,6 +89,49 @@ function paragraphText(p) {
   return [...p.getElementsByTagName('w:t')].map((t) => t.textContent || '').join('').trim();
 }
 
+function paragraphHeadingLevel(p) {
+  const styleEl = p.getElementsByTagName('w:pStyle')[0];
+  const style = styleEl?.getAttribute('w:val') || styleEl?.getAttribute('val') || '';
+  if (/Heading1|heading\s*1|כותרת\s*1|^1$/i.test(style)) return 1;
+  if (/Heading2|heading\s*2|כותרת\s*2|^2$/i.test(style)) return 2;
+  if (/Heading3|heading\s*3|כותרת\s*3|^3$/i.test(style)) return 3;
+  const bold = [...p.getElementsByTagName('w:r')].some((run) => {
+    const b = run.getElementsByTagName('w:b')[0];
+    if (!b) return false;
+    const val = b.getAttribute('w:val') || b.getAttribute('val');
+    return val == null || val === '1' || val === 'true';
+  });
+  const sizeEl = p.getElementsByTagName('w:sz')[0];
+  const size = sizeEl ? Number(sizeEl.getAttribute('w:val') || sizeEl.getAttribute('val')) : 0;
+  if (bold && size >= 28) return 1;
+  if (bold && size >= 24) return 2;
+  if (bold) return 3;
+  return 0;
+}
+
+function nextMeaningfulBlock(blocks, fromIndex) {
+  for (let i = fromIndex + 1; i < blocks.length; i++) {
+    if (isTableTag(blocks[i])) return blocks[i];
+    if (isParagraphTag(blocks[i]) && paragraphText(blocks[i])) return null;
+  }
+  return null;
+}
+
+function assignHeadingAsCategory(text, level, state) {
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  if (level === 1) {
+    state.pendingGroup = trimmed;
+    state.pendingSub = '';
+    return;
+  }
+  if (level === 2) {
+    state.pendingSub = trimmed;
+    return;
+  }
+  state.pendingSub = trimmed;
+}
+
 function cellText(cell) {
   return [...cell.getElementsByTagName('w:t')].map((t) => t.textContent || '').join('').trim();
 }
@@ -264,44 +307,61 @@ export function parseRecipesFromDocumentXml(xml) {
   if (!body) return [];
 
   const recipes = [];
-  let pendingTitle = null;
-  let pendingGroup = '';
-  let pendingSub = '';
+  const state = {
+    pendingTitle: null,
+    pendingGroup: '',
+    pendingSub: '',
+  };
 
   const blocks = collectBlocksInOrder(body);
 
-  for (const block of blocks) {
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
     if (isParagraphTag(block)) {
       const text = paragraphText(block);
       if (!text) continue;
 
       const groupM = text.match(GROUP_HEADER_RE);
       if (groupM) {
-        pendingGroup = groupM[1].trim();
+        state.pendingGroup = groupM[1].trim();
+        state.pendingSub = '';
         continue;
       }
       const subM = text.match(SUB_HEADER_RE);
       if (subM) {
-        pendingSub = subM[1].trim();
+        state.pendingSub = subM[1].trim();
         continue;
       }
       const recipeM = text.match(RECIPE_HEADER_RE);
       if (recipeM) {
-        pendingTitle = recipeM[1].trim();
+        state.pendingTitle = recipeM[1].trim();
         continue;
       }
       if (SKIP_TITLE_RE.test(text)) continue;
       if (parseIngredientLine(text)) continue;
-      if (text.length <= 120) pendingTitle = text;
+
+      const nextBlock = nextMeaningfulBlock(blocks, i);
+      const nextIsTable = nextBlock && isTableTag(nextBlock);
+      if (nextIsTable && text.length <= 120) {
+        const level = paragraphHeadingLevel(block);
+        assignHeadingAsCategory(text, level || 3, state);
+        state.pendingTitle = null;
+        continue;
+      }
+
+      if (text.length <= 120) state.pendingTitle = text;
       continue;
     }
 
     if (isTableTag(block)) {
-      const recipe = parseRecipeTable(block, pendingTitle);
-      pendingTitle = null;
+      const recipe = parseRecipeTable(block, state.pendingTitle);
+      state.pendingTitle = null;
       if (recipe) {
-        recipe.groupName = pendingGroup;
-        recipe.subName = pendingSub;
+        if (recipe.title === state.pendingSub) {
+          recipe.title = 'מתכון ללא שם';
+        }
+        recipe.groupName = state.pendingGroup;
+        recipe.subName = state.pendingSub;
         recipes.push(recipe);
       }
     }
@@ -339,70 +399,79 @@ export async function extractTextFromDocx(arrayBuffer) {
 }
 
 export function parseRecipesFromText(text) {
-  const blocks = String(text || '').split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const lines = String(text || '').split('\n').map((l) => l.trim());
   const recipes = [];
   let pendingGroup = '';
   let pendingSub = '';
+  let pendingTitle = null;
+  let ingredients = [];
+  let noteLines = [];
 
-  for (const block of blocks) {
-    const blockLines = block.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (!blockLines.length) continue;
-
-    let title = null;
-    let groupName = pendingGroup;
-    let subName = pendingSub;
-    const ingredients = [];
-    const noteLines = [];
-
-    for (const line of blockLines) {
-      const groupM = line.match(GROUP_HEADER_RE);
-      if (groupM) {
-        groupName = groupM[1].trim();
-        pendingGroup = groupName;
-        continue;
-      }
-      const subM = line.match(SUB_HEADER_RE);
-      if (subM) {
-        subName = subM[1].trim();
-        pendingSub = subName;
-        continue;
-      }
-      const recipeM = line.match(RECIPE_HEADER_RE);
-      if (recipeM) {
-        title = recipeM[1].trim();
-        continue;
-      }
-      const ing = parseIngredientLine(line);
-      if (ing) {
-        ingredients.push(ing);
-        continue;
-      }
-      if (!title && !ingredients.length && blockLines.length === 1) {
-        title = line;
-        continue;
-      }
-      noteLines.push(line);
-    }
-
-    if (!title && ingredients.length) {
-      title = blockLines[0];
-      for (let i = 1; i < blockLines.length; i++) {
-        const ing = parseIngredientLine(blockLines[i]);
-        if (!ing) noteLines.push(blockLines[i]);
-      }
-    }
-
-    if (!title) continue;
-
+  const flushRecipe = () => {
+    if (!pendingTitle && !ingredients.length) return;
     recipes.push({
-      title,
-      groupName: groupName || '',
-      subName: subName || '',
-      ingredients,
+      title: pendingTitle || 'מתכון ללא שם',
+      groupName: pendingGroup,
+      subName: pendingSub,
+      ingredients: ingredients.slice(),
       notes: noteLines.join('\n').trim(),
     });
-  }
+    pendingTitle = null;
+    ingredients = [];
+    noteLines = [];
+  };
 
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) {
+      flushRecipe();
+      continue;
+    }
+
+    const groupM = line.match(GROUP_HEADER_RE);
+    if (groupM) {
+      flushRecipe();
+      pendingGroup = groupM[1].trim();
+      pendingSub = '';
+      continue;
+    }
+    const subM = line.match(SUB_HEADER_RE);
+    if (subM) {
+      flushRecipe();
+      pendingSub = subM[1].trim();
+      continue;
+    }
+    const recipeM = line.match(RECIPE_HEADER_RE);
+    if (recipeM) {
+      flushRecipe();
+      pendingTitle = recipeM[1].trim();
+      continue;
+    }
+
+    const ing = parseIngredientLine(line);
+    if (ing) {
+      if (!pendingTitle) pendingTitle = pendingSub || null;
+      ingredients.push(ing);
+      continue;
+    }
+
+    const nextLine = lines[i + 1];
+    const nextIsIng = nextLine && parseIngredientLine(nextLine);
+    if (!ingredients.length && line.length <= 120 && nextIsIng) {
+      flushRecipe();
+      pendingSub = line;
+      continue;
+    }
+
+    if (!ingredients.length && line.length <= 120 && !parseIngredientLine(line)) {
+      flushRecipe();
+      pendingTitle = line;
+      continue;
+    }
+
+    noteLines.push(line);
+  }
+  flushRecipe();
   return recipes;
 }
 

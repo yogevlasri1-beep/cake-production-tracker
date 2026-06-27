@@ -511,35 +511,50 @@ export async function ensureRawMaterialByName(name, { supplierCategoryId, unit }
   });
 }
 
+export function normalizeRecipeImportKey(name) {
+  return sanitizeName(name, 80).trim().toLowerCase();
+}
+
+export async function getExistingRecipeNameKeys() {
+  const rows = await db.recipes.toArray();
+  return new Set(rows.map((r) => normalizeRecipeImportKey(r.name)).filter(Boolean));
+}
+
 export async function importParsedRecipes(parsedRecipes, {
-  groupId, subCategoryId, addRawMaterials = true,
+  groupId, subCategoryId, addRawMaterials = true, skipDuplicates = true,
 } = {}) {
   let materialsCategoryId = null;
   if (addRawMaterials) {
     materialsCategoryId = await findOrCreateImportMaterialsCategory();
   }
 
+  const wordLoc = await findOrCreateWordImportCategory();
   let imported = 0;
+  let skipped = 0;
   let rawMaterialsAdded = 0;
   const existingMaterials = addRawMaterials ? await db.rawMaterials.toArray() : [];
   const materialNames = new Set(existingMaterials.map((m) => m.name));
+  const existingNames = skipDuplicates ? await getExistingRecipeNameKeys() : new Set();
 
   for (const item of parsedRecipes) {
+    const nameKey = normalizeRecipeImportKey(item.title);
+    if (skipDuplicates && nameKey && existingNames.has(nameKey)) {
+      skipped += 1;
+      continue;
+    }
+
     let gid = item.groupName
       ? await findOrCreateRecipeGroup(item.groupName)
-      : groupId;
-    let subId = item.subName && gid
+      : (groupId || wordLoc.groupId);
+    let subId = item.subName
       ? await findOrCreateRecipeSubCategory(gid, item.subName)
-      : subCategoryId;
-    if (!gid || !subId) {
-      const loc = await findOrCreateWordImportCategory();
-      if (!gid) gid = loc.groupId;
-      if (!subId) subId = loc.subCategoryId;
-    }
+      : (subCategoryId || wordLoc.subCategoryId);
+    if (!gid) gid = wordLoc.groupId;
     if (!subId) {
       const subs = await getRecipeSubCategories(gid);
-      subId = subs[0]?.id;
+      subId = subs[0]?.id || wordLoc.subCategoryId;
     }
+
     const recipeId = await addRecipe({
       categoryId: subId,
       name: item.title,
@@ -556,7 +571,7 @@ export async function importParsedRecipes(parsedRecipes, {
         });
         if (isNew && rawMaterialId) {
           materialNames.add(ing.name);
-          rawMaterialsAdded++;
+          rawMaterialsAdded += 1;
         }
       }
       await addRecipeIngredient(recipeId, {
@@ -567,9 +582,10 @@ export async function importParsedRecipes(parsedRecipes, {
         unitKind,
       });
     }
-    imported++;
+    if (nameKey) existingNames.add(nameKey);
+    imported += 1;
   }
-  return { imported, rawMaterialsAdded };
+  return { imported, skipped, rawMaterialsAdded };
 }
 
 export async function moveRecipesToCategory(recipeIds, categoryId) {
