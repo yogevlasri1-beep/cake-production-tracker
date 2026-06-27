@@ -525,10 +525,12 @@ export async function importParsedRecipes(parsedRecipes, {
   const materialNames = new Set(existingMaterials.map((m) => m.name));
 
   for (const item of parsedRecipes) {
-    let gid = groupId;
-    let subId = subCategoryId;
-    if (!gid && item.groupName) gid = await findOrCreateRecipeGroup(item.groupName);
-    if (!subId && item.subName && gid) subId = await findOrCreateRecipeSubCategory(gid, item.subName);
+    let gid = item.groupName
+      ? await findOrCreateRecipeGroup(item.groupName)
+      : groupId;
+    let subId = item.subName && gid
+      ? await findOrCreateRecipeSubCategory(gid, item.subName)
+      : subCategoryId;
     if (!gid || !subId) {
       const loc = await findOrCreateWordImportCategory();
       if (!gid) gid = loc.groupId;
@@ -568,6 +570,22 @@ export async function importParsedRecipes(parsedRecipes, {
     imported++;
   }
   return { imported, rawMaterialsAdded };
+}
+
+export async function moveRecipesToCategory(recipeIds, categoryId) {
+  const cid = sanitizeProductId(categoryId);
+  if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+  const ids = [...new Set((recipeIds || []).map((id) => sanitizeProductId(id)).filter(Boolean))];
+  if (!ids.length) throw new ValidationError('לא נבחרו מתכונים');
+  await db.transaction('rw', db.recipes, async () => {
+    const inCat = await getRecipes(cid);
+    let maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
+    for (const id of ids) {
+      maxOrder += 1;
+      await db.recipes.update(id, { categoryId: cid, sortOrder: maxOrder });
+    }
+  });
+  return ids.length;
 }
 
 export async function deleteRecipe(id) {

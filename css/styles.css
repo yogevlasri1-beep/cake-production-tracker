@@ -4060,6 +4060,47 @@ body {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
+.recipe-row-open {
+  cursor: pointer;
+}
+
+.recipe-row-open .list-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.recipe-select-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+}
+
+.recipe-select-wrap input {
+  width: 18px;
+  height: 18px;
+}
+
+.recipe-selection-bar {
+  position: sticky;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
+  z-index: 5;
+}
+
+.recipe-selection-count {
+  flex: 1;
+  font-weight: 600;
+}
+
 body.recipe-drag-active,
 body.material-drag-active,
 body.supplier-drag-active {

@@ -103,7 +103,7 @@ function isParagraphTag(el) {
 
 function isHeaderRow(cells) {
   const joined = cells.join(' ');
-  return /כמות|quantity/i.test(joined) && /חומר|גלם|material/i.test(joined);
+  return /כמות|quantity/i.test(joined) && /חומר|גלם|material|מרכיב/i.test(joined);
 }
 
 function isTotalRow(cells) {
@@ -114,7 +114,7 @@ function detectColumns(cells) {
   let qtyCol = 0;
   let nameCol = 1;
   const qtyIdx = cells.findIndex((c) => /כמות|quantity/i.test(c));
-  const nameIdx = cells.findIndex((c) => /חומר|גלם|material/i.test(c));
+  const nameIdx = cells.findIndex((c) => /חומר|גלם|material|מרכיב/i.test(c));
   if (qtyIdx >= 0) qtyCol = qtyIdx;
   if (nameIdx >= 0) nameCol = nameIdx;
   if (qtyCol === nameCol) {
@@ -124,68 +124,138 @@ function detectColumns(cells) {
   return { qtyCol, nameCol };
 }
 
+function isTitleRow(cells) {
+  const nonEmpty = cells.map((c) => c.trim()).filter(Boolean);
+  if (!nonEmpty.length) return false;
+  if (nonEmpty.length === 1) {
+    const text = nonEmpty[0];
+    return text.length <= 120 && !parseQtyUnitText(text) && !parseIngredientLine(text);
+  }
+  return nonEmpty.every((c) => !parseQtyUnitText(c) && !parseIngredientLine(c) && !/^[\d.,]+$/.test(c));
+}
+
+function guessQtyNameColumns(cells, fallback = { qtyCol: 0, nameCol: 1 }) {
+  if (cells.length < 2) return fallback;
+  let bestQty = -1;
+  let bestName = -1;
+  for (let i = 0; i < cells.length; i++) {
+    const text = cells[i].trim();
+    if (!text) continue;
+    const asQty = parseQtyUnitText(text) || (/^[\d.,]+/.test(text) && parseNumber(text.match(/^[\d.,]+/)?.[0]));
+    if (asQty || /^[\d.,]/.test(text)) bestQty = i;
+    else if (/[א-תa-z]/i.test(text)) bestName = i;
+  }
+  if (bestQty >= 0 && bestName >= 0 && bestQty !== bestName) {
+    return { qtyCol: bestQty, nameCol: bestName };
+  }
+  if (bestName >= 0 && bestQty < 0) {
+    return { qtyCol: bestName === 0 ? 1 : 0, nameCol: bestName };
+  }
+  return fallback;
+}
+
+function parseRowIngredient(cells, qtyCol, nameCol) {
+  let qtyText = cells[qtyCol] || '';
+  let nameText = cells[nameCol] || '';
+
+  if (!nameText?.trim() && cells.length >= 2) {
+    const guessed = guessQtyNameColumns(cells);
+    qtyText = cells[guessed.qtyCol] || '';
+    nameText = cells[guessed.nameCol] || '';
+  }
+
+  if (!nameText?.trim()) {
+    const joined = cells.filter(Boolean).join(' ').trim();
+    return parseIngredientLine(joined);
+  }
+
+  if (qtyText && /[\d.,]/.test(qtyText)) {
+    const parsed = parseQtyUnitText(qtyText);
+    if (parsed) return { name: nameText.trim(), ...parsed };
+  }
+
+  const combined = `${nameText} ${qtyText}`.trim();
+  let ing = parseIngredientLine(combined) || parseIngredientLine(nameText);
+  if (ing && nameText && !ing.name) ing.name = nameText.trim();
+  if (ing && !ing.name) ing.name = nameText.trim();
+  return ing;
+}
+
+function getTableRows(table) {
+  return [...table.querySelectorAll('w\\:tr, tr')];
+}
+
+function getRowCells(row) {
+  return [...row.querySelectorAll('w\\:tc, tc')].map(cellText);
+}
+
 function parseRecipeTable(table, title) {
-  const rows = [...table.getElementsByTagName('w:tr')];
+  const rows = getTableRows(table);
   if (!rows.length) return null;
 
   const ingredients = [];
   let qtyCol = 0;
   let nameCol = 1;
   let headerDone = false;
+  let recipeTitle = title?.trim() || '';
+  let startRow = 0;
 
-  for (const row of rows) {
-    const cells = [...row.getElementsByTagName('w:tc')].map(cellText);
+  const firstCells = getRowCells(rows[0]);
+  if (firstCells.length && isTitleRow(firstCells) && !isHeaderRow(firstCells)) {
+    recipeTitle = recipeTitle || firstCells.filter((c) => c.trim()).join(' ').trim();
+    startRow = 1;
+  }
+
+  for (let ri = startRow; ri < rows.length; ri++) {
+    const cells = getRowCells(rows[ri]);
     if (!cells.length) continue;
 
-    if (!headerDone && (cells.length >= 2 || isHeaderRow(cells))) {
-      if (isHeaderRow(cells)) {
-        ({ qtyCol, nameCol } = detectColumns(cells));
-        headerDone = true;
-        continue;
-      }
+    if (!headerDone && isHeaderRow(cells)) {
+      ({ qtyCol, nameCol } = detectColumns(cells));
+      headerDone = true;
+      continue;
     }
     headerDone = true;
 
     if (isTotalRow(cells)) continue;
 
-    let qtyText = cells[qtyCol] || '';
-    let nameText = cells[nameCol] || '';
-
-    if (!nameText && cells.length >= 2) {
-      nameText = cells.find((c, i) => i !== qtyCol && c && !/^[\d.,]+\s*(ק"ג|גרם|ליטר|l|kg|g)?$/i.test(c)) || '';
-      qtyText = cells.find((c) => c !== nameText && /[\d.,]/.test(c)) || qtyText;
+    if (isTitleRow(cells) && !ingredients.length) {
+      recipeTitle = cells.filter((c) => c.trim()).join(' ').trim();
+      continue;
     }
 
-    if (!nameText?.trim()) continue;
+    const guessed = guessQtyNameColumns(cells, { qtyCol, nameCol });
+    qtyCol = guessed.qtyCol;
+    nameCol = guessed.nameCol;
 
-    let ing = null;
-    if (qtyText && /[\d.,]/.test(qtyText)) {
-      const parsed = parseQtyUnitText(qtyText);
-      if (parsed) {
-        ing = { name: nameText.trim(), ...parsed };
-      }
-    }
-    if (!ing) {
-      ing = parseIngredientLine(`${nameText} ${qtyText}`.trim()) || parseIngredientLine(nameText);
-      if (ing && !ing.name) ing.name = nameText.trim();
-      if (ing && nameText && !parseIngredientLine(nameText)) ing.name = nameText.trim();
-    }
-    if (!ing && nameText) {
-      const fromName = parseIngredientLine(nameText);
-      if (fromName) ing = fromName;
-    }
-
+    const ing = parseRowIngredient(cells, qtyCol, nameCol);
     if (ing?.name && ing.quantity != null) ingredients.push(ing);
   }
 
-  if (!ingredients.length) return null;
+  if (!recipeTitle) recipeTitle = 'מתכון ללא שם';
   return {
-    title: title || 'מתכון ללא שם',
+    title: recipeTitle,
     groupName: '',
     subName: '',
     ingredients,
     notes: '',
   };
+}
+
+function collectBlocksInOrder(root) {
+  const blocks = [];
+  const walk = (node) => {
+    for (const child of node.children || []) {
+      if (child.nodeType !== 1) continue;
+      if (isParagraphTag(child) || isTableTag(child)) {
+        blocks.push(child);
+      } else {
+        walk(child);
+      }
+    }
+  };
+  walk(root);
+  return blocks;
 }
 
 export function parseRecipesFromDocumentXml(xml) {
@@ -198,7 +268,7 @@ export function parseRecipesFromDocumentXml(xml) {
   let pendingGroup = '';
   let pendingSub = '';
 
-  const blocks = [...body.children].filter((el) => el.nodeType === 1);
+  const blocks = collectBlocksInOrder(body);
 
   for (const block of blocks) {
     if (isParagraphTag(block)) {
@@ -222,7 +292,7 @@ export function parseRecipesFromDocumentXml(xml) {
       }
       if (SKIP_TITLE_RE.test(text)) continue;
       if (parseIngredientLine(text)) continue;
-      if (text.length <= 80) pendingTitle = text;
+      if (text.length <= 120) pendingTitle = text;
       continue;
     }
 
@@ -340,12 +410,16 @@ export async function parseRecipesFromDocxFile(file) {
   const buf = await file.arrayBuffer();
   const xml = await getDocumentXml(buf);
   let recipes = parseRecipesFromDocumentXml(xml);
+  const tableCount = (xml.match(/<w:tbl[\s>]/g) || []).length;
   if (!recipes.length) {
     const text = extractTextFromDocumentXml(xml);
     recipes = parseRecipesFromText(text);
   }
   if (!recipes.length) {
     throw new Error('לא נמצאו מתכונים — ודא שיש טבלאות עם עמודות "כמות" ו"חומר גלם"');
+  }
+  if (tableCount > recipes.length) {
+    recipes._parseWarning = `זוהו ${tableCount} טבלאות, פורשו ${recipes.length} מתכונים — בדוק מתכונים חסרים`;
   }
   return recipes;
 }
