@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# Zip static app files for Vercel Drop (drag-and-drop deploy, no Git needed).
+# Zip proxy-only deploy for Vercel Drop — mirrors GitHub Pages (לא עותק סטטי).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/cake-production-tracker-vercel.zip"
 cd "$ROOT"
+bash scripts/vercel-proxy-build.sh
 rm -f "$OUT"
-zip -r "$OUT" . \
-  -x 'node_modules/*' \
-  -x 'ios/*' \
-  -x '.git/*' \
-  -x '.DS_Store' \
-  -x '*.local' \
-  -x '.env*' \
-  -x 'cake-production-tracker-vercel.zip'
-echo "Created: $OUT"
-echo "Open https://vercel.com/new/drop and drag this zip onto the page."
+(cd dist-vercel && zip -r "$OUT" .)
+echo "Created: $OUT (proxy → GitHub Pages)"
+echo "Open https://vercel.com/new/drop → גרור ל-yogevcakee או פרויקט חדש"
+echo "אחרי Drop אחד: Vercel יתעדכן אוטומטית עם כל push ל-GitHub Pages"

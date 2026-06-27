@@ -34,9 +34,10 @@ if [[ "$VERCEL_VER" == "$LOCAL" ]]; then
   echo "✓ Vercel מעודכן"
 else
   echo "✗ Vercel לא מעודכן (מותקן $VERCEL_VER, צפוי $LOCAL)"
-  echo "  → הוסף Deploy Hook ב-Vercel (Settings → Git → Deploy Hooks)"
-  echo "  → שמור ב-GitHub Secrets כ-VERCEL_DEPLOY_HOOK"
-  echo "  → או השתמש ב-GitHub Pages: $PAGES_URL"
+  echo "  → פעם אחת: Deploy Hook (scripts/FIX-VERCEL.md) או Drop של proxy zip:"
+  echo "     ./scripts/make-vercel-drop-zip.sh"
+  echo "  → אחרי זה Vercel ישקף אוטומטית את GitHub Pages"
+  echo "  → GitHub Pages (עובד עכשיו): $PAGES_URL"
 fi
 
 if [[ "$VERCEL_VER" == "$LOCAL" ]]; then

@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=163';
+} from './db.js?v=164';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=163';
-import { downloadBlob } from './download.js?v=163';
-import { ValidationError } from './validators.js?v=163';
-import { openModal, closeModal } from './modal.js?v=163';
-import { escapeHtml, showToast } from './utils.js?v=163';
+} from './backup.js?v=164';
+import { downloadBlob } from './download.js?v=164';
+import { ValidationError } from './validators.js?v=164';
+import { openModal, closeModal } from './modal.js?v=164';
+import { escapeHtml, showToast } from './utils.js?v=164';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=163';
+} from './backup-folder-bridge.js?v=164';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -411,14 +411,11 @@ export async function promptRestoreIfNeeded(navigate) {
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('restore-from-json-file')?.addEventListener('click', async () => {
+  document.getElementById('restore-from-json-file')?.addEventListener('click', () => {
     closeModal();
-    try {
-      const file = await pickJsonFileFromDevice();
-      confirmAndRestoreBackupFile(file, navigate);
-    } catch (err) {
-      if (err?.name === 'AbortError') return;
-      showToast(err.message || 'שגיאה בבחירת קובץ');
+    if (navigate) {
+      navigate('backup');
+      showToast('לחץ «ייבא גיבוי מקובץ JSON»');
     }
   });
   document.getElementById('restore-local-latest')?.addEventListener('click', async () => {

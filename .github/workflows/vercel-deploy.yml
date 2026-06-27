@@ -1,15 +1,34 @@
 name: Deploy Vercel
 
+# אחרי GitHub Pages — Vercel מקבל proxy ל-Pages (לא עותק סטטי ישן)
 on:
-  push:
+  workflow_run:
+    workflows: ["Deploy GitHub Pages"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 jobs:
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Wait for GitHub Pages propagation
+        run: sleep 45
+
+      - name: Verify GitHub Pages version
+        id: pages
+        run: |
+          LOCAL=$(grep "APP_VERSION = '" js/version.js | sed "s/.*'\([^']*\)'.*/\1/")
+          PAGES=$(curl -fsS "https://yogevlasri1-beep.github.io/cake-production-tracker/js/version.js?b=$(date +%s)" \
+            | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
+          echo "GitHub Pages: $PAGES · repo: $LOCAL"
+          echo "version=$PAGES" >> "$GITHUB_OUTPUT"
+          if [ "$PAGES" != "$LOCAL" ]; then
+            echo "::warning::GitHub Pages עדיין $PAGES (צפוי $LOCAL)"
+          fi
 
       - name: Deploy to Vercel
         env:
@@ -24,16 +43,21 @@ jobs:
             npm install -g vercel@latest
             vercel deploy --prod --token "$VERCEL_TOKEN" --yes --confirm
           else
-            echo "::warning::VERCEL_DEPLOY_HOOK / VERCEL_TOKEN לא מוגדרים — Vercel לא יתעדכן"
-            echo "GitHub Pages מתעדכן אוטומטית"
+            echo "::warning::VERCEL_DEPLOY_HOOK / VERCEL_TOKEN לא מוגדרים"
+            echo "Vercel לא יתעדכן אוטומטית — ראה scripts/FIX-VERCEL.md"
+            exit 0
           fi
 
-      - name: Verify Vercel version
+      - name: Verify Vercel mirrors GitHub Pages
+        continue-on-error: true
         run: |
-          sleep 30
-          REMOTE=$(curl -fsS "https://yogevcakee.vercel.app/js/version.js?b=$(date +%s)" | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
-          LOCAL=$(grep "APP_VERSION = '" js/version.js | sed "s/.*'\([^']*\)'.*/\1/")
-          echo "Vercel: $REMOTE · GitHub: $LOCAL"
-          if [ "$REMOTE" != "$LOCAL" ]; then
-            echo "::warning::Vercel עדיין על $REMOTE (צפוי $LOCAL) — ראה scripts/FIX-VERCEL.md"
+          sleep 90
+          EXPECT="${{ steps.pages.outputs.version }}"
+          REMOTE=$(curl -fsS "https://yogevcakee.vercel.app/js/version.js?b=$(date +%s)" \
+            | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1 || echo "?")
+          echo "yogevcakee: $REMOTE · צפוי: $EXPECT"
+          if [ "$REMOTE" = "$EXPECT" ] && [ "$REMOTE" != "?" ]; then
+            echo "✓ Vercel מסונכרן עם GitHub Pages"
+          else
+            echo "::warning::Vercel עדיין $REMOTE (צפוי $EXPECT) — הרץ workflow ידני עם Deploy Hook"
           fi

@@ -1,51 +1,35 @@
-# תיקון yogevcakee — מ-153 לגרסה עדכנית
+# תיקון yogevcakee — סנכרון עם GitHub Pages
 
 **פרויקט:** yogevcakee  
 **URL:** https://yogevcakee.vercel.app  
-**GitHub Pages (עובד):** https://yogevlasri1-beep.github.io/cake-production-tracker/
+**GitHub Pages (מקור):** https://yogevlasri1-beep.github.io/cake-production-tracker/
 
-Redeploy **לא עוזר** — הוא מפרס מחדש 153.
+## למה Vercel נתקע על 153?
+
+Vercel שמר **עותק סטטי ישן** של האפליקציה. Redeploy רגיל מפרס מחדש את אותו artifact — לא עוזר.
+
+**פתרון (גרסה 164+):** Vercel מפרס **proxy בלבד** — כל בקשה מועברת ל-GitHub Pages.  
+אחרי פריסה **פעם אחת**, Vercel תמיד מציג את הגרסה העדכנית מ-GitHub.
 
 ---
 
-## דרך 1 — Deploy Hook + GitHub Actions (5 דקות, מומלץ)
+## פעם אחת — הפעל proxy על Vercel
 
-### א. צור Hook ב-Vercel
+### א. Deploy Hook (מומלץ)
+
 1. https://vercel.com/dashboard → **yogevcakee**
-2. **Settings → Git → Deploy Hooks**
-3. **Create Hook** · שם: `github-main` · Branch: **main**
-4. **העתק את ה-URL** (מתחיל ב-`https://api.vercel.com/v1/integrations/deploy/`)
+2. **Settings → Git → Deploy Hooks** → Create · `github-main` · branch **main**
+3. העתק URL
+4. GitHub → repo → **Settings → Secrets → Actions** → `VERCEL_DEPLOY_HOOK`
+5. Actions → **Deploy Vercel (Manual)** → הדבק URL → Run
 
-### ב. הרץ ב-GitHub
-1. https://github.com/yogevlasri1-beep/cake-production-tracker/actions/workflows/vercel-deploy-manual.yml
-2. **Run workflow** (ימין)
-3. הדבק את ה-URL בשדה **deploy_hook_url**
-4. **Run workflow**
-5. אחרי ~2 דקות: https://yogevcakee.vercel.app/js/version.js
+### ב. Vercel Drop (ללא Git)
 
-### ג. לעתיד (אוטומטי)
-GitHub → repo → **Settings → Secrets → Actions** → New secret:
-- Name: `VERCEL_DEPLOY_HOOK`
-- Value: אותו URL
-
----
-
-## דרך 2 — חבר Git מחדש
-
-1. **yogevcakee** → **Settings → Git**
-2. **Disconnect**
-3. **Connect** → `yogevlasri1-beep/cake-production-tracker` · branch **main**
-4. המתן ל-Deployment חדש (לא Redeploy!)
-
----
-
-## דרך 3 — באייפון (עובד עכשיו, בלי Vercel)
-
-```
-https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1
+```bash
+./scripts/make-vercel-drop-zip.sh
 ```
 
-הוסף למסך הבית · מחק אייקון yogevcakee ישן.
+גרור `cake-production-tracker-vercel.zip` ל-yogevcakee ב-Vercel Drop.
 
 ---
 
@@ -54,3 +38,15 @@ https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1
 ```bash
 ./scripts/verify-deploy.sh
 ```
+
+צפוי: GitHub Pages ו-Vercel **אותה גרסה**.
+
+---
+
+## באייפון (עובד תמיד)
+
+```
+https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1
+```
+
+או yogevcakee אחרי שה-proxy הופעל.

@@ -37,6 +37,13 @@ echo "  גרסה: $VER"
 echo ""
 echo "→ ממתין ל-GitHub Pages..."
 sleep 45
+
+if [[ -n "${VERCEL_DEPLOY_HOOK:-}" ]]; then
+  echo "→ מפעיל Deploy Hook..."
+  curl -fsS -X POST "$VERCEL_DEPLOY_HOOK" || echo "⚠ Deploy Hook נכשל"
+  sleep 60
+fi
+
 if ./scripts/verify-deploy.sh; then
   echo ""
   echo "✓ פריסה תקינה"
