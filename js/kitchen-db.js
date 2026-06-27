@@ -1,6 +1,6 @@
 import { db, ValidationError } from './db.js';
 import {
-  sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity,
+  sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
 } from './validators.js';
 import { weekStartISO, todayISO } from './utils.js';
 
@@ -13,6 +13,16 @@ export const RECIPE_WEIGHT_UNITS = [
 
 function roundQty(n) {
   return Math.round(n * 1000) / 1000;
+}
+
+export function formatRecipeQuantity(qty) {
+  const n = Number(qty);
+  if (!Number.isFinite(n)) return '—';
+  const r = roundQty(n);
+  if (Math.abs(r - Math.round(r * 100) / 100) > 0.0004) return r.toFixed(3);
+  if (Math.abs(r - Math.round(r * 10) / 10) > 0.004) return r.toFixed(2);
+  if (Math.abs(r - Math.round(r)) > 0.04) return r.toFixed(1);
+  return String(Math.round(r));
 }
 
 export function normalizeRecipeUnitKind(unit) {
@@ -78,6 +88,7 @@ export function normalizeRecipeBakingFields(raw) {
       bakeSteamSeconds: null,
       bakeDryMinutes: null,
       bakeOvenType: null,
+      bakePresetId: null,
     };
   }
   const oven = normalizeBakeOvenType(raw.bakeOvenType);
@@ -93,6 +104,9 @@ export function normalizeRecipeBakingFields(raw) {
   const dryMin = raw.bakeDryMinutes != null && raw.bakeDryMinutes !== ''
     ? sanitizeQuantity(raw.bakeDryMinutes, { allowZero: true, max: 10_000 })
     : null;
+  const bakePresetId = raw.bakePresetId != null && raw.bakePresetId !== ''
+    ? sanitizeProductId(raw.bakePresetId)
+    : null;
   return {
     hasBaking: true,
     bakeTempC: temp,
@@ -100,7 +114,83 @@ export function normalizeRecipeBakingFields(raw) {
     bakeSteamSeconds: steamSec,
     bakeDryMinutes: dryMin,
     bakeOvenType: oven,
+    bakePresetId,
   };
+}
+
+export function formatBakingPresetSummary(preset) {
+  if (!preset) return '';
+  const parts = [];
+  if (preset.bakeOvenType) parts.push(getRecipeOvenLabel(preset.bakeOvenType));
+  const params = formatRecipeBakingParamsLine({ hasBaking: true, ...preset });
+  if (params) parts.push(params);
+  return parts.join(' · ') || preset.name;
+}
+
+function normalizeBakingPresetPayload(raw) {
+  const name = sanitizeName(raw.name, 60);
+  if (!name) throw new ValidationError('שם אפייה לא תקין');
+  const baking = normalizeRecipeBakingFields({ ...raw, hasBaking: true, bakePresetId: null });
+  return { name, ...baking };
+}
+
+export async function getBakingPresets() {
+  const rows = await db.bakingPresets.toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function getBakingPreset(id) {
+  const pid = sanitizeProductId(id);
+  if (!pid) return null;
+  return db.bakingPresets.get(pid);
+}
+
+export async function addBakingPreset(fields) {
+  const data = normalizeBakingPresetPayload(fields);
+  const existing = await getBakingPresets();
+  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+  return db.bakingPresets.add({ ...data, sortOrder: maxOrder + 1 });
+}
+
+export async function updateBakingPreset(id, patch) {
+  const pid = sanitizeProductId(id);
+  if (!pid) throw new ValidationError('אפייה לא תקינה');
+  const current = await db.bakingPresets.get(pid);
+  if (!current) throw new ValidationError('אפייה לא נמצאה');
+  const merged = { ...current, ...patch };
+  const data = normalizeBakingPresetPayload(merged);
+  await db.bakingPresets.update(pid, data);
+}
+
+export async function deleteBakingPreset(id) {
+  const pid = sanitizeProductId(id);
+  if (!pid) return;
+  const linked = await db.recipes.where('bakePresetId').equals(pid).toArray();
+  await db.transaction('rw', db.bakingPresets, db.recipes, async () => {
+    for (const recipe of linked) {
+      await db.recipes.update(recipe.id, { bakePresetId: null });
+    }
+    await db.bakingPresets.delete(pid);
+  });
+}
+
+export function bakingFieldsFromPreset(preset) {
+  return normalizeRecipeBakingFields({
+    hasBaking: true,
+    bakePresetId: preset.id,
+    bakeOvenType: preset.bakeOvenType,
+    bakeTempC: preset.bakeTempC,
+    bakeTimeMinutes: preset.bakeTimeMinutes,
+    bakeSteamSeconds: preset.bakeSteamSeconds,
+    bakeDryMinutes: preset.bakeDryMinutes,
+  });
+}
+
+export async function assignBakingPresetToRecipe(recipeId, presetId) {
+  const preset = await getBakingPreset(presetId);
+  if (!preset) throw new ValidationError('אפייה לא נמצאה');
+  await updateRecipe(recipeId, bakingFieldsFromPreset(preset));
 }
 
 /* ── קטגוריות כלליות (קבוצות) ── */
@@ -550,7 +640,7 @@ export async function getRecipeForProduct(productId) {
 export async function addRecipe({
   categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId,
   yieldPortions, portionWeightGrams, notes,
-  hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
+  hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType, bakePresetId,
 }) {
   const cid = sanitizeProductId(categoryId);
   const trimmed = sanitizeName(name, 80);
@@ -566,7 +656,7 @@ export async function addRecipe({
     ? sanitizeQuantity(portionWeightGrams, { allowZero: false })
     : null;
   const baking = normalizeRecipeBakingFields({
-    hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
+    hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType, bakePresetId,
   });
   const recipeId = await db.recipes.add({
     categoryId: cid,
@@ -755,8 +845,50 @@ export async function getExistingRecipeNameKeys() {
   return new Set(rows.map((r) => normalizeRecipeImportKey(r.name)).filter(Boolean));
 }
 
+export async function findRecipeByImportName(title) {
+  const key = normalizeRecipeImportKey(title);
+  if (!key) return null;
+  const rows = await db.recipes.toArray();
+  return rows.find((r) => normalizeRecipeImportKey(r.name) === key) || null;
+}
+
+export async function updateRecipeQuantitiesFromParsed(item) {
+  const recipe = await findRecipeByImportName(item.title);
+  if (!recipe) return { recipeId: null, ingredientsUpdated: 0, ingredientsAdded: 0 };
+  const existing = await db.recipeIngredients.where('recipeId').equals(recipe.id).toArray();
+  let ingredientsUpdated = 0;
+  let ingredientsAdded = 0;
+  for (const parsedIng of item.ingredients || []) {
+    const key = normalizeMaterialKey(parsedIng.name);
+    if (!key) continue;
+    const match = existing.find((e) => normalizeMaterialKey(e.name) === key);
+    const unitKind = parsedIng.unitKind || normalizeRecipeUnitKind(parsedIng.unit);
+    const qty = sanitizeRecipeQuantity(parsedIng.quantity, { allowZero: false });
+    if (qty == null) continue;
+    if (match) {
+      const patch = { quantity: qty };
+      if (parsedIng.unitKind || parsedIng.unit) {
+        patch.unitKind = unitKind;
+        patch.unit = parsedIng.unit || formatRecipeUnitKind(unitKind);
+      }
+      await updateRecipeIngredient(match.id, patch);
+      ingredientsUpdated += 1;
+    } else {
+      await addRecipeIngredient(recipe.id, {
+        name: parsedIng.name,
+        quantity: qty,
+        unitKind,
+        unit: parsedIng.unit,
+      });
+      ingredientsAdded += 1;
+    }
+  }
+  return { recipeId: recipe.id, ingredientsUpdated, ingredientsAdded };
+}
+
 export async function importParsedRecipes(parsedRecipes, {
   groupId, subCategoryId, addRawMaterials = true, skipDuplicates = true,
+  updateExistingQuantities = false,
 } = {}) {
   let materialsCategoryId = null;
   if (addRawMaterials) {
@@ -766,14 +898,24 @@ export async function importParsedRecipes(parsedRecipes, {
   const wordLoc = await findOrCreateWordImportCategory();
   let imported = 0;
   let skipped = 0;
+  let quantitiesUpdated = 0;
   let rawMaterialsAdded = 0;
   const existingMaterials = addRawMaterials ? await db.rawMaterials.toArray() : [];
   const materialNames = new Set(existingMaterials.map((m) => m.name));
-  const existingNames = skipDuplicates ? await getExistingRecipeNameKeys() : new Set();
+  const existingNames = (skipDuplicates || updateExistingQuantities)
+    ? await getExistingRecipeNameKeys()
+    : new Set();
 
   for (const item of parsedRecipes) {
     const nameKey = normalizeRecipeImportKey(item.title);
-    if (skipDuplicates && nameKey && existingNames.has(nameKey)) {
+    const exists = nameKey && existingNames.has(nameKey);
+    if (exists && updateExistingQuantities) {
+      const result = await updateRecipeQuantitiesFromParsed(item);
+      if (result.ingredientsUpdated + result.ingredientsAdded > 0) quantitiesUpdated += 1;
+      else skipped += 1;
+      continue;
+    }
+    if (skipDuplicates && exists) {
       skipped += 1;
       continue;
     }
@@ -820,7 +962,7 @@ export async function importParsedRecipes(parsedRecipes, {
     if (nameKey) existingNames.add(nameKey);
     imported += 1;
   }
-  return { imported, skipped, rawMaterialsAdded };
+  return { imported, skipped, rawMaterialsAdded, quantitiesUpdated };
 }
 
 export async function moveRecipesToCategory(recipeIds, categoryId) {
@@ -854,7 +996,11 @@ export async function updateRecipeIngredient(id, patch) {
   if (!iid) return;
   const data = { ...patch };
   if ('name' in data) data.name = sanitizeName(data.name, 80);
-  if ('quantity' in data) data.quantity = sanitizeQuantity(data.quantity, { allowZero: false });
+  if ('quantity' in data) {
+    const qty = sanitizeRecipeQuantity(data.quantity, { allowZero: false });
+    if (qty == null) throw new ValidationError('כמות לא תקינה');
+    data.quantity = qty;
+  }
   if ('unitKind' in data) {
     data.unitKind = normalizeRecipeUnitKind(data.unitKind);
     data.unit = formatRecipeUnitKind(data.unitKind);
@@ -871,7 +1017,8 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
   const trimmed = sanitizeName(name, 80);
   if (!rid) throw new ValidationError('מתכון לא תקין');
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
-  const qty = sanitizeQuantity(quantity, { allowZero: false });
+  const qty = sanitizeRecipeQuantity(quantity, { allowZero: false });
+  if (qty == null) throw new ValidationError('כמות לא תקינה');
   const existing = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
   const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
@@ -1368,6 +1515,7 @@ export function formatWhatsAppOrderText({ weekStart, categories }) {
 export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
+    bakingPresets,
     supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
@@ -1376,6 +1524,7 @@ export async function exportKitchenTables() {
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
     db.recipeProductLinks.toArray(),
+    db.bakingPresets.toArray(),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
@@ -1389,6 +1538,7 @@ export async function exportKitchenTables() {
     recipes,
     recipeIngredients,
     recipeProductLinks,
+    bakingPresets,
     supplierCategories,
     suppliers,
     rawMaterials,
@@ -1401,6 +1551,7 @@ export async function exportKitchenTables() {
 export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
+    'bakingPresets',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
@@ -1445,6 +1596,7 @@ async function ensureRecipeHierarchyInTx(dbRef) {
 export async function clearKitchenTables() {
   await db.transaction('rw',
     db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
+    db.bakingPresets,
     db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
@@ -1455,6 +1607,7 @@ export async function clearKitchenTables() {
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
+      await db.bakingPresets.clear();
       await db.rawMaterialPriceHistory.clear();
       await db.rawMaterials.clear();
       await db.suppliers.clear();

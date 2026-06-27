@@ -318,7 +318,7 @@ function installDbChangeHooks() {
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
     'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'flowPreparations', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'bakingPresets', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'settings',
   ];
   for (const name of tables) {

@@ -178,6 +178,7 @@ export function enrichBackupData(raw) {
     recipeCategories: raw.recipeCategories || [],
     recipes: raw.recipes || [],
     recipeIngredients: raw.recipeIngredients || [],
+    bakingPresets: raw.bakingPresets || [],
     supplierCategories: raw.supplierCategories || [],
     suppliers: raw.suppliers || [],
     rawMaterials: raw.rawMaterials || [],
@@ -228,6 +229,7 @@ export function summarizeBackupData(data) {
     recipeCategories: data.recipeCategories?.length || 0,
     recipes: data.recipes?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
+    bakingPresets: data.bakingPresets?.length || 0,
     supplierCategories: data.supplierCategories?.length || 0,
     suppliers: data.suppliers?.length || 0,
     rawMaterials: data.rawMaterials?.length || 0,
@@ -303,6 +305,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
   if (!Array.isArray(data.recipes)) data.recipes = [];
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
+  if (!Array.isArray(data.bakingPresets)) data.bakingPresets = [];
   if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
   if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];

@@ -26,6 +26,20 @@ export function sanitizeQuantity(raw, { min = 1, max = 1_000_000, allowZero = fa
   return n;
 }
 
+/** כמות במתכון — מאפשר עשרוניות עד 3 ספרות (למשל 1.150, 103.6) */
+export function sanitizeRecipeQuantity(raw, { min = 0.001, max = 1_000_000, allowZero = false } = {}) {
+  if (raw === '' || raw == null) return null;
+  const n = Number(String(raw).replace(/,/g, '').trim());
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.round(n * 1000) / 1000;
+  if (allowZero) {
+    if (rounded < 0 || rounded > max) return null;
+    return rounded;
+  }
+  if (rounded < min || rounded > max) return null;
+  return rounded;
+}
+
 /** כמות מנות — מאפשר עשרוניות מ-0.1 (למשל 0.3 מנה) */
 export function sanitizePortionCount(raw, { min = 0.1, max = 1_000_000 } = {}) {
   if (raw === '' || raw == null) return null;

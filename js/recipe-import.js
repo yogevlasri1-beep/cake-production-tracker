@@ -1,5 +1,5 @@
 import { loadFFlate } from './docx-loader.js';
-import { formatRecipeIngredientsTotal } from './kitchen-db.js';
+import { formatRecipeIngredientsTotal, formatRecipeQuantity } from './kitchen-db.js';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
@@ -617,7 +617,7 @@ export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDeta
         if (detail?.ingredients?.length) {
           body += '<ul class="book-ingredients">';
           for (const ing of detail.ingredients) {
-            body += `<li><span class="ing-name">${escapeHtml(ing.name)}</span> — <strong>${ing.quantity}</strong> ${escapeHtml(ing.unit)}</li>`;
+            body += `<li><span class="ing-name">${escapeHtml(ing.name)}</span> — <strong>${formatRecipeQuantity(ing.quantity)}</strong> ${escapeHtml(ing.unit)}</li>`;
           }
           body += '</ul>';
           const totalText = formatRecipeIngredientsTotal(detail.ingredients);

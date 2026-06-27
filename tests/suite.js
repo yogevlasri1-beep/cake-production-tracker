@@ -1,6 +1,6 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
-  isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, roundMoney,
+  isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
 } from '../js/validators.js?v=132';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
@@ -342,6 +342,17 @@ export async function runAllTests() {
     assertEqual(normalizeRecipeImportKey('  מילוי תפוחים '), normalizeRecipeImportKey('מילוי תפוחים'));
   });
 
+  test('sanitizeRecipeQuantity — שברים', () => {
+    assertEqual(sanitizeRecipeQuantity('1.150'), 1.15);
+    assertEqual(sanitizeRecipeQuantity('103.6'), 103.6);
+    assertEqual(sanitizeRecipeQuantity('0.001'), 0.001);
+  });
+
+  test('sanitizeRecipeQuantity — לא מעגל לשלם', () => {
+    assertEqual(sanitizeRecipeQuantity('15.5'), 15.5);
+    assertEqual(sanitizeRecipeQuantity('15'), 15);
+  });
+
   test('parseRecipesFromDocumentXml — טבלה בלי כותרות', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
@@ -358,6 +369,7 @@ export async function runAllTests() {
     assertEqual(recipes[0].title, 'מילוי תפוחים- עם סוכר');
     assertEqual(recipes[0].ingredients.length, 2);
     assertEqual(recipes[0].ingredients[0].name, 'תפוחים');
+    assertEqual(recipes[0].ingredients[0].quantity, 103.6);
   });
 
   await flushTests();
