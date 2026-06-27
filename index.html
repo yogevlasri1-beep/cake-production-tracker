@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '168';</script>
+  <script>window.__APP_BUILD__ = '169';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=168">
+  <link rel="stylesheet" href="css/styles.css?v=169">
   <script type="importmap">
   {
     "imports": {
@@ -82,6 +82,15 @@
           <button type="button" class="workspace-menu-item" data-workspace="recipes">
             <span class="workspace-menu-icon">📒</span>
             <span class="workspace-menu-label">מתכונים</span>
+          </button>
+          <div class="workspace-drawer-divider" role="separator"></div>
+          <div class="workspace-drawer-title">גיבוי</div>
+          <button type="button" class="workspace-menu-item" id="workspace-menu-backup">
+            <span class="workspace-menu-icon">💾</span>
+            <span class="workspace-menu-label">
+              גיבוי ושחזור
+              <small class="workspace-menu-hint">כל האפליקציה — מתכונים, ספקים, ייצור</small>
+            </span>
           </button>
         </div>
       </div>
@@ -283,7 +292,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=168"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=168"></script>
+  <script src="js/vendor/dexie.min.js?v=169"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=169"></script>
 </body>
 </html>

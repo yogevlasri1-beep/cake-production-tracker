@@ -141,6 +141,26 @@ body {
   color: #1d4ed8;
 }
 
+.workspace-drawer-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 8px;
+}
+
+.workspace-menu-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.workspace-menu-hint {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
 .workspace-menu-icon {
   font-size: 1.25rem;
 }
