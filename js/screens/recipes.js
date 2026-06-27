@@ -396,7 +396,9 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
     <div class="card">
       <div class="filter-row" style="margin-bottom:8px">
         <div class="card-title" style="margin:0;flex:1">עריכה ובניית מתכונים</div>
-        <button type="button" class="btn btn-secondary btn-sm" id="recipe-import-btn">📄 Word</button>
+        <label class="btn btn-secondary btn-sm backup-file-label" for="recipe-word-file">📄 Word
+          <input type="file" id="recipe-word-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+        </label>
         <button type="button" class="btn btn-secondary btn-sm" id="manage-recipe-cats">⚙️</button>
       </div>
     </div>
@@ -413,7 +415,6 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
       <button type="button" class="btn btn-secondary btn-sm" id="recipe-clear-selection">נקה</button>
       <button type="button" class="btn btn-primary btn-sm" id="recipe-move-selected">העבר לקטגוריה</button>
     </div>
-    <input type="file" id="recipe-word-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
     <div class="recipe-delete-all-section">
       <button type="button" class="btn btn-danger" id="delete-all-recipes-btn">🗑️ מחק את כל המתכונים</button>
       <p class="form-hint">מוחק רק מתכונים — קטגוריות נשארות. מתאים לפני ייבוא מחדש מ-Word.</p>
@@ -434,10 +435,6 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
-  });
-
-  document.getElementById('recipe-import-btn')?.addEventListener('click', () => {
-    document.getElementById('recipe-word-file')?.click();
   });
 
   document.getElementById('recipe-word-file')?.addEventListener('change', async (e) => {

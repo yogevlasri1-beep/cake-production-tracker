@@ -3768,6 +3768,25 @@ table.report-cat-summary-table td:not(:first-child) {
   margin-bottom: 10px;
 }
 
+.backup-file-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin: 0;
+}
+
+.backup-file-label input[type="file"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 0;
+}
+
 .backup-hero-card .backup-lead {
   font-size: 0.88rem;
   line-height: 1.55;

@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=162';
+} from './db.js?v=163';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=162';
-import { downloadBlob } from './download.js?v=162';
-import { ValidationError } from './validators.js?v=162';
-import { openModal, closeModal } from './modal.js?v=162';
-import { escapeHtml } from './utils.js?v=162';
+} from './backup.js?v=163';
+import { downloadBlob } from './download.js?v=163';
+import { ValidationError } from './validators.js?v=163';
+import { openModal, closeModal } from './modal.js?v=163';
+import { escapeHtml, showToast } from './utils.js?v=163';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=162';
+} from './backup-folder-bridge.js?v=163';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -359,6 +359,32 @@ export async function getBackupStatus() {
   };
 }
 
+export function confirmAndRestoreBackupFile(file, navigate) {
+  openModal({
+    title: 'שחזור מקובץ',
+    bodyHTML: `<p style="line-height:1.6">הקובץ <strong>${escapeHtml(file.name)}</strong> יחליף את כל הנתונים.<br><br>להמשיך?</p>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+      <button type="button" class="btn btn-primary" id="confirm-restore-file">שחזר</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('confirm-restore-file')?.addEventListener('click', async () => {
+    const btn = document.getElementById('confirm-restore-file');
+    btn.disabled = true;
+    btn.textContent = 'משחזר...';
+    try {
+      const meta = await restoreBackupFromFile(file);
+      closeModal();
+      showToast(`שוחזר ✓ · ${formatBackupSummary(meta.counts)}`);
+      if (navigate) await navigate('home');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'שחזר';
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
 export async function promptRestoreIfNeeded(navigate) {
   if (!(await isDatabaseEmpty())) return false;
 
@@ -376,18 +402,30 @@ export async function promptRestoreIfNeeded(navigate) {
         ${new Date(latest.createdAt).toLocaleString('he-IL')} · ${escapeHtml(latest.summary)}
       </p>
       <p style="font-size:0.82rem;color:var(--primary-dark)">
-        אם מחקת את האפליקות — ייבא קובץ JSON מ«קבצים» במסך הגיבוי.
+        אם מחקת את האפליקציה — ייבא קובץ JSON מ«קבצים» (לחץ «ייבא מקובץ JSON»).
       </p>`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">לא עכשיו</button>
+      <button type="button" class="btn btn-secondary" id="restore-from-json-file">ייבא מקובץ JSON</button>
       <button type="button" class="btn btn-primary" id="restore-local-latest">שחזר גיבוי</button>`,
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('restore-from-json-file')?.addEventListener('click', async () => {
+    closeModal();
+    try {
+      const file = await pickJsonFileFromDevice();
+      confirmAndRestoreBackupFile(file, navigate);
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      showToast(err.message || 'שגיאה בבחירת קובץ');
+    }
+  });
   document.getElementById('restore-local-latest')?.addEventListener('click', async () => {
     try {
-      await restoreLocalSnapshot(latest.id);
+      const meta = await restoreLocalSnapshot(latest.id);
       closeModal();
+      showToast(`שוחזר ✓ · ${formatBackupSummary(meta.counts)}`);
       if (navigate) await navigate('home');
     } catch (err) {
       closeModal();

@@ -9,17 +9,16 @@ import {
   listExternalBackupFiles,
   restoreLocalSnapshot,
   restoreFromExternalPath,
-  restoreBackupFromFile,
   formatBackupSummary,
   supportsBackupLocationPicker,
-  pickJsonFileFromDevice,
+  confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=162';
-import { describeDownloadMethod } from '../download.js?v=162';
-import { showToast, escapeHtml } from '../utils.js?v=162';
-import { openModal, closeModal } from '../modal.js?v=162';
-import { APP_VERSION } from '../version.js?v=162';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=162';
+} from '../backup-service.js?v=163';
+import { describeDownloadMethod } from '../download.js?v=163';
+import { showToast, escapeHtml } from '../utils.js?v=163';
+import { openModal, closeModal } from '../modal.js?v=163';
+import { APP_VERSION } from '../version.js?v=163';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=163';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -174,10 +173,10 @@ export async function renderBackup(container, { navigate } = {}) {
 
     <div class="card">
       <div class="card-title">ייבוא מקובץ (אחרי מחיקה / מכשיר אחר)</div>
-      <input type="file" id="backup-restore-file" accept=".json,application/json" hidden>
-      <button type="button" class="btn btn-primary btn-sm" id="backup-restore-btn" style="width:100%">
+      <label class="btn btn-primary btn-sm backup-file-label" for="backup-restore-file" style="width:100%">
         📂 ייבא גיבוי מקובץ JSON
-      </button>
+        <input type="file" id="backup-restore-file" accept=".json,application/json">
+      </label>
     </div>`;
 
   document.getElementById('backup-back')?.addEventListener('click', () => navigate?.('home'));
@@ -341,15 +340,11 @@ export async function renderBackup(container, { navigate } = {}) {
     btn.addEventListener('click', () => confirmRestoreLocal(Number(btn.dataset.id), navigate));
   });
 
-  document.getElementById('backup-restore-btn')?.addEventListener('click', () => {
-    document.getElementById('backup-restore-file')?.click();
-  });
-
   document.getElementById('backup-restore-file')?.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
-    confirmRestoreFile(file, navigate);
+    confirmAndRestoreBackupFile(file, navigate);
   });
 }
 
@@ -441,32 +436,6 @@ function confirmRestoreLocal(id, navigate) {
       showToast(`שוחזר ✓ · ${formatBackupSummary(meta.counts)}`);
       navigate?.('home');
     } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-}
-
-function confirmRestoreFile(file, navigate) {
-  openModal({
-    title: 'שחזור מקובץ',
-    bodyHTML: `<p style="line-height:1.6">הקובץ <strong>${escapeHtml(file.name)}</strong> יחליף את כל הנתונים.<br><br>להמשיך?</p>`,
-    footerHTML: `
-      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="confirm-restore-file">שחזר</button>`,
-  });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('confirm-restore-file')?.addEventListener('click', async () => {
-    const btn = document.getElementById('confirm-restore-file');
-    btn.disabled = true;
-    btn.textContent = 'משחזר...';
-    try {
-      const meta = await restoreBackupFromFile(file);
-      closeModal();
-      showToast(`שוחזר ✓ · ${formatBackupSummary(meta.counts)}`);
-      navigate?.('home');
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'שחזר';
       showToast(err.message || 'שגיאה');
     }
   });

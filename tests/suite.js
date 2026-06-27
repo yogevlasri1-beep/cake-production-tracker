@@ -1,17 +1,17 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=162';
+} from '../js/validators.js?v=163';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=162';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=162';
-import { enrichBackupData } from '../js/backup.js?v=162';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=162';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=162';
+} from '../js/calc.js?v=163';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=163';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=163';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=163';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=163';
 
 export async function runAllTests() {
   /* validators */
@@ -289,6 +289,49 @@ export async function runAllTests() {
     const r = computeReportRows(entries, categories, products, productMap, catMap);
     assertEqual(r.totalQty, 2.5);
     assertApprox(r.totalVal, 50);
+  });
+
+  test('summarizeBackupData — כולל כל טבלאות הגיבוי', () => {
+    const data = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      categoryGroups: [],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      flows: [{ id: 1 }],
+      flowSteps: [{ id: 1 }],
+      flowPreparations: [{ id: 1 }, { id: 2 }],
+      productPreparations: [{ id: 1 }],
+      runPreparationChecks: [{ id: 1 }],
+      productionRuns: [{ id: 1 }],
+      runStepStates: [{ id: 1 }],
+      recipeGroups: [],
+      recipeCategories: [],
+      recipes: [{ id: 1 }],
+      recipeIngredients: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      recipeProductLinks: [{ id: 1 }],
+      supplierCategories: [{ id: 1 }],
+      suppliers: [{ id: 1 }],
+      rawMaterials: [{ id: 1 }],
+      rawMaterialPriceHistory: [{ id: 1 }, { id: 2 }],
+      weeklyProductionPlans: [{ id: 1 }],
+      weeklyProductionPlanItems: [{ id: 1 }, { id: 2 }],
+    });
+    const counts = summarizeBackupData(data);
+    assertEqual(counts.flowPreparations, 2);
+    assertEqual(counts.productPreparations, 1);
+    assertEqual(counts.runPreparationChecks, 1);
+    assertEqual(counts.recipeIngredients, 3);
+    assertEqual(counts.recipeProductLinks, 1);
+    assertEqual(counts.supplierCategories, 1);
+    assertEqual(counts.rawMaterialPriceHistory, 2);
+    assertEqual(counts.weeklyProductionPlans, 1);
+    assertEqual(counts.weeklyProductionPlanItems, 2);
+    const summary = formatBackupSummary(counts);
+    assertOk(summary.includes('הכנות תזרים'));
+    assertOk(summary.includes('היסטוריית מחירים'));
   });
 
   test('enrichBackupData — כולל נתוני מנהל', () => {

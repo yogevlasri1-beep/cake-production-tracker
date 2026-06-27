@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=162';
-import { APP_VERSION } from './version.js?v=162';
-import { defaultColorForIndex } from './chart.js?v=162';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=162';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=162';
-import { ValidationError } from './validators.js?v=162';
+import { exportAllData, importAllData } from './db.js?v=163';
+import { APP_VERSION } from './version.js?v=163';
+import { defaultColorForIndex } from './chart.js?v=163';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=163';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=163';
+import { ValidationError } from './validators.js?v=163';
 
 export const BACKUP_VERSION = 3;
 
@@ -214,8 +214,13 @@ export function summarizeBackupData(data) {
     flows: data.flows?.length || 0,
     flowPortionPresets: data.flowPortionPresets?.length || 0,
     groupPortionPresets: data.groupPortionPresets?.length || 0,
+    flowPreparations: data.flowPreparations?.length || 0,
     productionRuns: data.productionRuns?.length || 0,
     runStepStates: data.runStepStates?.length || 0,
+    productPreparations: data.productPreparations?.length || 0,
+    runPreparationChecks: data.runPreparationChecks?.length || 0,
+    weeklyProductionPlans: data.weeklyProductionPlans?.length || 0,
+    weeklyProductionPlanItems: data.weeklyProductionPlanItems?.length || 0,
     managerPlans: data.managerPlans?.length || 0,
     managerPlanItems: data.managerPlanItems?.length || 0,
     managerTasks: data.managerTasks?.length || 0,
@@ -229,10 +234,12 @@ export function summarizeBackupData(data) {
     recipeCategories: data.recipeCategories?.length || 0,
     recipes: data.recipes?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
+    recipeProductLinks: data.recipeProductLinks?.length || 0,
     bakingProfiles: data.bakingProfiles?.length || 0,
     supplierCategories: data.supplierCategories?.length || 0,
     suppliers: data.suppliers?.length || 0,
     rawMaterials: data.rawMaterials?.length || 0,
+    rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
   };
 }
 
@@ -249,8 +256,14 @@ export function formatBackupSummary(counts) {
   if (counts.flowSteps) parts.push(`${counts.flowSteps} שלבי תזרים`);
   const portionCount = counts.groupPortionPresets || counts.flowPortionPresets;
   if (portionCount) parts.push(`${portionCount} מנות מוכנות`);
+  if (counts.flowPreparations) parts.push(`${counts.flowPreparations} הכנות תזרים`);
   if (counts.productionRuns) parts.push(`${counts.productionRuns} תהליכי יצור`);
   if (counts.runStepStates) parts.push(`${counts.runStepStates} שלבי תהליך`);
+  if (counts.productPreparations) parts.push(`${counts.productPreparations} הכנות מוצר`);
+  if (counts.runPreparationChecks) parts.push(`${counts.runPreparationChecks} בדיקות הכנה`);
+  if (counts.weeklyProductionPlans || counts.weeklyProductionPlanItems) {
+    parts.push(`${counts.weeklyProductionPlans || 0} תוכניות שבוע / ${counts.weeklyProductionPlanItems || 0} פריטים`);
+  }
   if (counts.managerPlans || counts.managerPlanItems) {
     parts.push(`${counts.managerPlans || 0} תוכניות / ${counts.managerPlanItems || 0} פריטים`);
   }
@@ -260,9 +273,13 @@ export function formatBackupSummary(counts) {
   if (counts.managerEmployees) parts.push(`${counts.managerEmployees} עובדים`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
   if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
+  if (counts.recipeIngredients) parts.push(`${counts.recipeIngredients} רכיבי מתכון`);
+  if (counts.recipeProductLinks) parts.push(`${counts.recipeProductLinks} קישורי מתכון`);
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
+  if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
+  if (counts.rawMaterialPriceHistory) parts.push(`${counts.rawMaterialPriceHistory} היסטוריית מחירים`);
   return parts.join(' · ');
 }
 
