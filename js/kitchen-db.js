@@ -40,6 +40,34 @@ export const RECIPE_OVEN_TYPES = {
   small: 'תנור קטן',
 };
 
+export function getRecipeOvenLabel(type) {
+  if (!type) return 'ללא סוג תנור';
+  return RECIPE_OVEN_TYPES[type] || type;
+}
+
+export function formatRecipeBakingParamsLine(recipe) {
+  if (!recipe?.hasBaking) return '';
+  const parts = [];
+  if (recipe.bakeTempC) parts.push(`${recipe.bakeTempC}°C`);
+  if (recipe.bakeTimeMinutes != null && recipe.bakeTimeMinutes !== '') {
+    parts.push(`${recipe.bakeTimeMinutes} דק׳`);
+  }
+  if (recipe.bakeSteamSeconds != null && recipe.bakeSteamSeconds !== '') {
+    parts.push(`קיטור ${recipe.bakeSteamSeconds} שנ׳`);
+  }
+  if (recipe.bakeDryMinutes != null && recipe.bakeDryMinutes !== '') {
+    parts.push(`ליבוש ${recipe.bakeDryMinutes} דק׳`);
+  }
+  return parts.join(' · ') || 'ללא פרטים';
+}
+
+function normalizeBakeOvenType(raw) {
+  if (raw == null || raw === '') return null;
+  const t = String(raw).trim();
+  if (t === 'large' || t === 'small') return t;
+  return sanitizeName(t, 40) || null;
+}
+
 export function normalizeRecipeBakingFields(raw) {
   const hasBaking = !!raw.hasBaking;
   if (!hasBaking) {
@@ -52,9 +80,7 @@ export function normalizeRecipeBakingFields(raw) {
       bakeOvenType: null,
     };
   }
-  const oven = raw.bakeOvenType === 'large' || raw.bakeOvenType === 'small'
-    ? raw.bakeOvenType
-    : null;
+  const oven = normalizeBakeOvenType(raw.bakeOvenType);
   const temp = raw.bakeTempC != null && raw.bakeTempC !== ''
     ? sanitizeQuantity(raw.bakeTempC, { min: 1, max: 500 })
     : null;
