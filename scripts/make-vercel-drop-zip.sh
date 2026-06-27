@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Zip proxy-only deploy for Vercel Drop — רק vercel.json (rewrites ל-GitHub Pages).
+# Zip static app for Vercel Drop — פריסה מלאה (לא proxy).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/cake-production-tracker-vercel.zip"
-PAGES_URL="${PAGES_URL:-https://yogevlasri1-beep.github.io/cake-production-tracker}"
-TMP="$ROOT/dist-vercel-drop"
-rm -rf "$TMP" "$OUT"
-mkdir -p "$TMP"
-cat > "$TMP/vercel.json" << EOF
-{
-  "\$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
-    {
-      "source": "/:path*",
-      "destination": "${PAGES_URL}/:path*"
-    }
-  ]
-}
-EOF
-(cd "$TMP" && zip -r "$OUT" vercel.json)
-rm -rf "$TMP"
-echo "Created: $OUT (proxy → GitHub Pages, ללא build)"
-echo "Vercel Drop → yogevcakee → גרור zip → Deploy"
+cd "$ROOT"
+rm -f "$OUT"
+zip -r "$OUT" . \
+  -x 'node_modules/*' \
+  -x 'ios/*' \
+  -x '.git/*' \
+  -x '.github/*' \
+  -x 'dist-vercel/*' \
+  -x 'dist-vercel-drop/*' \
+  -x '.DS_Store' \
+  -x '*.local' \
+  -x '.env*' \
+  -x 'cake-production-tracker-vercel.zip' \
+  -x 'scripts/*' \
+  -x 'tests/*' \
+  -x 'plugins/*'
+echo "Created: $OUT"
+echo "→ Vercel Dashboard → yogevcakee → Deployments → ⋯ → Redeploy"
+echo "→ או: https://vercel.com/new/drop — גרור את ה-zip"
