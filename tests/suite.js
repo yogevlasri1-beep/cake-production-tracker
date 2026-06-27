@@ -1,17 +1,17 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=132';
+} from '../js/validators.js?v=154';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=132';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=132';
-import { enrichBackupData } from '../js/backup.js?v=132';
-import { normalizeRecipeImportKey } from '../js/kitchen-db.js?v=132';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=132';
+} from '../js/calc.js?v=154';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=154';
+import { enrichBackupData } from '../js/backup.js?v=154';
+import { normalizeRecipeImportKey, formatRecipeQuantity } from '../js/kitchen-db.js?v=154';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=154';
 
 export async function runAllTests() {
   /* validators */
@@ -351,6 +351,12 @@ export async function runAllTests() {
   test('sanitizeRecipeQuantity — לא מעגל לשלם', () => {
     assertEqual(sanitizeRecipeQuantity('15.5'), 15.5);
     assertEqual(sanitizeRecipeQuantity('15'), 15);
+  });
+
+  test('formatRecipeQuantity — תצוגה', () => {
+    assertEqual(formatRecipeQuantity(1.15), '1.15');
+    assertEqual(formatRecipeQuantity(103.6), '103.6');
+    assertEqual(formatRecipeQuantity(15), '15');
   });
 
   test('parseRecipesFromDocumentXml — טבלה בלי כותרות', () => {

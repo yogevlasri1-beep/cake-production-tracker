@@ -1751,8 +1751,8 @@ function bindRatioCalculator(recipe, hostEl) {
         <div class="ratio-change-banner-inner">
           <span class="ratio-change-label">שינוי יחס — ${escapeHtml(anchor.name)}</span>
           <span class="ratio-change-values">
-            מ-<strong>${baseQty}</strong> ${escapeHtml(anchor.unit)}
-            ל-<strong>${targetQty}</strong> ${escapeHtml(anchor.unit)}
+            מ-<strong>${formatRecipeQuantity(baseQty)}</strong> ${escapeHtml(anchor.unit)}
+            ל-<strong>${formatRecipeQuantity(targetQty)}</strong> ${escapeHtml(anchor.unit)}
           </span>
           <span class="ratio-factor-badge">×${formatRatioFactor(ratio)}</span>
         </div>`;

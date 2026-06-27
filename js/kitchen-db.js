@@ -994,8 +994,14 @@ export async function deleteRecipe(id) {
 export async function updateRecipeIngredient(id, patch) {
   const iid = sanitizeProductId(id);
   if (!iid) return;
-  const data = { ...patch };
-  if ('name' in data) data.name = sanitizeName(data.name, 80);
+  const data = {};
+  if ('name' in patch) data.name = sanitizeName(patch.name, 80);
+  if ('quantity' in patch) data.quantity = patch.quantity;
+  if ('unitKind' in patch) data.unitKind = patch.unitKind;
+  if ('unit' in patch) data.unit = patch.unit;
+  if ('rawMaterialId' in patch) data.rawMaterialId = patch.rawMaterialId;
+  if ('sortOrder' in patch) data.sortOrder = patch.sortOrder;
+  if (!Object.keys(data).length) return;
   if ('quantity' in data) {
     const qty = sanitizeRecipeQuantity(data.quantity, { allowZero: false });
     if (qty == null) throw new ValidationError('כמות לא תקינה');
