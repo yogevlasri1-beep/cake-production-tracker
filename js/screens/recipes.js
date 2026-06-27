@@ -10,6 +10,7 @@ import {
   getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
   getRecipeWeightSummary, formatKgWeight,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
+  RECIPE_OVEN_TYPES, normalizeRecipeBakingFields,
 } from '../kitchen-db.js';
 import { getProducts, getProductsCatalogLayout } from '../db.js';
 import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js';
@@ -1279,6 +1280,112 @@ function findProductCategoryName(productCatalog, categoryId) {
   return '';
 }
 
+function buildRecipeBakingFormHTML(recipe) {
+  const enabled = !!recipe?.hasBaking;
+  const oven = recipe?.bakeOvenType || '';
+  return `
+    <div class="form-group recipe-baking-block">
+      <label class="checkbox-label recipe-baking-toggle">
+        <input type="checkbox" id="recipe-has-baking" ${enabled ? 'checked' : ''}>
+        <span>🔥 כולל אפייה</span>
+      </label>
+      <div id="recipe-baking-fields" class="recipe-baking-fields${enabled ? '' : ' hidden'}">
+        <div class="form-group" style="margin-top:12px">
+          <label>סוג תנור</label>
+          <div class="recipe-oven-type-row">
+            <label class="checkbox-label">
+              <input type="radio" name="recipe-oven-type" value="large" ${oven === 'large' ? 'checked' : ''}>
+              ${escapeHtml(RECIPE_OVEN_TYPES.large)}
+            </label>
+            <label class="checkbox-label">
+              <input type="radio" name="recipe-oven-type" value="small" ${oven === 'small' ? 'checked' : ''}>
+              ${escapeHtml(RECIPE_OVEN_TYPES.small)}
+            </label>
+          </div>
+          <p class="form-hint">אפייה שונה לפי גודל התנור</p>
+        </div>
+        <div class="recipe-baking-grid">
+          <div class="form-group">
+            <label>טמפ׳ אפייה (°C)</label>
+            <input type="number" id="recipe-bake-temp" min="1" max="500" step="1" placeholder="180" value="${recipe?.bakeTempC ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>זמן אפייה (דק׳)</label>
+            <input type="number" id="recipe-bake-time" min="0" step="1" placeholder="25" value="${recipe?.bakeTimeMinutes ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>קיטור (שניות)</label>
+            <input type="number" id="recipe-bake-steam" min="0" step="1" placeholder="30" value="${recipe?.bakeSteamSeconds ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>ליבוש (דק׳)</label>
+            <input type="number" id="recipe-bake-dry" min="0" step="1" placeholder="10" value="${recipe?.bakeDryMinutes ?? ''}">
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function bindRecipeBakingFormToggle() {
+  const cb = document.getElementById('recipe-has-baking');
+  const fields = document.getElementById('recipe-baking-fields');
+  cb?.addEventListener('change', () => {
+    fields?.classList.toggle('hidden', !cb.checked);
+  });
+}
+
+function readBakingFromForm() {
+  const hasBaking = document.getElementById('recipe-has-baking')?.checked;
+  if (!hasBaking) {
+    return normalizeRecipeBakingFields({ hasBaking: false });
+  }
+  const ovenEl = document.querySelector('input[name="recipe-oven-type"]:checked');
+  return normalizeRecipeBakingFields({
+    hasBaking: true,
+    bakeTempC: document.getElementById('recipe-bake-temp')?.value,
+    bakeTimeMinutes: document.getElementById('recipe-bake-time')?.value,
+    bakeSteamSeconds: document.getElementById('recipe-bake-steam')?.value,
+    bakeDryMinutes: document.getElementById('recipe-bake-dry')?.value,
+    bakeOvenType: ovenEl?.value || null,
+  });
+}
+
+function buildRecipeBakingViewHTML(recipe) {
+  if (!recipe?.hasBaking) return '';
+  const rows = [];
+  if (recipe.bakeOvenType && RECIPE_OVEN_TYPES[recipe.bakeOvenType]) {
+    rows.push({ label: 'תנור', value: RECIPE_OVEN_TYPES[recipe.bakeOvenType] });
+  }
+  if (recipe.bakeTempC) rows.push({ label: 'טמפ׳ אפייה', value: `${recipe.bakeTempC}°C` });
+  if (recipe.bakeTimeMinutes != null && recipe.bakeTimeMinutes !== '') {
+    rows.push({ label: 'זמן אפייה', value: `${recipe.bakeTimeMinutes} דק׳` });
+  }
+  if (recipe.bakeSteamSeconds != null && recipe.bakeSteamSeconds !== '') {
+    rows.push({ label: 'קיטור', value: `${recipe.bakeSteamSeconds} שניות` });
+  }
+  if (recipe.bakeDryMinutes != null && recipe.bakeDryMinutes !== '') {
+    rows.push({ label: 'ליבוש', value: `${recipe.bakeDryMinutes} דק׳` });
+  }
+  if (!rows.length) {
+    return `
+      <section class="recipe-sheet-section recipe-baking-section">
+        <h2 class="recipe-sheet-section-title">🔥 אפייה</h2>
+        <p class="recipe-sheet-empty">מסומן כולל אפייה — הוסף פרטים בעריכה</p>
+      </section>`;
+  }
+  return `
+    <section class="recipe-sheet-section recipe-baking-section">
+      <h2 class="recipe-sheet-section-title">🔥 אפייה</h2>
+      <div class="recipe-baking-view-grid">
+        ${rows.map((r) => `
+        <div class="recipe-baking-view-item">
+          <span class="recipe-baking-view-label">${escapeHtml(r.label)}</span>
+          <strong class="recipe-baking-view-value">${escapeHtml(r.value)}</strong>
+        </div>`).join('')}
+      </div>
+    </section>`;
+}
+
 function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName }) {
   const ingredients = recipe.ingredients || [];
   const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
@@ -1323,6 +1430,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         </div>
         ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
       </section>
+      ${buildRecipeBakingViewHTML(recipe)}
       ${recipe.notes?.trim() ? `
       <section class="recipe-sheet-section recipe-sheet-notes-block">
         <h2 class="recipe-sheet-section-title">הערות</h2>
@@ -1427,6 +1535,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>הערות</label>
         <textarea id="recipe-notes" rows="2">${recipe ? escapeHtml(recipe.notes || '') : ''}</textarea>
       </div>
+      ${buildRecipeBakingFormHTML(recipe)}
       ${isEdit ? `
       <div class="form-group">
         <label>חומרי גלם</label>
@@ -1471,6 +1580,8 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     linkedProductCategoryId: recipe?.linkedProductCategoryId,
     linkedProductIds: recipe?.linkedProductIds,
   });
+
+  bindRecipeBakingFormToggle();
 
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ingId = Number(row.dataset.ingId);
@@ -1546,6 +1657,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       linkedProductIds,
       linkedProductCategoryId: linkedProductCategoryId || null,
       notes: document.getElementById('recipe-notes').value,
+      ...readBakingFromForm(),
     };
     try {
       if (isEdit) {

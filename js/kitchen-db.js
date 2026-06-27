@@ -35,6 +35,48 @@ export const IMPORT_MATERIALS_CAT = 'ייבוא ממתכונים';
 export const RECIPE_SORT_GROUP_DEFAULT = 'סידור';
 export const DEFAULT_RECIPE_TYPES = ['מילית', 'בצק', 'קרם', 'רטבים', 'תוספת', 'אחר'];
 
+export const RECIPE_OVEN_TYPES = {
+  large: 'תנור גדול',
+  small: 'תנור קטן',
+};
+
+export function normalizeRecipeBakingFields(raw) {
+  const hasBaking = !!raw.hasBaking;
+  if (!hasBaking) {
+    return {
+      hasBaking: false,
+      bakeTempC: null,
+      bakeTimeMinutes: null,
+      bakeSteamSeconds: null,
+      bakeDryMinutes: null,
+      bakeOvenType: null,
+    };
+  }
+  const oven = raw.bakeOvenType === 'large' || raw.bakeOvenType === 'small'
+    ? raw.bakeOvenType
+    : null;
+  const temp = raw.bakeTempC != null && raw.bakeTempC !== ''
+    ? sanitizeQuantity(raw.bakeTempC, { min: 1, max: 500 })
+    : null;
+  const bakeMin = raw.bakeTimeMinutes != null && raw.bakeTimeMinutes !== ''
+    ? sanitizeQuantity(raw.bakeTimeMinutes, { allowZero: true, max: 10_000 })
+    : null;
+  const steamSec = raw.bakeSteamSeconds != null && raw.bakeSteamSeconds !== ''
+    ? sanitizeQuantity(raw.bakeSteamSeconds, { allowZero: true, max: 86_400 })
+    : null;
+  const dryMin = raw.bakeDryMinutes != null && raw.bakeDryMinutes !== ''
+    ? sanitizeQuantity(raw.bakeDryMinutes, { allowZero: true, max: 10_000 })
+    : null;
+  return {
+    hasBaking: true,
+    bakeTempC: temp,
+    bakeTimeMinutes: bakeMin,
+    bakeSteamSeconds: steamSec,
+    bakeDryMinutes: dryMin,
+    bakeOvenType: oven,
+  };
+}
+
 /* ── קטגוריות כלליות (קבוצות) ── */
 
 export async function getRecipeGroups() {
@@ -479,7 +521,11 @@ export async function getRecipeForProduct(productId) {
   return getRecipe(legacy.id);
 }
 
-export async function addRecipe({ categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId, yieldPortions, portionWeightGrams, notes }) {
+export async function addRecipe({
+  categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId,
+  yieldPortions, portionWeightGrams, notes,
+  hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
+}) {
   const cid = sanitizeProductId(categoryId);
   const trimmed = sanitizeName(name, 80);
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
@@ -493,6 +539,9 @@ export async function addRecipe({ categoryId, name, linkedProductId, linkedProdu
   const portionG = portionWeightGrams != null && portionWeightGrams !== ''
     ? sanitizeQuantity(portionWeightGrams, { allowZero: false })
     : null;
+  const baking = normalizeRecipeBakingFields({
+    hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
+  });
   const recipeId = await db.recipes.add({
     categoryId: cid,
     name: trimmed,
@@ -502,6 +551,7 @@ export async function addRecipe({ categoryId, name, linkedProductId, linkedProdu
     portionWeightGrams: portionG,
     notes: String(notes || '').trim().slice(0, 2000),
     sortOrder: maxOrder + 1,
+    ...baking,
   });
   const pids = linkedProductIds?.length
     ? linkedProductIds
@@ -541,6 +591,9 @@ export async function updateRecipe(id, patch) {
     data.portionWeightGrams = data.portionWeightGrams != null && data.portionWeightGrams !== ''
       ? sanitizeQuantity(data.portionWeightGrams, { allowZero: false })
       : null;
+  }
+  if ('hasBaking' in data) {
+    Object.assign(data, normalizeRecipeBakingFields(data));
   }
   if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 2000);
   if (Object.keys(data).length) await db.recipes.update(rid, data);

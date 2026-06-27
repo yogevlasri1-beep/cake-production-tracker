@@ -2664,6 +2664,71 @@ table.report-table tfoot td {
   margin-top: 10px;
 }
 
+.recipe-baking-block {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fffbeb;
+}
+
+.recipe-baking-toggle {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.recipe-baking-fields.hidden {
+  display: none;
+}
+
+.recipe-oven-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  margin-top: 6px;
+}
+
+.recipe-baking-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+}
+
+@media (max-width: 400px) {
+  .recipe-baking-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.recipe-baking-section {
+  margin-top: 4px;
+}
+
+.recipe-baking-view-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 16px;
+}
+
+.recipe-baking-view-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+}
+
+.recipe-baking-view-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.recipe-baking-view-value {
+  font-size: 1.05rem;
+  color: #c2410c;
+  font-variant-numeric: tabular-nums;
+}
+
 .recipe-sheet-empty {
   margin: 0;
   padding: 20px;
