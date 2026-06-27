@@ -660,6 +660,58 @@ function formatImportRecipePath(r) {
   return parts.length ? parts.join(' › ') : IMPORT_WORD_GROUP;
 }
 
+function renderImportRecipePick(r, i, existingNames) {
+  const isDup = existingNames.has(normalizeRecipeImportKey(r.title));
+  const selected = !isDup;
+  return `
+    <button type="button"
+      class="import-recipe-pick${selected ? ' is-selected' : ''}${isDup ? ' is-duplicate' : ''}"
+      data-idx="${i}"
+      data-duplicate="${isDup ? '1' : '0'}"
+      ${isDup ? 'disabled' : ''}>
+      <span class="import-pick-check" aria-hidden="true">✓</span>
+      <span class="import-pick-body">
+        <strong>${escapeHtml(r.title)}</strong>
+        <span class="form-hint"> · ${escapeHtml(formatImportRecipePath(r))}</span>
+        · ${(r.ingredients || []).length} חומרים
+        ${isDup ? ' · <span class="import-dup-badge">קיים</span>' : ''}
+        ${!(r.ingredients || []).length ? ' · <span class="import-warn-badge">ללא חומרים</span>' : ''}
+      </span>
+    </button>`;
+}
+
+function bindImportRecipePickers() {
+  const picks = document.querySelectorAll('.import-recipe-pick:not(.is-duplicate)');
+  const selectAll = document.getElementById('import-select-all');
+  const syncSelectAll = () => {
+    if (!selectAll) return;
+    const all = [...picks];
+    const selected = all.filter((el) => el.classList.contains('is-selected'));
+    selectAll.checked = all.length > 0 && selected.length === all.length;
+    selectAll.indeterminate = selected.length > 0 && selected.length < all.length;
+  };
+  picks.forEach((el) => {
+    el.addEventListener('click', () => {
+      el.classList.toggle('is-selected');
+      syncSelectAll();
+    });
+  });
+  selectAll?.addEventListener('change', (e) => {
+    picks.forEach((el) => {
+      if (e.target.checked) el.classList.add('is-selected');
+      else el.classList.remove('is-selected');
+    });
+    syncSelectAll();
+  });
+  syncSelectAll();
+}
+
+function getSelectedImportRecipes(parsed) {
+  return [...document.querySelectorAll('.import-recipe-pick.is-selected')]
+    .map((el) => parsed[Number(el.dataset.idx)])
+    .filter(Boolean);
+}
+
 function openImportPreview(container, parsed, { groups, subs }) {
   getExistingRecipeNameKeys().then((existingNames) => {
     const newCount = parsed.filter((r) => !existingNames.has(normalizeRecipeImportKey(r.title))).length;
@@ -668,9 +720,9 @@ function openImportPreview(container, parsed, { groups, subs }) {
       title: `ייבוא ${parsed.length} מתכונים`,
       bodyHTML: `
         <p class="form-hint" style="margin-bottom:10px">
-          כותרות לפני טבלאות ייובאו כ<strong>קטגוריות</strong> (ניתן לערוך אחר כך).
-          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — לא ייובאו שוב.` : ''}
-          ${newCount ? `<br>חדשים לייבוא: <strong>${newCount}</strong>` : ''}
+          לחץ על מתכון לסימון ✓ · כותרות מהקובץ יהפכו ל<strong>קטגוריות</strong>.
+          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — לא ניתן לייבא שוב.` : ''}
+          ${newCount ? `<br>חדשים: <strong>${newCount}</strong> (מסומנים ✓)` : ''}
         </p>
         <div class="form-group">
           <label>קטגוריה כללית (אם אין בקובץ)</label>
@@ -689,42 +741,23 @@ function openImportPreview(container, parsed, { groups, subs }) {
         <div class="form-group">
           <label class="checkbox-label">
             <input type="checkbox" id="import-select-all" checked>
-            סמן הכל (רק חדשים)
+            סמן הכל ✓
           </label>
         </div>
-        <div class="form-group" style="max-height:240px;overflow:auto">
-          ${parsed.map((r, i) => {
-    const isDup = existingNames.has(normalizeRecipeImportKey(r.title));
-    return `
-          <label class="checkbox-label recipe-import-pick" style="display:flex;gap:8px;margin-bottom:8px;padding:8px;background:${isDup ? '#fef3c7' : '#f8fafc'};border-radius:8px;opacity:${isDup ? '0.85' : '1'}">
-            <input type="checkbox" class="import-recipe-cb" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''}>
-            <span>
-              <strong>${escapeHtml(r.title)}</strong>
-              <span class="form-hint"> · ${escapeHtml(formatImportRecipePath(r))}</span>
-              · ${(r.ingredients || []).length} חומרים
-              ${isDup ? ' · <em style="color:#b45309">קיים</em>' : ''}
-              ${!(r.ingredients || []).length ? ' · <em style="color:#b45309">ללא חומרים</em>' : ''}
-            </span>
-          </label>`;
-  }).join('')}
+        <div class="import-recipe-pick-list">
+          ${parsed.map((r, i) => renderImportRecipePick(r, i, existingNames)).join('')}
         </div>`,
       footerHTML: `
         <button class="btn btn-secondary modal-cancel">ביטול</button>
-        <button class="btn btn-primary" id="confirm-recipe-import">ייבוא חדשים</button>`,
+        <button class="btn btn-primary" id="confirm-recipe-import">ייבוא מסומנים ✓</button>`,
     });
     document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-    document.getElementById('import-select-all')?.addEventListener('change', (e) => {
-      document.querySelectorAll('.import-recipe-cb:not(:disabled)').forEach((cb) => {
-        cb.checked = e.target.checked;
-      });
-    });
+    bindImportRecipePickers();
     document.getElementById('confirm-recipe-import')?.addEventListener('click', async () => {
       let gid = document.getElementById('import-group')?.value;
       const addRawMaterials = document.getElementById('import-add-materials')?.checked !== false;
-      const selected = [...document.querySelectorAll('.import-recipe-cb:checked')]
-        .map((cb) => parsed[Number(cb.dataset.idx)])
-        .filter(Boolean);
-      if (!selected.length) return showToast('אין מתכונים חדשים לייבוא');
+      const selected = getSelectedImportRecipes(parsed);
+      if (!selected.length) return showToast('סמן לפחות מתכון אחד ✓');
       try {
         let defaultGroupId;
         let defaultSubId;
