@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=154';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=154';
-import { defaultColorForIndex } from './chart.js?v=154';
+} from './validators.js?v=132';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=132';
+import { defaultColorForIndex } from './chart.js?v=132';
 
 export { ValidationError };
 
@@ -910,10 +910,10 @@ db.version(31).stores({
   runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
   recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
   recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
-  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakePresetId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
   recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
   recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
-  bakingPresets: '++id, name, sortOrder',
+  bakingProfiles: '++id, name, sortOrder',
   supplierCategories: '++id, name, sortOrder',
   suppliers: '++id, categoryId, name, sortOrder',
   rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
@@ -1248,12 +1248,11 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.bakingPresets, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
     await db.recipeIngredients.clear();
     await db.recipeProductLinks.clear();
-    await db.bakingPresets.clear();
     await db.recipes.clear();
     await db.recipeCategories.clear();
     await db.recipeGroups.clear();
@@ -1371,13 +1370,13 @@ export async function exportAllData() {
     recipes,
     recipeIngredients,
     recipeProductLinks,
-    bakingPresets,
     supplierCategories,
     suppliers,
     rawMaterials,
     rawMaterialPriceHistory,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
+    bakingProfiles,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -1409,13 +1408,13 @@ export async function exportAllData() {
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
     db.recipeProductLinks.toArray(),
-    db.bakingPresets.toArray(),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
     db.rawMaterialPriceHistory?.toArray?.() ?? Promise.resolve([]),
     db.weeklyProductionPlans.toArray(),
     db.weeklyProductionPlanItems.toArray(),
+    db.bakingProfiles?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -1447,13 +1446,13 @@ export async function exportAllData() {
     recipes,
     recipeIngredients,
     recipeProductLinks,
-    bakingPresets,
     supplierCategories,
     suppliers,
     rawMaterials,
     rawMaterialPriceHistory,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
+    bakingProfiles,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -1492,7 +1491,6 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.recipeCategories)) payload.recipeCategories = [];
   if (!Array.isArray(payload.recipes)) payload.recipes = [];
   if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
-  if (!Array.isArray(payload.bakingPresets)) payload.bakingPresets = [];
   if (!Array.isArray(payload.supplierCategories)) payload.supplierCategories = [];
   if (!Array.isArray(payload.suppliers)) payload.suppliers = [];
   if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
@@ -1506,6 +1504,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerResponsibilityAreas)) payload.managerResponsibilityAreas = [];
   if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
   if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
+  if (!Array.isArray(payload.bakingProfiles)) payload.bakingProfiles = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -1556,13 +1555,13 @@ export async function importAllData(payload) {
     db.recipeCategories,
     db.recipes,
     db.recipeIngredients,
-    db.bakingPresets,
     db.supplierCategories,
     db.suppliers,
     db.rawMaterials,
     db.rawMaterialPriceHistory,
     db.weeklyProductionPlans,
     db.weeklyProductionPlanItems,
+    db.bakingProfiles,
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
@@ -1570,10 +1569,10 @@ export async function importAllData(payload) {
       await db.weeklyProductionPlans.clear();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
-      await db.bakingPresets.clear();
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
+      await db.bakingProfiles?.clear?.();
       await db.rawMaterialPriceHistory?.clear?.();
       await db.rawMaterials.clear();
       await db.suppliers.clear();
@@ -1624,7 +1623,7 @@ export async function importAllData(payload) {
       if (payload.recipes.length) await db.recipes.bulkPut(payload.recipes);
       if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
       if (payload.recipeProductLinks.length) await db.recipeProductLinks.bulkPut(payload.recipeProductLinks);
-      if (payload.bakingPresets.length) await db.bakingPresets.bulkPut(payload.bakingPresets);
+      if (payload.bakingProfiles?.length) await db.bakingProfiles.bulkPut(payload.bakingProfiles);
       await migrateLegacyRecipeCategoriesIfNeeded(tx);
       if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
       if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);

@@ -230,111 +230,6 @@ body {
   margin-bottom: 12px;
 }
 
-.baking-presets-card {
-  margin-bottom: 14px;
-}
-
-.baking-presets-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.baking-presets-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 1.4em;
-  padding: 0 7px;
-  margin-inline-start: 6px;
-  border-radius: 999px;
-  background: #fff7ed;
-  color: #c2410c;
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.baking-presets-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.baking-preset-row {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  background: var(--surface);
-}
-
-.baking-preset-main {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px 12px;
-}
-
-.baking-preset-name {
-  font-size: 0.95rem;
-}
-
-.baking-preset-summary {
-  flex: 1;
-  min-width: 120px;
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-
-.baking-preset-linked {
-  font-size: 0.78rem;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.baking-preset-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.baking-preset-recipes {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: 0.82rem;
-}
-
-.baking-preset-recipes li {
-  padding: 4px 0;
-  border-top: 1px dashed var(--border);
-}
-
-.baking-preset-recipes li:first-child {
-  border-top: none;
-}
-
-.baking-col-preset {
-  width: 110px;
-  white-space: nowrap;
-}
-
-.baking-preset-badge {
-  display: inline-block;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: #fff7ed;
-  border: 1px solid #fdba74;
-  color: #c2410c;
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.baking-recipes-empty {
-  margin-top: 8px;
-}
-
 .baking-filter-row {
   display: flex;
   flex-wrap: wrap;
@@ -462,6 +357,117 @@ body {
   display: block;
   font-size: 0.72rem;
   color: var(--text-muted);
+}
+
+.baking-profiles-card {
+  margin-bottom: 14px;
+}
+
+.baking-profiles-header {
+  margin-bottom: 10px;
+}
+
+.baking-profiles-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.baking-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.baking-profile-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.baking-profile-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.baking-profile-name {
+  font-size: 0.92rem;
+}
+
+.baking-profile-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.baking-profile-notes {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.baking-profile-row-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.baking-profile-count {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.baking-profile-empty {
+  margin: 0;
+}
+
+.baking-recipes-header {
+  margin: 4px 0 12px;
+}
+
+.baking-recipes-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.baking-total-count {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.baking-profile-group-card {
+  margin-bottom: 12px;
+}
+
+.baking-profile-group-params {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.baking-profile-preview {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #fff7ed;
+}
+
+@media (max-width: 520px) {
+  .baking-profile-row {
+    flex-direction: column;
+  }
+
+  .baking-profile-row-side {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 .recipe-oven-custom {

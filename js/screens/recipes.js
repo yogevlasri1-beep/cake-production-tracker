@@ -11,10 +11,9 @@ import {
   formatRecipeQuantity,
   getRecipeWeightSummary, formatKgWeight,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
-  RECIPE_OVEN_TYPES, normalizeRecipeBakingFields,
+  RECIPE_OVEN_TYPES, normalizeRecipeBakingFields, resolveRecipeBaking,
   getRecipeOvenLabel, formatRecipeBakingParamsLine,
-  getBakingPresets, addBakingPreset, updateBakingPreset, deleteBakingPreset,
-  assignBakingPresetToRecipe, formatBakingPresetSummary,
+  getBakingProfiles, getBakingProfile, addBakingProfile, updateBakingProfile, deleteBakingProfile,
 } from '../kitchen-db.js';
 import { getProducts, getProductsCatalogLayout } from '../db.js';
 import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js';
@@ -30,12 +29,11 @@ const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
 const RECIPE_TAB_KEY = 'yitzurRecipeTab';
 const RECIPE_SEARCH_KEY = 'yitzurRecipeSearch';
 const RATIO_RECIPE_KEY = 'yitzurRatioRecipeId';
-const BAKING_OVEN_FILTER_KEY = 'yitzurBakingOvenFilter';
 
 export const RECIPE_TABS = {
   browse: { id: 'browse', label: 'מתכונים', subtitle: 'צפייה, חיפוש וספר מתכונים' },
   edit: { id: 'edit', label: 'עריכה ובנייה', subtitle: 'הוספה, ייבוא Word וניהול קטגוריות' },
-  baking: { id: 'baking', label: 'אפיות', subtitle: 'רשימת אפיות ושיוך למתכונים' },
+  baking: { id: 'baking', label: 'אפיות', subtitle: 'פרופילי אפייה ושיוך למתכונים' },
   ratio: { id: 'ratio', label: 'מחשבון יחס', subtitle: 'המרת כמויות לפי חומר בסיס' },
 };
 
@@ -603,262 +601,18 @@ async function renderRecipesRatio(container, { layout }) {
   if (options) await loadRecipe();
 }
 
-function buildBakingOvenFieldsHTML(preset, { idPrefix = 'baking-preset' } = {}) {
-  const oven = preset?.bakeOvenType || '';
-  const isPreset = oven === 'large' || oven === 'small';
-  const isCustom = oven && !isPreset;
-  return `
-    <div class="form-group">
-      <label>סוג תנור</label>
-      <div class="recipe-oven-type-row">
-        <label class="checkbox-label">
-          <input type="radio" name="${idPrefix}-oven-type" value="large" ${oven === 'large' ? 'checked' : ''}>
-          ${escapeHtml(RECIPE_OVEN_TYPES.large)}
-        </label>
-        <label class="checkbox-label">
-          <input type="radio" name="${idPrefix}-oven-type" value="small" ${oven === 'small' ? 'checked' : ''}>
-          ${escapeHtml(RECIPE_OVEN_TYPES.small)}
-        </label>
-        <label class="checkbox-label">
-          <input type="radio" name="${idPrefix}-oven-type" value="custom" ${isCustom ? 'checked' : ''}>
-          אחר
-        </label>
-      </div>
-      <input type="text" id="${idPrefix}-oven-custom" class="recipe-oven-custom${isCustom ? '' : ' hidden'}" maxlength="40" placeholder="למשל: תנור הילוך, תנור רצפתי..." value="${isCustom ? escapeHtml(oven) : ''}">
-    </div>
-    <div class="recipe-baking-grid">
-      <div class="form-group">
-        <label>טמפ׳ אפייה (°C)</label>
-        <input type="number" id="${idPrefix}-temp" min="1" max="500" step="1" placeholder="180" value="${preset?.bakeTempC ?? ''}">
-      </div>
-      <div class="form-group">
-        <label>זמן אפייה (דק׳)</label>
-        <input type="number" id="${idPrefix}-time" min="0" step="1" placeholder="25" value="${preset?.bakeTimeMinutes ?? ''}">
-      </div>
-      <div class="form-group">
-        <label>קיטור (שניות)</label>
-        <input type="number" id="${idPrefix}-steam" min="0" step="1" placeholder="30" value="${preset?.bakeSteamSeconds ?? ''}">
-      </div>
-      <div class="form-group">
-        <label>ליבוש (דק׳)</label>
-        <input type="number" id="${idPrefix}-dry" min="0" step="1" placeholder="10" value="${preset?.bakeDryMinutes ?? ''}">
-      </div>
-    </div>`;
-}
+const BAKING_PROFILE_UNASSIGNED = '__unassigned__';
 
-function bindBakingOvenFieldsToggle(idPrefix = 'baking-preset') {
-  const customInput = document.getElementById(`${idPrefix}-oven-custom`);
-  document.querySelectorAll(`input[name="${idPrefix}-oven-type"]`).forEach((radio) => {
-    radio.addEventListener('change', () => {
-      const isCustom = document.querySelector(`input[name="${idPrefix}-oven-type"]:checked`)?.value === 'custom';
-      customInput?.classList.toggle('hidden', !isCustom);
-      if (isCustom) customInput?.focus();
-    });
-  });
-}
-
-function readBakingOvenFieldsFromForm(idPrefix = 'baking-preset') {
-  const ovenEl = document.querySelector(`input[name="${idPrefix}-oven-type"]:checked`);
-  let bakeOvenType = null;
-  if (ovenEl?.value === 'large' || ovenEl?.value === 'small') {
-    bakeOvenType = ovenEl.value;
-  } else if (ovenEl?.value === 'custom') {
-    bakeOvenType = document.getElementById(`${idPrefix}-oven-custom`)?.value?.trim() || null;
-  }
-  return {
-    bakeOvenType,
-    bakeTempC: document.getElementById(`${idPrefix}-temp`)?.value,
-    bakeTimeMinutes: document.getElementById(`${idPrefix}-time`)?.value,
-    bakeSteamSeconds: document.getElementById(`${idPrefix}-steam`)?.value,
-    bakeDryMinutes: document.getElementById(`${idPrefix}-dry`)?.value,
-  };
-}
-
-function fillRecipeBakingFieldsFromPreset(preset) {
-  if (!preset) return;
-  const cb = document.getElementById('recipe-has-baking');
-  const fields = document.getElementById('recipe-baking-fields');
-  const presetSelect = document.getElementById('recipe-bake-preset');
-  if (cb) cb.checked = true;
-  fields?.classList.remove('hidden');
-  const oven = preset.bakeOvenType || '';
-  const isCustom = oven && oven !== 'large' && oven !== 'small';
-  document.querySelectorAll('input[name="recipe-oven-type"]').forEach((radio) => {
-    radio.checked = (isCustom && radio.value === 'custom')
-      || (!isCustom && radio.value === oven);
-  });
-  const customInput = document.getElementById('recipe-oven-custom');
-  customInput?.classList.toggle('hidden', !isCustom);
-  if (customInput) customInput.value = isCustom ? oven : '';
-  const setVal = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.value = val ?? '';
-  };
-  setVal('recipe-bake-temp', preset.bakeTempC);
-  setVal('recipe-bake-time', preset.bakeTimeMinutes);
-  setVal('recipe-bake-steam', preset.bakeSteamSeconds);
-  setVal('recipe-bake-dry', preset.bakeDryMinutes);
-  if (presetSelect) presetSelect.value = String(preset.id);
-}
-
-function openBakingPresetForm(preset, onSaved) {
-  const isEdit = !!preset;
-  openModal({
-    title: isEdit ? 'עריכת אפייה' : 'אפייה חדשה',
-    bodyHTML: `
-      <div class="form-group">
-        <label>שם האפייה</label>
-        <input type="text" id="baking-preset-name" maxlength="60" placeholder="למשל: בריוש תנור גדול" value="${preset ? escapeHtml(preset.name) : ''}">
-      </div>
-      ${buildBakingOvenFieldsHTML(preset, { idPrefix: 'baking-preset' })}`,
-    footerHTML: `
-      <button class="btn btn-secondary modal-cancel">ביטול</button>
-      <button class="btn btn-primary" id="save-baking-preset">שמור</button>`,
-  });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  bindBakingOvenFieldsToggle('baking-preset');
-  document.getElementById('save-baking-preset')?.addEventListener('click', async () => {
-    const name = document.getElementById('baking-preset-name')?.value?.trim();
-    const fields = { name, ...readBakingOvenFieldsFromForm('baking-preset') };
-    try {
-      if (isEdit) await updateBakingPreset(preset.id, fields);
-      else await addBakingPreset(fields);
-      closeModal();
-      showToast('נשמר ✓');
-      onSaved?.();
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-}
-
-function openAssignPresetModal(recipe, presets, onAssigned) {
-  if (!presets.length) return showToast('צור אפייה ברשימה קודם');
-  const options = presets.map((p) => `
-    <option value="${p.id}" ${recipe.bakePresetId === p.id ? 'selected' : ''}>${escapeHtml(p.name)} — ${escapeHtml(formatBakingPresetSummary(p))}</option>`).join('');
-  openModal({
-    title: `שיוך אפייה — ${escapeHtml(recipe.name)}`,
-    bodyHTML: `
-      <div class="form-group">
-        <label>בחר מהרשימה</label>
-        <select id="assign-bake-preset">${options}</select>
-      </div>
-      <p class="form-hint">הפרמטרים יועתקו למתכון ויישמרו הקישור לרשימה</p>`,
-    footerHTML: `
-      <button class="btn btn-secondary modal-cancel">ביטול</button>
-      <button class="btn btn-primary" id="confirm-assign-preset">שייך</button>`,
-  });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('confirm-assign-preset')?.addEventListener('click', async () => {
-    const presetId = Number(document.getElementById('assign-bake-preset')?.value);
-    if (!presetId) return showToast('בחר אפייה');
-    try {
-      await assignBakingPresetToRecipe(recipe.id, presetId);
-      closeModal();
-      showToast('שויך ✓');
-      onAssigned?.();
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-}
-
-function indexRecipesByPreset(layout) {
-  const map = new Map();
-  for (const group of layout.groups) {
-    for (const cat of group.categories) {
-      for (const recipe of cat.recipes) {
-        if (!recipe.bakePresetId) continue;
-        if (!map.has(recipe.bakePresetId)) map.set(recipe.bakePresetId, []);
-        map.get(recipe.bakePresetId).push({
-          recipe,
-          categoryPath: `${group.name} › ${cat.name}`,
-        });
-      }
-    }
-  }
-  return map;
-}
-
-function renderBakingPresetsCatalog(presets, recipesByPreset, { layout, productCatalog }) {
-  if (!presets.length) {
-    return `
-      <div class="card baking-presets-card">
-        <div class="baking-presets-header">
-          <div class="card-title">רשימת אפיות</div>
-          <button type="button" class="btn btn-primary btn-sm" id="baking-add-preset">+ אפייה</button>
-        </div>
-        <p class="form-hint" style="margin:0">הגדר תבניות אפייה (תנור, טמפ׳, זמן…) ושייך אותן למתכונים</p>
-      </div>`;
-  }
-  return `
-    <div class="card baking-presets-card">
-      <div class="baking-presets-header">
-        <div class="card-title">רשימת אפיות <span class="baking-presets-count">${presets.length}</span></div>
-        <button type="button" class="btn btn-primary btn-sm" id="baking-add-preset">+ אפייה</button>
-      </div>
-      <div class="baking-presets-list">
-        ${presets.map((preset) => {
-    const linked = recipesByPreset.get(preset.id) || [];
-    return `
-          <div class="baking-preset-row" data-preset-id="${preset.id}">
-            <div class="baking-preset-main">
-              <strong class="baking-preset-name">${escapeHtml(preset.name)}</strong>
-              <span class="baking-preset-summary">${escapeHtml(formatBakingPresetSummary(preset))}</span>
-              <span class="baking-preset-linked">${linked.length} מתכונים</span>
-            </div>
-            <div class="baking-preset-actions">
-              <button type="button" class="btn btn-secondary btn-sm edit-baking-preset" data-id="${preset.id}">עריכה</button>
-              <button type="button" class="btn btn-danger btn-sm del-baking-preset" data-id="${preset.id}">🗑</button>
-            </div>
-            ${linked.length ? `
-            <ul class="baking-preset-recipes">
-              ${linked.map(({ recipe, categoryPath }) => `
-              <li><button type="button" class="link-btn recipe-row-open" data-recipe-id="${recipe.id}">${escapeHtml(recipe.name)}</button> <span class="baking-recipe-path">${escapeHtml(categoryPath)}</span></li>`).join('')}
-            </ul>` : ''}
-          </div>`;
-  }).join('')}
-      </div>
-    </div>`;
-}
-
-function bindBakingPresetsCatalog(container, presets, { layout, productCatalog }) {
-  const refresh = () => renderRecipesBaking(container, { layout, productCatalog });
-  document.getElementById('baking-add-preset')?.addEventListener('click', () => {
-    openBakingPresetForm(null, refresh);
-  });
-  container.querySelectorAll('.edit-baking-preset').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const preset = presets.find((p) => p.id === Number(btn.dataset.id));
-      if (preset) openBakingPresetForm(preset, refresh);
-    });
-  });
-  container.querySelectorAll('.del-baking-preset').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      if (!confirm('למחוק את האפייה מהרשימה? המתכונים יישארו עם הפרמטרים הנוכחיים.')) return;
-      try {
-        await deleteBakingPreset(Number(btn.dataset.id));
-        showToast('נמחק ✓');
-        refresh();
-      } catch (err) {
-        showToast(err.message || 'שגיאה');
-      }
-    });
-  });
-}
-
-const BAKING_OVEN_NONE = '__none__';
-
-function collectBakingRecipes(layout) {
+function collectBakingRecipes(layout, profileMap) {
   const items = [];
   for (const group of layout.groups) {
     for (const cat of group.categories) {
       for (const recipe of cat.recipes) {
-        if (!recipe.hasBaking) continue;
+        const baking = resolveRecipeBaking(recipe, profileMap);
+        if (!baking.hasBaking) continue;
         items.push({
           recipe,
+          baking,
           categoryPath: `${group.name} › ${cat.name}`,
         });
       }
@@ -867,53 +621,82 @@ function collectBakingRecipes(layout) {
   return items;
 }
 
-function ovenGroupSortKey(key) {
-  if (key === 'large') return '0';
-  if (key === 'small') return '1';
-  if (key === BAKING_OVEN_NONE) return 'z';
-  return `2_${key}`;
-}
-
-function groupBakingByOven(items) {
+function groupBakingByProfile(items, profiles) {
   const map = new Map();
   for (const item of items) {
-    const key = item.recipe.bakeOvenType || BAKING_OVEN_NONE;
+    const key = item.recipe.bakingProfileId || BAKING_PROFILE_UNASSIGNED;
     if (!map.has(key)) map.set(key, []);
     map.get(key).push(item);
   }
   for (const list of map.values()) {
     list.sort((a, b) => a.recipe.name.localeCompare(b.recipe.name, 'he'));
   }
-  return [...map.entries()]
-    .sort(([a], [b]) => ovenGroupSortKey(a).localeCompare(ovenGroupSortKey(b)))
-    .map(([ovenKey, ovenItems]) => ({
-      ovenKey,
-      label: ovenKey === BAKING_OVEN_NONE ? getRecipeOvenLabel(null) : getRecipeOvenLabel(ovenKey),
-      items: ovenItems,
-    }));
+  const groups = [];
+  for (const profile of profiles) {
+    const profileItems = map.get(profile.id) || [];
+    if (!profileItems.length) continue;
+    groups.push({
+      key: String(profile.id),
+      profile,
+      label: profile.name,
+      ovenLabel: getRecipeOvenLabel(profile.bakeOvenType),
+      paramsLine: formatRecipeBakingParamsLine({}, profile),
+      items: profileItems,
+    });
+  }
+  const unassigned = map.get(BAKING_PROFILE_UNASSIGNED) || [];
+  if (unassigned.length) {
+    groups.push({
+      key: BAKING_PROFILE_UNASSIGNED,
+      profile: null,
+      label: 'ללא פרופיל — הגדרות ידניות',
+      ovenLabel: '',
+      paramsLine: '',
+      items: unassigned,
+    });
+  }
+  return groups;
 }
 
-function renderBakingParamsCells(recipe) {
+function renderBakingParamsCells(baking) {
   const cell = (value) => `<td class="baking-col-param">${value != null && value !== '' ? escapeHtml(String(value)) : '—'}</td>`;
   return `
-    ${cell(recipe.bakeTempC ? `${recipe.bakeTempC}°` : null)}
-    ${cell(recipe.bakeTimeMinutes != null && recipe.bakeTimeMinutes !== '' ? `${recipe.bakeTimeMinutes} דק׳` : null)}
-    ${cell(recipe.bakeSteamSeconds != null && recipe.bakeSteamSeconds !== '' ? `${recipe.bakeSteamSeconds} שנ׳` : null)}
-    ${cell(recipe.bakeDryMinutes != null && recipe.bakeDryMinutes !== '' ? `${recipe.bakeDryMinutes} דק׳` : null)}`;
+    ${cell(baking.bakeTempC ? `${baking.bakeTempC}°` : null)}
+    ${cell(baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '' ? `${baking.bakeTimeMinutes} דק׳` : null)}
+    ${cell(baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '' ? `${baking.bakeSteamSeconds} שנ׳` : null)}
+    ${cell(baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '' ? `${baking.bakeDryMinutes} דק׳` : null)}`;
 }
 
-function renderBakingOvenGroupCard(group, presetMap) {
-  const presetCell = (recipe) => {
-    const preset = recipe.bakePresetId ? presetMap.get(recipe.bakePresetId) : null;
-    if (preset) {
-      return `<td class="baking-col-preset"><span class="baking-preset-badge">${escapeHtml(preset.name)}</span></td>`;
-    }
-    return `<td class="baking-col-preset"><button type="button" class="btn btn-secondary btn-sm assign-bake-preset" data-recipe-id="${recipe.id}">שייך</button></td>`;
-  };
+function renderBakingProfileCatalogRow(profile, recipeCount) {
+  const oven = profile.bakeOvenType ? getRecipeOvenLabel(profile.bakeOvenType) : '—';
+  const params = formatRecipeBakingParamsLine({}, profile) || '—';
   return `
-    <div class="card baking-oven-group-card" data-oven-key="${escapeHtml(group.ovenKey)}">
+    <div class="baking-profile-row" data-profile-id="${profile.id}">
+      <div class="baking-profile-row-main">
+        <strong class="baking-profile-name">${escapeHtml(profile.name)}</strong>
+        <span class="baking-profile-meta">${escapeHtml(oven)} · ${escapeHtml(params)}</span>
+        ${profile.notes ? `<span class="baking-profile-notes">${escapeHtml(profile.notes)}</span>` : ''}
+      </div>
+      <div class="baking-profile-row-side">
+        <span class="baking-profile-count">${recipeCount} מתכונים</span>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon edit-baking-profile" data-id="${profile.id}" title="עריכה">✏️</button>
+        <button type="button" class="btn btn-danger btn-sm btn-icon delete-baking-profile" data-id="${profile.id}" data-count="${recipeCount}" title="מחיקה">🗑</button>
+      </div>
+    </div>`;
+}
+
+function renderBakingProfileGroupCard(group) {
+  const subtitleParts = [];
+  if (group.ovenLabel) subtitleParts.push(group.ovenLabel);
+  if (group.paramsLine) subtitleParts.push(group.paramsLine);
+  const subtitle = subtitleParts.length ? `<p class="baking-profile-group-params">${escapeHtml(subtitleParts.join(' · '))}</p>` : '';
+  return `
+    <div class="card baking-profile-group-card" data-profile-key="${escapeHtml(group.key)}">
       <div class="baking-oven-group-header">
-        <h3 class="baking-oven-group-title">🔥 ${escapeHtml(group.label)}</h3>
+        <div>
+          <h3 class="baking-oven-group-title">🔥 ${escapeHtml(group.label)}</h3>
+          ${subtitle}
+        </div>
         <span class="baking-oven-group-count">${group.items.length} מתכונים</span>
       </div>
       <div class="baking-table-wrap">
@@ -921,7 +704,6 @@ function renderBakingOvenGroupCard(group, presetMap) {
           <thead>
             <tr>
               <th scope="col" class="baking-col-name">מתכון</th>
-              <th scope="col" class="baking-col-preset">רשימת אפיות</th>
               <th scope="col" class="baking-col-param">טמפ׳</th>
               <th scope="col" class="baking-col-param">זמן</th>
               <th scope="col" class="baking-col-param">קיטור</th>
@@ -929,14 +711,13 @@ function renderBakingOvenGroupCard(group, presetMap) {
             </tr>
           </thead>
           <tbody>
-            ${group.items.map(({ recipe, categoryPath }) => `
-            <tr class="baking-row" data-recipe-id="${recipe.id}">
-              <td class="baking-col-name recipe-row-open" data-recipe-id="${recipe.id}" role="button" tabindex="0">
+            ${group.items.map(({ recipe, baking, categoryPath }) => `
+            <tr class="baking-row recipe-row-open" data-recipe-id="${recipe.id}" role="button" tabindex="0">
+              <td class="baking-col-name">
                 <strong class="baking-recipe-name">${escapeHtml(recipe.name)}</strong>
                 <span class="baking-recipe-path">${escapeHtml(categoryPath)}</span>
               </td>
-              ${presetCell(recipe)}
-              ${renderBakingParamsCells(recipe)}
+              ${renderBakingParamsCells(baking)}
             </tr>`).join('')}
           </tbody>
         </table>
@@ -945,75 +726,70 @@ function renderBakingOvenGroupCard(group, presetMap) {
 }
 
 async function renderRecipesBaking(container, { layout, productCatalog }) {
-  const [presets, allItems] = await Promise.all([
-    getBakingPresets(),
-    Promise.resolve(collectBakingRecipes(layout)),
-  ]);
-  const presetMap = new Map(presets.map((p) => [p.id, p]));
-  const recipesByPreset = indexRecipesByPreset(layout);
-  const groups = groupBakingByOven(allItems);
-  const savedFilter = sessionStorage.getItem(BAKING_OVEN_FILTER_KEY) || 'all';
-  const filterKey = savedFilter === 'all' || groups.some((g) => g.ovenKey === savedFilter)
-    ? savedFilter
-    : 'all';
+  const profiles = await getBakingProfiles();
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  const allItems = collectBakingRecipes(layout, profileMap);
+  const groups = groupBakingByProfile(allItems, profiles);
+  const recipeCounts = new Map();
+  for (const profile of profiles) {
+    recipeCounts.set(profile.id, allItems.filter((i) => Number(i.recipe.bakingProfileId) === profile.id).length);
+  }
 
-  const filterChips = [
-    { key: 'all', label: 'הכל', count: allItems.length },
-    ...groups.map((g) => ({ key: g.ovenKey, label: g.label, count: g.items.length })),
-  ];
-
-  const visibleGroups = filterKey === 'all'
-    ? groups
-    : groups.filter((g) => g.ovenKey === filterKey);
-
-  const presetsHtml = renderBakingPresetsCatalog(presets, recipesByPreset, { layout, productCatalog });
-  const recipesSection = allItems.length ? `
-    <div class="card baking-station-intro">
-      <div class="card-title">מתכונים לפי תנור</div>
-      <p class="form-hint" style="margin:0">לחץ על שם מתכון לפתיחה · «שייך» לקישור לרשימת האפיות</p>
-    </div>
-    <div class="baking-filter-row" role="tablist" aria-label="סינון לפי תנור">
-      ${filterChips.map((chip) => `
-      <button type="button" class="baking-filter-chip${filterKey === chip.key ? ' active' : ''}" data-oven-filter="${escapeHtml(chip.key)}" role="tab" aria-selected="${filterKey === chip.key}">
-        ${escapeHtml(chip.label)} <span class="baking-filter-count">${chip.count}</span>
-      </button>`).join('')}
-    </div>
-    ${visibleGroups.length
-    ? visibleGroups.map((g) => renderBakingOvenGroupCard(g, presetMap)).join('')
-    : `<div class="empty-state"><p>אין מתכונים בסינון זה</p></div>`}` : `
-    <div class="empty-state baking-recipes-empty">
-      <div class="empty-state-icon">🍞</div>
-      <p>אין מתכונים עם אפייה עדיין</p>
-      <p class="form-hint">בעריכת מתכון סמן «כולל אפייה» או שייך מהטבלה למעלה</p>
-      <button type="button" class="btn btn-primary btn-sm" id="baking-go-edit">עבור לעריכה ובנייה</button>
-    </div>`;
+  const profileCatalog = profiles.length
+    ? profiles.map((p) => renderBakingProfileCatalogRow(p, recipeCounts.get(p.id) || 0)).join('')
+    : '<p class="form-hint baking-profile-empty">אין פרופילי אפייה — צור פרופיל ראשון</p>';
 
   container.innerHTML = `
     <div class="card baking-station-intro">
-      <div class="card-title">עמדת אפיות</div>
-      <p class="form-hint" style="margin:0">נהל רשימת אפיות ושייך למתכונים — או הגדר ידנית בעריכת מתכון</p>
+      <div class="card-title">רשימת אפיות</div>
+      <p class="form-hint" style="margin:0">הגדר פרופילי אפייה חוזרים ושייך אותם למתכונים. מתכונים עם «כולל אפייה» יופיעו למטה לפי הפרופיל.</p>
     </div>
-    ${presetsHtml}
-    ${recipesSection}`;
+    <div class="card baking-profiles-card">
+      <div class="section-header baking-profiles-header">
+        <h2>פרופילי אפייה</h2>
+        <button type="button" class="btn btn-primary btn-sm" id="add-baking-profile-btn">+ פרופיל</button>
+      </div>
+      <div class="baking-profile-list">${profileCatalog}</div>
+    </div>
+    ${allItems.length ? `
+    <div class="section-header baking-recipes-header">
+      <h2>מתכונים לפי פרופיל</h2>
+      <span class="baking-total-count">${allItems.length} מתכונים</span>
+    </div>
+    ${groups.map(renderBakingProfileGroupCard).join('')}` : `
+    <div class="empty-state">
+      <div class="empty-state-icon">🔥</div>
+      <p>אין מתכונים עם אפייה עדיין</p>
+      <p class="form-hint">צור פרופיל, או בעריכת מתכון סמן «כולל אפייה» ובחר פרופיל / הגדרות ידניות</p>
+      <button type="button" class="btn btn-primary btn-sm" id="baking-go-edit">עבור לעריכה ובנייה</button>
+    </div>`}`;
 
   document.getElementById('baking-go-edit')?.addEventListener('click', () => switchRecipeTab('edit'));
 
-  container.querySelectorAll('.baking-filter-chip').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      sessionStorage.setItem(BAKING_OVEN_FILTER_KEY, btn.dataset.ovenFilter);
-      renderRecipesBaking(container, { layout, productCatalog });
+  document.getElementById('add-baking-profile-btn')?.addEventListener('click', () => {
+    openBakingProfileForm(container, { layout, productCatalog });
+  });
+
+  container.querySelectorAll('.edit-baking-profile').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const profile = await getBakingProfile(Number(btn.dataset.id));
+      if (profile) openBakingProfileForm(container, { profile, layout, productCatalog });
     });
   });
 
-  bindBakingPresetsCatalog(container, presets, { layout, productCatalog });
-
-  container.querySelectorAll('.assign-bake-preset').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
+  container.querySelectorAll('.delete-baking-profile').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const recipeId = Number(btn.dataset.recipeId);
-      const recipe = allItems.find((i) => i.recipe.id === recipeId)?.recipe;
-      if (recipe) {
-        openAssignPresetModal(recipe, presets, () => renderRecipesBaking(container, { layout, productCatalog }));
+      const count = Number(btn.dataset.count);
+      if (count > 0) return showToast('פרופיל בשימוש — הסר שיוך ממתכונים קודם');
+      if (!confirm('למחוק פרופיל אפייה?')) return;
+      try {
+        await deleteBakingProfile(Number(btn.dataset.id));
+        showToast('נמחק');
+        renderRecipesBaking(container, { layout, productCatalog });
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
       }
     });
   });
@@ -1444,7 +1220,7 @@ function renderImportRecipePick(r, i, existingNames) {
         <strong>${escapeHtml(r.title)}</strong>
         <span class="form-hint"> · ${escapeHtml(formatImportRecipePath(r))}</span>
         · ${(r.ingredients || []).length} חומרים
-        ${isDup ? ' · <span class="import-dup-badge">קיים — יעודכן</span>' : ''}
+        ${isDup ? ' · <span class="import-dup-badge">קיים</span>' : ''}
         ${!(r.ingredients || []).length ? ' · <span class="import-warn-badge">ללא חומרים</span>' : ''}
       </span>
     </label>`;
@@ -1510,7 +1286,7 @@ function openImportPreview(container, parsed, { groups, subs }) {
       bodyHTML: `
         <p class="form-hint" style="margin-bottom:10px">
           סמן ✓ את המתכונים לייבוא · כותרות מהקובץ יהפכו ל<strong>קטגוריות</strong>.
-          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — סמן «עדכן כמויות» לתיקון שברים (103.6 וכו׳).` : ''}
+          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — יסומנו «קיים» (ניתן לייבא כעותק).` : ''}
           ${newCount ? `<br>חדשים: <strong>${newCount}</strong>` : ''}
         </p>
         <div class="form-group">
@@ -1643,11 +1419,9 @@ function renderRecipeTotalHTML(ingredients, recipe, options) {
 function readIngredientsFromForm(baseIngredients) {
   return (baseIngredients || []).map((ing) => {
     const row = document.querySelector(`.recipe-ing-row[data-ing-id="${ing.id}"]`);
-    const rawQty = row?.querySelector('.ing-qty')?.value;
-    const qty = rawQty != null && rawQty !== '' ? Number(rawQty) : ing.quantity;
     return {
       ...ing,
-      quantity: Number.isFinite(qty) ? qty : ing.quantity,
+      quantity: row?.querySelector('.ing-qty')?.value ?? ing.quantity,
       unitKind: row?.querySelector('.ing-unit')?.value ?? ing.unitKind ?? normalizeRecipeUnitKind(ing.unit),
     };
   });
@@ -1751,8 +1525,8 @@ function bindRatioCalculator(recipe, hostEl) {
         <div class="ratio-change-banner-inner">
           <span class="ratio-change-label">שינוי יחס — ${escapeHtml(anchor.name)}</span>
           <span class="ratio-change-values">
-            מ-<strong>${formatRecipeQuantity(baseQty)}</strong> ${escapeHtml(anchor.unit)}
-            ל-<strong>${formatRecipeQuantity(targetQty)}</strong> ${escapeHtml(anchor.unit)}
+            מ-<strong>${baseQty}</strong> ${escapeHtml(anchor.unit)}
+            ל-<strong>${targetQty}</strong> ${escapeHtml(anchor.unit)}
           </span>
           <span class="ratio-factor-badge">×${formatRatioFactor(ratio)}</span>
         </div>`;
@@ -1770,7 +1544,7 @@ function bindRatioCalculator(recipe, hostEl) {
           </td>
           <td>${escapeHtml(ing.name)}</td>
           <td class="ratio-col-orig">${formatRecipeQuantity(orig?.quantity)} ${escapeHtml(ing.unit)}</td>
-          <td class="ratio-col-calc"><strong>${formatRecipeQuantity(ing.scaledQuantity)}</strong> ${escapeHtml(ing.unit)}</td>
+          <td class="ratio-col-calc"><strong>${ing.scaledQuantity}</strong> ${escapeHtml(ing.unit)}</td>
         </tr>`;
       }).join('') + (() => {
         const totalHtml = renderRecipeWeightSummaryHTML(scaled, recipe, { useScaled: true });
@@ -1927,13 +1701,95 @@ function findProductCategoryName(productCatalog, categoryId) {
   return '';
 }
 
-function buildRecipeBakingFormHTML(recipe, presets = []) {
-  const enabled = !!recipe?.hasBaking;
-  const oven = recipe?.bakeOvenType || '';
-  const isPresetOven = oven === 'large' || oven === 'small';
-  const isCustom = oven && !isPresetOven;
-  const presetOptions = presets.map((p) => `
-    <option value="${p.id}" ${recipe?.bakePresetId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`).join('');
+function buildBakingParamsFieldsHTML(values, { idPrefix = 'recipe' } = {}) {
+  const oven = values?.bakeOvenType || '';
+  const isPreset = oven === 'large' || oven === 'small';
+  const isCustom = oven && !isPreset;
+  return `
+        <div class="form-group" style="margin-top:12px">
+          <label>סוג תנור</label>
+          <div class="recipe-oven-type-row">
+            <label class="checkbox-label">
+              <input type="radio" name="${idPrefix}-oven-type" value="large" ${oven === 'large' ? 'checked' : ''}>
+              ${escapeHtml(RECIPE_OVEN_TYPES.large)}
+            </label>
+            <label class="checkbox-label">
+              <input type="radio" name="${idPrefix}-oven-type" value="small" ${oven === 'small' ? 'checked' : ''}>
+              ${escapeHtml(RECIPE_OVEN_TYPES.small)}
+            </label>
+            <label class="checkbox-label">
+              <input type="radio" name="${idPrefix}-oven-type" value="custom" ${isCustom ? 'checked' : ''}>
+              אחר
+            </label>
+          </div>
+          <input type="text" id="${idPrefix}-oven-custom" class="recipe-oven-custom${isCustom ? '' : ' hidden'}" maxlength="40" placeholder="למשל: תנור הילוך, תנור רצפתי..." value="${isCustom ? escapeHtml(oven) : ''}">
+          <p class="form-hint">אפייה שונה לפי גודל התנור — ניתן להוסיף סוגים נוספים</p>
+        </div>
+        <div class="recipe-baking-grid">
+          <div class="form-group">
+            <label>טמפ׳ אפייה (°C)</label>
+            <input type="number" id="${idPrefix}-bake-temp" min="1" max="500" step="1" placeholder="180" value="${values?.bakeTempC ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>זמן אפייה (דק׳)</label>
+            <input type="number" id="${idPrefix}-bake-time" min="0" step="1" placeholder="25" value="${values?.bakeTimeMinutes ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>קיטור (שניות)</label>
+            <input type="number" id="${idPrefix}-bake-steam" min="0" step="1" placeholder="30" value="${values?.bakeSteamSeconds ?? ''}">
+          </div>
+          <div class="form-group">
+            <label>ליבוש (דק׳)</label>
+            <input type="number" id="${idPrefix}-bake-dry" min="0" step="1" placeholder="10" value="${values?.bakeDryMinutes ?? ''}">
+          </div>
+        </div>`;
+}
+
+function buildBakingProfileSelectOptions(profiles, selectedId) {
+  const parts = ['<option value="">— הגדרות ידניות —</option>'];
+  for (const p of profiles) {
+    const sel = Number(selectedId) === p.id ? ' selected' : '';
+    const oven = p.bakeOvenType ? getRecipeOvenLabel(p.bakeOvenType) : '';
+    const params = formatRecipeBakingParamsLine({}, p);
+    const hint = [oven, params].filter(Boolean).join(' · ');
+    parts.push(`<option value="${p.id}"${sel}>${escapeHtml(p.name)}${hint ? ` (${escapeHtml(hint)})` : ''}</option>`);
+  }
+  return parts.join('');
+}
+
+function bindBakingParamsFormToggle(idPrefix) {
+  const customInput = document.getElementById(`${idPrefix}-oven-custom`);
+  document.querySelectorAll(`input[name="${idPrefix}-oven-type"]`).forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const isCustom = document.querySelector(`input[name="${idPrefix}-oven-type"]:checked`)?.value === 'custom';
+      customInput?.classList.toggle('hidden', !isCustom);
+      if (isCustom) customInput?.focus();
+    });
+  });
+}
+
+function readBakingParamsFromForm(idPrefix) {
+  const ovenEl = document.querySelector(`input[name="${idPrefix}-oven-type"]:checked`);
+  let bakeOvenType = null;
+  if (ovenEl?.value === 'large' || ovenEl?.value === 'small') {
+    bakeOvenType = ovenEl.value;
+  } else if (ovenEl?.value === 'custom') {
+    bakeOvenType = document.getElementById(`${idPrefix}-oven-custom`)?.value?.trim() || null;
+  }
+  return {
+    bakeTempC: document.getElementById(`${idPrefix}-bake-temp`)?.value,
+    bakeTimeMinutes: document.getElementById(`${idPrefix}-bake-time`)?.value,
+    bakeSteamSeconds: document.getElementById(`${idPrefix}-bake-steam`)?.value,
+    bakeDryMinutes: document.getElementById(`${idPrefix}-bake-dry`)?.value,
+    bakeOvenType,
+  };
+}
+
+function buildRecipeBakingFormHTML(recipe, profiles = []) {
+  const enabled = !!recipe?.hasBaking || !!recipe?.bakingProfileId;
+  const profileId = recipe?.bakingProfileId || '';
+  const profileOptions = buildBakingProfileSelectOptions(profiles, profileId);
+  const useProfile = !!profileId;
   return `
     <div class="form-group recipe-baking-block">
       <label class="checkbox-label recipe-baking-toggle">
@@ -1942,83 +1798,65 @@ function buildRecipeBakingFormHTML(recipe, presets = []) {
       </label>
       <div id="recipe-baking-fields" class="recipe-baking-fields${enabled ? '' : ' hidden'}">
         <div class="form-group" style="margin-top:12px">
-          <label>מהרשימה</label>
-          <select id="recipe-bake-preset">
-            <option value="">מותאם אישית</option>
-            ${presetOptions}
-          </select>
-          <p class="form-hint">בחירה מהרשימה ממלאת את השדות · עריכה ידנית מנתקת מהרשימה</p>
+          <label>פרופיל אפייה</label>
+          <select id="recipe-baking-profile">${profileOptions}</select>
+          <p class="form-hint">בחר פרופיל קיים או השאר «הגדרות ידניות» למתכון ספציפי</p>
         </div>
-        <div class="form-group">
-          <label>סוג תנור</label>
-          <div class="recipe-oven-type-row">
-            <label class="checkbox-label">
-              <input type="radio" name="recipe-oven-type" value="large" ${oven === 'large' ? 'checked' : ''}>
-              ${escapeHtml(RECIPE_OVEN_TYPES.large)}
-            </label>
-            <label class="checkbox-label">
-              <input type="radio" name="recipe-oven-type" value="small" ${oven === 'small' ? 'checked' : ''}>
-              ${escapeHtml(RECIPE_OVEN_TYPES.small)}
-            </label>
-            <label class="checkbox-label">
-              <input type="radio" name="recipe-oven-type" value="custom" ${isCustom ? 'checked' : ''}>
-              אחר
-            </label>
-          </div>
-          <input type="text" id="recipe-oven-custom" class="recipe-oven-custom${isCustom ? '' : ' hidden'}" maxlength="40" placeholder="למשל: תנור הילוך, תנור רצפתי..." value="${isCustom ? escapeHtml(oven) : ''}">
+        <div id="recipe-baking-manual-fields" class="${useProfile ? 'hidden' : ''}">
+          ${buildBakingParamsFieldsHTML(recipe, { idPrefix: 'recipe' })}
         </div>
-        <div class="recipe-baking-grid">
-          <div class="form-group">
-            <label>טמפ׳ אפייה (°C)</label>
-            <input type="number" id="recipe-bake-temp" min="1" max="500" step="1" placeholder="180" value="${recipe?.bakeTempC ?? ''}">
-          </div>
-          <div class="form-group">
-            <label>זמן אפייה (דק׳)</label>
-            <input type="number" id="recipe-bake-time" min="0" step="1" placeholder="25" value="${recipe?.bakeTimeMinutes ?? ''}">
-          </div>
-          <div class="form-group">
-            <label>קיטור (שניות)</label>
-            <input type="number" id="recipe-bake-steam" min="0" step="1" placeholder="30" value="${recipe?.bakeSteamSeconds ?? ''}">
-          </div>
-          <div class="form-group">
-            <label>ליבוש (דק׳)</label>
-            <input type="number" id="recipe-bake-dry" min="0" step="1" placeholder="10" value="${recipe?.bakeDryMinutes ?? ''}">
-          </div>
-        </div>
+        <div id="recipe-baking-profile-preview" class="baking-profile-preview${useProfile ? '' : ' hidden'}"></div>
       </div>
     </div>`;
 }
 
-function bindRecipeBakingFormToggle(presets = []) {
+function bindRecipeBakingFormToggle(profiles = []) {
   const cb = document.getElementById('recipe-has-baking');
   const fields = document.getElementById('recipe-baking-fields');
-  const customInput = document.getElementById('recipe-oven-custom');
-  const presetSelect = document.getElementById('recipe-bake-preset');
-  const presetMap = new Map(presets.map((p) => [p.id, p]));
+  const profileSelect = document.getElementById('recipe-baking-profile');
+  const manualFields = document.getElementById('recipe-baking-manual-fields');
+  const preview = document.getElementById('recipe-baking-profile-preview');
 
-  const clearPresetSelect = () => {
-    if (presetSelect) presetSelect.value = '';
+  const refreshProfilePreview = () => {
+    const profileId = Number(profileSelect?.value);
+    const profile = profiles.find((p) => p.id === profileId);
+    const useProfile = !!profile;
+    manualFields?.classList.toggle('hidden', useProfile);
+    preview?.classList.toggle('hidden', !useProfile);
+    if (!preview) return;
+    if (!profile) {
+      preview.innerHTML = '';
+      return;
+    }
+    const rows = [];
+    if (profile.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(profile.bakeOvenType) });
+    if (profile.bakeTempC) rows.push({ label: 'טמפ׳', value: `${profile.bakeTempC}°C` });
+    if (profile.bakeTimeMinutes != null && profile.bakeTimeMinutes !== '') {
+      rows.push({ label: 'זמן', value: `${profile.bakeTimeMinutes} דק׳` });
+    }
+    if (profile.bakeSteamSeconds != null && profile.bakeSteamSeconds !== '') {
+      rows.push({ label: 'קיטור', value: `${profile.bakeSteamSeconds} שנ׳` });
+    }
+    if (profile.bakeDryMinutes != null && profile.bakeDryMinutes !== '') {
+      rows.push({ label: 'ליבוש', value: `${profile.bakeDryMinutes} דק׳` });
+    }
+    preview.innerHTML = `
+      <p class="form-hint" style="margin-bottom:8px">פרטים מפרופיל «${escapeHtml(profile.name)}»</p>
+      <div class="recipe-baking-view-grid">
+        ${rows.map((r) => `
+        <div class="recipe-baking-view-item">
+          <span class="recipe-baking-view-label">${escapeHtml(r.label)}</span>
+          <strong class="recipe-baking-view-value">${escapeHtml(r.value)}</strong>
+        </div>`).join('') || '<p class="form-hint">פרופיל ללא פרטים</p>'}
+      </div>`;
   };
 
   cb?.addEventListener('change', () => {
     fields?.classList.toggle('hidden', !cb.checked);
   });
-  document.querySelectorAll('input[name="recipe-oven-type"]').forEach((radio) => {
-    radio.addEventListener('change', () => {
-      const isCustomOven = document.querySelector('input[name="recipe-oven-type"]:checked')?.value === 'custom';
-      customInput?.classList.toggle('hidden', !isCustomOven);
-      if (isCustomOven) customInput?.focus();
-      clearPresetSelect();
-    });
-  });
-  customInput?.addEventListener('input', clearPresetSelect);
-  ['recipe-bake-temp', 'recipe-bake-time', 'recipe-bake-steam', 'recipe-bake-dry'].forEach((id) => {
-    document.getElementById(id)?.addEventListener('input', clearPresetSelect);
-  });
-  presetSelect?.addEventListener('change', () => {
-    const preset = presetMap.get(Number(presetSelect.value));
-    if (preset) fillRecipeBakingFieldsFromPreset(preset);
-  });
+  profileSelect?.addEventListener('change', refreshProfilePreview);
+  bindBakingParamsFormToggle('recipe');
+  refreshProfilePreview();
 }
 
 function readBakingFromForm() {
@@ -2026,44 +1864,31 @@ function readBakingFromForm() {
   if (!hasBaking) {
     return normalizeRecipeBakingFields({ hasBaking: false });
   }
-  const ovenEl = document.querySelector('input[name="recipe-oven-type"]:checked');
-  let bakeOvenType = null;
-  if (ovenEl?.value === 'large' || ovenEl?.value === 'small') {
-    bakeOvenType = ovenEl.value;
-  } else if (ovenEl?.value === 'custom') {
-    bakeOvenType = document.getElementById('recipe-oven-custom')?.value?.trim() || null;
+  const profileId = document.getElementById('recipe-baking-profile')?.value;
+  if (profileId) {
+    return normalizeRecipeBakingFields({ hasBaking: true, bakingProfileId: profileId });
   }
-  const presetVal = document.getElementById('recipe-bake-preset')?.value;
   return normalizeRecipeBakingFields({
     hasBaking: true,
-    bakeTempC: document.getElementById('recipe-bake-temp')?.value,
-    bakeTimeMinutes: document.getElementById('recipe-bake-time')?.value,
-    bakeSteamSeconds: document.getElementById('recipe-bake-steam')?.value,
-    bakeDryMinutes: document.getElementById('recipe-bake-dry')?.value,
-    bakeOvenType,
-    bakePresetId: presetVal || null,
+    ...readBakingParamsFromForm('recipe'),
   });
 }
 
-function buildRecipeBakingViewHTML(recipe, presetMap = new Map()) {
-  if (!recipe?.hasBaking) return '';
+function buildRecipeBakingViewHTML(recipe, profileMap) {
+  const baking = resolveRecipeBaking(recipe, profileMap);
+  if (!baking.hasBaking) return '';
   const rows = [];
-  const linkedPreset = recipe.bakePresetId ? presetMap.get(recipe.bakePresetId) : null;
-  if (linkedPreset) {
-    rows.push({ label: 'מהרשימה', value: linkedPreset.name });
+  if (baking.profileName) rows.push({ label: 'פרופיל', value: baking.profileName });
+  if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
+  if (baking.bakeTempC) rows.push({ label: 'טמפ׳ אפייה', value: `${baking.bakeTempC}°C` });
+  if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') {
+    rows.push({ label: 'זמן אפייה', value: `${baking.bakeTimeMinutes} דק׳` });
   }
-  if (recipe.bakeOvenType) {
-    rows.push({ label: 'תנור', value: getRecipeOvenLabel(recipe.bakeOvenType) });
+  if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') {
+    rows.push({ label: 'קיטור', value: `${baking.bakeSteamSeconds} שניות` });
   }
-  if (recipe.bakeTempC) rows.push({ label: 'טמפ׳ אפייה', value: `${recipe.bakeTempC}°C` });
-  if (recipe.bakeTimeMinutes != null && recipe.bakeTimeMinutes !== '') {
-    rows.push({ label: 'זמן אפייה', value: `${recipe.bakeTimeMinutes} דק׳` });
-  }
-  if (recipe.bakeSteamSeconds != null && recipe.bakeSteamSeconds !== '') {
-    rows.push({ label: 'קיטור', value: `${recipe.bakeSteamSeconds} שניות` });
-  }
-  if (recipe.bakeDryMinutes != null && recipe.bakeDryMinutes !== '') {
-    rows.push({ label: 'ליבוש', value: `${recipe.bakeDryMinutes} דק׳` });
+  if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
+    rows.push({ label: 'ליבוש', value: `${baking.bakeDryMinutes} דק׳` });
   }
   if (!rows.length) {
     return `
@@ -2085,7 +1910,43 @@ function buildRecipeBakingViewHTML(recipe, presetMap = new Map()) {
     </section>`;
 }
 
-function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, presetMap }) {
+function openBakingProfileForm(container, { profile, layout, productCatalog }) {
+  const isEdit = !!profile;
+  openModal({
+    title: isEdit ? 'עריכת פרופיל אפייה' : 'פרופיל אפייה חדש',
+    bodyHTML: `
+      <div class="form-group">
+        <label>שם פרופיל</label>
+        <input type="text" id="baking-profile-name" maxlength="60" placeholder="למשל: בצק חמאה — תנור גדול" value="${profile ? escapeHtml(profile.name) : ''}">
+      </div>
+      ${buildBakingParamsFieldsHTML(profile, { idPrefix: 'baking-profile' })}
+      <div class="form-group">
+        <label>הערות (אופציונלי)</label>
+        <textarea id="baking-profile-notes" rows="2">${profile ? escapeHtml(profile.notes || '') : ''}</textarea>
+      </div>`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-baking-profile">שמור</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  bindBakingParamsFormToggle('baking-profile');
+  document.getElementById('save-baking-profile')?.addEventListener('click', async () => {
+    const name = document.getElementById('baking-profile-name')?.value.trim();
+    const notes = document.getElementById('baking-profile-notes')?.value || '';
+    const data = { name, notes, ...readBakingParamsFromForm('baking-profile') };
+    try {
+      if (isEdit) await updateBakingProfile(profile.id, data);
+      else await addBakingProfile(data);
+      closeModal();
+      showToast('נשמר ✓');
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
+function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap }) {
   const ingredients = recipe.ingredients || [];
   const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
   const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
@@ -2129,7 +1990,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         </div>
         ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
       </section>
-      ${buildRecipeBakingViewHTML(recipe, presetMap)}
+      ${buildRecipeBakingViewHTML(recipe, profileMap)}
       ${recipe.notes?.trim() ? `
       <section class="recipe-sheet-section recipe-sheet-notes-block">
         <h2 class="recipe-sheet-section-title">הערות</h2>
@@ -2139,12 +2000,9 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
 }
 
 async function openRecipeView(container, recipe, { productCatalog, layout }) {
-  const [products, presets] = await Promise.all([
-    getProducts(true),
-    getBakingPresets(),
-  ]);
-  const presetMap = new Map(presets.map((p) => [p.id, p]));
+  const [products, profiles] = await Promise.all([getProducts(true), getBakingProfiles()]);
   const productMap = new Map(products.map((p) => [p.id, p]));
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
   const linkedNames = (recipe.linkedProductIds || []).map((id) => productMap.get(id)?.name).filter(Boolean);
   const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
   const productCategoryName = findProductCategoryName(productCatalog, recipe.linkedProductCategoryId);
@@ -2152,7 +2010,7 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   openModal({
     title: '',
     modalClass: 'modal-recipe-view',
-    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, presetMap }),
+    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
@@ -2199,10 +2057,7 @@ function openRatioCalculatorPicker(layout) {
 async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView }) {
   const isEdit = !!recipe;
   const ingredients = recipe?.ingredients || [];
-  const [mats, presets] = await Promise.all([
-    getRawMaterials(),
-    getBakingPresets(),
-  ]);
+  const [mats, bakingProfiles] = await Promise.all([getRawMaterials(), getBakingProfiles()]);
   const catalog = productCatalog || await getProductsCatalogLayout();
   const catalogLayout = layout || container._recipeLayout;
   const selectedCategoryId = recipe?.categoryId || categoryId || '';
@@ -2241,7 +2096,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>הערות</label>
         <textarea id="recipe-notes" rows="2">${recipe ? escapeHtml(recipe.notes || '') : ''}</textarea>
       </div>
-      ${buildRecipeBakingFormHTML(recipe, presets)}
+      ${buildRecipeBakingFormHTML(recipe, bakingProfiles)}
       ${isEdit ? `
       <div class="form-group">
         <label>חומרי גלם</label>
@@ -2287,7 +2142,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     linkedProductIds: recipe?.linkedProductIds,
   });
 
-  bindRecipeBakingFormToggle(presets);
+  bindRecipeBakingFormToggle(bakingProfiles);
 
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ingId = Number(row.dataset.ingId);

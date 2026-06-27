@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=154';
-import { APP_VERSION } from './version.js?v=154';
-import { defaultColorForIndex } from './chart.js?v=154';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=154';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=154';
-import { ValidationError } from './validators.js?v=154';
+import { exportAllData, importAllData } from './db.js?v=132';
+import { APP_VERSION } from './version.js?v=132';
+import { defaultColorForIndex } from './chart.js?v=132';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=132';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=132';
+import { ValidationError } from './validators.js?v=132';
 
 export const BACKUP_VERSION = 3;
 
@@ -178,7 +178,7 @@ export function enrichBackupData(raw) {
     recipeCategories: raw.recipeCategories || [],
     recipes: raw.recipes || [],
     recipeIngredients: raw.recipeIngredients || [],
-    bakingPresets: raw.bakingPresets || [],
+    bakingProfiles: raw.bakingProfiles || [],
     supplierCategories: raw.supplierCategories || [],
     suppliers: raw.suppliers || [],
     rawMaterials: raw.rawMaterials || [],
@@ -229,7 +229,7 @@ export function summarizeBackupData(data) {
     recipeCategories: data.recipeCategories?.length || 0,
     recipes: data.recipes?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
-    bakingPresets: data.bakingPresets?.length || 0,
+    bakingProfiles: data.bakingProfiles?.length || 0,
     supplierCategories: data.supplierCategories?.length || 0,
     suppliers: data.suppliers?.length || 0,
     rawMaterials: data.rawMaterials?.length || 0,
@@ -260,6 +260,7 @@ export function formatBackupSummary(counts) {
   if (counts.managerEmployees) parts.push(`${counts.managerEmployees} עובדים`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
   if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
+  if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   return parts.join(' · ');
@@ -305,7 +306,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
   if (!Array.isArray(data.recipes)) data.recipes = [];
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
-  if (!Array.isArray(data.bakingPresets)) data.bakingPresets = [];
+  if (!Array.isArray(data.bakingProfiles)) data.bakingProfiles = [];
   if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
   if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];

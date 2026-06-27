@@ -55,20 +55,129 @@ export function getRecipeOvenLabel(type) {
   return RECIPE_OVEN_TYPES[type] || type;
 }
 
-export function formatRecipeBakingParamsLine(recipe) {
-  if (!recipe?.hasBaking) return '';
+export function formatRecipeBakingParamsLine(recipe, profileOrMap) {
+  const baking = resolveRecipeBaking(recipe, profileOrMap);
+  if (!baking.hasBaking) return '';
   const parts = [];
-  if (recipe.bakeTempC) parts.push(`${recipe.bakeTempC}°C`);
-  if (recipe.bakeTimeMinutes != null && recipe.bakeTimeMinutes !== '') {
-    parts.push(`${recipe.bakeTimeMinutes} דק׳`);
+  if (baking.bakeTempC) parts.push(`${baking.bakeTempC}°C`);
+  if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') {
+    parts.push(`${baking.bakeTimeMinutes} דק׳`);
   }
-  if (recipe.bakeSteamSeconds != null && recipe.bakeSteamSeconds !== '') {
-    parts.push(`קיטור ${recipe.bakeSteamSeconds} שנ׳`);
+  if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') {
+    parts.push(`קיטור ${baking.bakeSteamSeconds} שנ׳`);
   }
-  if (recipe.bakeDryMinutes != null && recipe.bakeDryMinutes !== '') {
-    parts.push(`ליבוש ${recipe.bakeDryMinutes} דק׳`);
+  if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
+    parts.push(`ליבוש ${baking.bakeDryMinutes} דק׳`);
   }
   return parts.join(' · ') || 'ללא פרטים';
+}
+
+export function resolveRecipeBaking(recipe, profileOrMap) {
+  if (!recipe) return normalizeRecipeBakingFields({ hasBaking: false, bakingProfileId: null });
+
+  let profile = null;
+  if (profileOrMap) {
+    if (profileOrMap instanceof Map) {
+      profile = recipe.bakingProfileId ? profileOrMap.get(Number(recipe.bakingProfileId)) : null;
+    } else {
+      profile = profileOrMap;
+    }
+  }
+
+  if (profile) {
+    return {
+      hasBaking: true,
+      bakingProfileId: Number(recipe.bakingProfileId) || null,
+      profileName: profile.name,
+      bakeOvenType: profile.bakeOvenType ?? null,
+      bakeTempC: profile.bakeTempC ?? null,
+      bakeTimeMinutes: profile.bakeTimeMinutes ?? null,
+      bakeSteamSeconds: profile.bakeSteamSeconds ?? null,
+      bakeDryMinutes: profile.bakeDryMinutes ?? null,
+      profileNotes: profile.notes || '',
+    };
+  }
+
+  return {
+    ...normalizeRecipeBakingFields(recipe),
+    bakingProfileId: recipe.bakingProfileId ? Number(recipe.bakingProfileId) : null,
+  };
+}
+
+export function normalizeBakingProfileFields(raw) {
+  const name = sanitizeName(raw.name, 60);
+  if (!name) throw new ValidationError('שם פרופיל לא תקין');
+  const baking = normalizeRecipeBakingFields({ hasBaking: true, ...raw });
+  return {
+    name,
+    bakeOvenType: baking.bakeOvenType,
+    bakeTempC: baking.bakeTempC,
+    bakeTimeMinutes: baking.bakeTimeMinutes,
+    bakeSteamSeconds: baking.bakeSteamSeconds,
+    bakeDryMinutes: baking.bakeDryMinutes,
+    notes: String(raw.notes || '').trim().slice(0, 500),
+  };
+}
+
+export async function getBakingProfiles() {
+  const rows = await db.bakingProfiles.toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function getBakingProfile(id) {
+  const pid = sanitizeProductId(id);
+  if (!pid) return null;
+  return db.bakingProfiles.get(pid);
+}
+
+export async function addBakingProfile(fields) {
+  const data = normalizeBakingProfileFields(fields);
+  const existing = await getBakingProfiles();
+  if (existing.some((p) => p.name === data.name)) throw new ValidationError('פרופיל בשם זה כבר קיים');
+  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+  return db.bakingProfiles.add({ ...data, sortOrder: maxOrder + 1 });
+}
+
+export async function updateBakingProfile(id, patch) {
+  const pid = sanitizeProductId(id);
+  if (!pid) throw new ValidationError('פרופיל לא תקין');
+  const current = await db.bakingProfiles.get(pid);
+  if (!current) throw new ValidationError('פרופיל לא נמצא');
+  const merged = normalizeBakingProfileFields({ ...current, ...patch });
+  if (merged.name !== current.name) {
+    const existing = await getBakingProfiles();
+    if (existing.some((p) => p.id !== pid && p.name === merged.name)) {
+      throw new ValidationError('פרופיל בשם זה כבר קיים');
+    }
+  }
+  await db.bakingProfiles.update(pid, merged);
+}
+
+export async function deleteBakingProfile(id) {
+  const pid = sanitizeProductId(id);
+  if (!pid) return;
+  const recipes = await db.recipes.toArray();
+  const using = recipes.filter((r) => Number(r.bakingProfileId) === pid);
+  if (using.length) {
+    throw new ValidationError(`פרופיל בשימוש ב-${using.length} מתכונים — הסר שיוך קודם`);
+  }
+  await db.bakingProfiles.delete(pid);
+}
+
+export async function setBakingProfileOrder(orderedIds) {
+  await db.transaction('rw', db.bakingProfiles, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.bakingProfiles.update(Number(orderedIds[i]), { sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function countRecipesUsingBakingProfile(profileId) {
+  const pid = sanitizeProductId(profileId);
+  if (!pid) return 0;
+  const recipes = await db.recipes.toArray();
+  return recipes.filter((r) => Number(r.bakingProfileId) === pid).length;
 }
 
 function normalizeBakeOvenType(raw) {
@@ -79,16 +188,30 @@ function normalizeBakeOvenType(raw) {
 }
 
 export function normalizeRecipeBakingFields(raw) {
-  const hasBaking = !!raw.hasBaking;
+  const profileId = raw.bakingProfileId != null && raw.bakingProfileId !== ''
+    ? sanitizeProductId(raw.bakingProfileId)
+    : null;
+  const hasBaking = !!raw.hasBaking || !!profileId;
   if (!hasBaking) {
     return {
       hasBaking: false,
+      bakingProfileId: null,
       bakeTempC: null,
       bakeTimeMinutes: null,
       bakeSteamSeconds: null,
       bakeDryMinutes: null,
       bakeOvenType: null,
-      bakePresetId: null,
+    };
+  }
+  if (profileId) {
+    return {
+      hasBaking: true,
+      bakingProfileId: profileId,
+      bakeTempC: null,
+      bakeTimeMinutes: null,
+      bakeSteamSeconds: null,
+      bakeDryMinutes: null,
+      bakeOvenType: null,
     };
   }
   const oven = normalizeBakeOvenType(raw.bakeOvenType);
@@ -104,93 +227,15 @@ export function normalizeRecipeBakingFields(raw) {
   const dryMin = raw.bakeDryMinutes != null && raw.bakeDryMinutes !== ''
     ? sanitizeQuantity(raw.bakeDryMinutes, { allowZero: true, max: 10_000 })
     : null;
-  const bakePresetId = raw.bakePresetId != null && raw.bakePresetId !== ''
-    ? sanitizeProductId(raw.bakePresetId)
-    : null;
   return {
     hasBaking: true,
+    bakingProfileId: null,
     bakeTempC: temp,
     bakeTimeMinutes: bakeMin,
     bakeSteamSeconds: steamSec,
     bakeDryMinutes: dryMin,
     bakeOvenType: oven,
-    bakePresetId,
   };
-}
-
-export function formatBakingPresetSummary(preset) {
-  if (!preset) return '';
-  const parts = [];
-  if (preset.bakeOvenType) parts.push(getRecipeOvenLabel(preset.bakeOvenType));
-  const params = formatRecipeBakingParamsLine({ hasBaking: true, ...preset });
-  if (params) parts.push(params);
-  return parts.join(' · ') || preset.name;
-}
-
-function normalizeBakingPresetPayload(raw) {
-  const name = sanitizeName(raw.name, 60);
-  if (!name) throw new ValidationError('שם אפייה לא תקין');
-  const baking = normalizeRecipeBakingFields({ ...raw, hasBaking: true, bakePresetId: null });
-  return { name, ...baking };
-}
-
-export async function getBakingPresets() {
-  const rows = await db.bakingPresets.toArray();
-  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-  return rows;
-}
-
-export async function getBakingPreset(id) {
-  const pid = sanitizeProductId(id);
-  if (!pid) return null;
-  return db.bakingPresets.get(pid);
-}
-
-export async function addBakingPreset(fields) {
-  const data = normalizeBakingPresetPayload(fields);
-  const existing = await getBakingPresets();
-  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
-  return db.bakingPresets.add({ ...data, sortOrder: maxOrder + 1 });
-}
-
-export async function updateBakingPreset(id, patch) {
-  const pid = sanitizeProductId(id);
-  if (!pid) throw new ValidationError('אפייה לא תקינה');
-  const current = await db.bakingPresets.get(pid);
-  if (!current) throw new ValidationError('אפייה לא נמצאה');
-  const merged = { ...current, ...patch };
-  const data = normalizeBakingPresetPayload(merged);
-  await db.bakingPresets.update(pid, data);
-}
-
-export async function deleteBakingPreset(id) {
-  const pid = sanitizeProductId(id);
-  if (!pid) return;
-  const linked = await db.recipes.where('bakePresetId').equals(pid).toArray();
-  await db.transaction('rw', db.bakingPresets, db.recipes, async () => {
-    for (const recipe of linked) {
-      await db.recipes.update(recipe.id, { bakePresetId: null });
-    }
-    await db.bakingPresets.delete(pid);
-  });
-}
-
-export function bakingFieldsFromPreset(preset) {
-  return normalizeRecipeBakingFields({
-    hasBaking: true,
-    bakePresetId: preset.id,
-    bakeOvenType: preset.bakeOvenType,
-    bakeTempC: preset.bakeTempC,
-    bakeTimeMinutes: preset.bakeTimeMinutes,
-    bakeSteamSeconds: preset.bakeSteamSeconds,
-    bakeDryMinutes: preset.bakeDryMinutes,
-  });
-}
-
-export async function assignBakingPresetToRecipe(recipeId, presetId) {
-  const preset = await getBakingPreset(presetId);
-  if (!preset) throw new ValidationError('אפייה לא נמצאה');
-  await updateRecipe(recipeId, bakingFieldsFromPreset(preset));
 }
 
 /* ── קטגוריות כלליות (קבוצות) ── */
@@ -640,7 +685,7 @@ export async function getRecipeForProduct(productId) {
 export async function addRecipe({
   categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId,
   yieldPortions, portionWeightGrams, notes,
-  hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType, bakePresetId,
+  hasBaking, bakingProfileId, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
 }) {
   const cid = sanitizeProductId(categoryId);
   const trimmed = sanitizeName(name, 80);
@@ -656,7 +701,7 @@ export async function addRecipe({
     ? sanitizeQuantity(portionWeightGrams, { allowZero: false })
     : null;
   const baking = normalizeRecipeBakingFields({
-    hasBaking, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType, bakePresetId,
+    hasBaking, bakingProfileId, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
   });
   const recipeId = await db.recipes.add({
     categoryId: cid,
@@ -708,7 +753,7 @@ export async function updateRecipe(id, patch) {
       ? sanitizeQuantity(data.portionWeightGrams, { allowZero: false })
       : null;
   }
-  if ('hasBaking' in data) {
+  if ('hasBaking' in data || 'bakingProfileId' in data) {
     Object.assign(data, normalizeRecipeBakingFields(data));
   }
   if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 2000);
@@ -902,9 +947,7 @@ export async function importParsedRecipes(parsedRecipes, {
   let rawMaterialsAdded = 0;
   const existingMaterials = addRawMaterials ? await db.rawMaterials.toArray() : [];
   const materialNames = new Set(existingMaterials.map((m) => m.name));
-  const existingNames = (skipDuplicates || updateExistingQuantities)
-    ? await getExistingRecipeNameKeys()
-    : new Set();
+  const existingNames = skipDuplicates ? await getExistingRecipeNameKeys() : new Set();
 
   for (const item of parsedRecipes) {
     const nameKey = normalizeRecipeImportKey(item.title);
@@ -994,19 +1037,9 @@ export async function deleteRecipe(id) {
 export async function updateRecipeIngredient(id, patch) {
   const iid = sanitizeProductId(id);
   if (!iid) return;
-  const data = {};
-  if ('name' in patch) data.name = sanitizeName(patch.name, 80);
-  if ('quantity' in patch) data.quantity = patch.quantity;
-  if ('unitKind' in patch) data.unitKind = patch.unitKind;
-  if ('unit' in patch) data.unit = patch.unit;
-  if ('rawMaterialId' in patch) data.rawMaterialId = patch.rawMaterialId;
-  if ('sortOrder' in patch) data.sortOrder = patch.sortOrder;
-  if (!Object.keys(data).length) return;
-  if ('quantity' in data) {
-    const qty = sanitizeRecipeQuantity(data.quantity, { allowZero: false });
-    if (qty == null) throw new ValidationError('כמות לא תקינה');
-    data.quantity = qty;
-  }
+  const data = { ...patch };
+  if ('name' in data) data.name = sanitizeName(data.name, 80);
+  if ('quantity' in data) data.quantity = sanitizeRecipeQuantity(data.quantity, { allowZero: false });
   if ('unitKind' in data) {
     data.unitKind = normalizeRecipeUnitKind(data.unitKind);
     data.unit = formatRecipeUnitKind(data.unitKind);
@@ -1024,7 +1057,6 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
   if (!rid) throw new ValidationError('מתכון לא תקין');
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
   const qty = sanitizeRecipeQuantity(quantity, { allowZero: false });
-  if (qty == null) throw new ValidationError('כמות לא תקינה');
   const existing = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
   const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
@@ -1521,7 +1553,7 @@ export function formatWhatsAppOrderText({ weekStart, categories }) {
 export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
-    bakingPresets,
+    bakingProfiles,
     supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
@@ -1530,7 +1562,7 @@ export async function exportKitchenTables() {
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
     db.recipeProductLinks.toArray(),
-    db.bakingPresets.toArray(),
+    db.bakingProfiles.toArray(),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
@@ -1544,7 +1576,7 @@ export async function exportKitchenTables() {
     recipes,
     recipeIngredients,
     recipeProductLinks,
-    bakingPresets,
+    bakingProfiles,
     supplierCategories,
     suppliers,
     rawMaterials,
@@ -1557,7 +1589,7 @@ export async function exportKitchenTables() {
 export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
-    'bakingPresets',
+    'bakingProfiles',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
@@ -1602,7 +1634,7 @@ async function ensureRecipeHierarchyInTx(dbRef) {
 export async function clearKitchenTables() {
   await db.transaction('rw',
     db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
-    db.bakingPresets,
+    db.bakingProfiles,
     db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
@@ -1613,7 +1645,7 @@ export async function clearKitchenTables() {
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
-      await db.bakingPresets.clear();
+      await db.bakingProfiles.clear();
       await db.rawMaterialPriceHistory.clear();
       await db.rawMaterials.clear();
       await db.suppliers.clear();

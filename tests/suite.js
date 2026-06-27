@@ -1,17 +1,17 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=154';
+} from '../js/validators.js?v=132';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=154';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=154';
-import { enrichBackupData } from '../js/backup.js?v=154';
-import { normalizeRecipeImportKey, formatRecipeQuantity } from '../js/kitchen-db.js?v=154';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=154';
+} from '../js/calc.js?v=132';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=132';
+import { enrichBackupData } from '../js/backup.js?v=132';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=132';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=132';
 
 export async function runAllTests() {
   /* validators */
@@ -353,13 +353,43 @@ export async function runAllTests() {
     assertEqual(sanitizeRecipeQuantity('15'), 15);
   });
 
-  test('formatRecipeQuantity — תצוגה', () => {
-    assertEqual(formatRecipeQuantity(1.15), '1.15');
-    assertEqual(formatRecipeQuantity(103.6), '103.6');
-    assertEqual(formatRecipeQuantity(15), '15');
+  test('resolveRecipeBaking — פרופיל מחליף שדות inline', () => {
+    const profile = {
+      id: 1,
+      name: 'בצק חמאה',
+      bakeOvenType: 'large',
+      bakeTempC: 180,
+      bakeTimeMinutes: 25,
+      bakeSteamSeconds: 30,
+      bakeDryMinutes: 10,
+    };
+    const recipe = {
+      hasBaking: true,
+      bakingProfileId: 1,
+      bakeTempC: 999,
+      bakeTimeMinutes: 99,
+    };
+    const baking = resolveRecipeBaking(recipe, profile);
+    assertOk(baking.hasBaking);
+    assertEqual(baking.profileName, 'בצק חמאה');
+    assertEqual(baking.bakeTempC, 180);
+    assertEqual(baking.bakeTimeMinutes, 25);
   });
 
-  test('parseRecipesFromDocumentXml — טבלה בלי כותרות', () => {
+  test('normalizeBakingProfileFields — שם וטמפ׳', () => {
+    const profile = normalizeBakingProfileFields({
+      name: '  תנור קטן  ',
+      bakeOvenType: 'small',
+      bakeTempC: '170',
+      bakeTimeMinutes: '20',
+    });
+    assertEqual(profile.name, 'תנור קטן');
+    assertEqual(profile.bakeOvenType, 'small');
+    assertEqual(profile.bakeTempC, 170);
+    assertEqual(profile.bakeTimeMinutes, 20);
+  });
+
+  test('parseRecipesFromDocumentXml — כותרת וחומרים', () => {
     const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
@@ -375,7 +405,6 @@ export async function runAllTests() {
     assertEqual(recipes[0].title, 'מילוי תפוחים- עם סוכר');
     assertEqual(recipes[0].ingredients.length, 2);
     assertEqual(recipes[0].ingredients[0].name, 'תפוחים');
-    assertEqual(recipes[0].ingredients[0].quantity, 103.6);
   });
 
   await flushTests();
