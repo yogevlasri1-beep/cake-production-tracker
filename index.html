@@ -13,7 +13,36 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <link rel="stylesheet" href="css/styles.css?v=157">
+  <script>window.__APP_BUILD__ = '158';</script>
+  <script>
+    (function earlyVersionGate() {
+      if (/force-update=1/.test(location.search)) return;
+      var build = Number(window.__APP_BUILD__ || 0);
+      fetch('./js/version.js?gate=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' })
+        .then(function (res) { return res.ok ? res.text() : ''; })
+        .then(function (text) {
+          var match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
+          var remote = match ? Number(match[1]) : 0;
+          if (!remote || remote <= build) return;
+          var tasks = [];
+          if (window.caches) {
+            tasks.push(caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            }));
+          }
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            tasks.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            }));
+          }
+          Promise.all(tasks).finally(function () {
+            location.replace(location.pathname + '?force-update=1&t=' + Date.now());
+          });
+        })
+        .catch(function () { /* ignore */ });
+    })();
+  </script>
+  <link rel="stylesheet" href="css/styles.css?v=158">
   <script type="importmap">
   {
     "imports": {
@@ -132,8 +161,6 @@
   </div>
 
   <script>
-    window.__APP_BUILD__ = '157';
-
     function isIOSStandalone() {
       return (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
         && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true);
@@ -180,12 +207,25 @@
       var BUILD = window.__APP_BUILD__;
       var params = new URLSearchParams(location.search);
 
+      function fetchLatestBuild() {
+        return fetch('./index.html?bust=' + Date.now(), { cache: 'no-store' })
+          .then(function (res) { return res.ok ? res.text() : ''; })
+          .then(function (html) {
+            var match = html.match(/__APP_BUILD__\s*=\s*['"](\d+)['"]/);
+            return match ? match[1] : BUILD;
+          })
+          .catch(function () { return BUILD; });
+      }
+
       if (params.get('force-update') === '1') {
         clearAllCaches().then(function () {
-          try { localStorage.setItem('appBuild', BUILD); } catch (e) { /* ignore */ }
+          return fetchLatestBuild();
+        }).then(function (latest) {
+          window.__APP_BUILD__ = latest;
+          try { localStorage.setItem('appBuild', latest); } catch (e) { /* ignore */ }
           var u = new URL(location.href);
           u.searchParams.delete('force-update');
-          u.searchParams.set('v', BUILD);
+          u.searchParams.set('v', latest);
           u.searchParams.set('t', String(Date.now()));
           location.replace(u.toString());
         });
@@ -243,7 +283,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=157"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=157"></script>
+  <script src="js/vendor/dexie.min.js?v=158"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=158"></script>
 </body>
 </html>

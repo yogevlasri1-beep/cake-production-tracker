@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '157';
+const VERSION = '158';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -99,12 +99,12 @@ async function matchCached(request) {
 
 async function putInCache(request, response) {
   if (!response.ok || response.type !== 'basic') return;
+  const url = new URL(request.url);
+  const path = url.pathname;
+  if (request.mode === 'navigate') return;
+  if (path.endsWith('index.html') || path.endsWith('version.js') || path.endsWith('sw.js')) return;
   const cache = await caches.open(CACHE);
-  if (request.mode === 'navigate') {
-    await cache.put('./index.html', response.clone());
-  } else {
-    await cache.put(cacheKey(request.url), response.clone());
-  }
+  await cache.put(cacheKey(request.url), response.clone());
 }
 
 function isAppShellRequest(request, url) {
@@ -130,7 +130,8 @@ function mustNetworkFirst(request, url) {
   if (path.endsWith('index.html') || path.endsWith('/') || path.endsWith('sw.js')) return true;
   if (path.endsWith('version.js')) return true;
   if (/\.(js|css)$/i.test(path)) return true;
-  if (url.searchParams.has('_') || url.searchParams.has('check') || url.searchParams.has('gate')) return true;
+  if (url.searchParams.has('_') || url.searchParams.has('check') || url.searchParams.has('gate')
+    || url.searchParams.has('bust') || url.searchParams.has('t')) return true;
   return false;
 }
 

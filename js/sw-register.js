@@ -1,6 +1,6 @@
-import { APP_VERSION } from './version.js?v=157';
+import { APP_VERSION } from './version.js?v=158';
 
-const SW_URL = `./sw.js?v=${APP_VERSION}`;
+const SW_URL = './sw.js';
 
 export function isStandaloneApp() {
   return window.matchMedia('(display-mode: standalone)').matches
@@ -71,6 +71,31 @@ async function clearAllAppCaches() {
   }
 }
 
+async function fetchLatestBuildFromServer() {
+  const bust = Date.now();
+  try {
+    const res = await fetch(`./index.html?bust=${bust}`, { cache: 'no-store' });
+    if (res.ok) {
+      const text = await res.text();
+      const match = text.match(/__APP_BUILD__\s*=\s*['"](\d+)['"]/);
+      if (match) return match[1];
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const res = await fetch(`./js/version.js?gate=${bust}`, { cache: 'no-store' });
+    if (res.ok) {
+      const text = await res.text();
+      const match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
+      if (match) return match[1];
+    }
+  } catch {
+    /* ignore */
+  }
+  return APP_VERSION;
+}
+
 async function tryActivateWaitingWorker() {
   if (!('serviceWorker' in navigator)) return false;
   const reg = await navigator.serviceWorker.getRegistration();
@@ -86,15 +111,16 @@ async function tryActivateWaitingWorker() {
   return true;
 }
 
-function hardReloadForUpdate() {
+async function hardReloadForUpdate() {
+  const latest = await fetchLatestBuildFromServer();
   const url = new URL(location.href);
   url.searchParams.set('force-update', '1');
+  url.searchParams.set('v', latest);
   url.searchParams.set('t', String(Date.now()));
-  url.searchParams.delete('v');
   location.replace(url.toString());
 }
 
-/** ניקוי מטמון מלא + טעינה מחדש דרך bootGate ב-index.html */
+/** ניקוי מטמון מ-full + טעינה מחדש */
 export async function forceAppUpdate() {
   if (updateInProgress) return;
   updateInProgress = true;
@@ -103,7 +129,7 @@ export async function forceAppUpdate() {
   } catch (err) {
     console.warn('forceAppUpdate cache clear failed', err);
   }
-  hardReloadForUpdate();
+  await hardReloadForUpdate();
 }
 
 /** כפתור «עדכן עכשיו» בבאנר העליון */
@@ -117,7 +143,7 @@ export async function applyAppUpdate() {
         const reg = await navigator.serviceWorker.getRegistration();
         if (reg) await reg.update();
       } catch {
-        /* continue to hard refresh */
+        /* continue */
       }
       await tryActivateWaitingWorker();
     }
@@ -125,7 +151,7 @@ export async function applyAppUpdate() {
   } catch (err) {
     console.warn('applyAppUpdate partial fail', err);
   }
-  hardReloadForUpdate();
+  await hardReloadForUpdate();
 }
 
 function watchRegistration(reg) {
@@ -141,6 +167,7 @@ function watchRegistration(reg) {
       if (worker.state !== 'installed' || !navigator.serviceWorker.controller) return;
       if (isStandaloneApp()) {
         showUpdateBanner();
+        applyAppUpdate().catch(() => forceAppUpdate());
         return;
       }
       worker.postMessage({ type: 'SKIP_WAITING' });
@@ -166,28 +193,21 @@ export async function checkForAppUpdate() {
 
 /** בדיקה מול השרת — האם יש גרסה חדשה יותר מהמותקנת */
 export async function detectRemoteVersion() {
-  const bust = `check=${Date.now()}`;
-  try {
-    const res = await fetch(`./js/version.js?${bust}`, { cache: 'no-store' });
-    if (res.ok) {
-      const text = await res.text();
-      const match = text.match(/APP_VERSION\s*=\s*['"](\d+)['"]/);
-      if (match) return match[1];
+  return fetchLatestBuildFromServer();
+}
+
+async function cleanupLegacyServiceWorkers() {
+  if (!('serviceWorker' in navigator)) return;
+  const regs = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(regs.map(async (reg) => {
+    const scriptUrl = reg.active?.scriptURL
+      || reg.installing?.scriptURL
+      || reg.waiting?.scriptURL
+      || '';
+    if (scriptUrl && !scriptUrl.endsWith('/sw.js')) {
+      await reg.unregister();
     }
-  } catch {
-    /* fall through */
-  }
-  try {
-    const res = await fetch(`./index.html?${bust}`, { cache: 'no-store' });
-    if (res.ok) {
-      const text = await res.text();
-      const match = text.match(/__APP_BUILD__\s*=\s*['"](\d+)['"]/);
-      if (match) return match[1];
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
+  }));
 }
 
 export async function initAppUpdateCheck() {
@@ -201,27 +221,32 @@ export async function initAppUpdateCheck() {
   });
 
   try {
-    const reg = await navigator.serviceWorker.register(SW_URL, { scope: './' });
+    const remote = await detectRemoteVersion();
+    if (remote && remote !== APP_VERSION) {
+      await clearAllAppCaches();
+      await hardReloadForUpdate();
+      return;
+    }
+
+    await cleanupLegacyServiceWorkers();
+    const reg = await navigator.serviceWorker.register(SW_URL, {
+      scope: './',
+      updateViaCache: 'none',
+    });
     watchRegistration(reg);
     await checkForAppUpdate();
 
-    const remote = await detectRemoteVersion();
-    if (remote && remote !== APP_VERSION) {
-      showUpdateBanner(remote);
-      if (isStandaloneApp()) {
-        setTimeout(() => {
-          if (pendingUpdate) applyAppUpdate().catch(() => forceAppUpdate());
-        }, 1200);
-      }
-    }
-
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        checkForAppUpdate();
-        detectRemoteVersion().then((v) => {
-          if (v && v !== APP_VERSION) showUpdateBanner(v);
-        });
-      }
+      if (document.visibilityState !== 'visible') return;
+      detectRemoteVersion().then(async (v) => {
+        if (v && v !== APP_VERSION) {
+          showUpdateBanner(v);
+          if (isStandaloneApp()) {
+            await applyAppUpdate().catch(() => forceAppUpdate());
+          }
+        }
+      });
+      checkForAppUpdate();
     });
 
     setInterval(() => {
