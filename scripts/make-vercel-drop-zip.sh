@@ -15,14 +15,6 @@ cat > "$TMP/vercel.json" << EOF
       "source": "/:path*",
       "destination": "${PAGES_URL}/:path*"
     }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
-      ]
-    }
   ]
 }
 EOF

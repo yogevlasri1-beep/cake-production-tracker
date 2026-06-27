@@ -9,13 +9,5 @@
       "source": "/:path*",
       "destination": "https://yogevlasri1-beep.github.io/cake-production-tracker/:path*"
     }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
-      ]
-    }
   ]
 }
