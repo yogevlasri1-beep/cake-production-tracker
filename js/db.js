@@ -1253,6 +1253,7 @@ export async function resetAllData() {
     await db.weeklyProductionPlans.clear();
     await db.recipeIngredients.clear();
     await db.recipeProductLinks.clear();
+    await db.bakingPresets.clear();
     await db.recipes.clear();
     await db.recipeCategories.clear();
     await db.recipeGroups.clear();
