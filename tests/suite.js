@@ -1,17 +1,17 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=167';
+} from '../js/validators.js?v=168';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=167';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=167';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=167';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=167';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=167';
+} from '../js/calc.js?v=168';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=168';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=168';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=168';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=168';
 
 export async function runAllTests() {
   /* validators */
@@ -469,6 +469,41 @@ export async function runAllTests() {
     assertEqual(recipes[0].title, 'מתכון א');
     assertEqual(recipes[1].title, 'מתכון ב');
     assertEqual(recipes[2].title, 'מתכון ג');
+  });
+
+  test('parseRecipesFromDocumentXml — כותרת Word Heading לפני טבלה', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>בצק חמאה</w:t></w:r></w:p>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>5 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>קמח</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body>
+</w:document>`;
+    const recipes = parseRecipesFromDocumentXml(xml);
+    assertEqual(recipes.length, 1);
+    assertEqual(recipes[0].title, 'בצק חמאה');
+    assertEqual(recipes[0].ingredients.length, 1);
+    assertEqual(recipes[0].ingredients[0].name, 'קמח');
+  });
+
+  test('parseRecipesFromDocumentXml — כותרת בעמודת שם בטבלה', () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t></w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>קרם וניל</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>3 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>חלב</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>1 ק"ג</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>סוכר</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body>
+</w:document>`;
+    const recipes = parseRecipesFromDocumentXml(xml);
+    assertEqual(recipes.length, 1);
+    assertEqual(recipes[0].title, 'קרם וניל');
+    assertEqual(recipes[0].ingredients[0].name, 'חלב');
+    assertEqual(recipes[0].ingredients[1].name, 'סוכר');
   });
 
   test('parseRecipesFromDocumentXml — כותרת עם שורת חומר גלם לפני טבלה', () => {

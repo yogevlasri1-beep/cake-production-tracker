@@ -265,15 +265,41 @@ function detectColumnsFromRows(rows, startRow) {
   return { qtyCol: 0, nameCol: 1 };
 }
 
-function isTitleRow(cells) {
-  const nonEmpty = cells.map((c) => c.trim()).filter(Boolean);
+function isTitleRow(cells, qtyCol = 0, nameCol = 1) {
+  if (isHeaderRow(cells) || isTotalRow(cells)) return false;
+  const trimmed = cells.map((c) => c.trim());
+  const nonEmpty = trimmed.filter(Boolean);
   if (!nonEmpty.length) return false;
-  if (nonEmpty.some(looksLikeQtyCell)) return false;
+
+  const joined = nonEmpty.join(' ').trim();
+  if (parseIngredientLine(joined)) return false;
+
+  if (cells.length >= 2 && qtyCol !== nameCol) {
+    const qtyText = (cells[qtyCol] || '').trim();
+    const nameText = (cells[nameCol] || '').trim();
+    if (nameText && !qtyText && nameText.length <= 120 && !parseQtyUnitText(nameText)) return true;
+    if (qtyText && !nameText && !looksLikeQtyCell(qtyText) && !parseQtyUnitText(qtyText) && qtyText.length <= 120) {
+      return true;
+    }
+  }
+
+  if (nonEmpty.some((c) => looksLikeQtyCell(c) && parseQtyUnitText(c) && !/[א-ת]{2,}/.test(c))) return false;
+
   if (nonEmpty.length === 1) {
     const text = nonEmpty[0];
-    return text.length <= 120 && !parseQtyUnitText(text) && !parseIngredientLine(text);
+    if (TOTAL_ROW_RE.test(text)) return false;
+    if (/^(חומר\s*גלם|כמות|מרכיב|רכיב)/i.test(text)) return false;
+    return text.length <= 120 && !parseQtyUnitText(text);
   }
   return nonEmpty.every((c) => looksLikeNameCell(c));
+}
+
+function extractTitleFromRow(cells, qtyCol, nameCol) {
+  const qtyText = (cells[qtyCol] || '').trim();
+  const nameText = (cells[nameCol] || '').trim();
+  if (nameText && !qtyText) return nameText;
+  if (qtyText && !nameText && !looksLikeQtyCell(qtyText)) return qtyText;
+  return cells.map((c) => c.trim()).filter(Boolean).join(' ').trim();
 }
 
 function guessQtyNameColumns(cells, fallback = { qtyCol: 0, nameCol: 1 }) {
@@ -358,7 +384,7 @@ function parseRecipeTablesFromTable(table, title) {
 
   const firstCells = getRowCells(rows[0]);
   if (firstCells.length && isTitleRow(firstCells) && !isHeaderRow(firstCells)) {
-    recipeTitle = recipeTitle || firstCells.filter((c) => c.trim()).join(' ').trim();
+    recipeTitle = recipeTitle || extractTitleFromRow(firstCells, 0, 1);
     startRow = 1;
   }
 
@@ -375,6 +401,11 @@ function parseRecipeTablesFromTable(table, title) {
   }
   if (dataStart === startRow) {
     ({ qtyCol, nameCol } = detectColumnsFromRows(rows, startRow));
+  }
+
+  if (startRow === 0 && firstCells.length && isTitleRow(firstCells, qtyCol, nameCol) && !isHeaderRow(firstCells)) {
+    recipeTitle = recipeTitle || extractTitleFromRow(firstCells, qtyCol, nameCol);
+    if (dataStart === startRow) dataStart = 1;
   }
 
   const flush = () => {
@@ -395,8 +426,8 @@ function parseRecipeTablesFromTable(table, title) {
     if (isTotalRow(cells)) continue;
     if (isHeaderRow(cells)) continue;
 
-    if (isTitleRow(cells)) {
-      const rowTitle = cells.filter((c) => c.trim()).join(' ').trim();
+    if (isTitleRow(cells, qtyCol, nameCol)) {
+      const rowTitle = extractTitleFromRow(cells, qtyCol, nameCol);
       if (ingredients.length) {
         flush();
         recipeTitle = rowTitle;
@@ -501,15 +532,8 @@ export function parseRecipesFromDocumentXml(xml) {
       const nextBlock = findNextTable(blocks, i);
       const nextIsTable = nextBlock && isTableTag(nextBlock);
       if (nextIsTable && text.length <= 120) {
-        const level = paragraphHeadingLevel(block);
-        if (level === 1 && !RECIPE_HEADER_RE.test(text)) {
-          flushPendingRecipe();
-          assignHeadingAsCategory(text, 1, state);
-          state.pendingTitle = null;
-        } else {
-          flushPendingRecipe();
-          state.pendingTitle = text.trim();
-        }
+        flushPendingRecipe();
+        state.pendingTitle = text.trim();
         continue;
       }
 

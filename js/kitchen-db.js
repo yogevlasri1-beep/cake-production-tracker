@@ -1002,7 +1002,8 @@ export async function importParsedRecipes(parsedRecipes, {
         name: recipeName,
         notes: item.notes || '',
       });
-      for (const ing of item.ingredients || []) {
+      for (let ingIdx = 0; ingIdx < (item.ingredients || []).length; ingIdx++) {
+        const ing = item.ingredients[ingIdx];
         const unitKind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
         let rawMaterialId = null;
         if (addRawMaterials && materialsCategoryId) {
@@ -1022,6 +1023,7 @@ export async function importParsedRecipes(parsedRecipes, {
           quantity: ing.quantity,
           unit: ing.unit || formatRecipeUnitKind(unitKind),
           unitKind,
+          sortOrder: ingIdx + 1,
         });
       }
       imported += 1;
@@ -1085,7 +1087,7 @@ export async function updateRecipeIngredient(id, patch) {
   await db.recipeIngredients.update(iid, data);
 }
 
-export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind }) {
+export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind, sortOrder }) {
   const rid = sanitizeProductId(recipeId);
   const trimmed = sanitizeName(name, 80);
   if (!rid) throw new ValidationError('מתכון לא תקין');
@@ -1095,6 +1097,7 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
   const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
   const kind = unitKind ? normalizeRecipeUnitKind(unitKind) : normalizeRecipeUnitKind(unit);
+  const order = Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : maxOrder + 1;
   return db.recipeIngredients.add({
     recipeId: rid,
     rawMaterialId: matId,
@@ -1102,7 +1105,7 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
     quantity: qty,
     unit: formatRecipeUnitKind(kind),
     unitKind: kind,
-    sortOrder: maxOrder + 1,
+    sortOrder: order,
   });
 }
 
