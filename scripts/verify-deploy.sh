@@ -10,9 +10,13 @@ PAGES_URL="${PAGES_URL:-https://yogevlasri1-beep.github.io/cake-production-track
 
 fetch_version() {
   local base="$1"
-  curl -fsS -m 20 -H 'Cache-Control: no-cache' "${base}/js/version.js?b=$(date +%s)" 2>/dev/null \
-    | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" \
-    | head -1
+  local body
+  body=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "${base}/js/version.js?b=$(date +%s)" 2>/dev/null || echo "")
+  if echo "$body" | grep -q 'NOT_FOUND'; then
+    echo "404"
+    return
+  fi
+  echo "$body" | sed -n "s/.*APP_VERSION = '\([0-9]*\)'.*/\1/p" | head -1
 }
 
 VERCEL_VER=$(fetch_version "$VERCEL_URL" || echo "?")
@@ -33,7 +37,11 @@ fi
 if [[ "$VERCEL_VER" == "$LOCAL" ]]; then
   echo "✓ Vercel מעודכן"
 else
-  echo "✗ Vercel לא מעודכן (מותקן $VERCEL_VER, צפוי $LOCAL)"
+  if [[ "$VERCEL_VER" == "404" ]]; then
+    echo "✗ Vercel מחזיר 404 — פריסה שבורה, צריך Deploy Hook או Drop (פעם אחת)"
+  else
+    echo "✗ Vercel לא מעודכן (מותקן ${VERCEL_VER:-?}, צפוי $LOCAL)"
+  fi
   echo "  → פעם אחת: Deploy Hook (scripts/FIX-VERCEL.md) או Drop של proxy zip:"
   echo "     ./scripts/make-vercel-drop-zip.sh"
   echo "  → אחרי זה Vercel ישקף אוטומטית את GitHub Pages"
