@@ -1916,6 +1916,17 @@ textarea {
   border: 1px solid rgba(239, 68, 68, 0.15);
 }
 
+.recipe-delete-all-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+}
+
+.recipe-delete-all-section .form-hint {
+  margin: 10px 0 0;
+}
+
 .btn-sm {
   padding: 8px 14px;
   font-size: 0.85rem;

@@ -1034,6 +1034,15 @@ export async function deleteRecipe(id) {
   });
 }
 
+/** מוחק את כל המתכונים (רכיבים וקישורים) — קטגוריות וקבוצות נשארות */
+export async function deleteAllRecipes() {
+  await db.transaction('rw', db.recipes, db.recipeIngredients, db.recipeProductLinks, async () => {
+    await db.recipeIngredients.clear();
+    await db.recipeProductLinks.clear();
+    await db.recipes.clear();
+  });
+}
+
 export async function updateRecipeIngredient(id, patch) {
   const iid = sanitizeProductId(id);
   if (!iid) return;

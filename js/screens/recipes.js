@@ -2,7 +2,7 @@ import {
   getRecipeGroups, getRecipeSubCategories, getRecipes, getRecipe, getRecipesCatalogLayout,
   addRecipeGroup, addRecipeSubCategory, updateRecipeGroup, updateRecipeSubCategory,
   deleteRecipeGroup, deleteRecipeSubCategory, ensureRecipeTypeCatalog,
-  addRecipe, updateRecipe, deleteRecipe, addRecipeIngredient, deleteRecipeIngredient,
+  addRecipe, updateRecipe, deleteRecipe, deleteAllRecipes, addRecipeIngredient, deleteRecipeIngredient,
   updateRecipeIngredient, syncProductCostFromRecipe, getRawMaterials,
   setRecipeOrder, setRecipeGroupOrder, setRecipeSubCategoryOrder, moveRecipesToCategory,
   importParsedRecipes, scaleRecipeIngredients,
@@ -413,7 +413,28 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
       <button type="button" class="btn btn-secondary btn-sm" id="recipe-clear-selection">נקה</button>
       <button type="button" class="btn btn-primary btn-sm" id="recipe-move-selected">העבר לקטגוריה</button>
     </div>
-    <input type="file" id="recipe-word-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>`;
+    <input type="file" id="recipe-word-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+    <div class="recipe-delete-all-section">
+      <button type="button" class="btn btn-danger" id="delete-all-recipes-btn">🗑️ מחק את כל המתכונים</button>
+      <p class="form-hint">מוחק רק מתכונים — קטגוריות נשארות. מתאים לפני ייבוא מחדש מ-Word.</p>
+    </div>`;
+
+  document.getElementById('delete-all-recipes-btn')?.addEventListener('click', async () => {
+    const count = layout.groups.reduce(
+      (n, g) => n + g.categories.reduce((m, c) => m + c.recipes.length, 0),
+      0,
+    );
+    if (!count) return showToast('אין מתכונים למחיקה');
+    if (!confirm(`למחוק את כל ${count} המתכונים?\n\nהפעולה בלתי הפיכה. הקטגוריות יישארו — תוכל לייבא מחדש מ-Word.`)) return;
+    try {
+      await deleteAllRecipes();
+      selectedRecipeIds.clear();
+      showToast(`נמחקו ${count} מתכונים ✓`);
+      renderRecipes(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
 
   document.getElementById('recipe-import-btn')?.addEventListener('click', () => {
     document.getElementById('recipe-word-file')?.click();
