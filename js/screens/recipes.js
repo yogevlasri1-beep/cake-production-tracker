@@ -1294,6 +1294,19 @@ function getSelectedImportRecipes(parsed) {
     .filter(Boolean);
 }
 
+function countDuplicateImportTitles(parsed) {
+  const seen = new Map();
+  for (const r of parsed) {
+    const key = normalizeRecipeImportKey(r.title) || `__empty_${seen.size}`;
+    seen.set(key, (seen.get(key) || 0) + 1);
+  }
+  let dupRows = 0;
+  for (const n of seen.values()) {
+    if (n > 1) dupRows += n;
+  }
+  return dupRows;
+}
+
 function openImportPreview(container, parsed, { groups, subs }) {
   if (!Array.isArray(parsed) || !parsed.length) {
     showToast('לא נמצאו מתכונים בקובץ');
@@ -1302,13 +1315,16 @@ function openImportPreview(container, parsed, { groups, subs }) {
   getExistingRecipeNameKeys().then((existingNames) => {
     const newCount = parsed.filter((r) => !existingNames.has(normalizeRecipeImportKey(r.title))).length;
     const dupCount = parsed.length - newCount;
+    const dupTitleRows = countDuplicateImportTitles(parsed);
+    const allNew = newCount === parsed.length;
     openModal({
       title: `ייבוא ${parsed.length} מתכונים`,
       bodyHTML: `
         <p class="form-hint" style="margin-bottom:10px">
           סמן ✓ את המתכונים לייבוא · כותרות מהקובץ יהפכו ל<strong>קטגוריות</strong>.
-          ${dupCount ? `<br>כבר קיימים: <strong>${dupCount}</strong> — יסומנו «קיים» (ניתן לייבא כעותק).` : ''}
+          ${dupCount ? `<br>כבר קיימים במערכת: <strong>${dupCount}</strong> — יסומנו «קיים».` : ''}
           ${newCount ? `<br>חדשים: <strong>${newCount}</strong>` : ''}
+          ${dupTitleRows ? `<br><strong>${dupTitleRows}</strong> שורות עם שם כפול בקובץ — ייובאו כולן (עם סיומת אם צריך).` : ''}
         </p>
         <div class="form-group">
           <label>קבוצת סידור (אם אין בקובץ)</label>
@@ -1326,13 +1342,13 @@ function openImportPreview(container, parsed, { groups, subs }) {
         </div>
         <div class="form-group">
           <label class="checkbox-label">
-            <input type="checkbox" id="import-update-qty" checked>
+            <input type="checkbox" id="import-update-qty"${allNew ? '' : ' checked'}>
             עדכן כמויות במתכונים קיימים (תיקון עיגול / שברים)
           </label>
         </div>
         <div class="form-group">
           <label class="checkbox-label">
-            <input type="checkbox" id="import-skip-dupes" checked>
+            <input type="checkbox" id="import-skip-dupes"${allNew ? '' : ' checked'}>
             דלג על מתכונים קיימים (בזמן ייבוא חדש)
           </label>
         </div>
@@ -1357,6 +1373,10 @@ function openImportPreview(container, parsed, { groups, subs }) {
       const skipDupes = document.getElementById('import-skip-dupes')?.checked !== false;
       const updateQty = document.getElementById('import-update-qty')?.checked !== false;
       let selected = getSelectedImportRecipes(parsed);
+      const selectAllEl = document.getElementById('import-select-all');
+      if (selectAllEl?.checked && selected.length < parsed.length) {
+        selected = parsed.slice();
+      }
       if (!selected.length) return showToast('סמן לפחות מתכון אחד ✓');
       if (skipDupes && !updateQty) {
         const before = selected.length;
@@ -1391,7 +1411,9 @@ function openImportPreview(container, parsed, { groups, subs }) {
         const parts = [];
         if (result.imported) parts.push(`יובאו ${result.imported}`);
         if (result.quantitiesUpdated) parts.push(`עודכנו כמויות ב-${result.quantitiesUpdated}`);
-        if (result.skipped) parts.push(`דולגו ${result.skipped}`);
+        if (result.skippedDuplicate) parts.push(`דולגו ${result.skippedDuplicate} קיימים`);
+        else if (result.skipped) parts.push(`דולגו ${result.skipped}`);
+        if (result.failed) parts.push(`${result.failed} נכשלו`);
         showToast(`${parts.join(' · ') || 'בוצע'} ✓`);
         renderRecipes(container);
       } catch (err) {
