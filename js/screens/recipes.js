@@ -136,7 +136,7 @@ function renderRecipeSubCategoryCard(cat, catIndex) {
         </div>
         ${cat.recipes.length === 0
     ? '<p class="category-products-empty">אין מתכונים — הוסף או ייבא מ-Word</p>'
-    : `<p class="product-drag-hint">לחץ על מתכון לפתיחה · סמן ☑ להעברה · גרור ⠿ לשינוי סדר</p>
+    : `<p class="product-drag-hint">לחץ על מתכון לצפייה · סמן ☑ להעברה · גרור ⠿ לשינוי סדר</p>
            <div class="recipe-list" data-sub-id="${cat.id}">
              ${cat.recipes.map((r, i) => renderRecipeItem(r, i)).join('')}
            </div>`}
@@ -213,7 +213,7 @@ function buildRecipeSelectOptions(layout) {
 }
 
 export function recipesMeta() {
-  return { title: 'מתכונים', subtitle: 'קטגוריות, קישור למוצרים בתוך המתכון וייבוא Word' };
+  return { title: 'מתכונים', subtitle: 'צפייה מקצועית, עריכה וקישור למוצרים' };
 }
 
 export async function renderRecipes(container) {
@@ -337,9 +337,11 @@ export async function renderRecipes(container) {
     });
   });
 
+  container._recipeLayout = layout;
+
   const openRecipeById = async (id) => {
     const recipe = await getRecipe(Number(id));
-    if (recipe) openRecipeForm(container, { recipe, productCatalog });
+    if (recipe) openRecipeView(container, recipe, { productCatalog, layout });
   };
 
   container.querySelectorAll('.recipe-row-open').forEach((row) => {
@@ -568,7 +570,7 @@ async function renderRecipeBook(container, { groups, allSubs, productMap }) {
                     ${detail.ingredients.map((ing) => `
                       <li>${escapeHtml(ing.name)} — <strong>${ing.quantity}</strong> ${escapeHtml(ing.unit)}</li>`).join('')}
                   </ul>
-                  ${renderRecipeTotalHTML(detail.ingredients) ? `<p class="recipe-ingredients-total">${renderRecipeTotalHTML(detail.ingredients)}</p>` : ''}` : ''}
+                  ${ingTotal ? `<p class="recipe-ingredients-total">${ingTotal}</p>` : ''}` : ''}
                 </article>`;
       }).join('')}
             </section>`;
@@ -867,6 +869,109 @@ function bindRatioCalculator(recipe, hostEl) {
   hostEl.querySelector('#ratio-target')?.addEventListener('input', refresh);
 }
 
+function findRecipeCategoryPath(layout, categoryId) {
+  if (!layout?.groups) return '';
+  for (const group of layout.groups) {
+    for (const cat of group.categories) {
+      if (Number(cat.id) === Number(categoryId)) {
+        return `${group.name} › ${cat.name}`;
+      }
+    }
+  }
+  return '';
+}
+
+function buildRecipeViewHTML(recipe, { categoryPath, linkedNames }) {
+  const ingredients = recipe.ingredients || [];
+  const totalText = formatRecipeIngredientsTotal(ingredients);
+  const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
+    ? `${recipe.yieldPortions} מנות`
+    : 'מתכון בסיס';
+
+  return `
+    <article class="recipe-sheet">
+      <header class="recipe-sheet-header">
+        ${categoryPath ? `<p class="recipe-sheet-breadcrumb">${escapeHtml(categoryPath)}</p>` : ''}
+        <h1 class="recipe-sheet-title">${escapeHtml(recipe.name)}</h1>
+        <div class="recipe-sheet-meta">
+          <span class="recipe-meta-pill">${escapeHtml(yieldLabel)}</span>
+          ${linkedNames?.length ? `<span class="recipe-meta-pill recipe-meta-products">🔗 ${linkedNames.map((n) => escapeHtml(n)).join(' · ')}</span>` : ''}
+        </div>
+      </header>
+      <section class="recipe-sheet-section" aria-label="חומרי גלם">
+        <h2 class="recipe-sheet-section-title">חומרי גלם</h2>
+        ${ingredients.length ? `
+        <div class="recipe-sheet-table-wrap">
+          <table class="recipe-sheet-table">
+            <thead>
+              <tr>
+                <th scope="col" class="col-num">#</th>
+                <th scope="col" class="col-name">חומר גלם</th>
+                <th scope="col" class="col-qty">כמות</th>
+                <th scope="col" class="col-unit">יחידה</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${ingredients.map((ing, i) => `
+              <tr>
+                <td class="col-num">${i + 1}</td>
+                <td class="col-name">${escapeHtml(ing.name)}</td>
+                <td class="col-qty"><span class="recipe-qty-value">${ing.quantity}</span></td>
+                <td class="col-unit">${escapeHtml(ing.unit)}</td>
+              </tr>`).join('')}
+            </tbody>
+            ${totalText ? `
+            <tfoot>
+              <tr class="recipe-sheet-total-row">
+                <td colspan="2">סה"כ משקל</td>
+                <td colspan="2"><strong>${escapeHtml(totalText)}</strong></td>
+              </tr>
+            </tfoot>` : ''}
+          </table>
+        </div>` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
+      </section>
+      ${recipe.notes?.trim() ? `
+      <section class="recipe-sheet-section recipe-sheet-notes-block">
+        <h2 class="recipe-sheet-section-title">הערות</h2>
+        <p class="recipe-sheet-notes">${escapeHtml(recipe.notes.trim())}</p>
+      </section>` : ''}
+    </article>`;
+}
+
+async function openRecipeView(container, recipe, { productCatalog, layout }) {
+  const products = await getProducts(true);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const linkedNames = (recipe.linkedProductIds || []).map((id) => productMap.get(id)?.name).filter(Boolean);
+  const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
+
+  openModal({
+    title: '',
+    modalClass: 'modal-recipe-view',
+    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames }),
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
+      <button type="button" class="btn btn-primary" id="recipe-view-edit">✏️ עריכה</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('recipe-view-edit')?.addEventListener('click', () => {
+    closeModal();
+    openRecipeForm(container, { recipe, productCatalog, layout, returnToView: true });
+  });
+  document.getElementById('recipe-view-ratio')?.addEventListener('click', () => {
+    openModal({
+      title: `מחשבון יחס — ${recipe.name}`,
+      modalClass: 'modal-recipe-view',
+      bodyHTML: '<div id="ratio-calculator-host"></div>',
+      footerHTML: '<button class="btn btn-primary modal-cancel">סגור</button>',
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    const host = document.getElementById('ratio-calculator-host');
+    if (host) bindRatioCalculator(recipe, host);
+  });
+}
+
 function openRatioCalculatorPicker(layout) {
   const options = buildRecipeSelectOptions(layout);
   if (!options) return showToast('אין מתכונים');
@@ -892,14 +997,16 @@ function openRatioCalculatorPicker(layout) {
   loadRecipe();
 }
 
-async function openRecipeForm(container, { recipe, categoryId, productCatalog }) {
+async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView }) {
   const isEdit = !!recipe;
   const ingredients = recipe?.ingredients || [];
   const mats = await getRawMaterials();
   const catalog = productCatalog || await getProductsCatalogLayout();
+  const catalogLayout = layout || container._recipeLayout;
 
   openModal({
     title: isEdit ? 'עריכת מתכון' : 'מתכון חדש',
+    modalClass: isEdit ? 'modal-recipe-edit' : '',
     bodyHTML: `
       <div class="form-group">
         <label>שם מתכון</label>
@@ -985,7 +1092,9 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog })
     try {
       await addRecipeIngredient(recipe.id, { rawMaterialId: mat?.id || null, name, quantity: qty, unitKind });
       closeModal();
-      openRecipeForm(container, { recipe: await getRecipe(recipe.id), productCatalog: catalog });
+      openRecipeForm(container, {
+        recipe: await getRecipe(recipe.id), productCatalog: catalog, layout: catalogLayout, returnToView,
+      });
       showToast('נוסף ✓');
     } catch (err) {
       showToast(err.message || 'שגיאה');
@@ -996,7 +1105,9 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog })
     btn.addEventListener('click', async () => {
       await deleteRecipeIngredient(Number(btn.dataset.id));
       closeModal();
-      openRecipeForm(container, { recipe: await getRecipe(recipe.id), productCatalog: catalog });
+      openRecipeForm(container, {
+        recipe: await getRecipe(recipe.id), productCatalog: catalog, layout: catalogLayout, returnToView,
+      });
     });
   });
 
@@ -1021,13 +1132,21 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog })
     try {
       if (isEdit) {
         await updateRecipe(recipe.id, data);
+        closeModal();
+        showToast('נשמר ✓');
+        if (returnToView) {
+          const updated = await getRecipe(recipe.id);
+          openRecipeView(container, updated, { productCatalog: catalog, layout: catalogLayout });
+        } else {
+          renderRecipes(container);
+        }
       } else {
         await addRecipe({ ...data, categoryId });
+        closeModal();
+        if (categoryId) expandRecipeCategory(categoryId);
+        showToast('נשמר ✓');
+        renderRecipes(container);
       }
-      closeModal();
-      if (categoryId) expandRecipeCategory(categoryId);
-      showToast('נשמר ✓');
-      renderRecipes(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
