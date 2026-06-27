@@ -7,25 +7,6 @@ OUT="$ROOT/dist-vercel"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
+touch "$OUT/.vercel-proxy"
 
-cat > "$OUT/vercel.json" << EOF
-{
-  "\$schema": "https://openapi.vercel.sh/vercel.json",
-  "rewrites": [
-    {
-      "source": "/:path*",
-      "destination": "${PAGES_URL}/:path*"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/(.*)",
-      "headers": [
-        { "key": "Cache-Control", "value": "no-store, no-cache, must-revalidate" }
-      ]
-    }
-  ]
-}
-EOF
-
-echo "✓ Vercel proxy → ${PAGES_URL} (dist-vercel/)"
+echo "✓ Vercel proxy → ${PAGES_URL} (rewrites in root vercel.json)"

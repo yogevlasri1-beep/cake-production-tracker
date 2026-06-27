@@ -489,6 +489,7 @@ export function parseRecipesFromDocumentXml(xml) {
         continue;
       }
       if (SKIP_TITLE_RE.test(text)) continue;
+      if (isSkippableBetweenTitleAndTable(text)) continue;
 
       const ingLine = parseIngredientLine(text);
       if (ingLine) {
@@ -519,9 +520,10 @@ export function parseRecipesFromDocumentXml(xml) {
     }
 
     if (isTableTag(block)) {
-      flushPendingRecipe();
-      const parsed = parseRecipeTablesFromTable(block, state.pendingTitle);
+      const titleForTable = state.pendingTitle;
       state.pendingTitle = null;
+      state.pendingIngredients = [];
+      const parsed = parseRecipeTablesFromTable(block, titleForTable);
       for (const recipe of parsed) {
         recipe.groupName = state.pendingGroup;
         recipe.subName = state.pendingSub;
