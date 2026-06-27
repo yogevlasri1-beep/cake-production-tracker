@@ -43,9 +43,11 @@
 
 #### באייפון
 
-1. Safari → פתח את כתובת Vercel
+1. Safari → פתח **https://yogevcakee.vercel.app**
 2. **שיתוף** → **הוסף למסך הבית**
-3. לעדכון גרסה: `/?force-update=1`
+3. לעדכון גרסה: `https://yogevcakee.vercel.app/?force-update=1`
+
+> פרויקט Vercel: **yogevcakee** · GitHub Pages (גיבוי): `https://yogevlasri1-beep.github.io/cake-production-tracker/`
 
 #### אם הפריסה נכשלת
 

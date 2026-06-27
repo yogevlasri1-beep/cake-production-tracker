@@ -48,7 +48,7 @@ fi
 echo ""
 echo "בדיקה: https://vercel.com/dashboard → Deployments → Ready"
 echo "GitHub Pages: https://yogevlasri1-beep.github.io/cake-production-tracker/?force-update=1"
-echo "Vercel:       https://cake-production-tracker.vercel.app/?force-update=1"
+echo "Vercel:       https://yogevcakee.vercel.app/?force-update=1"
 
 if [[ "$MAKE_ZIP" -eq 1 ]]; then
   echo ""

@@ -13,7 +13,7 @@ alwaysApply: true
 
 ## Vercel (דורש חיבור)
 
-`https://cake-production-tracker.vercel.app` — **לא מתעדכן אוטומטית** אם חיבור Git נותק.
+`https://yogevcakee.vercel.app` (פרויקט **yogevcakee**) — **לא מתעדכן אוטומטית** אם חיבור Git נותק.
 
 אחרי שינוי משמעותי:
 1. `./scripts/bump-version.sh`

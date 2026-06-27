@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 LOCAL=$(grep "APP_VERSION = '" js/version.js | sed "s/.*'\([^']*\)'.*/\1/")
-VERCEL_URL="${VERCEL_URL:-https://cake-production-tracker.vercel.app}"
+VERCEL_URL="${VERCEL_URL:-https://yogevcakee.vercel.app}"
 PAGES_URL="${PAGES_URL:-https://yogevlasri1-beep.github.io/cake-production-tracker}"
 
 fetch_version() {
