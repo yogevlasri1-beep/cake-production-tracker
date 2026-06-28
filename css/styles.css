@@ -1639,9 +1639,31 @@ body {
 .flow-pick-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   max-height: 320px;
   overflow-y: auto;
+}
+
+.flow-pick-list--grouped {
+  gap: 0;
+}
+
+.flow-pick-category-block + .flow-pick-category-block {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.flow-pick-category-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  padding-right: 2px;
+}
+
+.flow-pick-category-block .manage-flow-pick + .manage-flow-pick {
+  margin-top: 6px;
 }
 
 .manage-flow-pick {

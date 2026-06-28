@@ -16,11 +16,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=172';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=172';
-import { openModal, closeModal } from '../modal.js?v=172';
-import { requestAutoBackupNow } from '../backup-service.js?v=172';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=172';
+} from '../db.js?v=173';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=173';
+import { openModal, closeModal } from '../modal.js?v=173';
+import { requestAutoBackupNow } from '../backup-service.js?v=173';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=173';
 
 function parseIdList(str) {
   try {
@@ -92,8 +92,7 @@ function compareProductCategories(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
 
-function renderFlowsOverviewGrouped(flowsOverview, layout) {
-  if (!flowsOverview.length) return '';
+function bucketFlowsForCatalog(flowsOverview, layout) {
   const flowsByCategory = new Map();
   const flowsByGroup = new Map();
   const otherFlows = [];
@@ -112,6 +111,39 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
       }
     }
   }
+
+  const listedGroupIds = new Set([...flowsByGroup.keys()]);
+  for (const f of flowsOverview) {
+    if (f.targetType === 'category' && f.categoryId) {
+      if (!layout.allCategories.some((c) => c.id === f.categoryId) && !otherFlows.includes(f)) {
+        otherFlows.push(f);
+      }
+    } else {
+      const gid = f.categoryGroupId || f.groupId;
+      if (gid && !listedGroupIds.has(gid) && !layout.groups.some((g) => g.id === gid) && !otherFlows.includes(f)) {
+        otherFlows.push(f);
+      }
+    }
+  }
+
+  return { flowsByCategory, flowsByGroup, otherFlows };
+}
+
+function renderFlowPickButtonHTML(f, selectedFlowId) {
+  return `
+    <button type="button" class="manage-flow-pick start-flow-pick${String(f.id) === String(selectedFlowId) ? ' is-active' : ''}"
+      data-flow-id="${f.id}"
+      data-target-type="${f.targetType}"
+      data-group-id="${f.groupId || f.categoryGroupId || ''}"
+      data-category-id="${f.categoryId || ''}">
+      <span class="manage-flow-pick-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
+      <span class="manage-flow-pick-meta">${f.stepCount} שלבים</span>
+    </button>`;
+}
+
+function renderFlowsOverviewGrouped(flowsOverview, layout) {
+  if (!flowsOverview.length) return '';
+  const { flowsByCategory, flowsByGroup, otherFlows } = bucketFlowsForCatalog(flowsOverview, layout);
 
   const renderFlowRow = (f) => `
     <div class="list-item-meta flows-overview-row" style="padding:6px 0;border-bottom:1px solid var(--border)">
@@ -148,20 +180,6 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
       </div>`);
   }
 
-  const listedGroupIds = new Set([...flowsByGroup.keys()]);
-  for (const f of flowsOverview) {
-    if (f.targetType === 'category' && f.categoryId) {
-      if (!layout.allCategories.some((c) => c.id === f.categoryId) && !otherFlows.includes(f)) {
-        otherFlows.push(f);
-      }
-    } else {
-      const gid = f.categoryGroupId || f.groupId;
-      if (gid && !listedGroupIds.has(gid) && !layout.groups.some((g) => g.id === gid) && !otherFlows.includes(f)) {
-        otherFlows.push(f);
-      }
-    }
-  }
-
   if (otherFlows.length) {
     sections.push(`
       <div class="flows-overview-section">
@@ -173,23 +191,51 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
   return sections.join('');
 }
 
-function renderFlowPickListHTML(flows, selectedFlowId, { emptyMessage } = {}) {
+function renderFlowPickListHTML(flows, selectedFlowId, layout, { emptyMessage } = {}) {
   const selectable = flows.filter((f) => f.stepCount > 0);
   if (!selectable.length) {
     return `<p class="form-hint">${emptyMessage || 'אין תזרימים עם שלבים — הגדר ב«נהל תזרים»'}</p>`;
   }
-  return `
+
+  if (!layout) {
+    return `
     <div class="flow-pick-list">
-      ${selectable.map((f) => `
-        <button type="button" class="manage-flow-pick start-flow-pick${String(f.id) === String(selectedFlowId) ? ' is-active' : ''}"
-          data-flow-id="${f.id}"
-          data-target-type="${f.targetType}"
-          data-group-id="${f.groupId || f.categoryGroupId || ''}"
-          data-category-id="${f.categoryId || ''}">
-          <span class="manage-flow-pick-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
-          <span class="manage-flow-pick-meta">${escapeHtml(f.groupName ? `${f.groupName} · ` : '')}${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
-        </button>`).join('')}
+      ${selectable.map((f) => renderFlowPickButtonHTML(f, selectedFlowId)).join('')}
     </div>`;
+  }
+
+  const { flowsByCategory, flowsByGroup, otherFlows } = bucketFlowsForCatalog(selectable, layout);
+  const blocks = [];
+
+  for (const group of layout.groups) {
+    for (const cat of group.categories.slice().sort(compareProductCategories)) {
+      const catFlows = flowsByCategory.get(cat.id) || [];
+      if (!catFlows.length) continue;
+      blocks.push(`
+        <div class="flow-pick-category-block">
+          <div class="flow-pick-category-label">${escapeHtml(cat.name)}</div>
+          ${catFlows.map((f) => renderFlowPickButtonHTML(f, selectedFlowId)).join('')}
+        </div>`);
+    }
+    const groupFlows = flowsByGroup.get(group.id) || [];
+    if (groupFlows.length) {
+      blocks.push(`
+        <div class="flow-pick-category-block">
+          <div class="flow-pick-category-label">${escapeHtml(group.name)} · כל הקבוצה</div>
+          ${groupFlows.map((f) => renderFlowPickButtonHTML(f, selectedFlowId)).join('')}
+        </div>`);
+    }
+  }
+
+  if (otherFlows.length) {
+    blocks.push(`
+      <div class="flow-pick-category-block">
+        <div class="flow-pick-category-label">אחר</div>
+        ${otherFlows.map((f) => renderFlowPickButtonHTML(f, selectedFlowId)).join('')}
+      </div>`);
+  }
+
+  return `<div class="flow-pick-list flow-pick-list--grouped">${blocks.join('')}</div>`;
 }
 
 function runTitle(run, catMap, productMap, groupMap) {
@@ -2145,7 +2191,7 @@ async function renderStartView(container, ctx) {
       <div class="form-group">
         <label>בחר תזרים</label>
         <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים מהרשימה — הקטגוריות ימולאו אוטומטית</p>
-        ${renderFlowPickListHTML(allFlowsOverview, selectedFlowId)}
+        ${renderFlowPickListHTML(allFlowsOverview, selectedFlowId, layout)}
       </div>
 
       <div class="form-group">
