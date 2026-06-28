@@ -118,7 +118,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-dup">אחד כפילויות</button>
       </div>
-      <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה)</p>
+      <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · גיליון לכל ספק (עם או בלי כותרות — שם + מחיר לק"ג)</p>
     </div>
     <div class="card">
       <div class="workspace-chip-row catalog-cat-chips" style="margin-bottom:10px">
@@ -607,7 +607,7 @@ async function renderEditTab(body, container, categories, selectedMatCat, select
         <button type="button" class="btn btn-secondary btn-sm" id="supplier-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="add-sup-cat-edit">+ קטגוריה</button>
       </div>
-      <p class="form-hint" style="margin:0">ייבוא Excel: גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה), או עמודות חומר גלם · ספק · מחיר</p>
+      <p class="form-hint" style="margin:0">ייבוא Excel: גיליון לכל ספק — עם כותרות (מוצר | כמות | מחיר) או בלי (שם + מחיר לק"ג)</p>
     </div>
     <div class="supplier-edit-sections" id="supplier-edit-sections">טוען...</div>
     <input type="file" id="supplier-excel-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`;

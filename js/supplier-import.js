@@ -132,6 +132,108 @@ function isMaterialColumnHeader(cell) {
   return headerKey(cell) === 'material';
 }
 
+function looksLikeMaterialName(cell) {
+  const s = cleanCell(cell);
+  if (!s || s.length < 2) return false;
+  if (/^(סה|total|סך|סה"כ|מחיר|מוצר|חומר|כמות)/i.test(s)) return false;
+  if (!/[א-תa-z]/i.test(s)) return false;
+  if (parseEffectiveDate(s) && !/[א-ת]{2,}/.test(s)) return false;
+  if (parsePrice(s) != null && !/[א-ת]{2,}/.test(s)) return false;
+  return true;
+}
+
+function findSheetLevelDate(rows, nameCol, beforeRow = 8) {
+  for (let ri = 0; ri < Math.min(rows.length, beforeRow); ri++) {
+    const row = rows[ri] || [];
+    const name = cleanCell(row[nameCol]);
+    if (looksLikeMaterialName(name)) continue;
+    for (let c = 0; c < row.length; c++) {
+      const d = parseEffectiveDate(row[c]);
+      if (d) return d;
+    }
+  }
+  return null;
+}
+
+function scoreHeaderlessNameColumn(rows, nameCol) {
+  let score = 0;
+  let priceStartCol = -1;
+  for (let ri = 0; ri < Math.min(rows.length, 40); ri++) {
+    const row = rows[ri] || [];
+    const name = cleanCell(row[nameCol]);
+    if (!looksLikeMaterialName(name)) continue;
+    for (let c = nameCol + 1; c < row.length; c++) {
+      const price = parsePrice(row[c]);
+      if (price == null) continue;
+      if (priceStartCol === -1) priceStartCol = c;
+      if (c === priceStartCol) {
+        score += 1;
+        break;
+      }
+    }
+  }
+  return { score, priceStartCol };
+}
+
+/** פורמט ללא כותרות: שם בטור B (או A) + מחירים — הכל לפי ק"ג */
+export function detectHeaderlessPriceListFormat(rows) {
+  if (detectSupplierSheetFormat(rows)) return null;
+
+  let best = null;
+  for (const nameCol of [0, 1]) {
+    const { score, priceStartCol } = scoreHeaderlessNameColumn(rows, nameCol);
+    if (priceStartCol < 0 || score < 2) continue;
+    if (!best || score > best.score) {
+      best = {
+        nameCol,
+        priceStartCol,
+        score,
+        sheetDate: findSheetLevelDate(rows, nameCol) || todayISO(),
+      };
+    }
+  }
+  return best;
+}
+
+export function parseHeaderlessPriceListRows(rows, supplierName, meta) {
+  const entries = [];
+  const supplier = cleanCell(supplierName);
+  if (!supplier || !meta) return entries;
+
+  const baseUnit = { unit: 'ק"ג', packageWeightGrams: 1000 };
+  const sheetDate = meta.sheetDate || todayISO();
+
+  for (let ri = 0; ri < rows.length; ri++) {
+    const row = rows[ri] || [];
+    const materialName = cleanCell(row[meta.nameCol]);
+    if (!looksLikeMaterialName(materialName)) continue;
+
+    const base = {
+      materialName,
+      supplierName: supplier,
+      ...baseUnit,
+      categoryName: '',
+    };
+
+    const prices = [];
+    for (let c = meta.priceStartCol; c < row.length; c++) {
+      const price = parsePrice(row[c]);
+      if (price != null) prices.push(price);
+    }
+
+    if (!prices.length) {
+      entries.push({ ...base, price: null, effectiveDate: sheetDate });
+      continue;
+    }
+
+    entries.push({ ...base, price: prices[0], effectiveDate: todayISO() });
+    for (let i = 1; i < prices.length; i++) {
+      entries.push({ ...base, price: prices[i], effectiveDate: sheetDate });
+    }
+  }
+  return entries;
+}
+
 /** פורמט: גיליון לכל ספק — מוצר | כמות | מחיר נוכחי | מחיר+תאריך... */
 export function detectSupplierSheetFormat(rows) {
   for (let ri = 0; ri < Math.min(rows.length, 25); ri++) {
@@ -322,12 +424,20 @@ function parseWorkbookSheets(wb, XLSX) {
       .map((r) => (Array.isArray(r) ? r.map(cleanCell) : []))
       .filter((r) => r.some((c) => c));
 
-    const meta = detectSupplierSheetFormat(rows);
-    if (!meta) continue;
+    const headerMeta = detectSupplierSheetFormat(rows);
+    if (headerMeta) {
+      const entries = parseSupplierSheetRows(rows, sheetName, headerMeta);
+      allEntries.push(...entries);
+      sheets.push({ name: sheetName, entries: entries.length });
+      continue;
+    }
 
-    const entries = parseSupplierSheetRows(rows, sheetName, meta);
-    allEntries.push(...entries);
-    sheets.push({ name: sheetName, entries: entries.length });
+    const headerlessMeta = detectHeaderlessPriceListFormat(rows);
+    if (headerlessMeta) {
+      const entries = parseHeaderlessPriceListRows(rows, sheetName, headerlessMeta);
+      allEntries.push(...entries);
+      sheets.push({ name: sheetName, entries: entries.length });
+    }
   }
 
   if (allEntries.length) {
@@ -359,7 +469,7 @@ export async function parseSupplierFile(file) {
   const parsed = parseSupplierRows(rows);
   if (!parsed.entries.length) {
     throw new Error(
-      'לא זוהו נתונים — ודא שיש גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה), או עמודות: חומר גלם, ספק, מחיר',
+      'לא זוהו נתונים — גיליון לכל ספק (עם או בלי כותרות: שם + מחיר לק"ג), או עמודות: חומר גלם, ספק, מחיר',
     );
   }
   return parsed;

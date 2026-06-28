@@ -1,18 +1,21 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=180';
+} from '../js/validators.js?v=181';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=180';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=180';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=180';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=180';
-import { parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows, parseQuantityUnit } from '../js/supplier-import.js?v=180';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=180';
+} from '../js/calc.js?v=181';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=181';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=181';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=181';
+import {
+  parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
+  parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
+} from '../js/supplier-import.js?v=181';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=181';
 
 export async function runAllTests() {
   /* validators */
@@ -131,6 +134,39 @@ export async function runAllTests() {
     assertEqual(parseQuantityUnit('קרטון 1').unit, 'קרטון');
     assertEqual(parseQuantityUnit('שק 1').unit, 'שק');
     assertEqual(parseQuantityUnit('ק"ג 1').packageWeightGrams, 1000);
+  });
+
+  test('detectHeaderlessPriceListFormat — no headers, name col B', () => {
+    const rows = [
+      ['', '11/5/25'],
+      ['', 'סוכר', '3.1', '2.7'],
+      ['', 'שמן לליטר', '6.14'],
+      ['', 'אגוזי מלך', '27'],
+    ];
+    const meta = detectHeaderlessPriceListFormat(rows);
+    assertOk(meta);
+    assertEqual(meta.nameCol, 1);
+    assertEqual(meta.priceStartCol, 2);
+    assertEqual(meta.sheetDate, '2025-05-11');
+  });
+
+  test('parseHeaderlessPriceListRows — per kg + dual prices', () => {
+    const rows = [
+      ['', '11/5/25'],
+      ['', 'סוכר', '3.1', '2.7'],
+      ['', 'גלוטן', '6'],
+    ];
+    const meta = detectHeaderlessPriceListFormat(rows);
+    const entries = parseHeaderlessPriceListRows(rows, 'פוליבה', meta);
+    assertEqual(entries.filter((e) => e.materialName === 'סוכר').length, 2);
+    const sugarCurrent = entries.find((e) => e.materialName === 'סוכר' && e.price === 3.1);
+    assertOk(sugarCurrent);
+    assertEqual(sugarCurrent.unit, 'ק"ג');
+    assertEqual(sugarCurrent.packageWeightGrams, 1000);
+    assertEqual(sugarCurrent.supplierName, 'פוליבה');
+    const sugarOld = entries.find((e) => e.materialName === 'סוכר' && e.price === 2.7);
+    assertOk(sugarOld);
+    assertEqual(sugarOld.effectiveDate, '2025-05-11');
   });
 
   /* pct */
