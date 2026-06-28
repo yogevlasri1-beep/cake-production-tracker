@@ -8,7 +8,7 @@ import {
   importSupplierExcelEntries,
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
-  getDuplicateMaterialGroups, mergeDuplicateMaterials, computePricePerKg,
+  getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, computePricePerKg,
 } from '../kitchen-db.js';
 import { getProducts } from '../db.js';
 import { parseSupplierFile } from '../supplier-import.js';
@@ -188,7 +188,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
   });
 
   document.getElementById('catalog-merge-dup')?.addEventListener('click', () => {
-    openMergeDuplicatesModal(container, supMap);
+    openMergeDuplicatesModal(container);
   });
 }
 
@@ -350,54 +350,132 @@ function openAssignMaterialModal(container, catalogItem, categories, suppliers) 
   });
 }
 
-async function openMergeDuplicatesModal(container, supMap) {
+function renderMergeDupGroupsHTML(groups, supMap) {
+  return groups.map((g, gi) => `
+    <div class="merge-dup-group" data-group="${gi}">
+      <div class="merge-dup-group-name">${escapeHtml(g.name)}</div>
+      <p class="form-hint merge-dup-group-hint">סמן ספקים/רשומות לשמירה · לא מסומן יאוחד</p>
+      ${g.materials.map((m) => `
+        <label class="merge-dup-option">
+          <input type="checkbox" class="merge-keep-cb" data-group="${gi}" value="${m.id}" checked>
+          <span>${escapeHtml(m.supplierId ? supMap.get(m.supplierId) || 'ללא ספק' : 'ללא ספק')}
+            · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}</span>
+        </label>`).join('')}
+      <button type="button" class="btn btn-primary btn-sm merge-group-btn" data-group="${gi}">אחד קבוצה זו</button>
+    </div>`).join('');
+}
+
+async function refreshMergeDuplicatesModal(container) {
+  const host = document.querySelector('.merge-dup-groups');
+  if (!host) return;
+  const groups = await getDuplicateMaterialGroups();
+  if (!groups.length) {
+    closeModal();
+    showToast('כל הכפילויות אוחדו ✓');
+    renderSuppliers(container);
+    return;
+  }
+  const suppliers = await getSuppliers();
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  host.innerHTML = renderMergeDupGroupsHTML(groups, supMap);
+  host.dataset.groupsJson = JSON.stringify(groups.map((g) => ({
+    materials: g.materials.map((m) => m.id),
+  })));
+}
+
+async function mergeDupGroupFromUI(gi, container) {
+  const host = document.querySelector('.merge-dup-groups');
+  const meta = JSON.parse(host?.dataset.groupsJson || '[]');
+  const groupMeta = meta[gi];
+  if (!groupMeta) return;
+
+  const checked = [...document.querySelectorAll(`.merge-keep-cb[data-group="${gi}"]:checked`)]
+    .map((el) => Number(el.value));
+  const allIds = groupMeta.materials;
+  const mergeIds = allIds.filter((id) => !checked.includes(id));
+
+  if (!checked.length) {
+    showToast('סמן לפחות רשומה אחת לשמירה');
+    return;
+  }
+  if (!mergeIds.length) {
+    showToast('בטל סימון של רשומות שברצונך לאחד');
+    return;
+  }
+
+  await mergeDuplicateMaterialsKeeping(checked, mergeIds);
+  showToast('אוחד ✓');
+  requestAutoBackupNow().catch(() => {});
+  renderSuppliers(container);
+  await refreshMergeDuplicatesModal(container);
+}
+
+async function openMergeDuplicatesModal(container) {
   const groups = await getDuplicateMaterialGroups();
   if (!groups.length) {
     showToast('לא נמצאו כפילויות');
     return;
   }
+  const suppliers = await getSuppliers();
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
 
   openModal({
     title: 'איחוד כפילויות חומרי גלם',
     modalClass: 'modal-merge-dup',
     bodyHTML: `
-      <p class="form-hint">בחר איזה רשומה לשמור — השאר יאוחדו אליה (מתכונים והיסטוריה)</p>
-      <div class="merge-dup-groups">
-        ${groups.map((g, gi) => `
-          <div class="merge-dup-group" data-group="${gi}">
-            <div class="merge-dup-group-name">${escapeHtml(g.name)}</div>
-            ${g.materials.map((m, mi) => `
-              <label class="merge-dup-option">
-                <input type="radio" name="keep-${gi}" value="${m.id}"${mi === 0 ? ' checked' : ''}>
-                <span>#${m.id} · ${escapeHtml(m.supplierId ? supMap.get(m.supplierId) || 'ללא ספק' : 'ללא ספק')}
-                  · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}</span>
-              </label>`).join('')}
-            <button type="button" class="btn btn-primary btn-sm merge-group-btn" data-group="${gi}">אחד קבוצה זו</button>
-          </div>`).join('')}
+      <p class="form-hint" style="margin-top:0">סמן את הספקים/רשומות שיישארו — השאר יאוחדו (החלון נשאר פתוח לקבוצה הבאה)</p>
+      <div class="merge-dup-groups" data-groups-json='${JSON.stringify(groups.map((g) => ({ materials: g.materials.map((m) => m.id) })))}'>
+        ${renderMergeDupGroupsHTML(groups, supMap)}
       </div>`,
-    footerHTML: `<button class="btn btn-secondary modal-cancel">סגור</button>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary" id="merge-dup-all">אחד את כל הקבוצות</button>
+      <button class="btn btn-secondary modal-cancel">סגור</button>`,
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.querySelectorAll('.merge-group-btn').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const gi = Number(btn.dataset.group);
-      const group = groups[gi];
-      const keepRadio = document.querySelector(`input[name="keep-${gi}"]:checked`);
-      const keepId = Number(keepRadio?.value);
-      if (!keepId) return;
-      const mergeIds = group.materials.filter((m) => m.id !== keepId).map((m) => m.id);
-      if (!mergeIds.length) return;
-      try {
-        await mergeDuplicateMaterials(keepId, mergeIds);
-        showToast('אוחד ✓');
+
+  const host = document.querySelector('.merge-dup-groups');
+  host?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.merge-group-btn');
+    if (!btn) return;
+    try {
+      await mergeDupGroupFromUI(Number(btn.dataset.group), container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('merge-dup-all')?.addEventListener('click', async () => {
+    const btn = document.getElementById('merge-dup-all');
+    if (btn) btn.disabled = true;
+    try {
+      let remaining = await getDuplicateMaterialGroups();
+      while (remaining.length) {
+        const g = remaining[0];
+        const bySupplier = new Map();
+        for (const m of g.materials) {
+          const key = m.supplierId || `id:${m.id}`;
+          if (!bySupplier.has(key)) bySupplier.set(key, m.id);
+        }
+        const keepIds = [...bySupplier.values()];
+        const mergeIds = g.materials.map((m) => m.id).filter((id) => !keepIds.includes(id));
+        if (mergeIds.length) {
+          await mergeDuplicateMaterialsKeeping(keepIds, mergeIds);
+        } else {
+          await mergeDuplicateMaterialsKeeping([g.materials[0].id], g.materials.slice(1).map((m) => m.id));
+        }
         requestAutoBackupNow().catch(() => {});
-        closeModal();
-        renderSuppliers(container);
-      } catch (e) {
-        showToast(e.message || 'שגיאה');
+        remaining = await getDuplicateMaterialGroups();
       }
-    });
+      showToast('כל הכפילויות אוחדו ✓');
+      closeModal();
+      renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      await refreshMergeDuplicatesModal(container);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
 }
 

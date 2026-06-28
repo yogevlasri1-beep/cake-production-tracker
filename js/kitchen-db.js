@@ -1589,22 +1589,57 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
 
   await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
     for (const mid of ids) {
-      const ings = await db.recipeIngredients.where('rawMaterialId').equals(mid).toArray();
-      for (const ing of ings) {
-        await db.recipeIngredients.update(ing.id, { rawMaterialId: keep });
-      }
-      const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
-      for (const h of history) {
-        const exists = await priceHistoryEntryExists(keep, h.effectiveDate, h.price);
-        if (exists) {
-          await db.rawMaterialPriceHistory.delete(h.id);
-        } else {
-          await db.rawMaterialPriceHistory.update(h.id, { rawMaterialId: keep });
-        }
-      }
-      await db.rawMaterials.delete(mid);
+      await mergeMaterialIntoKeep(keep, mid);
     }
     await syncRawMaterialLatestPrice(keep);
+  });
+}
+
+async function mergeMaterialIntoKeep(keep, mid) {
+  if (!keep || !mid || keep === mid) return;
+  const ings = await db.recipeIngredients.where('rawMaterialId').equals(mid).toArray();
+  for (const ing of ings) {
+    await db.recipeIngredients.update(ing.id, { rawMaterialId: keep });
+  }
+  const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
+  for (const h of history) {
+    const exists = await priceHistoryEntryExists(keep, h.effectiveDate, h.price);
+    if (exists) {
+      await db.rawMaterialPriceHistory.delete(h.id);
+    } else {
+      await db.rawMaterialPriceHistory.update(h.id, { rawMaterialId: keep });
+    }
+  }
+  await db.rawMaterials.delete(mid);
+}
+
+/** שומר מספר רשומות (ספקים) — לא מסומנות מאוחדות לרשומת יעד מתאימה */
+export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
+  const keeps = [...new Set((keepIds || []).map(sanitizeProductId).filter(Boolean))];
+  if (!keeps.length) throw new ValidationError('סמן לפחות רשומה אחת לשמירה');
+  const primary = keeps[0];
+  const ids = (mergeIds || []).map(sanitizeProductId).filter((id) => id && !keeps.includes(id));
+  if (!ids.length) throw new ValidationError('אין רשומות לאיחוד');
+
+  const keepMats = (await Promise.all(keeps.map((id) => db.rawMaterials.get(id)))).filter(Boolean);
+  const keepBySupplier = new Map();
+  for (const m of keepMats) {
+    if (m.supplierId && !keepBySupplier.has(m.supplierId)) keepBySupplier.set(m.supplierId, m.id);
+  }
+
+  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+    const touched = new Set();
+    for (const mid of ids) {
+      const mat = await db.rawMaterials.get(mid);
+      if (!mat) continue;
+      let target = mat.supplierId ? keepBySupplier.get(mat.supplierId) : null;
+      if (!target || !keeps.includes(target)) target = primary;
+      await mergeMaterialIntoKeep(target, mid);
+      touched.add(target);
+    }
+    for (const kid of touched) {
+      await syncRawMaterialLatestPrice(kid);
+    }
   });
 }
 

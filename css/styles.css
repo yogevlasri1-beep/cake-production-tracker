@@ -5998,6 +5998,17 @@ body.supplier-drag-active {
   font-size: 0.88rem;
 }
 
+.merge-dup-group-hint {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+}
+
+.merge-dup-option input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
 .merge-group-btn {
   margin-top: 8px;
 }
