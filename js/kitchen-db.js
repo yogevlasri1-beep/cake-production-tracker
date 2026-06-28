@@ -1525,14 +1525,15 @@ export async function addRawMaterialPriceEntry(rawMaterialId, { price, effective
   const date = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate))
     ? String(effectiveDate)
     : todayISO();
-  if (skipDuplicate && await priceHistoryEntryExists(mid, date, p)) return;
-  await db.rawMaterialPriceHistory.add({
+  if (skipDuplicate && await priceHistoryEntryExists(mid, date, p)) return null;
+  const id = await db.rawMaterialPriceHistory.add({
     rawMaterialId: mid,
     price: p,
     effectiveDate: date,
     createdAt: new Date().toISOString(),
   });
   await syncRawMaterialLatestPrice(mid);
+  return id;
 }
 
 export async function setRawMaterialPrice(rawMaterialId, price, effectiveDate) {
@@ -1600,7 +1601,7 @@ export async function getSuppliersBrowseLayout() {
   return { categories: grouped, allMaterials: materials };
 }
 
-export async function importSupplierExcelEntries(entries, { defaultCategoryId } = {}) {
+export async function importSupplierExcelEntries(entries, { defaultCategoryId, fileHint } = {}) {
   if (!entries?.length) throw new ValidationError('אין נתונים לייבוא');
   let defaultCatId = sanitizeProductId(defaultCategoryId);
   if (!defaultCatId) {
@@ -1610,7 +1611,19 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
   }
 
   const stats = { suppliersAdded: 0, materialsAdded: 0, priceEntries: 0 };
+  const undo = {
+    importId: `sup-${Date.now()}`,
+    createdAt: new Date().toISOString(),
+    fileHint: fileHint || '',
+    priceHistoryIds: [],
+    createdMaterialIds: [],
+    createdSupplierIds: [],
+    createdCategoryIds: [],
+    materialPatches: [],
+  };
   const supplierCache = new Map();
+  const existingCategoryIds = new Set((await getSupplierCategories()).map((c) => c.id));
+  const patchedMaterialIds = new Set();
 
   for (const entry of entries) {
     const materialName = sanitizeName(entry.materialName, 80);
@@ -1619,7 +1632,15 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
 
     let catId = defaultCatId;
     if (entry.categoryName) {
+      const beforeCats = await getSupplierCategories();
       catId = await findOrCreateSupplierCategory(entry.categoryName);
+      if (!existingCategoryIds.has(catId)) {
+        const wasNew = !beforeCats.some((c) => c.id === catId);
+        if (wasNew) {
+          undo.createdCategoryIds.push(catId);
+          existingCategoryIds.add(catId);
+        }
+      }
     }
 
     const supKey = `${catId}|${supplierName.toLocaleLowerCase('he')}`;
@@ -1632,11 +1653,23 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
       } else {
         supplierId = await addSupplier({ categoryId: catId, name: supplierName });
         stats.suppliersAdded += 1;
+        undo.createdSupplierIds.push(supplierId);
       }
       supplierCache.set(supKey, supplierId);
     }
 
     const hadMat = await findRawMaterialBySupplierAndName(supplierId, materialName);
+    const existingMat = hadMat ? await db.rawMaterials.get(hadMat.id) : null;
+    if (existingMat && !patchedMaterialIds.has(existingMat.id)) {
+      patchedMaterialIds.add(existingMat.id);
+      undo.materialPatches.push({
+        id: existingMat.id,
+        unitPrice: existingMat.unitPrice,
+        packageWeightGrams: existingMat.packageWeightGrams ?? null,
+        unit: existingMat.unit,
+      });
+    }
+
     const mid = await assignMaterialToSupplier({
       name: materialName,
       supplierCategoryId: catId,
@@ -1645,7 +1678,10 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
       packageWeightGrams: entry.packageWeightGrams,
     });
     const mat = await db.rawMaterials.get(mid);
-    if (!hadMat) stats.materialsAdded += 1;
+    if (!hadMat && mat) {
+      stats.materialsAdded += 1;
+      undo.createdMaterialIds.push(mat.id);
+    }
     if (entry.unit && mat && entry.unit !== mat.unit) {
       await updateRawMaterial(mat.id, { unit: entry.unit });
     }
@@ -1656,15 +1692,93 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
     const price = entry.price != null ? sanitizeMoney(entry.price) : null;
     if (price != null && price >= 0 && mat) {
       const effDate = entry.effectiveDate || todayISO();
-      const before = await priceHistoryEntryExists(mat.id, effDate, price);
-      await addRawMaterialPriceEntry(mat.id, {
+      const histId = await addRawMaterialPriceEntry(mat.id, {
         price,
         effectiveDate: effDate,
       }, { skipDuplicate: true });
-      if (!before) stats.priceEntries += 1;
+      if (histId) {
+        stats.priceEntries += 1;
+        undo.priceHistoryIds.push(histId);
+      }
     }
   }
-  return stats;
+
+  await saveSupplierImportUndo(undo);
+  return { stats, undo };
+}
+
+const SUPPLIER_IMPORT_UNDO_KEY = 'supplierImportUndo';
+
+export async function saveSupplierImportUndo(undo) {
+  await db.settings.put({ key: SUPPLIER_IMPORT_UNDO_KEY, value: undo });
+}
+
+export async function getSupplierImportUndo() {
+  const row = await db.settings.get(SUPPLIER_IMPORT_UNDO_KEY);
+  return row?.value || null;
+}
+
+export async function clearSupplierImportUndo() {
+  await db.settings.delete(SUPPLIER_IMPORT_UNDO_KEY);
+}
+
+/** ביטול ייבוא אחרון — לא מוחק חומרים שמקושרים למתכונים */
+export async function undoSupplierImport() {
+  const undo = await getSupplierImportUndo();
+  if (!undo) throw new ValidationError('אין ייבוא לביטול');
+
+  let keptForRecipes = 0;
+
+  await db.transaction(
+    'rw',
+    db.rawMaterials,
+    db.rawMaterialPriceHistory,
+    db.suppliers,
+    db.supplierCategories,
+    db.recipeIngredients,
+    async () => {
+      for (const hid of undo.priceHistoryIds || []) {
+        await db.rawMaterialPriceHistory.delete(hid);
+      }
+
+      const patchedIds = new Set();
+      for (const patch of undo.materialPatches || []) {
+        if (patchedIds.has(patch.id)) continue;
+        patchedIds.add(patch.id);
+        const updates = {};
+        if ('unitPrice' in patch) updates.unitPrice = patch.unitPrice;
+        if ('packageWeightGrams' in patch) updates.packageWeightGrams = patch.packageWeightGrams;
+        if ('unit' in patch) updates.unit = patch.unit;
+        await db.rawMaterials.update(patch.id, updates);
+        await syncRawMaterialLatestPrice(patch.id);
+      }
+
+      for (const mid of undo.createdMaterialIds || []) {
+        const linked = await db.recipeIngredients.where('rawMaterialId').equals(mid).count();
+        if (linked > 0) {
+          keptForRecipes += 1;
+          await syncRawMaterialLatestPrice(mid);
+          continue;
+        }
+        await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
+        await db.rawMaterials.delete(mid);
+      }
+
+      for (const sid of undo.createdSupplierIds || []) {
+        const mats = await db.rawMaterials.where('supplierId').equals(sid).count();
+        if (mats === 0) await db.suppliers.delete(sid);
+      }
+
+      for (const cid of undo.createdCategoryIds || []) {
+        const mats = await db.rawMaterials.where('supplierCategoryId').equals(cid).count();
+        const sups = await db.suppliers.where('categoryId').equals(cid).count();
+        if (mats === 0 && sups === 0) await db.supplierCategories.delete(cid);
+      }
+    },
+  );
+
+  await clearSupplierImportUndo();
+  return { keptForRecipes };
 }
 
 export async function backfillRawMaterialPriceHistory() {

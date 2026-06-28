@@ -6,6 +6,7 @@ import {
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
   importSupplierExcelEntries,
+  getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
   getDuplicateMaterialGroups, mergeDuplicateMaterials, computePricePerKg,
 } from '../kitchen-db.js';
@@ -97,9 +98,10 @@ export async function renderSuppliers(container) {
 async function renderCatalogTab(body, container, categories, selectedCatId) {
   const catId = selectedCatId ? Number(selectedCatId) : null;
   const search = (container.dataset.catalogSearch || '').trim().toLowerCase();
-  const [catalog, suppliers] = await Promise.all([
+  const [catalog, suppliers, importUndo] = await Promise.all([
     getMasterMaterialsList(catId || undefined),
     getSuppliers(),
+    getSupplierImportUndo(),
   ]);
   const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
 
@@ -109,12 +111,14 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
   }
 
   body.innerHTML = `
+    ${importUndo ? renderImportUndoBanner(importUndo) : ''}
     <div class="card catalog-intro">
       <div class="filter-row" style="margin-bottom:8px">
         <div class="card-title" style="margin:0;flex:1">מחסן חומרי גלם</div>
+        <button type="button" class="btn btn-secondary btn-sm" id="catalog-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-dup">אחד כפילויות</button>
       </div>
-      <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · לחץ לפרטים, שיוך לספקים והיסטוריית מחירים</p>
+      <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה)</p>
     </div>
     <div class="card">
       <div class="workspace-chip-row catalog-cat-chips" style="margin-bottom:10px">
@@ -144,7 +148,24 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
           </button>`;
   }).join('')}
       </div>`}
-    </div>`;
+    </div>
+    <input type="file" id="catalog-excel-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`;
+
+  bindImportUndoButton(body, container);
+  document.getElementById('catalog-import-btn')?.addEventListener('click', () => {
+    document.getElementById('catalog-excel-file')?.click();
+  });
+  document.getElementById('catalog-excel-file')?.addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const parsed = await parseSupplierFile(file);
+      openImportPreview(container, parsed, categories, catId || categories[0]?.id, file.name);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
 
   body.querySelectorAll('[data-catalog-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -512,17 +533,21 @@ async function openMaterialDetailModal(container, materialId) {
 /* ── עריכה ── */
 
 async function renderEditTab(body, container, categories, selectedMatCat, selectedSupCat) {
+  const importUndo = await getSupplierImportUndo();
   body.innerHTML = `
+    ${importUndo ? renderImportUndoBanner(importUndo) : ''}
     <div class="card">
       <div class="filter-row" style="margin-bottom:8px">
         <div class="card-title" style="margin:0;flex:1">עריכת ספקים וחומרי גלם</div>
         <button type="button" class="btn btn-secondary btn-sm" id="supplier-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="add-sup-cat-edit">+ קטגוריה</button>
       </div>
-      <p class="form-hint" style="margin:0">ייבוא Excel: עמודות חומר גלם · ספק · מחיר · תאריך — או ספקים בעמודות ותאריכים בשורה שנייה</p>
+      <p class="form-hint" style="margin:0">ייבוא Excel: גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה), או עמודות חומר גלם · ספק · מחיר</p>
     </div>
     <div class="supplier-edit-sections" id="supplier-edit-sections">טוען...</div>
     <input type="file" id="supplier-excel-file" accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`;
+
+  bindImportUndoButton(body, container);
 
   document.getElementById('supplier-import-btn')?.addEventListener('click', () => {
     document.getElementById('supplier-excel-file')?.click();
@@ -534,7 +559,7 @@ async function renderEditTab(body, container, categories, selectedMatCat, select
     if (!file) return;
     try {
       const parsed = await parseSupplierFile(file);
-      openImportPreview(container, parsed, categories, selectedMatCat);
+      openImportPreview(container, parsed, categories, selectedMatCat, file.name);
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
@@ -898,15 +923,61 @@ function bindSupplierForm(container, categoryId, supplierId) {
   });
 }
 
-function openImportPreview(container, parsed, categories, defaultCatId) {
-  const { entries, format } = parsed;
+function importFormatLabel(format) {
+  if (format === 'supplier_sheets') return 'גיליון לכל ספק';
+  if (format === 'wide') return 'טבלת ספקים';
+  if (format === 'long') return 'רשימה';
+  return format || 'לא ידוע';
+}
+
+function renderImportUndoBanner(undo) {
+  const when = undo.createdAt ? formatDate(undo.createdAt.slice(0, 10)) : '';
+  const hint = undo.fileHint ? ` · ${escapeHtml(undo.fileHint)}` : '';
+  return `
+    <div class="card import-undo-banner">
+      <div class="filter-row" style="margin:0;align-items:center">
+        <span class="form-hint" style="margin:0;flex:1">
+          ייבוא אחרון${when ? ` (${when})` : ''}${hint} — ניתן לבטל. חומרים שמקושרים למתכונים לא יימחקו.
+        </span>
+        <button type="button" class="btn btn-danger btn-sm" id="undo-sup-import-btn">בטל ייבוא</button>
+      </div>
+    </div>`;
+}
+
+function bindImportUndoButton(host, container) {
+  host.querySelector('#undo-sup-import-btn')?.addEventListener('click', async () => {
+    if (!confirm('לבטל את הייבוא האחרון? מחירים וחומרים חדשים יוסרו — מתכונים לא ייפגעו.')) return;
+    try {
+      const { keptForRecipes } = await undoSupplierImport();
+      showToast(
+        keptForRecipes > 0
+          ? `הייבוא בוטל · ${keptForRecipes} חומרים נשארו כי הם במתכונים`
+          : 'הייבוא בוטל ✓',
+      );
+      requestAutoBackupNow().catch(() => {});
+      renderSuppliers(container);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
+function openImportPreview(container, parsed, categories, defaultCatId, fileName = '') {
+  const { entries, format, sheets } = parsed;
   const preview = entries.slice(0, 12);
+  const uniqueMaterials = new Set(entries.map((e) => e.materialName)).size;
+  const uniqueSuppliers = new Set(entries.map((e) => e.supplierName)).size;
+  const sheetsBlock = format === 'supplier_sheets' && sheets?.length
+    ? `<p class="form-hint" style="margin-top:8px">גיליונות (${sheets.length}): ${sheets.map((s) => `${escapeHtml(s.name)} (${s.entries})`).join(' · ')}</p>`
+    : '';
+
   openModal({
-    title: `ייבוא ${entries.length} רשומות (${format === 'wide' ? 'טבלת ספקים' : 'רשימה'})`,
+    title: `ייבוא ${entries.length} רשומות · ${importFormatLabel(format)}`,
     bodyHTML: `
-      <p class="form-hint">ייווצרו/יעודכנו ספקים, חומרי גלם ומחירים (עם תאריך כשיש)</p>
+      <p class="form-hint">${uniqueMaterials} חומרים · ${uniqueSuppliers} ספקים · ייווצרו/יעודכנו מחירים והיסטוריה</p>
+      ${sheetsBlock}
       <div class="form-group">
-        <label>קטגוריית ברירת מחדל</label>
+        <label>קטגוריית ברירת מחדל לספקים חדשים</label>
         <select id="import-sup-cat">
           ${categories.map((c) => `<option value="${c.id}"${String(c.id) === String(defaultCatId) ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
@@ -915,14 +986,18 @@ function openImportPreview(container, parsed, categories, defaultCatId) {
         ${preview.map((e) => `
           <li><strong>${escapeHtml(e.materialName)}</strong> · ${escapeHtml(e.supplierName)} · ${formatMoney(e.price || 0)}${e.effectiveDate ? ` · ${formatDate(e.effectiveDate)}` : ''}</li>`).join('')}
         ${entries.length > preview.length ? `<li class="form-hint">+ עוד ${entries.length - preview.length}...</li>` : ''}
-      </ul>`,
+      </ul>
+      <p class="form-hint" style="margin-top:10px">אחרי הייבוא תוכל לבטל דרך «בטל ייבוא» — בלי לפגוע במתכונים.</p>`,
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="confirm-sup-import">ייבוא ✓</button>`,
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('confirm-sup-import')?.addEventListener('click', async () => {
     try {
       const catId = Number(document.getElementById('import-sup-cat')?.value);
-      const stats = await importSupplierExcelEntries(entries, { defaultCategoryId: catId });
+      const { stats } = await importSupplierExcelEntries(entries, {
+        defaultCategoryId: catId,
+        fileHint: fileName || '',
+      });
       closeModal();
       showToast(`יובאו: ${stats.suppliersAdded} ספקים · ${stats.materialsAdded} חומרים · ${stats.priceEntries} מחירים ✓`);
       requestAutoBackupNow().catch(() => {});

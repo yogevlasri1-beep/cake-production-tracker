@@ -4,10 +4,11 @@ import { todayISO } from './utils.js';
 const MATERIAL_ALIASES = ['חומר גלם', 'חומר', 'מוצר', 'material', 'שם', 'פריט', 'תיאור'];
 const SUPPLIER_ALIASES = ['ספק', 'supplier', 'שם ספק'];
 const PRICE_ALIASES = ['מחיר', 'price', 'עלות', 'תמחור'];
-const DATE_ALIASES = ['תאריך', 'date', 'יום', 'מתאריך'];
-const UNIT_ALIASES = ['יחידה', 'unit', 'יח'];
+const DATE_ALIASES = ['תאריך', 'date', 'יום', 'מתאריך', 'עודכן'];
+const UNIT_ALIASES = ['יחידה', 'unit', 'יח', 'כמות'];
 const CATEGORY_ALIASES = ['קטגוריה', 'category', 'סוג'];
 const WEIGHT_ALIASES = ['משקל', 'weight', 'גרם', 'משקל מוצר', 'package weight', 'משקל אריזה'];
+const QTY_WEEKLY_ALIASES = ['כמות שבועית', 'כמות', 'אריזה'];
 
 function cleanCell(val) {
   if (val == null) return '';
@@ -101,8 +102,81 @@ function looksLikeSupplierName(cell) {
   if (!t || t.length < 2) return false;
   if (parsePrice(t) != null && !/[א-תa-z]/i.test(t)) return false;
   if (looksLikeDateHeader(t)) return false;
-  if (/^(חומר|מחיר|תאריך|יחידה|קטגוריה)/i.test(t)) return false;
+  if (/^(חומר|מחיר|תאריך|יחידה|קטגוריה|מוצר|כמות)/i.test(t)) return false;
   return /[א-תa-z]/i.test(t);
+}
+
+export function isSkipSheetName(name) {
+  const n = cleanCell(name).toLowerCase();
+  if (!n) return true;
+  if (/^sheet\d*$/i.test(n)) return true;
+  if (n === 'גיליון1' || n === 'גיליון' || n === 'sheet1') return true;
+  return false;
+}
+
+export function parseQuantityUnit(raw) {
+  const s = cleanCell(raw);
+  if (!s) return { unit: 'ק"ג', packageWeightGrams: null };
+  let unit = 'ק"ג';
+  if (/קרטון/i.test(s)) unit = 'קרטון';
+  else if (/שק/i.test(s)) unit = 'שק';
+  else if (/ליטר/i.test(s)) unit = 'ליטר';
+  const packageWeightGrams = parsePackageWeightGrams(s);
+  return { unit, packageWeightGrams };
+}
+
+/** פורמט: גיליון לכל ספק — מוצר | כמות | מחיר נוכחי | מחיר+תאריך... */
+export function detectSupplierSheetFormat(rows) {
+  for (let ri = 0; ri < Math.min(rows.length, 25); ri++) {
+    const a = cleanCell(rows[ri]?.[0]).toLowerCase();
+    if (a === 'מוצר' || a.startsWith('מוצר')) {
+      return { headerRowIndex: ri };
+    }
+  }
+  return null;
+}
+
+export function parseSupplierSheetRows(rows, supplierName, meta) {
+  const entries = [];
+  const supplier = cleanCell(supplierName);
+  if (!supplier || !meta) return entries;
+
+  for (let ri = meta.headerRowIndex + 1; ri < rows.length; ri++) {
+    const row = rows[ri] || [];
+    const materialName = cleanCell(row[0]);
+    if (!materialName || /^(סה|total|סך|סה"כ)/i.test(materialName)) continue;
+
+    const { unit, packageWeightGrams } = parseQuantityUnit(row[1]);
+
+    const currentPrice = parsePrice(row[2]);
+    if (currentPrice != null) {
+      entries.push({
+        materialName,
+        supplierName: supplier,
+        price: currentPrice,
+        effectiveDate: todayISO(),
+        unit,
+        packageWeightGrams,
+        categoryName: '',
+      });
+    }
+
+    for (let c = 3; c + 1 < row.length; c += 2) {
+      const price = parsePrice(row[c]);
+      const date = parseEffectiveDate(row[c + 1]);
+      if (price == null || !date) continue;
+      entries.push({
+        materialName,
+        supplierName: supplier,
+        price,
+        effectiveDate: date,
+        unit,
+        packageWeightGrams,
+        categoryName: '',
+      });
+    }
+  }
+  return entries;
 }
 
 function detectLongFormat(rows) {
@@ -195,10 +269,6 @@ function parseWideMatrix(rows) {
 function detectWideFormat(rows) {
   const header = rows[0] || [];
   if (header.length < 3) return false;
-  const first = cleanCell(header[0]).toLowerCase();
-  if (first && !/^(חומר|מוצר|material|פריט)/i.test(first) && parsePrice(first) == null) {
-    /* first col may still be material label row below */
-  }
   const supplierCols = header.slice(1).filter((c) => looksLikeSupplierName(c)).length;
   const row1Dates = (rows[1] || []).slice(1).filter((c) => looksLikeDateHeader(c)).length;
   return supplierCols >= 1 || row1Dates >= 2;
@@ -222,11 +292,36 @@ export function parseSupplierRows(rows) {
     if (entries.length) return { entries, format: 'wide' };
   }
 
-  /* fallback: try wide without strict detection */
   const wideEntries = parseWideMatrix(cleaned);
   if (wideEntries.length) return { entries: wideEntries, format: 'wide' };
 
   return { entries: [], format: 'unknown' };
+}
+
+function parseWorkbookSheets(wb, XLSX) {
+  const allEntries = [];
+  const sheets = [];
+
+  for (const sheetName of wb.SheetNames) {
+    if (isSkipSheetName(sheetName)) continue;
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '', raw: false })
+      .map((r) => (Array.isArray(r) ? r.map(cleanCell) : []))
+      .filter((r) => r.some((c) => c));
+
+    const meta = detectSupplierSheetFormat(rows);
+    if (!meta) continue;
+
+    const entries = parseSupplierSheetRows(rows, sheetName, meta);
+    if (entries.length) {
+      allEntries.push(...entries);
+      sheets.push({ name: sheetName, entries: entries.length });
+    }
+  }
+
+  if (allEntries.length) {
+    return { entries: allEntries, format: 'supplier_sheets', sheets };
+  }
+  return null;
 }
 
 export async function parseSupplierFile(file) {
@@ -237,6 +332,10 @@ export async function parseSupplierFile(file) {
     const XLSX = await loadXLSX();
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+
+    const multiSheet = parseWorkbookSheets(wb, XLSX);
+    if (multiSheet) return multiSheet;
+
     const sheetName = wb.SheetNames[0];
     if (!sheetName) throw new Error('קובץ Excel ריק');
     rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: '', raw: false });
@@ -248,7 +347,7 @@ export async function parseSupplierFile(file) {
   const parsed = parseSupplierRows(rows);
   if (!parsed.entries.length) {
     throw new Error(
-      'לא זוהו נתונים — ודא שיש עמודות: חומר גלם, ספק, מחיר (ותאריך אופציונלי) או טבלה עם שמות ספקים בעמודות',
+      'לא זוהו נתונים — ודא שיש גיליון לכל ספק (מוצר | כמות | מחיר + היסטוריה), או עמודות: חומר גלם, ספק, מחיר',
     );
   }
   return parsed;

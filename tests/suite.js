@@ -1,18 +1,18 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=178';
+} from '../js/validators.js?v=179';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=178';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=178';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=178';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=178';
-import { parsePackageWeightGrams } from '../js/supplier-import.js?v=178';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=178';
+} from '../js/calc.js?v=179';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=179';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=179';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=179';
+import { parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows, parseQuantityUnit } from '../js/supplier-import.js?v=179';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=179';
 
 export async function runAllTests() {
   /* validators */
@@ -49,6 +49,42 @@ export async function runAllTests() {
 
   test('parsePackageWeightGrams — kg', () => assertEqual(parsePackageWeightGrams('1 ק"ג'), 1000));
   test('parsePackageWeightGrams — grams', () => assertEqual(parsePackageWeightGrams('250 גרם'), 250));
+
+  test('isSkipSheetName — skips default sheets', () => {
+    assertOk(isSkipSheetName('גיליון1'));
+    assertOk(isSkipSheetName('Sheet1'));
+    assertOk(!isSkipSheetName('פוליבה'));
+  });
+
+  test('detectSupplierSheetFormat — finds מוצר header', () => {
+    const rows = [['מוצר', 'כמות שבועית', 'פוליבה'], ['אגוז מלך', 'ק"ג 1', '21']];
+    const meta = detectSupplierSheetFormat(rows);
+    assertOk(meta);
+    assertEqual(meta.headerRowIndex, 0);
+  });
+
+  test('parseSupplierSheetRows — current + history', () => {
+    const rows = [
+      ['מוצר', 'כמות שבועית', 'פוליבה', 'מחיר', 'עודכן בתאריך', 'מחיר', 'עודכן בתאריך'],
+      ['אגוז מלך', 'ק"ג 1', '21', '15', '24/2/22', '18.5', '6/12/23'],
+    ];
+    const meta = detectSupplierSheetFormat(rows);
+    const entries = parseSupplierSheetRows(rows, 'פוליבה', meta);
+    assertEqual(entries.length, 3);
+    assertEqual(entries[0].materialName, 'אגוז מלך');
+    assertEqual(entries[0].supplierName, 'פוליבה');
+    assertEqual(entries[0].price, 21);
+    assertEqual(entries[1].price, 15);
+    assertEqual(entries[1].effectiveDate, '2022-02-24');
+    assertEqual(entries[2].price, 18.5);
+    assertEqual(entries[2].effectiveDate, '2023-12-06');
+  });
+
+  test('parseQuantityUnit — carton and bag', () => {
+    assertEqual(parseQuantityUnit('קרטון 1').unit, 'קרטון');
+    assertEqual(parseQuantityUnit('שק 1').unit, 'שק');
+    assertEqual(parseQuantityUnit('ק"ג 1').packageWeightGrams, 1000);
+  });
 
   /* pct */
   test('pct — רגיל', () => assertEqual(pct(50, 100), 50));

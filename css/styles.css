@@ -5639,6 +5639,12 @@ body.supplier-drag-active {
   border-bottom: 1px solid var(--border);
 }
 
+.import-undo-banner {
+  margin-bottom: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+}
+
 .suppliers-sub-nav {
   box-shadow: 0 -4px 20px rgba(15, 118, 110, 0.08);
 }
