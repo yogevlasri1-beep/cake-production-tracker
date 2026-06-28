@@ -10,14 +10,14 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=183';
+} from '../db.js?v=184';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=183';
-import { openModal, closeModal } from '../modal.js?v=183';
-import { renderTargets } from './targets.js?v=183';
-import { forceAppUpdate } from '../sw-register.js?v=183';
+} from '../utils.js?v=184';
+import { openModal, closeModal } from '../modal.js?v=184';
+import { renderTargets } from './targets.js?v=184';
+import { forceAppUpdate } from '../sw-register.js?v=184';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
