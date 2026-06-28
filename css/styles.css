@@ -5272,6 +5272,82 @@ body.supplier-drag-active {
   text-align: left;
 }
 
+.recipe-cost-summary {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #bfdbfe;
+}
+
+.recipe-cost-label {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.recipe-cost-value {
+  font-size: 1.15rem;
+  color: var(--primary, #2563eb);
+}
+
+.recipe-ing-name {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  text-align: right;
+  padding: 4px 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.recipe-ing-name-text {
+  display: block;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.recipe-ing-price-meta {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ing-price-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ing-price-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: right;
+  font: inherit;
+}
+
+.ing-price-option.active {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+}
+
+.ing-price-option-name {
+  font-weight: 600;
+}
+
+.ing-price-option-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 .ratio-table .recipe-total-row td {
   border-top: 2px solid var(--primary, #2563eb);
   padding-top: 10px;

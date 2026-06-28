@@ -1095,10 +1095,116 @@ export async function updateRecipeIngredient(id, patch) {
     data.unitKind = normalizeRecipeUnitKind(data.unit);
     data.unit = formatRecipeUnitKind(data.unitKind);
   }
+  if ('priceSource' in data) {
+    data.priceSource = data.priceSource === 'supplier' ? 'supplier' : 'max';
+    if (data.priceSource === 'max') data.rawMaterialId = null;
+  }
+  if ('rawMaterialId' in data) {
+    data.rawMaterialId = data.rawMaterialId ? sanitizeProductId(data.rawMaterialId) : null;
+  }
   await db.recipeIngredients.update(iid, data);
 }
 
-export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind, sortOrder }) {
+export function getIngredientPriceSource(ing) {
+  if (ing?.priceSource === 'max' || ing?.priceSource === 'supplier') return ing.priceSource;
+  return ing?.rawMaterialId ? 'supplier' : 'max';
+}
+
+export function buildMaterialsByNameKey(materials) {
+  const map = new Map();
+  for (const m of materials || []) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(m);
+  }
+  return map;
+}
+
+function materialComparisonPrice(mat) {
+  const ppk = computePricePerKg(mat?.unitPrice, mat?.packageWeightGrams);
+  if (ppk != null) return ppk;
+  return Number(mat?.unitPrice) || 0;
+}
+
+export function pickHighestPricedMaterial(offers) {
+  if (!offers?.length) return null;
+  return offers.reduce((best, m) => (
+    materialComparisonPrice(m) > materialComparisonPrice(best) ? m : best
+  ), offers[0]);
+}
+
+export function resolveRecipeIngredientMaterial(ing, { matById, byNameKey }) {
+  const source = getIngredientPriceSource(ing);
+  if (source === 'supplier' && ing.rawMaterialId) {
+    const mat = matById.get(Number(ing.rawMaterialId));
+    if (mat) return { mat, priceSource: 'supplier' };
+  }
+  const key = normalizeMaterialKey(ing.name);
+  const offers = byNameKey.get(key) || [];
+  let mat = pickHighestPricedMaterial(offers);
+  if (!mat && ing.rawMaterialId) mat = matById.get(Number(ing.rawMaterialId)) || null;
+  return { mat, priceSource: 'max' };
+}
+
+export function computeIngredientLineCost(ing, mat) {
+  const qty = Number(ing?.quantity) || 0;
+  if (!mat || qty <= 0) return 0;
+  const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+  const unitPrice = Number(mat.unitPrice) || 0;
+  const ppk = computePricePerKg(mat.unitPrice, mat.packageWeightGrams);
+  if (kind === 'g') {
+    const perKg = ppk ?? unitPrice;
+    return roundQty((qty / 1000) * perKg);
+  }
+  if (kind === 'kg') {
+    const perKg = ppk ?? unitPrice;
+    return roundQty(qty * perKg);
+  }
+  return roundQty(qty * unitPrice);
+}
+
+export async function computeRecipeMaterialsCost(ingredients, materials) {
+  const mats = materials || await getRawMaterials();
+  const matById = new Map(mats.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(mats);
+  let total = 0;
+  for (const ing of ingredients || []) {
+    const { mat } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
+    total += computeIngredientLineCost(ing, mat);
+  }
+  return roundQty(total);
+}
+
+export async function getMaterialsByIngredientName(name) {
+  const key = normalizeMaterialKey(name);
+  if (!key) return [];
+  const all = await db.rawMaterials.toArray();
+  return all.filter((m) => normalizeMaterialKey(m.name) === key);
+}
+
+async function syncRecipesAffectedByMaterial(materialId) {
+  const mat = await db.rawMaterials.get(Number(materialId));
+  if (!mat) return;
+  const key = normalizeMaterialKey(mat.name);
+  const allIngs = await db.recipeIngredients.toArray();
+  const recipeIds = new Set();
+  for (const ing of allIngs) {
+    if (Number(ing.rawMaterialId) === Number(materialId)) recipeIds.add(ing.recipeId);
+    else if (getIngredientPriceSource(ing) === 'max' && normalizeMaterialKey(ing.name) === key) {
+      recipeIds.add(ing.recipeId);
+    }
+  }
+  for (const rid of recipeIds) {
+    try {
+      await syncProductCostFromRecipe(rid);
+    } catch {
+      /* no linked products */
+    }
+  }
+}
+
+export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind, sortOrder, priceSource }) {
   const rid = sanitizeProductId(recipeId);
   const trimmed = sanitizeName(name, 80);
   if (!rid) throw new ValidationError('מתכון לא תקין');
@@ -1109,14 +1215,16 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
   const kind = unitKind ? normalizeRecipeUnitKind(unitKind) : normalizeRecipeUnitKind(unit);
   const order = Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : maxOrder + 1;
+  const src = priceSource === 'supplier' ? 'supplier' : 'max';
   return db.recipeIngredients.add({
     recipeId: rid,
-    rawMaterialId: matId,
+    rawMaterialId: src === 'supplier' && matId ? matId : null,
     name: trimmed,
     quantity: qty,
     unit: formatRecipeUnitKind(kind),
     unitKind: kind,
     sortOrder: order,
+    priceSource: src,
   });
 }
 
@@ -1132,14 +1240,7 @@ export async function syncProductCostFromRecipe(recipeId) {
     ? recipe.linkedProductIds
     : (recipe?.linkedProductId ? [recipe.linkedProductId] : []);
   if (!productIds.length) throw new ValidationError('אין מוצרים מקושרים');
-  let total = 0;
-  for (const ing of recipe.ingredients) {
-    if (ing.rawMaterialId) {
-      const mat = await db.rawMaterials.get(ing.rawMaterialId);
-      if (mat?.unitPrice) total += Number(mat.unitPrice) * Number(ing.quantity);
-    }
-  }
-  const cost = roundQty(total);
+  const cost = await computeRecipeMaterialsCost(recipe.ingredients);
   for (const pid of productIds) {
     await db.products.update(pid, { rawMaterialsCost: cost });
   }
@@ -1523,6 +1624,7 @@ async function syncRawMaterialLatestPrice(rawMaterialId) {
   const history = await getPriceHistory(rawMaterialId);
   if (!history.length) return;
   await db.rawMaterials.update(rawMaterialId, { unitPrice: history[0].price });
+  await syncRecipesAffectedByMaterial(rawMaterialId);
 }
 
 export async function addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate } = {}, { skipDuplicate } = {}) {

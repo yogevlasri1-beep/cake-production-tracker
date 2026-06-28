@@ -1,21 +1,21 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=184';
+} from '../js/validators.js?v=185';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=184';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=184';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=184';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=184';
+} from '../js/calc.js?v=185';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=185';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=185';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=185';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=184';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=184';
+} from '../js/supplier-import.js?v=185';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=185';
 
 export async function runAllTests() {
   /* validators */
@@ -167,6 +167,23 @@ export async function runAllTests() {
     const sugarOld = entries.find((e) => e.materialName === 'סוכר' && e.price === 2.7);
     assertOk(sugarOld);
     assertEqual(sugarOld.effectiveDate, '2025-05-11');
+  });
+
+  test('pickHighestPricedMaterial — recipe pricing', () => {
+    const offers = [
+      { id: 1, name: 'סוכר', unitPrice: 3, packageWeightGrams: 1000, supplierId: 1 },
+      { id: 2, name: 'סוכר', unitPrice: 5, packageWeightGrams: 1000, supplierId: 2 },
+    ];
+    const best = pickHighestPricedMaterial(offers);
+    assertEqual(best.id, 2);
+    const byName = buildMaterialsByNameKey(offers);
+    const matById = new Map(offers.map((m) => [m.id, m]));
+    const ing = { name: 'סוכר', quantity: 2, unitKind: 'kg', priceSource: 'max' };
+    const { mat, priceSource } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey: byName });
+    assertEqual(priceSource, 'max');
+    assertEqual(mat.id, 2);
+    assertEqual(computeIngredientLineCost(ing, mat), 10);
+    assertEqual(getIngredientPriceSource({ priceSource: 'supplier', rawMaterialId: 1 }), 'supplier');
   });
 
   /* pct */
