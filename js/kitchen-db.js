@@ -1230,7 +1230,14 @@ export async function updateSupplier(id, patch) {
   if ('phone' in data) data.phone = String(data.phone || '').trim().slice(0, 30);
   if ('whatsapp' in data) data.whatsapp = String(data.whatsapp || '').trim().slice(0, 30);
   if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 500);
+  const prev = await db.suppliers.get(sid);
   await db.suppliers.update(sid, data);
+  if (prev && 'categoryId' in data && data.categoryId && data.categoryId !== prev.categoryId) {
+    const mats = await db.rawMaterials.where('supplierId').equals(sid).toArray();
+    for (const m of mats) {
+      await db.rawMaterials.update(m.id, { supplierCategoryId: data.categoryId });
+    }
+  }
 }
 
 export async function deleteSupplier(id) {

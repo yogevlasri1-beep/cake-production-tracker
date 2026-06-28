@@ -707,7 +707,7 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
           <span class="supplier-order-num">${i + 1}</span>
           <button type="button" class="list-item-info edit-sup-open" data-id="${s.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
             <div class="list-item-name">${escapeHtml(s.name)}</div>
-            <div class="list-item-meta">${s.whatsapp ? `📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? `📞 ${escapeHtml(s.phone)}` : 'ללא טלפון')}</div>
+            <div class="list-item-meta">${escapeHtml(catMap.get(s.categoryId) || 'ללא קטגוריה')}${s.whatsapp ? ` · 📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? ` · 📞 ${escapeHtml(s.phone)}` : '')}</div>
           </button>
           <div class="list-item-actions">
             <button type="button" class="btn btn-danger btn-sm del-sup" data-id="${s.id}">🗑</button>
@@ -779,13 +779,13 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
   });
 
   document.getElementById('add-supplier')?.addEventListener('click', () => {
-    openAddSupplierModal(container, Number(selectedSupCat));
+    openAddSupplierModal(container, Number(selectedSupCat), categories);
   });
 
   host.querySelectorAll('.edit-sup-open').forEach((btn) => {
     btn.addEventListener('click', () => {
       const s = suppliers.find((x) => x.id === Number(btn.dataset.id));
-      if (s) openEditSupplierModal(container, s);
+      if (s) openEditSupplierModal(container, s, categories);
     });
   });
 
@@ -943,27 +943,34 @@ function openDuplicateMaterialModal(container, mat, categoryId) {
   });
 }
 
-function openAddSupplierModal(container, categoryId) {
+function openAddSupplierModal(container, categoryId, categories) {
   openModal({
     title: 'ספק חדש',
-    bodyHTML: supplierFormHTML(null),
+    bodyHTML: supplierFormHTML(null, categories, categoryId),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-sup">שמור</button>`,
   });
   bindSupplierForm(container, categoryId, null);
 }
 
-function openEditSupplierModal(container, supplier) {
+function openEditSupplierModal(container, supplier, categories) {
   openModal({
     title: `עריכה · ${escapeHtml(supplier.name)}`,
-    bodyHTML: supplierFormHTML(supplier),
+    bodyHTML: supplierFormHTML(supplier, categories, supplier.categoryId),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-sup">שמור</button>`,
   });
   bindSupplierForm(container, supplier.categoryId, supplier.id);
 }
 
-function supplierFormHTML(s) {
+function supplierFormHTML(s, categories, defaultCategoryId) {
+  const selectedCat = s?.categoryId ?? defaultCategoryId;
+  const catOptions = (categories || []).map((c) => `
+    <option value="${c.id}"${String(c.id) === String(selectedCat) ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
   return `
     <div class="form-group"><label>שם</label><input type="text" id="sup-name" value="${s ? escapeHtml(s.name) : ''}"></div>
+    <div class="form-group">
+      <label>קטגוריה</label>
+      <select id="sup-cat"${catOptions ? '' : ' disabled'}>${catOptions || '<option value="">— אין קטגוריות —</option>'}</select>
+    </div>
     <div class="form-group"><label>וואטסאפ / טלפון</label><input type="tel" id="sup-wa" value="${s ? escapeHtml(s.whatsapp || s.phone || '') : ''}"></div>
     <div class="form-group"><label>הערות</label><input type="text" id="sup-notes" value="${s ? escapeHtml(s.notes || '') : ''}"></div>`;
 }
@@ -976,6 +983,7 @@ function bindSupplierForm(container, categoryId, supplierId) {
         name: document.getElementById('sup-name')?.value,
         whatsapp: document.getElementById('sup-wa')?.value,
         notes: document.getElementById('sup-notes')?.value,
+        categoryId: Number(document.getElementById('sup-cat')?.value) || categoryId,
       };
       if (supplierId) await updateSupplier(supplierId, payload);
       else await addSupplier({ categoryId, ...payload });
