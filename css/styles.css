@@ -1676,6 +1676,15 @@ body {
   margin-top: 6px;
 }
 
+.run-list-grouped {
+  display: flex;
+  flex-direction: column;
+}
+
+.run-list-category-block .flow-run-item + .flow-run-item {
+  margin-top: 6px;
+}
+
 .manage-flow-pick {
   display: flex;
   flex-direction: column;

@@ -16,11 +16,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=174';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=174';
-import { openModal, closeModal } from '../modal.js?v=174';
-import { requestAutoBackupNow } from '../backup-service.js?v=174';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=174';
+} from '../db.js?v=175';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=175';
+import { openModal, closeModal } from '../modal.js?v=175';
+import { requestAutoBackupNow } from '../backup-service.js?v=175';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=175';
 
 function parseIdList(str) {
   try {
@@ -795,6 +795,89 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
         <button type="button" class="btn btn-danger btn-sm delete-run" data-id="${run.id}">🗑</button>
       </div>
     </div>`;
+}
+
+function resolveRunCatalogCategoryId(run, productMap, layout) {
+  if (run.productId) {
+    const p = productMap.get(run.productId);
+    if (p?.categoryId) return p.categoryId;
+  }
+  const ids = run.categoryIds?.length
+    ? run.categoryIds.map(Number).filter(Boolean)
+    : (run.categoryId ? [Number(run.categoryId)] : []);
+  if (ids.length) {
+    const ordered = layout.allCategories
+      .filter((c) => ids.includes(c.id))
+      .sort(compareProductCategories);
+    return ordered[0]?.id ?? ids[0];
+  }
+  return null;
+}
+
+function bucketRunsForCatalog(runs, layout, productMap) {
+  const runsByCategory = new Map();
+  const runsByGroup = new Map();
+  const otherRuns = [];
+
+  for (const run of runs) {
+    if (run.scopeMode === 'group' && run.categoryGroupId) {
+      const gid = Number(run.categoryGroupId);
+      if (!runsByGroup.has(gid)) runsByGroup.set(gid, []);
+      runsByGroup.get(gid).push(run);
+      continue;
+    }
+    const cid = resolveRunCatalogCategoryId(run, productMap, layout);
+    if (cid) {
+      if (!runsByCategory.has(cid)) runsByCategory.set(cid, []);
+      runsByCategory.get(cid).push(run);
+    } else if (run.categoryGroupId) {
+      const gid = Number(run.categoryGroupId);
+      if (!runsByGroup.has(gid)) runsByGroup.set(gid, []);
+      runsByGroup.get(gid).push(run);
+    } else {
+      otherRuns.push(run);
+    }
+  }
+
+  return { runsByCategory, runsByGroup, otherRuns };
+}
+
+function renderRunsListGroupedHTML(runs, layout, catMap, productMap, groupMap, { listDate } = {}) {
+  if (!runs.length) return '';
+  const { runsByCategory, runsByGroup, otherRuns } = bucketRunsForCatalog(runs, layout, productMap);
+  const blocks = [];
+
+  for (const group of layout.groups) {
+    for (const cat of group.categories.slice().sort(compareProductCategories)) {
+      const catRuns = runsByCategory.get(cat.id) || [];
+      if (!catRuns.length) continue;
+      blocks.push(`
+        <div class="flow-pick-category-block run-list-category-block">
+          <div class="flow-pick-category-label">${escapeHtml(cat.name)}</div>
+          ${catRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate })).join('')}
+        </div>`);
+    }
+    const groupRuns = runsByGroup.get(group.id) || [];
+    if (groupRuns.length) {
+      blocks.push(`
+        <div class="flow-pick-category-block run-list-category-block">
+          <div class="flow-pick-category-label">${escapeHtml(group.name)} · כל הקבוצה</div>
+          ${groupRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate })).join('')}
+        </div>`);
+    }
+  }
+
+  if (otherRuns.length) {
+    blocks.push(`
+      <div class="flow-pick-category-block run-list-category-block">
+        <div class="flow-pick-category-label">אחר</div>
+        ${otherRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate })).join('')}
+      </div>`);
+  }
+
+  return blocks.length
+    ? `<div class="run-list-grouped">${blocks.join('')}</div>`
+    : runs.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate })).join('');
 }
 
 function flowPreparationsPopoverHTML({ checks, flowLabel, canManageList }) {
@@ -2542,7 +2625,7 @@ export async function renderProcess(container) {
     ${activeRuns.length ? `
       <div class="card">
         <div class="card-title">פעילים (${activeRuns.length})</div>
-        ${activeRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate: date })).join('')}
+        ${renderRunsListGroupedHTML(activeRuns, layout, catMap, productMap, groupMap, { listDate: date })}
       </div>` : ''}
 
     <div class="card">

@@ -1,17 +1,17 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=174';
+} from '../js/validators.js?v=175';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=174';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=174';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=174';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=174';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=174';
+} from '../js/calc.js?v=175';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=175';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=175';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=175';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=175';
 
 export async function runAllTests() {
   /* validators */
