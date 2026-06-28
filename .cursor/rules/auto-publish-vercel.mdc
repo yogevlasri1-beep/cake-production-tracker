@@ -1,23 +1,29 @@
 ---
-description: Auto-publish app changes to Vercel via GitHub push
+description: Always auto-publish app changes to GitHub/Vercel after code edits — no need to ask user
 alwaysApply: true
 ---
 
-# פרסום אוטומטי
+# פרסום אוטומטי — תמיד
 
-## GitHub Pages (עובד תמיד)
+**אחרי כל שינוי בקוד האפליקציה** (js, css, html, sw, tests) — **פרסם מיד בסיום העבודה**, בלי לחכות שהמשתמש יבקש.
 
-כל push ל-`main` מפריס ל-GitHub Pages תוך ~1 דקה.
+## צעדים (חובה)
 
-- **URL עדכני:** `https://yogevlasri1-beep.github.io/cake-production-tracker/`
-
-## Vercel (דורש חיבור)
-
-`https://yogevcakee.vercel.app` (פרויקט **yogevcakee**) — **לא מתעדכן אוטומטית** אם חיבור Git נותק.
-
-אחרי שינוי משמעותי:
 1. `./scripts/bump-version.sh`
-2. `./scripts/publish-to-vercel.sh "תיאור"`
-3. `./scripts/verify-deploy.sh` — אם Vercel לא מעודכן, ראה `scripts/FIX-VERCEL.md`
+2. `./scripts/publish-to-vercel.sh "תיאור קצר של השינוי"` — commit + push ל-`main`
+3. אם `verify-deploy` נכשל — `./scripts/verify-deploy.sh` וטפל לפי `scripts/FIX-VERCEL.md`
 
-`vercel.json` מוגדר ל-proxy ל-GitHub Pages — אחרי Redeploy חד-פעמי ב-Vercel, שני ה-URLים יציגו אותה גרסה.
+## מתי לא לפרסם
+
+- שינויי תיעוד בלבד (README, הערות) — לא חובה
+- המשתמש ביקש במפורש **לא** לפרסם / לא לעשות commit
+
+## URLs
+
+- Production: `https://yogevcakee.vercel.app`
+- GitHub Pages: `https://yogevlasri1-beep.github.io/cake-production-tracker/`
+- אחרי deploy: `/?force-update=1` אם ה-PWA תקוע על גרסה ישנה
+
+## אל תשתמש ב-Vercel Drop
+
+הפריסה הרשמית: GitHub → GitHub Pages + Vercel proxy.
