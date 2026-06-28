@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=171';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=171';
-import { defaultColorForIndex } from './chart.js?v=171';
+} from './validators.js?v=172';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=172';
+import { defaultColorForIndex } from './chart.js?v=172';
 
 export { ValidationError };
 
@@ -3298,7 +3298,7 @@ export async function startProductionRun({
 
   const startedAt = mergeDateIntoIso(date, nowISO());
 
-  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, async () => {
+  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.flowPreparations, db.runPreparationChecks, async () => {
     const runId = await db.productionRuns.add({
       date,
       batchNumber: batch,
