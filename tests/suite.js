@@ -1,18 +1,18 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=179';
+} from '../js/validators.js?v=180';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=179';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=179';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=179';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=179';
-import { parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows, parseQuantityUnit } from '../js/supplier-import.js?v=179';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=179';
+} from '../js/calc.js?v=180';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=180';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=180';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=180';
+import { parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows, parseQuantityUnit } from '../js/supplier-import.js?v=180';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=180';
 
 export async function runAllTests() {
   /* validators */
@@ -63,6 +63,17 @@ export async function runAllTests() {
     assertEqual(meta.headerRowIndex, 0);
   });
 
+  test('detectSupplierSheetFormat — חומר גלם alias + title rows', () => {
+    const rows = [
+      ['רשימת מחירים'],
+      ['חומר גלם', 'כמות', 'ספק א'],
+      ['קמח', '1 ק"ג', '5'],
+    ];
+    const meta = detectSupplierSheetFormat(rows);
+    assertOk(meta);
+    assertEqual(meta.headerRowIndex, 1);
+  });
+
   test('parseSupplierSheetRows — current + history', () => {
     const rows = [
       ['מוצר', 'כמות שבועית', 'פוליבה', 'מחיר', 'עודכן בתאריך', 'מחיר', 'עודכן בתאריך'],
@@ -78,6 +89,42 @@ export async function runAllTests() {
     assertEqual(entries[1].effectiveDate, '2022-02-24');
     assertEqual(entries[2].price, 18.5);
     assertEqual(entries[2].effectiveDate, '2023-12-06');
+  });
+
+  test('parseSupplierSheetRows — material without price still imported', () => {
+    const rows = [
+      ['מוצר', 'כמות שבועית', 'ספק'],
+      ['שמן', 'ליטר', ''],
+    ];
+    const meta = detectSupplierSheetFormat(rows);
+    const entries = parseSupplierSheetRows(rows, 'ספק', meta);
+    assertEqual(entries.length, 1);
+    assertEqual(entries[0].materialName, 'שמן');
+    assertEqual(entries[0].price, null);
+  });
+
+  test('parseSupplierSheetRows — history without date uses today', () => {
+    const rows = [
+      ['מוצר', 'כמות', 'ספק'],
+      ['חמאה', 'ק"ג', '', '12', ''],
+    ];
+    const meta = detectSupplierSheetFormat(rows);
+    const entries = parseSupplierSheetRows(rows, 'ספק', meta);
+    assertEqual(entries.length, 2);
+    assertEqual(entries[0].price, 12);
+    assertEqual(entries[1].price, 12);
+  });
+
+  test('parseSupplierSheetRows — empty current price uses latest history', () => {
+    const rows = [
+      ['מוצר', 'כמות', 'ספק', 'מחיר', 'תאריך'],
+      ['סוכר', 'ק"ג', '', '10', '1/1/24', '12', '1/6/24'],
+    ];
+    const meta = detectSupplierSheetFormat(rows);
+    const entries = parseSupplierSheetRows(rows, 'ספק', meta);
+    const current = entries.find((e) => e.effectiveDate === new Date().toISOString().slice(0, 10));
+    assertOk(current);
+    assertEqual(current.price, 12);
   });
 
   test('parseQuantityUnit — carton and bag', () => {

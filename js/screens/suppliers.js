@@ -403,26 +403,73 @@ async function openMergeDuplicatesModal(container, supMap) {
 
 /* ── צפייה: ספקים + תמחור ── */
 
+function browseSearchMatch(text, search) {
+  if (!search) return true;
+  return String(text || '').toLocaleLowerCase('he').includes(search);
+}
+
+function filterBrowseLayout(layout, search) {
+  if (!search) return layout;
+  const categories = layout.categories
+    .map((cat) => {
+      const suppliers = cat.suppliers
+        .map((sup) => {
+          const supMatch = browseSearchMatch(sup.name, search);
+          const materials = supMatch
+            ? sup.materials
+            : sup.materials.filter((m) => browseSearchMatch(m.name, search));
+          if (!supMatch && !materials.length) return null;
+          return { ...sup, materials, autoExpand: true };
+        })
+        .filter(Boolean);
+      if (!suppliers.length) return null;
+      return { ...cat, suppliers };
+    })
+    .filter(Boolean);
+  return { ...layout, categories };
+}
+
 async function renderBrowseTab(body, container) {
   const layout = await getSuppliersBrowseLayout();
+  const search = (container.dataset.browseSearch || '').trim().toLocaleLowerCase('he');
+  const filtered = filterBrowseLayout(layout, search);
+  const expandedIds = new Set(
+    JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
+  );
   const hasData = layout.categories.some((c) => c.suppliers.length);
 
   body.innerHTML = `
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0">לחץ על חומר גלם לצפייה בהיסטוריית מחירים · אותו מוצר אצל כמה ספקים מוצג בנפרד</p>
+      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים</p>
+      ${hasData ? `
+      <div class="form-group" style="margin:0">
+        <input type="search" id="browse-search" class="catalog-search-input"
+          placeholder="חיפוש ספק או חומר גלם..." value="${escapeHtml(container.dataset.browseSearch || '')}">
+      </div>` : ''}
     </div>
-    ${hasData ? layout.categories.map(renderBrowseCategoryBlock).join('') : `
+    ${hasData ? filtered.categories.map((cat) => renderBrowseCategoryBlock(cat, { search, expandedIds })).join('')
+    : `
     <div class="empty-state">
       <div class="empty-state-icon">🚚</div>
       <p>אין ספקים עדיין</p>
       <button type="button" class="btn btn-primary btn-sm" id="browse-go-edit">עבור לעריכה</button>
-    </div>`}`;
+    </div>`}
+    ${search && hasData && !filtered.categories.length
+    ? '<p class="form-hint" style="text-align:center;padding:16px">לא נמצאו תוצאות</p>' : ''}`;
 
   document.getElementById('browse-go-edit')?.addEventListener('click', () => switchSupplierTab('edit'));
 
+  document.getElementById('browse-search')?.addEventListener('input', (e) => {
+    container.dataset.browseSearch = e.target.value;
+    renderBrowseTab(body, container);
+  });
+
   body.querySelectorAll('.browse-material-row').forEach((row) => {
-    row.addEventListener('click', () => openMaterialDetailModal(container, Number(row.dataset.materialId)));
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openMaterialDetailModal(container, Number(row.dataset.materialId));
+    });
   });
 
   body.querySelectorAll('.category-toggle-browse').forEach((btn) => {
@@ -430,9 +477,22 @@ async function renderBrowseTab(body, container) {
       btn.closest('.supplier-browse-cat')?.classList.toggle('is-collapsed');
     });
   });
+
+  body.querySelectorAll('.supplier-toggle-browse').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const block = btn.closest('.supplier-browse-block');
+      const supId = Number(block?.dataset.supplierId);
+      block?.classList.toggle('is-collapsed');
+      if (supId) {
+        if (block?.classList.contains('is-collapsed')) expandedIds.delete(supId);
+        else expandedIds.add(supId);
+        container.dataset.browseExpanded = JSON.stringify([...expandedIds]);
+      }
+    });
+  });
 }
 
-function renderBrowseCategoryBlock(cat) {
+function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
   if (!cat.suppliers.length) return '';
   const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0);
   return `
@@ -442,15 +502,20 @@ function renderBrowseCategoryBlock(cat) {
         <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} חומרים</span>
       </button>
       <div class="supplier-browse-cat-body">
-        ${cat.suppliers.map(renderBrowseSupplierBlock).join('')}
+        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds })).join('')}
       </div>
     </div>`;
 }
 
-function renderBrowseSupplierBlock(supplier) {
+function renderBrowseSupplierBlock(supplier, { search, expandedIds } = {}) {
+  const expanded = supplier.autoExpand || expandedIds.has(supplier.id);
+  const collapsedClass = expanded ? '' : ' is-collapsed';
   return `
-    <section class="supplier-browse-block">
-      <h3 class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</h3>
+    <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}">
+      <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
+        <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
+        <span class="supplier-browse-sup-meta">${supplier.materials.length} חומרים</span>
+      </button>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
         ${supplier.materials.map((m) => `
@@ -459,7 +524,7 @@ function renderBrowseSupplierBlock(supplier) {
           <span class="browse-mat-price">${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}</span>
         </button>`).join('')}
       </div>`
-    : '<p class="form-hint">אין חומרי גלם</p>'}
+    : '<p class="form-hint supplier-browse-empty">אין חומרי גלם</p>'}
     </section>`;
 }
 

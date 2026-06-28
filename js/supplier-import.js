@@ -125,15 +125,32 @@ export function parseQuantityUnit(raw) {
   return { unit, packageWeightGrams };
 }
 
+function isMaterialColumnHeader(cell) {
+  const a = cleanCell(cell).toLowerCase();
+  if (!a) return false;
+  if (a === 'מוצר' || a.startsWith('מוצר')) return true;
+  return headerKey(cell) === 'material';
+}
+
 /** פורמט: גיליון לכל ספק — מוצר | כמות | מחיר נוכחי | מחיר+תאריך... */
 export function detectSupplierSheetFormat(rows) {
   for (let ri = 0; ri < Math.min(rows.length, 25); ri++) {
-    const a = cleanCell(rows[ri]?.[0]).toLowerCase();
-    if (a === 'מוצר' || a.startsWith('מוצר')) {
+    if (isMaterialColumnHeader(rows[ri]?.[0])) {
       return { headerRowIndex: ri };
     }
   }
   return null;
+}
+
+function parseSheetHistoryEntries(row, base) {
+  const historyEntries = [];
+  for (let c = 3; c < row.length; c += 2) {
+    const price = parsePrice(row[c]);
+    if (price == null) continue;
+    const date = parseEffectiveDate(row[c + 1]) || todayISO();
+    historyEntries.push({ ...base, price, effectiveDate: date });
+  }
+  return historyEntries;
 }
 
 export function parseSupplierSheetRows(rows, supplierName, meta) {
@@ -147,33 +164,30 @@ export function parseSupplierSheetRows(rows, supplierName, meta) {
     if (!materialName || /^(סה|total|סך|סה"כ)/i.test(materialName)) continue;
 
     const { unit, packageWeightGrams } = parseQuantityUnit(row[1]);
+    const base = {
+      materialName,
+      supplierName: supplier,
+      unit,
+      packageWeightGrams,
+      categoryName: '',
+    };
 
+    const historyEntries = parseSheetHistoryEntries(row, base);
     const currentPrice = parsePrice(row[2]);
+
     if (currentPrice != null) {
-      entries.push({
-        materialName,
-        supplierName: supplier,
-        price: currentPrice,
-        effectiveDate: todayISO(),
-        unit,
-        packageWeightGrams,
-        categoryName: '',
-      });
+      entries.push({ ...base, price: currentPrice, effectiveDate: todayISO() });
+    } else if (historyEntries.length) {
+      const latest = historyEntries.reduce((best, e) => (
+        e.effectiveDate >= best.effectiveDate ? e : best
+      ));
+      entries.push({ ...base, price: latest.price, effectiveDate: todayISO() });
     }
 
-    for (let c = 3; c + 1 < row.length; c += 2) {
-      const price = parsePrice(row[c]);
-      const date = parseEffectiveDate(row[c + 1]);
-      if (price == null || !date) continue;
-      entries.push({
-        materialName,
-        supplierName: supplier,
-        price,
-        effectiveDate: date,
-        unit,
-        packageWeightGrams,
-        categoryName: '',
-      });
+    entries.push(...historyEntries);
+
+    if (currentPrice == null && !historyEntries.length) {
+      entries.push({ ...base, price: null, effectiveDate: todayISO() });
     }
   }
   return entries;
@@ -312,10 +326,8 @@ function parseWorkbookSheets(wb, XLSX) {
     if (!meta) continue;
 
     const entries = parseSupplierSheetRows(rows, sheetName, meta);
-    if (entries.length) {
-      allEntries.push(...entries);
-      sheets.push({ name: sheetName, entries: entries.length });
-    }
+    allEntries.push(...entries);
+    sheets.push({ name: sheetName, entries: entries.length });
   }
 
   if (allEntries.length) {
