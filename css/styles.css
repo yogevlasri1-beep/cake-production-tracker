@@ -1603,6 +1603,16 @@ body {
 .manage-flows-overview--bottom {
   margin-top: 24px;
   margin-bottom: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.manage-target-flows .flow-pick-list {
+  max-height: 260px;
+}
+
+.manage-flows-overview--bottom .flow-pick-list {
+  max-height: 360px;
 }
 
 .manage-portions-section {
