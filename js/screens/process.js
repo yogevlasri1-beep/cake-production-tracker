@@ -16,11 +16,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=175';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=175';
-import { openModal, closeModal } from '../modal.js?v=175';
-import { requestAutoBackupNow } from '../backup-service.js?v=175';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=175';
+} from '../db.js?v=176';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=176';
+import { openModal, closeModal } from '../modal.js?v=176';
+import { requestAutoBackupNow } from '../backup-service.js?v=176';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=176';
 
 function parseIdList(str) {
   try {
@@ -241,9 +241,14 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
   const { flowsByCategory, flowsByGroup, otherFlows } = bucketFlowsForCatalog(flowsOverview, layout);
 
   const renderFlowRow = (f) => `
-    <div class="list-item-meta flows-overview-row" style="padding:6px 0;border-bottom:1px solid var(--border)">
-      <strong>${escapeHtml(f.name)}</strong>${f.isDefault ? ' ★' : ''} · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים
-    </div>`;
+    <button type="button" class="flows-overview-open"
+      data-flow-id="${f.id}"
+      data-target-type="${f.targetType}"
+      data-group-id="${f.groupId || f.categoryGroupId || ''}"
+      data-category-id="${f.categoryId || ''}">
+      <strong>${escapeHtml(f.name)}</strong>${f.isDefault ? ' ★' : ''}
+      <span class="flows-overview-open-meta"> · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
+    </button>`;
 
   const sections = [];
   for (const group of layout.groups) {
@@ -284,6 +289,16 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
   }
 
   return sections.join('');
+}
+
+function openFlowInManageView(container, { flowId, targetType, groupId, categoryId }) {
+  container.dataset.view = 'manage';
+  container.dataset.manageTarget = targetType === 'category' ? 'category' : 'group';
+  container.dataset.manageGroup = groupId || '';
+  container.dataset.manageCategory = categoryId || '';
+  container.dataset.manageFlowId = flowId || '';
+  if (groupId) container.dataset.managePortionGroup = groupId;
+  renderProcess(container);
 }
 
 function runTitle(run, catMap, productMap, groupMap) {
@@ -1815,12 +1830,12 @@ async function renderManageView(container, ctx) {
 
   container.querySelectorAll('.manage-flow-pick').forEach((btn) => {
     btn.addEventListener('click', () => {
-      container.dataset.manageTarget = btn.dataset.targetType === 'category' ? 'category' : 'group';
-      container.dataset.manageGroup = btn.dataset.groupId || '';
-      container.dataset.manageCategory = btn.dataset.categoryId || '';
-      container.dataset.manageFlowId = btn.dataset.flowId || '';
-      if (btn.dataset.groupId) container.dataset.managePortionGroup = btn.dataset.groupId;
-      renderProcess(container);
+      openFlowInManageView(container, {
+        flowId: btn.dataset.flowId,
+        targetType: btn.dataset.targetType,
+        groupId: btn.dataset.groupId,
+        categoryId: btn.dataset.categoryId,
+      });
     });
   });
 
@@ -2640,6 +2655,7 @@ export async function renderProcess(container) {
     ${flowsOverview.length ? `
     <div class="card flows-overview">
       <div class="card-title">תזרימים מוגדרים (${flowsOverview.length})</div>
+      <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לצפייה בשלבים — ללא הפעלת תהליך</p>
       ${renderFlowsOverviewGrouped(flowsOverview, layout)}
     </div>` : ''}
 
@@ -2689,6 +2705,17 @@ export async function renderProcess(container) {
   document.getElementById('manage-flow')?.addEventListener('click', () => {
     container.dataset.view = 'manage';
     renderProcess(container);
+  });
+
+  container.querySelectorAll('.flows-overview-open').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openFlowInManageView(container, {
+        flowId: btn.dataset.flowId,
+        targetType: btn.dataset.targetType,
+        groupId: btn.dataset.groupId,
+        categoryId: btn.dataset.categoryId,
+      });
+    });
   });
 
   container.querySelectorAll('.open-run').forEach((btn) => {

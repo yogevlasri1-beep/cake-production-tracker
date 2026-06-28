@@ -1015,6 +1015,31 @@ body {
   margin: 8px 0 4px;
 }
 
+.flows-overview-open {
+  display: block;
+  width: 100%;
+  text-align: right;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.flows-overview-open:hover {
+  background: var(--surface-alt, #f8fafc);
+  border-color: var(--primary, #2563eb);
+}
+
+.flows-overview-open-meta {
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
 .supplier-cat-chip-row {
   align-items: center;
 }
