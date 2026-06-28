@@ -638,28 +638,31 @@ async function renderEditTab(body, container, categories, selectedMatCat, select
       .catch((err) => showToast(err.message || 'שגיאה'));
   });
 
-  await renderEditSections(document.getElementById('supplier-edit-sections'), container, categories, selectedMatCat, selectedSupCat);
+  await renderEditSections(document.getElementById('supplier-edit-sections'), container, categories, selectedMatCat);
 }
 
-async function renderEditSections(host, container, categories, selectedMatCat, selectedSupCat) {
-  const [materials, suppliers] = await Promise.all([
+async function renderEditSections(host, container, categories, selectedMatCat) {
+  const [materials, allSuppliers] = await Promise.all([
     getRawMaterials(Number(selectedMatCat)),
-    getSuppliers(Number(selectedSupCat)),
+    getSuppliers(),
   ]);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
-  const supMap = new Map((await getSuppliers()).map((s) => [s.id, s.name]));
+  const supMap = new Map(allSuppliers.map((s) => [s.id, s.name]));
+  const suppliersByCat = new Map(categories.map((c) => [c.id, []]));
+  for (const s of allSuppliers) {
+    if (suppliersByCat.has(s.categoryId)) suppliersByCat.get(s.categoryId).push(s);
+  }
+  const expandedCatIds = new Set(
+    JSON.parse(container.dataset.editExpandedCats || '[]').map(Number).filter(Boolean),
+  );
 
   host.innerHTML = `
     <div class="card">
-      <div class="card-title">קטגוריות</div>
+      <div class="card-title">קטגוריות · סינון חומרי גלם</div>
       <div class="workspace-chip-row supplier-cat-chip-row">
         ${categories.map((c) => `
-          <span class="supplier-cat-chip-wrap">
-            <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
-              data-mat-cat="${c.id}">${escapeHtml(c.name)}</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-icon edit-sup-cat" data-id="${c.id}" data-name="${escapeHtml(c.name)}" title="שינוי שם">✏️</button>
-            <button type="button" class="btn btn-danger btn-sm btn-icon del-sup-cat" data-id="${c.id}" data-name="${escapeHtml(c.name)}" title="מחיקה">🗑</button>
-          </span>`).join('')}
+          <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
+            data-mat-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
       </div>
     </div>
     <div class="card">
@@ -689,44 +692,34 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
       </div>`}
     </div>
     <div class="card">
-      <div class="filter-row" style="margin-bottom:12px">
-        <div class="card-title" style="margin:0;flex:1">ספקים · ${escapeHtml(catMap.get(Number(selectedSupCat)) || '')}</div>
-        <button type="button" class="btn btn-primary btn-sm" id="add-supplier">+ ספק</button>
-      </div>
-      <div class="workspace-chip-row" style="margin-bottom:10px">
-        ${categories.map((c) => `
-          <button type="button" class="workspace-chip${String(c.id) === String(selectedSupCat) ? ' active' : ''}"
-            data-sup-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
-      </div>
-      ${suppliers.length === 0
-    ? '<p class="form-hint">אין ספקים — ייבא מ-Excel או הוסף ידנית</p>'
-    : `<div class="supplier-list" data-cat-id="${selectedSupCat}">
-        ${suppliers.map((s, i) => `
-        <div class="list-item supplier-list-item" data-supplier-id="${s.id}">
-          <button type="button" class="supplier-drag-handle" aria-label="גרור">☰</button>
-          <span class="supplier-order-num">${i + 1}</span>
-          <button type="button" class="list-item-info edit-sup-open" data-id="${s.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
-            <div class="list-item-name">${escapeHtml(s.name)}</div>
-            <div class="list-item-meta">${escapeHtml(catMap.get(s.categoryId) || 'ללא קטגוריה')}${s.whatsapp ? ` · 📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? ` · 📞 ${escapeHtml(s.phone)}` : '')}</div>
-          </button>
-          <div class="list-item-actions">
-            <button type="button" class="btn btn-danger btn-sm del-sup" data-id="${s.id}">🗑</button>
-          </div>
-        </div>`).join('')}
-      </div>`}
+      <div class="card-title" style="margin-bottom:10px">ספקים לפי קטגוריה</div>
+      <p class="form-hint" style="margin:0 0 12px">לחץ על קטגוריה לפתיחה · לחץ על ספק לעריכה</p>
+      ${categories.length === 0
+    ? '<p class="form-hint">אין קטגוריות — הוסף קטגוריה למעלה</p>'
+    : categories.map((cat) => renderEditSupplierCategoryBlock(
+      cat,
+      suppliersByCat.get(cat.id) || [],
+      expandedCatIds.has(cat.id),
+    )).join('')}
     </div>`;
 
   host.querySelectorAll('[data-mat-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       container.dataset.matCat = btn.dataset.matCat;
-      container.dataset.supCat = btn.dataset.matCat;
       renderSuppliers(container);
     });
   });
-  host.querySelectorAll('[data-sup-cat]').forEach((btn) => {
+
+  host.querySelectorAll('.edit-cat-toggle').forEach((btn) => {
     btn.addEventListener('click', () => {
-      container.dataset.supCat = btn.dataset.supCat;
-      renderSuppliers(container);
+      const block = btn.closest('.supplier-edit-cat');
+      const catId = Number(block?.dataset.catId);
+      block?.classList.toggle('is-collapsed');
+      if (catId) {
+        if (block?.classList.contains('is-collapsed')) expandedCatIds.delete(catId);
+        else expandedCatIds.add(catId);
+        container.dataset.editExpandedCats = JSON.stringify([...expandedCatIds]);
+      }
     });
   });
 
@@ -778,13 +771,16 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
     });
   });
 
-  document.getElementById('add-supplier')?.addEventListener('click', () => {
-    openAddSupplierModal(container, Number(selectedSupCat), categories);
+  host.querySelectorAll('.add-supplier-cat').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openAddSupplierModal(container, Number(btn.dataset.catId), categories);
+    });
   });
 
   host.querySelectorAll('.edit-sup-open').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const s = suppliers.find((x) => x.id === Number(btn.dataset.id));
+      const s = allSuppliers.find((x) => x.id === Number(btn.dataset.id));
       if (s) openEditSupplierModal(container, s, categories);
     });
   });
@@ -802,11 +798,51 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
       await setRawMaterialOrder(Number(selectedMatCat), orderedIds);
     });
   }
-  if (suppliers.length) {
-    bindSupplierDragList(host, Number(selectedSupCat), async (orderedIds) => {
-      await setSupplierOrder(Number(selectedSupCat), orderedIds);
-    });
+  for (const cat of categories) {
+    const list = host.querySelector(`.supplier-list[data-cat-id="${cat.id}"]`);
+    const catSuppliers = suppliersByCat.get(cat.id) || [];
+    if (list && catSuppliers.length) {
+      bindSupplierDragList(list.closest('.supplier-edit-cat') || host, cat.id, async (orderedIds) => {
+        await setSupplierOrder(cat.id, orderedIds);
+      });
+    }
   }
+}
+
+function renderEditSupplierCategoryBlock(cat, suppliers, expanded) {
+  const collapsedClass = expanded ? '' : ' is-collapsed';
+  return `
+    <section class="supplier-browse-cat supplier-edit-cat${collapsedClass}" data-cat-id="${cat.id}">
+      <div class="supplier-edit-cat-header-row">
+        <button type="button" class="supplier-browse-cat-header edit-cat-toggle">
+          <span class="supplier-browse-cat-name">${escapeHtml(cat.name)}</span>
+          <span class="supplier-browse-cat-meta">${suppliers.length} ספקים</span>
+        </button>
+        <div class="supplier-edit-cat-actions">
+          <button type="button" class="btn btn-primary btn-sm add-supplier-cat" data-cat-id="${cat.id}" title="ספק חדש">+</button>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon edit-sup-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" title="שינוי שם">✏️</button>
+          <button type="button" class="btn btn-danger btn-sm btn-icon del-sup-cat" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" title="מחיקה">🗑</button>
+        </div>
+      </div>
+      <div class="supplier-browse-cat-body">
+        ${suppliers.length === 0
+    ? '<p class="form-hint">אין ספקים — לחץ + להוספה</p>'
+    : `<div class="supplier-list" data-cat-id="${cat.id}">
+        ${suppliers.map((s, i) => `
+        <div class="list-item supplier-list-item" data-supplier-id="${s.id}">
+          <button type="button" class="supplier-drag-handle" aria-label="גרור">☰</button>
+          <span class="supplier-order-num">${i + 1}</span>
+          <button type="button" class="list-item-info edit-sup-open" data-id="${s.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
+            <div class="list-item-name">${escapeHtml(s.name)}</div>
+            <div class="list-item-meta">${s.whatsapp ? `📱 ${escapeHtml(s.whatsapp)}` : (s.phone ? `📞 ${escapeHtml(s.phone)}` : 'ללא טלפון')}</div>
+          </button>
+          <div class="list-item-actions">
+            <button type="button" class="btn btn-danger btn-sm del-sup" data-id="${s.id}">🗑</button>
+          </div>
+        </div>`).join('')}
+      </div>`}
+      </div>
+    </section>`;
 }
 
 function openAddMaterialModal(container, categoryId, suppliers) {

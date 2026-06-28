@@ -5516,6 +5516,35 @@ body.supplier-drag-active {
   content: '▸';
 }
 
+.supplier-edit-cat {
+  margin-bottom: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.supplier-edit-cat:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.supplier-edit-cat-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.supplier-edit-cat-header-row .supplier-browse-cat-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.supplier-edit-cat-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .supplier-browse-block {
   margin-top: 8px;
   border: 1px solid var(--border);
