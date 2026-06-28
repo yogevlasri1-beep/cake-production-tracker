@@ -406,7 +406,6 @@ async function mergeDupGroupFromUI(gi, container) {
   await mergeDuplicateMaterialsKeeping(checked, mergeIds);
   showToast('אוחד ✓');
   requestAutoBackupNow().catch(() => {});
-  renderSuppliers(container);
   await refreshMergeDuplicatesModal(container);
 }
 
@@ -424,7 +423,7 @@ async function openMergeDuplicatesModal(container) {
     modalClass: 'modal-merge-dup',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0">סמן את הספקים/רשומות שיישארו — השאר יאוחדו (החלון נשאר פתוח לקבוצה הבאה)</p>
-      <div class="merge-dup-groups" data-groups-json='${JSON.stringify(groups.map((g) => ({ materials: g.materials.map((m) => m.id) })))}'>
+      <div class="merge-dup-groups">
         ${renderMergeDupGroupsHTML(groups, supMap)}
       </div>`,
     footerHTML: `
@@ -432,9 +431,17 @@ async function openMergeDuplicatesModal(container) {
       <button class="btn btn-secondary modal-cancel">סגור</button>`,
   });
 
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.querySelector('.modal-cancel')?.addEventListener('click', () => {
+    closeModal();
+    renderSuppliers(container);
+  });
 
   const host = document.querySelector('.merge-dup-groups');
+  if (host) {
+    host.dataset.groupsJson = JSON.stringify(groups.map((g) => ({
+      materials: g.materials.map((m) => m.id),
+    })));
+  }
   host?.addEventListener('click', async (e) => {
     const btn = e.target.closest('.merge-group-btn');
     if (!btn) return;

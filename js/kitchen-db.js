@@ -1591,8 +1591,8 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
     for (const mid of ids) {
       await mergeMaterialIntoKeep(keep, mid);
     }
-    await syncRawMaterialLatestPrice(keep);
   });
+  await syncRawMaterialLatestPrice(keep);
 }
 
 async function mergeMaterialIntoKeep(keep, mid) {
@@ -1627,8 +1627,8 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
     if (m.supplierId && !keepBySupplier.has(m.supplierId)) keepBySupplier.set(m.supplierId, m.id);
   }
 
+  const touched = new Set();
   await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
-    const touched = new Set();
     for (const mid of ids) {
       const mat = await db.rawMaterials.get(mid);
       if (!mat) continue;
@@ -1637,10 +1637,10 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
       await mergeMaterialIntoKeep(target, mid);
       touched.add(target);
     }
-    for (const kid of touched) {
-      await syncRawMaterialLatestPrice(kid);
-    }
   });
+  for (const kid of touched) {
+    await syncRawMaterialLatestPrice(kid);
+  }
 }
 
 export async function getPriceHistory(rawMaterialId) {
