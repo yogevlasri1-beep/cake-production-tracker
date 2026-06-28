@@ -684,7 +684,7 @@ export async function getRecipeForProduct(productId) {
 
 export async function addRecipe({
   categoryId, name, linkedProductId, linkedProductIds, linkedProductCategoryId,
-  yieldPortions, portionWeightGrams, notes,
+  yieldPortions, portionWeightGrams, showTotalAsPortions, notes,
   hasBaking, bakingProfileId, bakeTempC, bakeTimeMinutes, bakeSteamSeconds, bakeDryMinutes, bakeOvenType,
 }) {
   const cid = sanitizeProductId(categoryId);
@@ -710,6 +710,7 @@ export async function addRecipe({
     linkedProductCategoryId: linkCatId,
     yieldPortions: yp,
     portionWeightGrams: portionG,
+    showTotalAsPortions: !!showTotalAsPortions,
     notes: String(notes || '').trim().slice(0, 2000),
     sortOrder: maxOrder + 1,
     ...baking,
@@ -752,6 +753,9 @@ export async function updateRecipe(id, patch) {
     data.portionWeightGrams = data.portionWeightGrams != null && data.portionWeightGrams !== ''
       ? sanitizeQuantity(data.portionWeightGrams, { allowZero: false })
       : null;
+  }
+  if ('showTotalAsPortions' in data) {
+    data.showTotalAsPortions = !!data.showTotalAsPortions;
   }
   if ('hasBaking' in data || 'bakingProfileId' in data) {
     Object.assign(data, normalizeRecipeBakingFields(data));
@@ -818,7 +822,13 @@ export function formatKgWeight(kg) {
 export function getRecipeWeightSummary(ingredients, options = {}) {
   const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, options);
   const totalRecipeKg = roundQty(totalKg + totalLiters);
-  const mainText = totalRecipeKg > 0 ? formatKgWeight(totalRecipeKg) : '';
+  const recipe = options.recipe;
+  const yieldP = Number(recipe?.yieldPortions) || 0;
+  const showAsPortions = !!recipe?.showTotalAsPortions && yieldP > 0;
+  const weightText = totalRecipeKg > 0 ? formatKgWeight(totalRecipeKg) : '';
+  const mainText = showAsPortions
+    ? `${formatRecipeQuantity(yieldP)} מנות${weightText ? ` (${weightText})` : ''}`
+    : weightText;
   const breakdownParts = [];
   if (totalKg > 0) breakdownParts.push(`יבשים: ${formatKgWeight(totalKg)}`);
   if (totalLiters > 0) breakdownParts.push(`נוזלים: ${roundQty(totalLiters)} ליטר`);
@@ -829,6 +839,7 @@ export function getRecipeWeightSummary(ingredients, options = {}) {
     totalRecipeKg,
     dryKg: totalKg,
     liquidLiters: totalLiters,
+    showAsPortions,
   };
 }
 
@@ -1150,6 +1161,29 @@ export async function addSupplierCategory(name) {
   if (existing.some((c) => c.name === trimmed)) throw new ValidationError('קטגוריה כבר קיימת');
   const maxOrder = existing.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0);
   return db.supplierCategories.add({ name: trimmed, sortOrder: maxOrder + 1 });
+}
+
+export async function updateSupplierCategory(id, patch) {
+  const cid = sanitizeProductId(id);
+  if (!cid) return;
+  const data = { ...patch };
+  if ('name' in data) {
+    data.name = sanitizeName(data.name, 40);
+    if (!data.name) throw new ValidationError('שם קטגוריה לא תקין');
+    const existing = await getSupplierCategories();
+    if (existing.some((c) => c.id !== cid && c.name === data.name)) {
+      throw new ValidationError('קטגוריה כבר קיימת');
+    }
+  }
+  if (Object.keys(data).length) await db.supplierCategories.update(cid, data);
+}
+
+export async function setSupplierCategoryOrder(orderedIds) {
+  await db.transaction('rw', db.supplierCategories, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await db.supplierCategories.update(Number(orderedIds[i]), { sortOrder: i + 1 });
+    }
+  });
 }
 
 export async function deleteSupplierCategory(id) {

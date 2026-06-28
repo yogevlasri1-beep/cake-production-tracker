@@ -21,4 +21,4 @@ zip -r "$OUT" . \
   -x 'plugins/*'
 echo "Created: $OUT"
 echo "→ Vercel Dashboard → yogevcakee → Deployments → ⋯ → Redeploy"
-echo "→ או: https://vercel.com/new/drop — גרור את ה-zip"
+echo "→ או: https://vercel.cpom/new/dro — גרור את ה-zip"

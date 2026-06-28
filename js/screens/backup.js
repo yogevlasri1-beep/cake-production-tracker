@@ -13,12 +13,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=169';
-import { describeDownloadMethod } from '../download.js?v=169';
-import { showToast, escapeHtml } from '../utils.js?v=169';
-import { openModal, closeModal } from '../modal.js?v=169';
-import { APP_VERSION } from '../version.js?v=169';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=169';
+} from '../backup-service.js?v=171';
+import { describeDownloadMethod } from '../download.js?v=171';
+import { showToast, escapeHtml } from '../utils.js?v=171';
+import { openModal, closeModal } from '../modal.js?v=171';
+import { APP_VERSION } from '../version.js?v=171';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=171';
 
 function formatWhen(iso) {
   if (!iso) return '—';

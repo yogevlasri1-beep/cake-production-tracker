@@ -28,7 +28,9 @@ const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
 const RECIPE_TAB_KEY = 'yitzurRecipeTab';
 const RECIPE_SEARCH_KEY = 'yitzurRecipeSearch';
+const RECIPE_EDIT_SEARCH_KEY = 'yitzurRecipeEditSearch';
 const RATIO_RECIPE_KEY = 'yitzurRatioRecipeId';
+const RATIO_CAT_KEY = 'yitzurRatioRecipeCatId';
 
 export const RECIPE_TABS = {
   browse: { id: 'browse', label: 'מתכונים', subtitle: 'צפייה, חיפוש וספר מתכונים' },
@@ -128,6 +130,9 @@ function renderRecipeItem(r, index, mode = 'edit') {
     </div>`;
   }
   const checked = selectedRecipeIds.has(r.id) ? 'checked' : '';
+  const portionsMeta = r.showTotalAsPortions && r.yieldPortions
+    ? `סה״כ ${formatRecipeQuantity(r.yieldPortions)} מנות`
+    : `${r.yieldPortions || 1} מנות`;
   return `
     <div class="list-item recipe-list-item recipe-row-open" data-recipe-id="${r.id}" role="button" tabindex="0">
       <label class="recipe-select-wrap" title="בחר">
@@ -139,9 +144,10 @@ function renderRecipeItem(r, index, mode = 'edit') {
       </div>
       <div class="list-item-info">
         <div class="list-item-name">${escapeHtml(r.name)}</div>
-        <div class="list-item-meta">${r.yieldPortions || 1} מנות</div>
+        <div class="list-item-meta">${portionsMeta}</div>
       </div>
       <div class="list-item-actions">
+        <button type="button" class="btn btn-secondary btn-sm recipe-portions-toggle${r.showTotalAsPortions ? ' active' : ''}" data-id="${r.id}" title="הצג סה״כ במנות">${r.showTotalAsPortions ? '🍽' : '⚖'}</button>
         <button type="button" class="btn btn-danger btn-sm delete-recipe" data-id="${r.id}">🗑</button>
       </div>
     </div>`;
@@ -304,7 +310,7 @@ function bindRecipeRowOpen(container, layout, productCatalog) {
   };
   container.querySelectorAll('.recipe-row-open').forEach((row) => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.recipe-drag-handle, .delete-recipe, .recipe-select-wrap')) return;
+      if (e.target.closest('.recipe-drag-handle, .delete-recipe, .recipe-select-wrap, .recipe-portions-toggle')) return;
       openRecipeById(row.dataset.recipeId);
     });
     row.addEventListener('keydown', (e) => {
@@ -392,6 +398,10 @@ async function renderRecipesBrowse(container, { layout, productCatalog }) {
 }
 
 async function renderRecipesEdit(container, { layout, productCatalog }) {
+  const savedSearch = sessionStorage.getItem(RECIPE_EDIT_SEARCH_KEY) || '';
+  const filtered = filterRecipeLayout(layout, savedSearch);
+  const hasResults = filtered.groups.some((g) => g.categories.length > 0);
+
   container.innerHTML = `
     <div class="card">
       <div class="filter-row" style="margin-bottom:8px">
@@ -402,6 +412,9 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
         <button type="button" class="btn btn-secondary btn-sm" id="manage-recipe-cats">⚙️</button>
       </div>
     </div>
+    <div class="recipe-browse-toolbar">
+      <input type="search" class="recipe-browse-search" id="recipe-edit-search" placeholder="חיפוש מתכון..." value="${escapeHtml(savedSearch)}" autocomplete="off">
+    </div>
     <div class="section-header products-toolbar">
       <h2>קטגוריות ומתכונים</h2>
       <div class="products-toolbar-actions">
@@ -409,7 +422,12 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
         <button type="button" class="btn btn-primary btn-sm" id="add-recipe-sub-btn">+ קטגוריה</button>
       </div>
     </div>
-    ${renderRecipeCatalogHTML(layout, 'edit')}
+    ${hasResults
+    ? renderRecipeCatalogHTML(filtered, 'edit')
+    : `<div class="empty-state">
+        <div class="empty-state-icon">${savedSearch ? '🔍' : '📒'}</div>
+        <p>${savedSearch ? 'לא נמצאו מתכונים לחיפוש זה' : 'הוסף קטגוריה (מילית, בצק...) או ייבא מ-Word'}</p>
+      </div>`}
     <div id="recipe-selection-bar" class="recipe-selection-bar" hidden>
       <span class="recipe-selection-count">0 נבחרו</span>
       <button type="button" class="btn btn-secondary btn-sm" id="recipe-clear-selection">נקה</button>
@@ -419,6 +437,11 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
       <button type="button" class="btn btn-danger" id="delete-all-recipes-btn">🗑️ מחק את כל המתכונים</button>
       <p class="form-hint">מוחק רק מתכונים — קטגוריות נשארות. מתאים לפני ייבוא מחדש מ-Word.</p>
     </div>`;
+
+  document.getElementById('recipe-edit-search')?.addEventListener('input', (e) => {
+    sessionStorage.setItem(RECIPE_EDIT_SEARCH_KEY, e.target.value);
+    renderRecipesEdit(container, { layout, productCatalog });
+  });
 
   document.getElementById('delete-all-recipes-btn')?.addEventListener('click', async () => {
     const count = layout.groups.reduce(
@@ -516,6 +539,22 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
     });
   });
 
+  container.querySelectorAll('.recipe-portions-toggle').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.id);
+      const recipe = await getRecipe(id);
+      if (!recipe) return;
+      try {
+        await updateRecipe(id, { showTotalAsPortions: !recipe.showTotalAsPortions });
+        showToast(recipe.showTotalAsPortions ? 'סה״כ במשקל' : 'סה״כ במנות ✓');
+        renderRecipes(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
   container.querySelectorAll('.edit-recipe-group').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -581,21 +620,29 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
 }
 
 async function renderRecipesRatio(container, { layout }) {
-  const options = buildRecipeSelectOptions(layout);
-  const savedId = sessionStorage.getItem(RATIO_RECIPE_KEY);
-  const defaultId = savedId && options.includes(`value="${savedId}"`) ? savedId : null;
-  const optionsHtml = defaultId
-    ? options.replace(`value="${defaultId}"`, `value="${defaultId}" selected`)
-    : options;
+  const catOptions = buildRecipeCategorySelectOptions(layout);
+  const savedCatId = sessionStorage.getItem(RATIO_CAT_KEY);
+  const savedRecipeId = sessionStorage.getItem(RATIO_RECIPE_KEY);
+  const defaultCatId = (savedCatId && catOptions.includes(`value="${savedCatId}"`))
+    ? savedCatId
+    : findFirstRecipeCategoryId(layout);
+  const recipeOptions = buildRecipeSelectOptionsForCategory(layout, defaultCatId, savedRecipeId);
+  const defaultRecipeId = savedRecipeId && recipeOptions.includes(`value="${savedRecipeId}"`)
+    ? savedRecipeId
+    : null;
 
   container.innerHTML = `
     <div class="card recipe-ratio-card">
       <div class="card-title">מחשבון יחס</div>
       <p class="form-hint" style="margin-bottom:12px">סמן חומר גלם לשינוי, הזן כמות יעד — או חשב לפי משקל עוגה ומספר עוגות.</p>
-      ${options ? `
+      ${catOptions ? `
+      <div class="form-group">
+        <label>קטגוריית מתכון</label>
+        <select id="ratio-tab-cat-pick">${buildRecipeCategorySelectOptions(layout, defaultCatId)}</select>
+      </div>
       <div class="form-group">
         <label>מתכון</label>
-        <select id="ratio-tab-recipe-pick">${optionsHtml}</select>
+        <select id="ratio-tab-recipe-pick">${recipeOptions}</select>
       </div>
       <div id="ratio-tab-host"></div>` : `
       <div class="empty-state" style="padding:24px 0">
@@ -606,8 +653,19 @@ async function renderRecipesRatio(container, { layout }) {
 
   document.getElementById('ratio-go-edit')?.addEventListener('click', () => switchRecipeTab('edit'));
 
+  const catPick = document.getElementById('ratio-tab-cat-pick');
   const pick = document.getElementById('ratio-tab-recipe-pick');
   const host = document.getElementById('ratio-tab-host');
+
+  const refreshRecipeOptions = () => {
+    const catId = catPick?.value;
+    if (catId) sessionStorage.setItem(RATIO_CAT_KEY, catId);
+    if (!pick) return;
+    const prev = pick.value;
+    pick.innerHTML = buildRecipeSelectOptionsForCategory(layout, catId, prev);
+    if (!pick.value && pick.options.length) pick.selectedIndex = 0;
+  };
+
   const loadRecipe = async () => {
     const id = pick?.value;
     if (id) sessionStorage.setItem(RATIO_RECIPE_KEY, id);
@@ -615,11 +673,19 @@ async function renderRecipesRatio(container, { layout }) {
     if (!recipe || !host) return;
     bindRatioCalculator(recipe, host);
   };
-  pick?.addEventListener('change', loadRecipe);
-  if (options) await loadRecipe();
-}
 
-const BAKING_PROFILE_UNASSIGNED = '__unassigned__';
+  catPick?.addEventListener('change', () => {
+    refreshRecipeOptions();
+    loadRecipe();
+  });
+  pick?.addEventListener('change', loadRecipe);
+
+  if (catOptions) {
+    refreshRecipeOptions();
+    if (defaultRecipeId && pick) pick.value = defaultRecipeId;
+    await loadRecipe();
+  }
+}
 
 function collectBakingRecipes(layout, profileMap) {
   const items = [];
@@ -639,41 +705,22 @@ function collectBakingRecipes(layout, profileMap) {
   return items;
 }
 
-function groupBakingByProfile(items, profiles) {
-  const map = new Map();
+function groupBakingByOven(items) {
+  const groups = [
+    { key: 'large', label: RECIPE_OVEN_TYPES.large, ovenLabel: RECIPE_OVEN_TYPES.large, paramsLine: '', items: [] },
+    { key: 'small', label: RECIPE_OVEN_TYPES.small, ovenLabel: RECIPE_OVEN_TYPES.small, paramsLine: '', items: [] },
+    { key: 'other', label: 'ללא סוג תנור / אחר', ovenLabel: '', paramsLine: '', items: [] },
+  ];
+  const map = new Map(groups.map((g) => [g.key, g]));
   for (const item of items) {
-    const key = item.recipe.bakingProfileId || BAKING_PROFILE_UNASSIGNED;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key).push(item);
+    const t = item.baking.bakeOvenType;
+    const key = t === 'large' || t === 'small' ? t : 'other';
+    map.get(key).items.push(item);
   }
-  for (const list of map.values()) {
-    list.sort((a, b) => a.recipe.name.localeCompare(b.recipe.name, 'he'));
+  for (const g of groups) {
+    g.items.sort((a, b) => a.recipe.name.localeCompare(b.recipe.name, 'he'));
   }
-  const groups = [];
-  for (const profile of profiles) {
-    const profileItems = map.get(profile.id) || [];
-    if (!profileItems.length) continue;
-    groups.push({
-      key: String(profile.id),
-      profile,
-      label: profile.name,
-      ovenLabel: getRecipeOvenLabel(profile.bakeOvenType),
-      paramsLine: formatRecipeBakingParamsLine({}, profile),
-      items: profileItems,
-    });
-  }
-  const unassigned = map.get(BAKING_PROFILE_UNASSIGNED) || [];
-  if (unassigned.length) {
-    groups.push({
-      key: BAKING_PROFILE_UNASSIGNED,
-      profile: null,
-      label: 'ללא פרופיל — הגדרות ידניות',
-      ovenLabel: '',
-      paramsLine: '',
-      items: unassigned,
-    });
-  }
-  return groups;
+  return groups.filter((g) => g.items.length);
 }
 
 function renderBakingParamsCells(baking) {
@@ -747,7 +794,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
   const profiles = await getBakingProfiles();
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
   const allItems = collectBakingRecipes(layout, profileMap);
-  const groups = groupBakingByProfile(allItems, profiles);
+  const groups = groupBakingByOven(allItems);
   const recipeCounts = new Map();
   for (const profile of profiles) {
     recipeCounts.set(profile.id, allItems.filter((i) => Number(i.recipe.bakingProfileId) === profile.id).length);
@@ -771,7 +818,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     </div>
     ${allItems.length ? `
     <div class="section-header baking-recipes-header">
-      <h2>מתכונים לפי פרופיל</h2>
+      <h2>מתכונים לפי סוג תנור</h2>
       <span class="baking-total-count">${allItems.length} מתכונים</span>
     </div>
     ${groups.map(renderBakingProfileGroupCard).join('')}` : `
@@ -824,6 +871,42 @@ function buildCategorySelectOptions(groups, selectedId) {
     }
   }
   return parts.join('');
+}
+
+function buildRecipeCategorySelectOptions(layout, selectedCatId) {
+  const parts = [];
+  for (const group of layout.groups) {
+    for (const cat of group.categories) {
+      if (!cat.recipes.length) continue;
+      const sel = Number(selectedCatId) === cat.id ? ' selected' : '';
+      parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(group.name)} › ${escapeHtml(cat.name)}</option>`);
+    }
+  }
+  return parts.join('');
+}
+
+function buildRecipeSelectOptionsForCategory(layout, categoryId, selectedRecipeId) {
+  if (!categoryId) return '';
+  const parts = [];
+  for (const group of layout.groups) {
+    for (const cat of group.categories) {
+      if (Number(cat.id) !== Number(categoryId)) continue;
+      for (const r of cat.recipes) {
+        const sel = Number(selectedRecipeId) === r.id ? ' selected' : '';
+        parts.push(`<option value="${r.id}"${sel}>${escapeHtml(r.name)}</option>`);
+      }
+    }
+  }
+  return parts.join('');
+}
+
+function findFirstRecipeCategoryId(layout) {
+  for (const group of layout.groups) {
+    for (const cat of group.categories) {
+      if (cat.recipes.length) return cat.id;
+    }
+  }
+  return null;
 }
 
 function buildRecipeSelectOptions(layout) {
@@ -1423,7 +1506,7 @@ function openImportPreview(container, parsed, { groups, subs }) {
 }
 
 function renderRecipeWeightSummaryHTML(ingredients, recipe, options) {
-  const summary = getRecipeWeightSummary(ingredients, options);
+  const summary = getRecipeWeightSummary(ingredients, { ...options, recipe });
   if (!summary.mainText) return '';
 
   const portionGrams = recipe?.portionWeightGrams ? Number(recipe.portionWeightGrams) : null;
@@ -1473,6 +1556,7 @@ function getRecipeFormContext(baseRecipe) {
     ...(baseRecipe || {}),
     yieldPortions: document.getElementById('recipe-yield')?.value,
     portionWeightGrams: portionRaw ? Number(portionRaw) : null,
+    showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked || false,
   };
 }
 
@@ -2094,6 +2178,39 @@ function openRatioCalculatorPicker(layout) {
   loadRecipe();
 }
 
+function bindMaterialSearchPicker(mats) {
+  const input = document.getElementById('new-ing-mat-search');
+  const hidden = document.getElementById('new-ing-mat');
+  const list = document.getElementById('new-ing-mat-list');
+  if (!input || !hidden || !list) return;
+
+  const renderList = (filter = '') => {
+    const q = filter.trim().toLowerCase();
+    const filtered = q
+      ? mats.filter((m) => m.name.toLowerCase().includes(q))
+      : mats.slice(0, 50);
+    list.innerHTML = filtered.map((m) => `
+      <li><button type="button" class="mat-search-option" data-id="${m.id}">${escapeHtml(m.name)}</button></li>`).join('');
+    list.classList.toggle('hidden', filtered.length === 0);
+  };
+
+  input.addEventListener('input', () => {
+    hidden.value = '';
+    renderList(input.value);
+  });
+  input.addEventListener('focus', () => renderList(input.value));
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mat-search-option');
+    if (!btn) return;
+    hidden.value = btn.dataset.id;
+    input.value = mats.find((m) => m.id === Number(btn.dataset.id))?.name || '';
+    list.classList.add('hidden');
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => list.classList.add('hidden'), 150);
+  });
+}
+
 async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView }) {
   const isEdit = !!recipe;
   const ingredients = recipe?.ingredients || [];
@@ -2122,6 +2239,10 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>מנות למתכון (בסיס)</label>
         <input type="number" id="recipe-yield" min="0.1" step="0.1" value="${recipe?.yieldPortions ?? 1}">
       </div>
+      <label class="group-category-option" style="margin-bottom:12px">
+        <input type="checkbox" id="recipe-show-portions" ${recipe?.showTotalAsPortions ? 'checked' : ''}>
+        <span>הצג סה״כ במנות</span>
+      </label>
       <div class="form-group">
         <label>משקל מנה (גרם) — אופציונלי</label>
         <input type="number" id="recipe-portion-weight" min="1" step="1" placeholder="למשל: 85 — כדור בצק / מנת שקילה" value="${recipe?.portionWeightGrams ?? ''}">
@@ -2155,10 +2276,11 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   }).join('') : '<p class="form-hint">אין חומרים</p>'}
         ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeTotalHTML(ingredients, recipe)}</div>` : ''}
         <div class="filter-row" style="margin-top:8px">
-          <select id="new-ing-mat" style="flex:1">
-            <option value="">מחסן...</option>
-            ${mats.map((m) => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join('')}
-          </select>
+          <div class="mat-search-wrap" style="flex:1;position:relative">
+            <input type="text" id="new-ing-mat-search" placeholder="חפש חומר גלם..." autocomplete="off">
+            <input type="hidden" id="new-ing-mat" value="">
+            <ul class="mat-search-list hidden" id="new-ing-mat-list"></ul>
+          </div>
           <input type="text" id="new-ing-name" placeholder="שם ידני" style="flex:1">
           <input type="number" id="new-ing-qty" min="0.001" step="0.001" placeholder="כמות" style="width:72px">
           <select id="new-ing-unit" style="width:72px">
@@ -2184,6 +2306,8 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
 
   bindRecipeBakingFormToggle(bakingProfiles);
 
+  if (isEdit) bindMaterialSearchPicker(mats);
+
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ingId = Number(row.dataset.ingId);
     row.querySelector('.ing-qty')?.addEventListener('change', async (e) => {
@@ -2205,13 +2329,21 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   document.getElementById('recipe-portion-weight')?.addEventListener('input', () => {
     if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe);
   });
+  document.getElementById('recipe-show-portions')?.addEventListener('change', () => {
+    if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe);
+  });
 
   document.getElementById('add-ing-btn')?.addEventListener('click', async () => {
     const matId = Number(document.getElementById('new-ing-mat')?.value);
+    const searchName = document.getElementById('new-ing-mat-search')?.value.trim();
     const manualName = document.getElementById('new-ing-name')?.value.trim();
     const qty = document.getElementById('new-ing-qty')?.value;
     const unitKind = document.getElementById('new-ing-unit')?.value || 'kg';
-    const mat = mats.find((m) => m.id === matId);
+    let mat = mats.find((m) => m.id === matId);
+    if (!mat && searchName) {
+      mat = mats.find((m) => m.name === searchName)
+        || mats.find((m) => m.name.toLowerCase() === searchName.toLowerCase());
+    }
     const name = mat?.name || manualName;
     if (!name || !qty) return showToast('הזן שם וכמות');
     try {
@@ -2254,6 +2386,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     const data = {
       name: document.getElementById('recipe-name').value.trim(),
       yieldPortions: document.getElementById('recipe-yield').value,
+      showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked || false,
       portionWeightGrams: portionRaw || null,
       linkedProductIds,
       linkedProductCategoryId: linkedProductCategoryId || null,

@@ -1,5 +1,6 @@
 import {
-  getSupplierCategories, getSuppliers, addSupplierCategory, addSupplier, updateSupplier, deleteSupplier,
+  getSupplierCategories, getSuppliers, addSupplierCategory, updateSupplierCategory, deleteSupplierCategory,
+  addSupplier, updateSupplier, deleteSupplier,
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
@@ -266,10 +267,14 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
   host.innerHTML = `
     <div class="card">
       <div class="card-title">קטגוריות</div>
-      <div class="workspace-chip-row">
+      <div class="workspace-chip-row supplier-cat-chip-row">
         ${categories.map((c) => `
-          <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
-            data-mat-cat="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
+          <span class="supplier-cat-chip-wrap">
+            <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
+              data-mat-cat="${c.id}">${escapeHtml(c.name)}</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-icon edit-sup-cat" data-id="${c.id}" data-name="${escapeHtml(c.name)}" title="שינוי שם">✏️</button>
+            <button type="button" class="btn btn-danger btn-sm btn-icon del-sup-cat" data-id="${c.id}" data-name="${escapeHtml(c.name)}" title="מחיקה">🗑</button>
+          </span>`).join('')}
       </div>
     </div>
     <div class="card">
@@ -337,6 +342,27 @@ async function renderEditSections(host, container, categories, selectedMatCat, s
     btn.addEventListener('click', () => {
       container.dataset.supCat = btn.dataset.supCat;
       renderSuppliers(container);
+    });
+  });
+
+  host.querySelectorAll('.edit-sup-cat').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const name = prompt('שם קטגוריה:', btn.dataset.name || '');
+      if (!name?.trim() || name.trim() === btn.dataset.name) return;
+      updateSupplierCategory(Number(btn.dataset.id), { name: name.trim() })
+        .then(() => { showToast('עודכן ✓'); renderSuppliers(container); })
+        .catch((err) => showToast(err.message || 'שגיאה'));
+    });
+  });
+
+  host.querySelectorAll('.del-sup-cat').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm(`למחוק קטגוריה "${btn.dataset.name}"?`)) return;
+      deleteSupplierCategory(Number(btn.dataset.id))
+        .then(() => { showToast('נמחק'); renderSuppliers(container); })
+        .catch((err) => showToast(err.message || 'שגיאה'));
     });
   });
 
