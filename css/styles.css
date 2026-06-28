@@ -5648,6 +5648,146 @@ body.supplier-drag-active {
   background: #ecfdf5;
 }
 
+.catalog-intro {
+  margin-bottom: 0;
+}
+
+.catalog-search-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: inherit;
+}
+
+.catalog-material-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.catalog-material-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: right;
+  font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.catalog-material-row:hover {
+  border-color: #0f766e;
+  background: #f0fdfa;
+}
+
+.catalog-mat-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.catalog-mat-meta {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.material-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.material-pricing-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  text-align: center;
+}
+
+.material-pricing-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.material-pricing-cell strong {
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
+.catalog-offers-section {
+  margin-bottom: 16px;
+}
+
+.catalog-offers-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.catalog-offers-table th,
+.catalog-offers-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+
+.combined-history-table th:nth-child(3),
+.combined-history-table th:nth-child(4),
+.combined-history-table td:nth-child(3),
+.combined-history-table td:nth-child(4) {
+  white-space: nowrap;
+}
+
+.merge-dup-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.merge-dup-group {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.merge-dup-group-name {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.merge-dup-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.merge-group-btn {
+  margin-top: 8px;
+}
+
+@media (max-width: 480px) {
+  .material-pricing-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media print {
   .app-header,
   .bottom-nav,

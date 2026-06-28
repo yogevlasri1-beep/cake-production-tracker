@@ -1268,7 +1268,21 @@ export async function getRawMaterials(supplierCategoryId) {
   return rows;
 }
 
-export async function addRawMaterial({ supplierCategoryId, name, unit, unitPrice, supplierId }) {
+function sanitizePackageWeightGrams(val) {
+  if (val == null || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+export function computePricePerKg(unitPrice, packageWeightGrams) {
+  const price = sanitizeMoney(unitPrice);
+  const grams = sanitizePackageWeightGrams(packageWeightGrams);
+  if (!grams || price <= 0) return null;
+  return Math.round((price / (grams / 1000)) * 100) / 100;
+}
+
+export async function addRawMaterial({ supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
@@ -1277,12 +1291,14 @@ export async function addRawMaterial({ supplierCategoryId, name, unit, unitPrice
   const maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const price = sanitizeMoney(unitPrice);
   const sid = supplierId ? sanitizeProductId(supplierId) : null;
+  const pkg = sanitizePackageWeightGrams(packageWeightGrams);
   const id = await db.rawMaterials.add({
     supplierCategoryId: cid,
     name: trimmed,
     unit: String(unit || 'ק"ג').trim().slice(0, 20),
     unitPrice: price,
     supplierId: sid,
+    packageWeightGrams: pkg,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {
@@ -1314,6 +1330,7 @@ export async function updateRawMaterial(id, patch) {
   }
   if ('supplierId' in data) data.supplierId = data.supplierId ? sanitizeProductId(data.supplierId) : null;
   if ('unit' in data) data.unit = String(data.unit || '').trim().slice(0, 20);
+  if ('packageWeightGrams' in data) data.packageWeightGrams = sanitizePackageWeightGrams(data.packageWeightGrams);
   if (Object.keys(data).length) await db.rawMaterials.update(mid, data);
 }
 
@@ -1327,6 +1344,160 @@ export async function deleteRawMaterial(id) {
 export function normalizeMaterialKey(name) {
   const s = sanitizeName(name, 80);
   return s ? s.toLocaleLowerCase('he') : '';
+}
+
+async function priceHistoryEntryExists(rawMaterialId, effectiveDate, price) {
+  const rows = await db.rawMaterialPriceHistory
+    .where('[rawMaterialId+effectiveDate]')
+    .equals([rawMaterialId, effectiveDate])
+    .toArray();
+  const p = sanitizeMoney(price);
+  return rows.some((r) => sanitizeMoney(r.price) === p);
+}
+
+export async function getMasterMaterialsList(supplierCategoryId) {
+  let rows = await db.rawMaterials.toArray();
+  const cid = supplierCategoryId ? sanitizeProductId(supplierCategoryId) : null;
+  if (cid) rows = rows.filter((m) => m.supplierCategoryId === cid);
+
+  const byKey = new Map();
+  for (const m of rows) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(m);
+  }
+
+  const list = [];
+  for (const [key, offers] of byKey.entries()) {
+    offers.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+    const supplierIds = new Set(offers.filter((o) => o.supplierId).map((o) => o.supplierId));
+    list.push({
+      key,
+      name: offers[0].name,
+      supplierCategoryId: offers[0].supplierCategoryId,
+      offers,
+      primaryId: offers[0].id,
+      supplierCount: supplierIds.size,
+    });
+  }
+  list.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  return list;
+}
+
+export async function getCombinedPriceHistory(materialId) {
+  const mats = await getMaterialsWithSameName(materialId);
+  if (!mats.length) return [];
+  const suppliers = await getSuppliers();
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const matById = new Map(mats.map((m) => [m.id, m]));
+
+  const rows = [];
+  for (const mat of mats) {
+    const history = await getPriceHistory(mat.id);
+    for (const h of history) {
+      rows.push({
+        ...h,
+        rawMaterialId: mat.id,
+        supplierName: mat.supplierId ? supMap.get(mat.supplierId) || '' : '',
+        pricePerKg: computePricePerKg(h.price, mat.packageWeightGrams),
+      });
+    }
+  }
+  rows.sort((a, b) => {
+    const d = b.effectiveDate.localeCompare(a.effectiveDate);
+    if (d !== 0) return d;
+    return (b.createdAt || '').localeCompare(a.createdAt || '');
+  });
+  return rows;
+}
+
+export async function assignMaterialToSupplier({
+  name, supplierCategoryId, supplierId, unitPrice, packageWeightGrams, unit,
+}) {
+  const trimmed = sanitizeName(name, 80);
+  const cid = sanitizeProductId(supplierCategoryId);
+  const sid = sanitizeProductId(supplierId);
+  if (!trimmed) throw new ValidationError('שם חומר לא תקין');
+  if (!cid) throw new ValidationError('קטגוריה לא תקינה');
+  if (!sid) throw new ValidationError('ספק לא תקין');
+
+  const all = await db.rawMaterials.toArray();
+  const key = normalizeMaterialKey(trimmed);
+  const sameKey = all.filter((m) => normalizeMaterialKey(m.name) === key);
+  const canonicalName = sameKey.length ? sameKey[0].name : trimmed;
+
+  let mat = await findRawMaterialBySupplierAndName(sid, canonicalName);
+  if (mat) {
+    const patch = {};
+    if (unit) patch.unit = unit;
+    if (packageWeightGrams != null && packageWeightGrams !== '') {
+      patch.packageWeightGrams = packageWeightGrams;
+    }
+    if (Object.keys(patch).length) await updateRawMaterial(mat.id, patch);
+    if (unitPrice != null && unitPrice !== '') {
+      const price = sanitizeMoney(unitPrice);
+      if (price >= 0) {
+        await addRawMaterialPriceEntry(mat.id, { price, effectiveDate: todayISO() }, { skipDuplicate: true });
+      }
+    }
+    return mat.id;
+  }
+
+  return addRawMaterial({
+    supplierCategoryId: cid,
+    name: canonicalName,
+    unit: unit || 'ק"ג',
+    unitPrice: unitPrice ?? 0,
+    supplierId: sid,
+    packageWeightGrams,
+  });
+}
+
+export async function getDuplicateMaterialGroups() {
+  const all = await db.rawMaterials.toArray();
+  const byKey = new Map();
+  for (const m of all) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(m);
+  }
+  return Array.from(byKey.entries())
+    .filter(([, mats]) => mats.length > 1)
+    .map(([key, materials]) => ({
+      key,
+      name: materials[0].name,
+      materials: materials.sort((a, b) => a.id - b.id),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+export async function mergeDuplicateMaterials(keepId, mergeIds) {
+  const keep = sanitizeProductId(keepId);
+  if (!keep) throw new ValidationError('חומר לא תקין');
+  const ids = (mergeIds || []).map(sanitizeProductId).filter((id) => id && id !== keep);
+  if (!ids.length) return;
+
+  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+    for (const mid of ids) {
+      const ings = await db.recipeIngredients.where('rawMaterialId').equals(mid).toArray();
+      for (const ing of ings) {
+        await db.recipeIngredients.update(ing.id, { rawMaterialId: keep });
+      }
+      const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
+      for (const h of history) {
+        const exists = await priceHistoryEntryExists(keep, h.effectiveDate, h.price);
+        if (exists) {
+          await db.rawMaterialPriceHistory.delete(h.id);
+        } else {
+          await db.rawMaterialPriceHistory.update(h.id, { rawMaterialId: keep });
+        }
+      }
+      await db.rawMaterials.delete(mid);
+    }
+    await syncRawMaterialLatestPrice(keep);
+  });
 }
 
 export async function getPriceHistory(rawMaterialId) {
@@ -1347,13 +1518,14 @@ async function syncRawMaterialLatestPrice(rawMaterialId) {
   await db.rawMaterials.update(rawMaterialId, { unitPrice: history[0].price });
 }
 
-export async function addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate } = {}) {
+export async function addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate } = {}, { skipDuplicate } = {}) {
   const mid = sanitizeProductId(rawMaterialId);
   if (!mid) throw new ValidationError('חומר לא תקין');
   const p = sanitizeMoney(price);
   const date = effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(String(effectiveDate))
     ? String(effectiveDate)
     : todayISO();
+  if (skipDuplicate && await priceHistoryEntryExists(mid, date, p)) return;
   await db.rawMaterialPriceHistory.add({
     rawMaterialId: mid,
     price: p,
@@ -1464,28 +1636,32 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId } 
       supplierCache.set(supKey, supplierId);
     }
 
-    let mat = await findRawMaterialBySupplierAndName(supplierId, materialName);
-    if (!mat) {
-      const mid = await addRawMaterial({
-        supplierCategoryId: catId,
-        name: materialName,
-        unit: entry.unit || 'ק"ג',
-        unitPrice: 0,
-        supplierId,
-      });
-      mat = await db.rawMaterials.get(mid);
-      stats.materialsAdded += 1;
-    } else if (entry.unit && entry.unit !== mat.unit) {
+    const hadMat = await findRawMaterialBySupplierAndName(supplierId, materialName);
+    const mid = await assignMaterialToSupplier({
+      name: materialName,
+      supplierCategoryId: catId,
+      supplierId,
+      unit: entry.unit || 'ק"ג',
+      packageWeightGrams: entry.packageWeightGrams,
+    });
+    const mat = await db.rawMaterials.get(mid);
+    if (!hadMat) stats.materialsAdded += 1;
+    if (entry.unit && mat && entry.unit !== mat.unit) {
       await updateRawMaterial(mat.id, { unit: entry.unit });
+    }
+    if (entry.packageWeightGrams != null && mat) {
+      await updateRawMaterial(mat.id, { packageWeightGrams: entry.packageWeightGrams });
     }
 
     const price = entry.price != null ? sanitizeMoney(entry.price) : null;
-    if (price != null && price >= 0) {
+    if (price != null && price >= 0 && mat) {
+      const effDate = entry.effectiveDate || todayISO();
+      const before = await priceHistoryEntryExists(mat.id, effDate, price);
       await addRawMaterialPriceEntry(mat.id, {
         price,
-        effectiveDate: entry.effectiveDate || todayISO(),
-      });
-      stats.priceEntries += 1;
+        effectiveDate: effDate,
+      }, { skipDuplicate: true });
+      if (!before) stats.priceEntries += 1;
     }
   }
   return stats;

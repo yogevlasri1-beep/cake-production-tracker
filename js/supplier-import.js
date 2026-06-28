@@ -7,6 +7,7 @@ const PRICE_ALIASES = ['מחיר', 'price', 'עלות', 'תמחור'];
 const DATE_ALIASES = ['תאריך', 'date', 'יום', 'מתאריך'];
 const UNIT_ALIASES = ['יחידה', 'unit', 'יח'];
 const CATEGORY_ALIASES = ['קטגוריה', 'category', 'סוג'];
+const WEIGHT_ALIASES = ['משקל', 'weight', 'גרם', 'משקל מוצר', 'package weight', 'משקל אריזה'];
 
 function cleanCell(val) {
   if (val == null) return '';
@@ -21,6 +22,30 @@ function parsePrice(raw) {
   const s = String(raw).replace(/[₪,\s]/g, '').trim();
   const n = Number(s);
   return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+}
+
+export function parsePackageWeightGrams(raw) {
+  if (raw == null || raw === '') return null;
+  const s = cleanCell(raw).replace(/,/g, '');
+  if (!s) return null;
+
+  const kgMatch = s.match(/^([\d.]+)\s*(?:ק"ג|ק״ג|קג|kg|קילו)/i);
+  if (kgMatch) {
+    const n = Number(kgMatch[1]);
+    return Number.isFinite(n) && n > 0 ? Math.round(n * 1000) : null;
+  }
+
+  const gMatch = s.match(/^([\d.]+)\s*(?:גרם|gr|g|ג'|ג׳)/i);
+  if (gMatch) {
+    const n = Number(gMatch[1]);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : null;
+  }
+
+  const n = Number(s.replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (/גרם|gr|g|ג'|ג׳/i.test(s) || n >= 100) return Math.round(n);
+  if (n < 50) return Math.round(n * 1000);
+  return Math.round(n);
 }
 
 export function parseEffectiveDate(raw) {
@@ -63,6 +88,7 @@ function headerKey(cell) {
   if (match(DATE_ALIASES)) return 'date';
   if (match(UNIT_ALIASES)) return 'unit';
   if (match(CATEGORY_ALIASES)) return 'category';
+  if (match(WEIGHT_ALIASES)) return 'weight';
   return null;
 }
 
@@ -111,6 +137,9 @@ function parseLongFormat(rows, meta) {
       categoryName: meta.columns.includes('category')
         ? cleanCell(row[meta.columns.indexOf('category')]) || ''
         : '',
+      packageWeightGrams: meta.columns.includes('weight')
+        ? parsePackageWeightGrams(row[meta.columns.indexOf('weight')])
+        : null,
     });
   }
   return entries;

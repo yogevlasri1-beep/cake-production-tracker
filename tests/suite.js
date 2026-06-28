@@ -1,17 +1,18 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=176';
+} from '../js/validators.js?v=178';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=176';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=176';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=176';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields } from '../js/kitchen-db.js?v=176';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=176';
+} from '../js/calc.js?v=178';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=178';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=178';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey } from '../js/kitchen-db.js?v=178';
+import { parsePackageWeightGrams } from '../js/supplier-import.js?v=178';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=178';
 
 export async function runAllTests() {
   /* validators */
@@ -25,6 +26,29 @@ export async function runAllTests() {
   test('sanitizeMoney — עיגול', () => assertApprox(sanitizeMoney('10.556'), 10.56));
   test('sanitizeName — ריק', () => assertEqual(sanitizeName('   '), null));
   test('sanitizeName — תקין', () => assertEqual(sanitizeName('  שטרודל  '), 'שטרודל'));
+
+  test('computePricePerKg — 1kg package', () => assertApprox(computePricePerKg(25, 1000), 25));
+  test('computePricePerKg — 500g package', () => assertApprox(computePricePerKg(10, 500), 20));
+  test('computePricePerKg — missing weight', () => assertEqual(computePricePerKg(10, null), null));
+
+  test('normalizeMaterialKey — dedupe logic', () => {
+    const mats = [
+      { id: 1, name: 'קמח', supplierId: 1 },
+      { id: 2, name: '  קמח ', supplierId: 2 },
+      { id: 3, name: 'סוכר', supplierId: 1 },
+    ];
+    const byKey = new Map();
+    for (const m of mats) {
+      const key = normalizeMaterialKey(m.name);
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(m);
+    }
+    assertEqual(byKey.size, 2);
+    assertEqual(byKey.get(normalizeMaterialKey('קמח')).length, 2);
+  });
+
+  test('parsePackageWeightGrams — kg', () => assertEqual(parsePackageWeightGrams('1 ק"ג'), 1000));
+  test('parsePackageWeightGrams — grams', () => assertEqual(parsePackageWeightGrams('250 גרם'), 250));
 
   /* pct */
   test('pct — רגיל', () => assertEqual(pct(50, 100), 50));
