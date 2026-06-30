@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=204';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=204';
-import { openModal, closeModal } from '../modal.js?v=204';
-import { requestAutoBackupNow } from '../backup-service.js?v=204';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=204';
+} from '../db.js?v=205';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=205';
+import { openModal, closeModal } from '../modal.js?v=205';
+import { requestAutoBackupNow } from '../backup-service.js?v=205';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=205';
 
 function parseIdList(str) {
   try {
@@ -1218,12 +1218,16 @@ async function renderRunView(container, runId, ctx) {
 
   container.innerHTML = `
     <div class="card flow-run-header-card">
-      <button type="button" class="btn btn-secondary btn-sm" id="back-to-list">← חזרה</button>
+      <div class="flow-run-corner-tools">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn${editAllMode ? ' is-active' : ''}" id="toggle-edit-all" title="עריכת שלבים" aria-label="עריכת שלבים">✏️</button>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn" id="sync-run-flow" title="רענן תהליך" aria-label="רענן תהליך">🔄</button>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm flow-run-back-btn" id="back-to-list">← חזרה</button>
       <div class="flow-run-header-info">
         <h2 class="flow-run-title">${run.batchNumber ? `אצווה ${escapeHtml(run.batchNumber)}` : runTitle(run, catMap, productMap, groupMap)}</h2>
         <p class="flow-run-subtitle">${runTitle(run, catMap, productMap, groupMap)}</p>
       </div>
-      <div class="flow-run-dates">
+      <button type="button" class="flow-run-dates flow-run-dates--clickable" id="edit-run-details" aria-label="פרטי תהליך">
         <div class="flow-run-dates-row">
           <span class="flow-run-dates-label">התחלה</span>
           <span class="flow-run-dates-value">${formatRunTimestamp(run.startedAt, run.date)}</span>
@@ -1236,13 +1240,10 @@ async function renderRunView(container, runId, ctx) {
           <span class="flow-run-dates-label">משך כולל</span>
           <span class="flow-run-dates-value flow-run-duration-value">⏱ ${runDurationLabel}</span>
         </div>
-      </div>
+        <span class="flow-run-dates-hint">📋 פרטי תהליך</span>
+      </button>
       <div class="flow-run-header-actions filter-row" style="margin-top:12px;flex-wrap:wrap">
         ${prepButtonHTML}
-        <button type="button" class="btn btn-secondary btn-sm" id="toggle-edit-all">${editAllMode ? 'סיום עריכה' : '✏️ ערוך הכל'}</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="sync-run-flow">🔄 רענן מתבנית</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="edit-run-details">📋 פרטי תהליך</button>
-        <button type="button" class="btn btn-danger btn-sm" id="delete-run-in-view">🗑 מחק תהליך</button>
       </div>
       ${editAllMode ? '<p class="form-hint" style="margin-top:8px">מצב עריכה — כל השלבים שהגיעו אליהם פתוחים לעריכה</p>' : ''}
       <div class="flow-legend">
@@ -1323,10 +1324,6 @@ async function renderRunView(container, runId, ctx) {
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
-  });
-
-  document.getElementById('delete-run-in-view')?.addEventListener('click', () => {
-    confirmDeleteRun(container, run);
   });
 
   document.getElementById('delete-run-footer')?.addEventListener('click', () => {
@@ -1715,7 +1712,7 @@ function openRunDetailsModal(container, run, ctx) {
   const endDate = run.completedAt ? String(run.completedAt).slice(0, 10) : '';
 
   openModal({
-    title: 'עריכת פרטי תהליך',
+    title: 'פרטי תהליך',
     bodyHTML: `
       <div class="form-group">
         <label for="run-batch-number">מספר אצווה</label>
@@ -1725,12 +1722,13 @@ function openRunDetailsModal(container, run, ctx) {
         <label for="run-started-date">תאריך התחלה</label>
         <input type="date" id="run-started-date" value="${startDate}">
       </div>
-      ${run.status === 'completed' ? `
       <div class="form-group">
         <label for="run-completed-date">תאריך סיום</label>
-        <input type="date" id="run-completed-date" value="${endDate}">
-      </div>` : `
-      <p class="form-hint">תאריך סיום יופיע ויהיה ניתן לעריכה לאחר השלמת כל השלבים</p>`}`,
+        <input type="date" id="run-completed-date" value="${endDate}"${run.status === 'completed' ? '' : ' disabled'}>
+        ${run.status !== 'completed'
+    ? '<p class="form-hint">יתמלא אוטומטית בסיום התהליך · ניתן לעריכה אחרי השלמת כל השלבים</p>'
+    : ''}
+      </div>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-run-details">שמור</button>`,

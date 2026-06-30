@@ -1498,9 +1498,11 @@ body {
 }
 
 .flow-run-delete-footer {
-  margin-top: 12px;
+  margin-top: 16px;
+  margin-bottom: 8px;
   border: 1px solid rgba(239, 68, 68, 0.35);
   background: #fef2f2;
+  padding: 12px;
 }
 
 .flow-production-panel-header {
@@ -1667,6 +1669,29 @@ body {
 
 .flow-run-header-card {
   margin-bottom: 8px;
+  position: relative;
+  padding-top: 40px;
+}
+
+.flow-run-corner-tools {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+
+.flow-run-tool-btn {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 4px 8px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.flow-run-back-btn {
+  margin-bottom: 4px;
 }
 
 .flow-run-title {
@@ -1681,12 +1706,37 @@ body {
   margin: 0 0 4px;
 }
 
-.flow-run-dates {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+.flow-run-tool-btn.is-active {
+  background: color-mix(in srgb, var(--primary) 18%, white);
+  border-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.flow-run-dates--clickable {
   display: grid;
   gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f8fafc;
+  text-align: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.flow-run-dates--clickable:hover {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: #f1f5f9;
+}
+
+.flow-run-dates-hint {
+  font-size: 0.75rem;
+  color: var(--primary);
+  font-weight: 600;
+  text-align: center;
+  margin-top: 4px;
 }
 
 .flow-run-dates-row {
