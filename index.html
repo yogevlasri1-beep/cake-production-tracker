@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '202';</script>
+  <script>window.__APP_BUILD__ = '203';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=202">
+  <link rel="stylesheet" href="css/styles.css?v=203">
   <script type="importmap">
   {
     "imports": {
@@ -235,6 +235,14 @@
       }
 
       if (params.get('force-update') === '1') {
+        var forceAttempts = 0;
+        try { forceAttempts = Number(sessionStorage.getItem('forceUpdateAttempts') || 0); } catch (e) { /* ignore */ }
+        if (forceAttempts >= 3) {
+          try { sessionStorage.removeItem('forceUpdateAttempts'); } catch (e) { /* ignore */ }
+          finishBoot();
+          return;
+        }
+        try { sessionStorage.setItem('forceUpdateAttempts', String(forceAttempts + 1)); } catch (e) { /* ignore */ }
         clearAllCaches().then(function () {
           return fetchLatestBuild();
         }).then(function (latest) {
@@ -245,9 +253,11 @@
           u.searchParams.set('v', latest);
           u.searchParams.set('t', String(Date.now()));
           location.replace(u.toString());
-        });
+        }).catch(function () { finishBoot(); });
         return;
       }
+
+      try { sessionStorage.removeItem('forceUpdateAttempts'); } catch (e) { /* ignore */ }
 
       function loadApp() {
         import('./js/app.js?v=' + BUILD).catch(function (err) {
@@ -300,7 +310,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=202"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=202"></script>
+  <script src="js/vendor/dexie.min.js?v=203"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=203"></script>
 </body>
 </html>
