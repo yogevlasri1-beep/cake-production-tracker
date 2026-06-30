@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=203';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=203';
-import { defaultColorForIndex } from './chart.js?v=203';
+} from './validators.js?v=204';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=204';
+import { defaultColorForIndex } from './chart.js?v=204';
 
 export { ValidationError };
 
@@ -4053,7 +4053,10 @@ export async function deleteRunStepPortionBatch(runId, stepIndex, batchIndex) {
   });
 }
 
-export async function completeRunStep(runId, stepIndex, { notes, issues, improvements, portionUnit, portionSize, portionCount } = {}) {
+export async function completeRunStep(runId, stepIndex, {
+  notes, issues, improvements, portionUnit, portionSize, portionCount,
+  completedDate, completedTime,
+} = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (run.status === 'completed') throw new ValidationError('התהליך כבר הושלם');
@@ -4062,10 +4065,20 @@ export async function completeRunStep(runId, stepIndex, { notes, issues, improve
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
 
+  let completedAt = nowISO();
+  if (completedDate || completedTime) {
+    completedAt = mergeDateTimeIntoIso(
+      completedDate !== undefined && completedDate !== '' ? completedDate : isoDatePart(completedAt),
+      completedTime !== undefined && completedTime !== '' ? completedTime : undefined,
+      completedAt,
+    );
+    validateStepCompletedAtOrder(run, stepIndex, completedAt);
+  }
+
   return db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
     const stepPatch = {
       status: 'completed',
-      completedAt: nowISO(),
+      completedAt,
       notes: String(notes ?? step.notes ?? '').trim().slice(0, 500),
       issues: String(issues ?? step.issues ?? '').trim().slice(0, 500),
       improvements: String(improvements ?? step.improvements ?? '').trim().slice(0, 500),

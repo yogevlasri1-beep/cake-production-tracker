@@ -1,21 +1,21 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=203';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=204';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=203';
+} from '../js/validators.js?v=204';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=203';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=203';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=203';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=203';
+} from '../js/calc.js?v=204';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=204';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=204';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=204';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=203';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=203';
+} from '../js/supplier-import.js?v=204';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=204';
 
 export async function runAllTests() {
   /* validators */

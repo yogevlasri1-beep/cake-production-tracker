@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=203';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=203';
-import { openModal, closeModal } from '../modal.js?v=203';
-import { requestAutoBackupNow } from '../backup-service.js?v=203';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=203';
+} from '../db.js?v=204';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=204';
+import { openModal, closeModal } from '../modal.js?v=204';
+import { requestAutoBackupNow } from '../backup-service.js?v=204';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=204';
 
 function parseIdList(str) {
   try {
@@ -508,23 +508,30 @@ function readStepInlineFields(stepIndex) {
   };
 }
 
-function stepDatetimeFieldsHTML(step, stepIndex) {
+function stepDatetimeFieldsHTML(step, stepIndex, { defaultNow = false } = {}) {
+  let dateVal = isoToDateInput(step.completedAt);
+  let timeVal = isoToTimeInput(step.completedAt);
+  if (!dateVal && defaultNow) {
+    dateVal = todayISO();
+    timeVal = isoToTimeInput(new Date().toISOString());
+  }
   return `
     <div class="flow-step-datetime-row">
       <div class="form-group">
-        <label for="step-${stepIndex}-completed-date">תאריך השלמה</label>
-        <input type="date" id="step-${stepIndex}-completed-date" value="${isoToDateInput(step.completedAt)}">
+        <label for="step-${stepIndex}-completed-date">תאריך</label>
+        <input type="date" id="step-${stepIndex}-completed-date" value="${dateVal}">
       </div>
       <div class="form-group">
-        <label for="step-${stepIndex}-completed-time">שעת השלמה</label>
-        <input type="time" id="step-${stepIndex}-completed-time" value="${isoToTimeInput(step.completedAt)}">
+        <label for="step-${stepIndex}-completed-time">שעה</label>
+        <input type="time" id="step-${stepIndex}-completed-time" value="${timeVal}">
       </div>
     </div>`;
 }
 
-function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = false } = {}) {
+function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = false, defaultDatetimeNow = false } = {}) {
   return `
     <div class="flow-step-notes-panel${hidden ? ' hidden' : ''}" data-step-notes="${stepIndex}">
+      ${showDatetime ? stepDatetimeFieldsHTML(step, stepIndex, { defaultNow: defaultDatetimeNow }) : ''}
       <div class="form-group">
         <label for="step-${stepIndex}-notes">הערות</label>
         <textarea id="step-${stepIndex}-notes" rows="2" placeholder="הערות כלליות">${escapeHtml(step.notes || '')}</textarea>
@@ -537,7 +544,7 @@ function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = fal
         <label for="step-${stepIndex}-improvements">נקודות לשיפור</label>
         <textarea id="step-${stepIndex}-improvements" rows="2" placeholder="מה אפשר לשפר">${escapeHtml(step.improvements || '')}</textarea>
       </div>
-      ${showDatetime ? stepDatetimeFieldsHTML(step, stepIndex) : ''}
+      <button type="button" class="btn btn-secondary btn-sm flow-step-notes-save-btn" data-step="${stepIndex}">שמור</button>
     </div>`;
 }
 
@@ -740,7 +747,8 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
-  const showDatetimeInNotes = isDone || step.status === 'completed' || editAllMode;
+  const showDatetimeInNotes = canEditFields;
+  const defaultDatetimeNow = isActive && !step.completedAt;
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
@@ -777,7 +785,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽</span>' : ''}
           <div class="flow-step-header-actions">
             ${canEditFields ? `
-              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="הערות · תקלות · שיפור" aria-label="הערות תקלות ושיפור">📝</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="תאריך · שעה · הערות · תקלות · שיפור" aria-label="תאריך שעה הערות תקלות ושיפור">📝</button>` : ''}
             ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
             ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
           </div>
@@ -786,7 +794,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
         ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${step.tracksPortions && portionEditable
     ? stepPortionBatchesHTML(step, stepIndex, { canAdd: portionEditable, canEdit: portionEditable, presets: portionPresets }) : ''}
-        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true, showDatetime: showDatetimeInNotes }) : ''}
+        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true, showDatetime: showDatetimeInNotes, defaultDatetimeNow }) : ''}
         ${(canEditCompleted || (isDone && canEditFields)) ? `
         <div class="flow-step-actions">
           ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור</button>` : ''}
@@ -1456,15 +1464,20 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
-  container.querySelectorAll('.flow-step-save-btn').forEach((btn) => {
+  async function saveStepInlineFields(stepIndex) {
+    await updateRunStepFields(run.id, stepIndex, readStepInlineFields(stepIndex));
+    requestAutoBackupNow().catch(() => {});
+    showToast('נשמר ✓');
+    container.dataset.runId = String(run.id);
+    container.dataset.view = 'run';
+    renderProcess(container);
+  }
+
+  container.querySelectorAll('.flow-step-save-btn, .flow-step-notes-save-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const stepIndex = Number(btn.dataset.step);
       try {
-        await updateRunStepFields(run.id, stepIndex, readStepInlineFields(stepIndex));
-        showToast('נשמר ✓');
-        container.dataset.runId = String(run.id);
-        container.dataset.view = 'run';
-        renderProcess(container);
+        await saveStepInlineFields(stepIndex);
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
