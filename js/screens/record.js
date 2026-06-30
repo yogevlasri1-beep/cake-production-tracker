@@ -1,10 +1,10 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=187';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg } from '../utils.js?v=187';
-import { openModal, closeModal } from '../modal.js?v=187';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=187';
+} from '../db.js?v=202';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=202';
+import { openModal, closeModal } from '../modal.js?v=202';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=202';
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
@@ -131,10 +131,12 @@ export async function renderRecord(container) {
     qtyInput.placeholder = isKg ? 'לדוגמה: 2.5' : 'לדוגמה: 50';
     const hint = document.getElementById('record-qty-hint');
     if (hint) {
-      hint.textContent = p?.priceUnit === 'kg_units'
-        ? `מחיר ללקוח לפי ק"ג${p.unitWeightKg ? ` · ~${p.unitWeightKg} ק"ג ליחידה` : ''}`
-        : '';
-      hint.classList.toggle('hidden', p?.priceUnit !== 'kg_units');
+      hint.textContent = p?.priceUnit === 'kg_with_units'
+        ? `רישום בק"ג · מחיר לק"ג${p.unitWeightKg ? ` · ~${p.unitWeightKg} ק"ג ליחידה` : ''}`
+        : p?.priceUnit === 'kg_units'
+          ? `מחיר ללקוח לפי ק"ג${p.unitWeightKg ? ` · ~${p.unitWeightKg} ק"ג ליחידה` : ''}`
+          : '';
+      hint.classList.toggle('hidden', p?.priceUnit !== 'kg_units' && p?.priceUnit !== 'kg_with_units');
     }
   }
 
@@ -216,7 +218,7 @@ function editEntry(id, entries, productMap, container) {
       </div>
       <div class="form-group">
         <label for="edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
-        <input type="number" id="edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${entry.quantity}">
+        <input type="number" id="edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${formatDecimal(entry.quantity)}">
       </div>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>

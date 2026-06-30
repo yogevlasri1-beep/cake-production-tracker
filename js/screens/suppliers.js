@@ -9,6 +9,8 @@ import {
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
   getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, computePricePerKg,
+  getSupplierShortagesGrouped, addSupplierShortage, updateSupplierShortage, deleteSupplierShortage,
+  clearDoneSupplierShortages, formatSupplierShortagesText,
 } from '../kitchen-db.js';
 import { getProducts } from '../db.js';
 import { parseSupplierFile } from '../supplier-import.js';
@@ -24,6 +26,7 @@ export const SUPPLIER_TABS = {
   browse: { id: 'browse', label: 'ספקים', subtitle: 'רשימת ספקים, תמחור והיסטוריית מחירים' },
   edit: { id: 'edit', label: 'עריכה', subtitle: 'עריכת ספקים, חומרי גלם, מחירים וייבוא Excel' },
   order: { id: 'order', label: 'הזמנה', subtitle: 'תוכנית שבועית ובניית הזמנה' },
+  shortages: { id: 'shortages', label: 'חוסרים', subtitle: 'רשימת חוסרים לפי ספק עם כמות הזמנה' },
 };
 
 function getSupplierTab(container) {
@@ -90,6 +93,7 @@ export async function renderSuppliers(container) {
   if (tab === 'catalog') await renderCatalogTab(body, container, supCats, selectedMatCat || container.dataset.matCat);
   else if (tab === 'browse') await renderBrowseTab(body, container);
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat || container.dataset.matCat, selectedSupCat || container.dataset.supCat);
+  else if (tab === 'shortages') await renderShortagesTab(body, container);
   else await renderOrderTab(body, container, products, weekStart);
 }
 
@@ -1234,6 +1238,193 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
       renderSuppliers(container);
     } catch (e) {
       showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
+/* ── חוסרים ── */
+
+async function renderShortagesTab(body, container) {
+  const [grouped, suppliers, materials] = await Promise.all([
+    getSupplierShortagesGrouped(),
+    getSuppliers(),
+    getRawMaterials(),
+  ]);
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const totalItems = grouped.reduce((n, g) => n + g.items.length, 0);
+  const openItems = grouped.reduce((n, g) => n + g.items.filter((i) => !i.done).length, 0);
+  const waText = formatSupplierShortagesText(grouped);
+
+  const materialOptions = materials
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'))
+    .map((m) => {
+      const supName = m.supplierId ? supMap.get(m.supplierId) : '';
+      const suffix = supName ? ` · ${supName}` : '';
+      return `<option value="${m.id}" data-unit="${escapeHtml(m.unit || '')}">${escapeHtml(m.name)}${escapeHtml(suffix)}</option>`;
+    })
+    .join('');
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="card-title">הוסף חוסר</div>
+      <div class="form-group">
+        <label for="shortage-supplier">ספק</label>
+        <select id="shortage-supplier">
+          <option value="">בחר ספק...</option>
+          ${suppliers.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="shortage-material">חומר מהמחסן (אופציונלי)</label>
+        <select id="shortage-material">
+          <option value="">— הזן שם ידנית למטה —</option>
+          ${materialOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="shortage-name">שם חומר (אם לא נבחר מהמחסן)</label>
+        <input type="text" id="shortage-name" placeholder="למשל: קמח מספר 1">
+      </div>
+      <div class="filter-row">
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label for="shortage-qty">כמות להזמנה</label>
+          <input type="number" id="shortage-qty" min="0.001" step="0.001" inputmode="decimal" placeholder="אופציונלי">
+        </div>
+        <div class="form-group" style="flex:1;margin-bottom:0">
+          <label for="shortage-unit">יחידה</label>
+          <input type="text" id="shortage-unit" placeholder="ק&quot;ג, יח', ...">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="shortage-notes">הערה (אופציונלי)</label>
+        <input type="text" id="shortage-notes" placeholder="למשל: דחוף / מותג מסוים">
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="shortage-add-btn" style="width:100%">+ הוסף לרשימה</button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">רשימת חוסרים (${openItems} פתוחים · ${totalItems} סה"כ)</div>
+      ${grouped.length === 0
+    ? '<p class="form-hint">אין חוסרים — הוסף למעלה</p>'
+    : grouped.map(({ supplier, items }) => `
+        <div class="shortage-supplier-block order-category-block">
+          <h3 class="order-category-title shortage-supplier-title">${escapeHtml(supplier?.name || 'ספק')}</h3>
+          <ul class="shortage-items-list">
+            ${items.map((item) => `
+              <li class="shortage-item${item.done ? ' is-done' : ''}" data-id="${item.id}">
+                <label class="shortage-item-check">
+                  <input type="checkbox" class="shortage-done-cb" data-id="${item.id}" ${item.done ? 'checked' : ''}>
+                </label>
+                <div class="shortage-item-body">
+                  <strong class="shortage-item-name">${escapeHtml(item.displayName)}</strong>
+                  ${item.notes ? `<span class="shortage-item-notes">${escapeHtml(item.notes)}</span>` : ''}
+                </div>
+                <label class="shortage-qty-edit">
+                  <input type="number" class="shortage-qty-input" data-id="${item.id}" min="0.001" step="0.001" inputmode="decimal"
+                    value="${item.orderQuantity ?? ''}" placeholder="כמות" aria-label="כמות הזמנה">
+                  <input type="text" class="shortage-unit-input" data-id="${item.id}" value="${escapeHtml(item.unit || '')}" placeholder="יח'" aria-label="יחידה">
+                </label>
+                <button type="button" class="btn btn-danger btn-sm btn-icon shortage-del-btn" data-id="${item.id}" title="הסר">🗑</button>
+              </li>`).join('')}
+          </ul>
+        </div>`).join('')}
+      <textarea id="shortage-wa-text" class="wa-order-text" rows="8" readonly style="margin-top:12px">${escapeHtml(waText)}</textarea>
+      <div class="filter-row" style="margin-top:8px">
+        <button type="button" class="btn btn-primary btn-sm" id="copy-shortage-wa" style="flex:1">📋 העתק לוואטסאפ</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="clear-done-shortages">נקה שהושלמו</button>
+      </div>
+    </div>`;
+
+  document.getElementById('shortage-material')?.addEventListener('change', (e) => {
+    const opt = e.target.selectedOptions[0];
+    const unit = opt?.dataset?.unit || '';
+    if (unit) document.getElementById('shortage-unit').value = unit;
+    if (opt?.value) document.getElementById('shortage-name').value = '';
+  });
+
+  document.getElementById('shortage-add-btn')?.addEventListener('click', async () => {
+    const supplierId = document.getElementById('shortage-supplier')?.value;
+    const rawMaterialId = document.getElementById('shortage-material')?.value || null;
+    const name = document.getElementById('shortage-name')?.value?.trim();
+    const orderQuantity = document.getElementById('shortage-qty')?.value;
+    const unit = document.getElementById('shortage-unit')?.value?.trim();
+    const notes = document.getElementById('shortage-notes')?.value?.trim();
+    try {
+      await addSupplierShortage({
+        supplierId, rawMaterialId, name, orderQuantity, unit, notes,
+      });
+      requestAutoBackupNow().catch(() => {});
+      showToast('נוסף ✓');
+      renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  body.querySelectorAll('.shortage-done-cb').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      try {
+        await updateSupplierShortage(cb.dataset.id, { done: cb.checked });
+        requestAutoBackupNow().catch(() => {});
+        renderSuppliers(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  const saveShortageField = async (id, patch) => {
+    try {
+      await updateSupplierShortage(id, patch);
+      requestAutoBackupNow().catch(() => {});
+      showToast('עודכן ✓');
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  };
+
+  body.querySelectorAll('.shortage-qty-input').forEach((input) => {
+    input.addEventListener('change', () => saveShortageField(input.dataset.id, { orderQuantity: input.value }));
+  });
+  body.querySelectorAll('.shortage-unit-input').forEach((input) => {
+    input.addEventListener('change', () => saveShortageField(input.dataset.id, { unit: input.value }));
+  });
+
+  body.querySelectorAll('.shortage-del-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('להסיר מהרשימה?')) return;
+      try {
+        await deleteSupplierShortage(btn.dataset.id);
+        requestAutoBackupNow().catch(() => {});
+        showToast('נמחק');
+        renderSuppliers(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('copy-shortage-wa')?.addEventListener('click', async () => {
+    const ta = document.getElementById('shortage-wa-text');
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      showToast('הועתק ✓');
+    } catch {
+      ta.select();
+      document.execCommand('copy');
+      showToast('הועתק ✓');
+    }
+  });
+
+  document.getElementById('clear-done-shortages')?.addEventListener('click', async () => {
+    try {
+      const n = await clearDoneSupplierShortages();
+      requestAutoBackupNow().catch(() => {});
+      showToast(n ? `${n} הוסרו ✓` : 'אין פריטים שהושלמו');
+      renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
     }
   });
 }

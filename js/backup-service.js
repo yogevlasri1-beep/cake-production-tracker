@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=187';
+} from './db.js?v=202';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=187';
-import { downloadBlob } from './download.js?v=187';
-import { ValidationError } from './validators.js?v=187';
-import { openModal, closeModal } from './modal.js?v=187';
-import { escapeHtml, showToast } from './utils.js?v=187';
+} from './backup.js?v=202';
+import { downloadBlob } from './download.js?v=202';
+import { ValidationError } from './validators.js?v=202';
+import { openModal, closeModal } from './modal.js?v=202';
+import { escapeHtml, showToast } from './utils.js?v=202';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=187';
+} from './backup-folder-bridge.js?v=202';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -317,8 +317,8 @@ function installDbChangeHooks() {
     'categories', 'categoryGroups', 'products', 'productionEntries', 'targets',
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
     'managerResponsibilityAreas', 'managerEmployees',
-    'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'flowPreparations', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'groupPreparations', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'settings',
   ];
   for (const name of tables) {

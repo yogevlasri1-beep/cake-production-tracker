@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=187';
+} from '../db.js?v=202';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
-  showToast, escapeHtml, formatPortionCount, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
-} from '../utils.js?v=187';
+  showToast, escapeHtml, formatPortionCount, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
+} from '../utils.js?v=202';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=187';
-import { openModal, closeModal } from '../modal.js?v=187';
+} from '../export.js?v=202';
+import { openModal, closeModal } from '../modal.js?v=202';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=187';
-import { isSheetsConfigured } from '../google-sheets.js?v=187';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=187';
-import { defaultColorForIndex } from '../chart.js?v=187';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=187';
+} from '../sheets-flow.js?v=202';
+import { isSheetsConfigured } from '../google-sheets.js?v=202';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=202';
+import { defaultColorForIndex } from '../chart.js?v=202';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=202';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -407,7 +407,7 @@ function renderCategorySummaryTable(catSummary) {
       <tbody>
         ${catSummary.map((c) => `<tr>
           <td class="report-cell-text">${escapeHtml(c.name)}</td>
-          <td class="report-cell-num">${c.qty}</td>
+          <td class="report-cell-num">${formatDecimal(c.qty)}</td>
           <td class="report-cell-num">${c.costRaw > 0 ? formatMoney(c.costRaw) : '—'}</td>
           <td class="report-cell-num">${c.costPack > 0 ? formatMoney(c.costPack) : '—'}</td>
           <td class="report-cell-num">${c.costExtra > 0 ? formatMoney(c.costExtra) : '—'}</td>
@@ -423,7 +423,7 @@ function renderProductionStatsGrid(totals) {
   return `
     <div class="stat-grid">
       <div class="stat-box">
-        <div class="stat-value">${totals.total}</div>
+        <div class="stat-value">${formatDecimal(totals.total)}</div>
         <div class="stat-label">ייצור (יח')</div>
       </div>
       <div class="stat-box">
@@ -669,7 +669,7 @@ function renderProductionTableHTML(rows, totals, catMap) {
         ${rows.map((r) => `<tr>
           <td class="report-cell-text">${escapeHtml(r.product.name)}</td>
           <td class="report-cell-text">${escapeHtml(catMap.get(r.product.categoryId) || '')}</td>
-          <td class="report-cell-num">${r.qty}</td>
+          <td class="report-cell-num">${formatDecimal(r.qty)}</td>
           <td class="report-cell-num">${r.costRaw > 0 ? formatMoney(r.costRaw) : '—'}</td>
           <td class="report-cell-num">${r.costPack > 0 ? formatMoney(r.costPack) : '—'}</td>
           <td class="report-cell-num">${r.costExtra > 0 ? formatMoney(r.costExtra) : '—'}</td>
@@ -778,7 +778,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
         <h4 class="report-preview-heading">${escapeHtml(formatDateHebrew(dateIso))}</h4>
         <div class="stat-grid report-preview-stats" style="margin-bottom:12px">
           <div class="stat-box">
-            <div class="stat-value">${dayTotals.total}</div>
+            <div class="stat-value">${formatDecimal(dayTotals.total)}</div>
             <div class="stat-label">כמות</div>
           </div>
           <div class="stat-box">
@@ -797,7 +797,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
       <p class="report-preview-meta">${escapeHtml(subtitle)}</p>
       <div class="stat-grid report-preview-stats">
         <div class="stat-box">
-          <div class="stat-value">${totals.total}</div>
+          <div class="stat-value">${formatDecimal(totals.total)}</div>
           <div class="stat-label">סה"כ שבוע (יח')</div>
         </div>
         <div class="stat-box">
@@ -834,16 +834,16 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
               ${processSummary.map((r) => `<tr>
                 <td class="report-cell-text">${escapeHtml(r.activity)}</td>
                 <td class="report-cell-text">${escapeHtml(r.category)}</td>
-                <td class="report-cell-num">${r.qty || '—'}</td>
+                <td class="report-cell-num">${r.qty != null ? formatDecimal(r.qty) : '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
           </div>` : ''}
-          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty || '—'} · ${processLogs.length} רישומים</p>
+          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty ? formatDecimal(processTotalQty) : '—'} · ${processLogs.length} רישומים</p>
           ${processLogs.map((log) => `
             <div class="list-item report-preview-log">
               <div class="list-item-info">
-                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
                 <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
               </div>
             </div>`).join('')}`}
@@ -860,7 +860,7 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
       <p class="report-preview-meta">${escapeHtml(subtitle)}</p>
       <div class="stat-grid report-preview-stats">
         <div class="stat-box">
-          <div class="stat-value">${totals.total}</div>
+          <div class="stat-value">${formatDecimal(totals.total)}</div>
           <div class="stat-label">ייצור (יח')</div>
         </div>
         <div class="stat-box">
@@ -897,16 +897,16 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
               ${processSummary.map((r) => `<tr>
                 <td class="report-cell-text">${escapeHtml(r.activity)}</td>
                 <td class="report-cell-text">${escapeHtml(r.category)}</td>
-                <td class="report-cell-num">${r.qty || '—'}</td>
+                <td class="report-cell-num">${r.qty != null ? formatDecimal(r.qty) : '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
           </div>` : ''}
-          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty || '—'} · ${processLogs.length} רישומים</p>
+          <p class="report-preview-note">סה"כ כמויות: ${processTotalQty ? formatDecimal(processTotalQty) : '—'} · ${processLogs.length} רישומים</p>
           ${processLogs.map((log) => `
             <div class="list-item report-preview-log">
               <div class="list-item-info">
-                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+                <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
                 <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
               </div>
             </div>`).join('')}`}
@@ -1127,7 +1127,7 @@ export async function renderReports(container) {
     ` : `
     <div class="stat-grid">
       <div class="stat-box">
-        <div class="stat-value">${totals.total}</div>
+        <div class="stat-value">${formatDecimal(totals.total)}</div>
         <div class="stat-label">ייצור מוצרים (יח')</div>
       </div>
       <div class="stat-box">
@@ -1166,7 +1166,7 @@ export async function renderReports(container) {
 
     <div class="card process-card">
       <div class="card-title">תיעוד הכנות — ${ctx.label}</div>
-      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">לשימושך · לא נכלל בייצור המוצרים${processTotalQty ? ` · סה"כ כמויות: ${processTotalQty}` : ''}</p>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">לשימושך · לא נכלל בייצור המוצרים${processTotalQty ? ` · סה"כ כמויות: ${formatDecimal(processTotalQty)}` : ''}</p>
       ${processLogs.length === 0
         ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
         : `${processSummary.length ? `
@@ -1177,7 +1177,7 @@ export async function renderReports(container) {
               ${processSummary.map((r) => `<tr>
                 <td class="report-cell-text">${escapeHtml(r.activity)}</td>
                 <td class="report-cell-text">${escapeHtml(r.category)}</td>
-                <td class="report-cell-num">${r.qty || '—'}</td>
+                <td class="report-cell-num">${r.qty != null ? formatDecimal(r.qty) : '—'}</td>
               </tr>`).join('')}
             </tbody>
           </table>
@@ -1185,7 +1185,7 @@ export async function renderReports(container) {
           ${processLogs.map((log) => `
           <div class="list-item">
             <div class="list-item-info">
-              <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+              <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
               <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
             </div>
           </div>`).join('')}`}
@@ -1354,7 +1354,7 @@ export async function renderReports(container) {
         resultsEl.innerHTML = `
           <div class="audit-ok">
             <strong>✓ הכל תקין</strong>
-            <p>${audit.validEntries} רישומים · ${audit.totals.total} יח' · ${formatMoney(audit.totals.totalValue)}</p>
+            <p>${audit.validEntries} רישומים · ${formatDecimal(audit.totals.total)} יח' · ${formatMoney(audit.totals.totalValue)}</p>
             <p class="form-hint">סכומי קטגוריה, מוצר ודוחות תואמים</p>
           </div>`;
         showToast('בדיקה עברה בהצלחה ✓');

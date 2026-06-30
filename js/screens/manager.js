@@ -1,23 +1,24 @@
 import {
   getManagerDepartments, addManagerDepartment, updateManagerDepartment, deleteManagerDepartment,
-  getProducts, getCategories, getAllFlowPortionPresetsWithContext,
+  getProducts, getCategories, getProductsCatalogLayout, getAllFlowPortionPresetsWithContext,
   getAllFlowsOverview, getFlowStepsForFlow,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
-  addManagerPlanItem, addManagerPlanFlowSteps, updateManagerPlanItem, deleteManagerPlanItem,
+  addManagerPlanItem, addManagerPlanFlowSteps, syncDailyPlanFromFlows,
+  updateManagerPlanItem, deleteManagerPlanItem,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=187';
+} from '../db.js?v=202';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
-  weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel,
-} from '../utils.js?v=187';
-import { openModal, closeModal } from '../modal.js?v=187';
-import { renderTargets } from './targets.js?v=187';
-import { forceAppUpdate } from '../sw-register.js?v=187';
+  weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
+} from '../utils.js?v=202';
+import { openModal, closeModal } from '../modal.js?v=202';
+import { renderTargets } from './targets.js?v=202';
+import { forceAppUpdate } from '../sw-register.js?v=202';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -145,7 +146,7 @@ async function renderOverview(container) {
         <div class="manager-list-item">
           <span class="manager-check${item.done ? ' done' : ''}">${item.done ? '✓' : '○'}</span>
           <div class="manager-list-body">
-            <span>${item.itemKind === 'portion' ? '🍽 ' : item.itemKind === 'flow_step' ? '📋 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${item.quantity}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
+            <span>${item.itemKind === 'portion' ? '🍽 ' : item.itemKind === 'flow_step' ? '📋 ' : item.itemKind === 'flow_preparation' ? '🧁 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${formatDecimal(item.quantity)}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
           </div>
         </div>`).join('')}
       ${planItems.length > 6 ? `<p class="form-hint">+${planItems.length - 6} נוספים</p>` : ''}
@@ -213,10 +214,98 @@ async function renderOverview(container) {
   });
 }
 
+function comparePlanCategories(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function resolvePlanItemCategory(item, catMap, productMap) {
+  if (item.categoryId) {
+    const cat = catMap.get(Number(item.categoryId));
+    return {
+      categoryId: Number(item.categoryId),
+      categoryGroupId: cat?.groupId ? Number(cat.groupId) : (item.categoryGroupId ? Number(item.categoryGroupId) : null),
+    };
+  }
+  if (item.productId) {
+    const prod = productMap.get(Number(item.productId));
+    if (prod) {
+      const cat = catMap.get(prod.categoryId);
+      return { categoryId: prod.categoryId, categoryGroupId: cat?.groupId ? Number(cat.groupId) : null };
+    }
+  }
+  if (item.categoryGroupId) {
+    return { categoryId: null, categoryGroupId: Number(item.categoryGroupId) };
+  }
+  return { categoryId: null, categoryGroupId: null };
+}
+
+function renderGroupedPlanItemsHTML(items, layout, products) {
+  if (!items.length) {
+    return '<p class="form-hint">אין פריטים — הוסף מוצרים או משימות</p>';
+  }
+  const catMap = new Map(layout.allCategories.map((c) => [c.id, c]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const byCat = new Map();
+  const byGroup = new Map();
+  const other = [];
+
+  for (const item of items) {
+    const { categoryId, categoryGroupId } = resolvePlanItemCategory(item, catMap, productMap);
+    if (categoryId) {
+      if (!byCat.has(categoryId)) byCat.set(categoryId, []);
+      byCat.get(categoryId).push(item);
+    } else if (categoryGroupId) {
+      if (!byGroup.has(categoryGroupId)) byGroup.set(categoryGroupId, []);
+      byGroup.get(categoryGroupId).push(item);
+    } else {
+      other.push(item);
+    }
+  }
+
+  const sections = [];
+  for (const group of layout.groups) {
+    for (const cat of group.categories.slice().sort(comparePlanCategories)) {
+      const catItems = byCat.get(cat.id);
+      if (!catItems?.length) continue;
+      sections.push(`
+        <div class="manager-plan-category-section">
+          <div class="manager-plan-category-heading">${escapeHtml(group.name)} › ${escapeHtml(cat.name)}</div>
+          ${catItems.map((item) => planItemRow(item)).join('')}
+        </div>`);
+    }
+    const groupItems = byGroup.get(group.id);
+    if (groupItems?.length) {
+      sections.push(`
+        <div class="manager-plan-category-section">
+          <div class="manager-plan-category-heading">${escapeHtml(group.name)}</div>
+          ${groupItems.map((item) => planItemRow(item)).join('')}
+        </div>`);
+    }
+  }
+  for (const cat of layout.ungrouped.slice().sort(comparePlanCategories)) {
+    const catItems = byCat.get(cat.id);
+    if (!catItems?.length) continue;
+    sections.push(`
+      <div class="manager-plan-category-section">
+        <div class="manager-plan-category-heading">${escapeHtml(cat.name)}</div>
+        ${catItems.map((item) => planItemRow(item)).join('')}
+      </div>`);
+  }
+  if (other.length) {
+    sections.push(`
+      <div class="manager-plan-category-section">
+        <div class="manager-plan-category-heading">כללי</div>
+        ${other.map((item) => planItemRow(item)).join('')}
+      </div>`);
+  }
+  return sections.join('');
+}
+
 function planItemRow(item, { showDay = false } = {}) {
   const dayLabels = weekDayLabels();
   const isPortion = item.itemKind === 'portion';
   const isFlowStep = item.itemKind === 'flow_step';
+  const isFlowPrep = item.itemKind === 'flow_preparation';
   let bodyInner;
   if (isPortion) {
     const target = item.label.includes('→') ? item.label.split('→').pop().trim() : item.label;
@@ -231,13 +320,16 @@ function planItemRow(item, { showDay = false } = {}) {
   } else if (isFlowStep) {
     bodyInner = `
         <span class="manager-plan-label">📋 ${escapeHtml(item.label)}</span>`;
+  } else if (item.itemKind === 'flow_preparation') {
+    bodyInner = `
+        <span class="manager-plan-label">🧁 ${escapeHtml(item.label)}</span>`;
   } else {
     bodyInner = `
         <span class="manager-plan-label">${escapeHtml(item.label)}</span>
-        ${item.quantity ? `<span class="manager-plan-qty">× ${item.quantity}</span>` : ''}`;
+        ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   }
   return `
-    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}" data-id="${item.id}">
+    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}" data-id="${item.id}">
       <label class="manager-plan-check">
         <input type="checkbox" class="plan-item-done" ${item.done ? 'checked' : ''}>
       </label>
@@ -359,13 +451,15 @@ function bindPlanItems(container, planType, anchorDate) {
 async function renderDailyPlan(container) {
   const date = container.dataset.planDate || todayISO();
   const selectedFlowId = container.dataset.planFlowId || '';
-  const [plan, items, products, categories, portionPresets, flowsOverview] = await Promise.all([
+  await syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date });
+  const [plan, items, products, categories, portionPresets, flowsOverview, layout] = await Promise.all([
     getManagerPlan('daily', date),
     getManagerPlanItems('daily', date),
     getProducts(true),
     getCategories(),
     getAllFlowPortionPresetsWithContext(),
     getAllFlowsOverview(),
+    getProductsCatalogLayout(),
   ]);
   const flowSteps = selectedFlowId
     ? await getFlowStepsForFlow(selectedFlowId)
@@ -496,9 +590,9 @@ async function renderDailyPlan(container) {
 
     <div class="card">
       <div class="card-title">פריטים בתוכנית (${items.length})</div>
-      ${items.length
-        ? items.map((item) => planItemRow(item)).join('')
-        : '<p class="form-hint">אין פריטים — הוסף מוצרים או משימות</p>'}
+      <p class="form-hint" style="margin-bottom:10px">מסודר לפי קטגוריות · משימות מתזרימים מתעדכנות אוטומטית</p>
+      <button type="button" class="btn btn-secondary btn-sm" id="refresh-plan-from-flows" style="width:100%;margin-bottom:12px">🔄 רענן משימות מתזרימים</button>
+      ${renderGroupedPlanItemsHTML(items, layout, products)}
     </div>`;
 
   bindManagerTabs(container);
@@ -518,6 +612,16 @@ async function renderDailyPlan(container) {
   document.getElementById('plan-flow-pick')?.addEventListener('change', (e) => {
     container.dataset.planFlowId = e.target.value;
     renderManager(container);
+  });
+
+  document.getElementById('refresh-plan-from-flows')?.addEventListener('click', async () => {
+    try {
+      const n = await syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date });
+      showToast(n ? `${n} משימות נוספו ✓` : 'הכל מעודכן');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('add-plan-flow-steps')?.addEventListener('click', async () => {

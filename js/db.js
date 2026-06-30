@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=187';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=187';
-import { defaultColorForIndex } from './chart.js?v=187';
+} from './validators.js?v=202';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=202';
+import { defaultColorForIndex } from './chart.js?v=202';
 
 export { ValidationError };
 
@@ -973,6 +973,280 @@ db.version(32).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
 });
 
+db.version(33).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  flowPreparations: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
+db.version(34).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  await migrateFlowPreparationsToGroup(tx);
+});
+
+db.version(35).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
+db.version(36).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
+async function migrateFlowPreparationsToGroup(tx) {
+  const groupTable = tx.table('groupPreparations');
+  if (await groupTable.count() > 0) return;
+  const oldTable = tx.table('flowPreparations');
+  const oldPreps = await oldTable.toArray();
+  if (!oldPreps.length) return;
+
+  const [flows, categories] = await Promise.all([
+    tx.table('flows').toArray(),
+    tx.table('categories').toArray(),
+  ]);
+  const flowMap = new Map(flows.map((f) => [f.id, f]));
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const seen = new Map();
+  const idRemap = new Map();
+
+  for (const prep of oldPreps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const flow = flowMap.get(prep.flowId);
+    if (!flow) continue;
+    let categoryGroupId = null;
+    let categoryId = null;
+    if (flow.categoryId) {
+      categoryId = flow.categoryId;
+      categoryGroupId = catMap.get(flow.categoryId)?.groupId || null;
+    } else {
+      categoryGroupId = flow.categoryGroupId || null;
+    }
+    if (!categoryGroupId) continue;
+
+    const key = `${categoryGroupId}|${categoryId || ''}|${prep.name}`;
+    if (seen.has(key)) {
+      idRemap.set(prep.id, seen.get(key));
+      continue;
+    }
+    const newId = await groupTable.add({
+      categoryGroupId,
+      categoryId: categoryId || null,
+      name: prep.name,
+      sortOrder: prep.sortOrder ?? 0,
+    });
+    seen.set(key, newId);
+    idRemap.set(prep.id, newId);
+  }
+
+  const checks = await tx.table('runPreparationChecks').toArray();
+  for (const check of checks) {
+    if (check.flowPreparationId && idRemap.has(check.flowPreparationId)) {
+      await tx.table('runPreparationChecks').update(check.id, {
+        flowPreparationId: idRemap.get(check.flowPreparationId),
+      });
+    }
+  }
+}
+
+async function migrateImportedFlowPreparationsToGroup(tx, payload) {
+  const groupTable = tx.table('groupPreparations');
+  const idRemap = new Map();
+  if (await groupTable.count() > 0) return idRemap;
+  const oldPreps = payload?.flowPreparations || [];
+  if (!oldPreps.length) return idRemap;
+
+  const flows = payload?.flows?.length
+    ? payload.flows
+    : await tx.table('flows').toArray();
+  const categories = payload?.categories?.length
+    ? payload.categories
+    : await tx.table('categories').toArray();
+  const flowMap = new Map(flows.map((f) => [f.id, f]));
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const seen = new Map();
+
+  for (const prep of oldPreps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const flow = flowMap.get(prep.flowId);
+    if (!flow) continue;
+    let categoryGroupId = null;
+    let categoryId = null;
+    if (flow.categoryId) {
+      categoryId = flow.categoryId;
+      categoryGroupId = catMap.get(flow.categoryId)?.groupId || null;
+    } else {
+      categoryGroupId = flow.categoryGroupId || null;
+    }
+    if (!categoryGroupId) continue;
+
+    const key = `${categoryGroupId}|${categoryId || ''}|${prep.name}`;
+    if (seen.has(key)) {
+      idRemap.set(prep.id, seen.get(key));
+      continue;
+    }
+    const newId = await groupTable.add({
+      categoryGroupId,
+      categoryId: categoryId || null,
+      name: prep.name,
+      sortOrder: prep.sortOrder ?? 0,
+    });
+    seen.set(key, newId);
+    idRemap.set(prep.id, newId);
+  }
+  return idRemap;
+}
+
 async function migrateLegacyRecipeCategoriesIfNeeded(tx) {
   const groups = await tx.table('recipeGroups').count();
   if (groups > 0) return;
@@ -1042,17 +1316,17 @@ async function migrateImportedFlowPresetsToGroup(tx) {
 }
 
 function sanitizeProductPriceUnit(raw) {
-  if (raw === 'kg' || raw === 'kg_units') return raw;
+  if (raw === 'kg' || raw === 'kg_units' || raw === 'kg_with_units') return raw;
   return 'unit';
 }
 
 function sanitizeUnitWeightKg(raw, priceUnit) {
-  if (priceUnit !== 'kg_units') return null;
+  if (priceUnit !== 'kg_units' && priceUnit !== 'kg_with_units') return null;
   return sanitizePortionSize(raw, { min: 0.001, max: 100_000 });
 }
 
 function sanitizeProductQuantity(raw, product, { allowZero = false } = {}) {
-  if (product?.priceUnit === 'kg') {
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units') {
     const min = allowZero ? 0 : 0.001;
     const n = sanitizePortionSize(raw, { min, max: 100_000 });
     if (n == null && allowZero && (raw === 0 || raw === '0')) return 0;
@@ -1289,9 +1563,10 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.flowPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.groupPreparations, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.productRecipeComponents, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
+    await db.productRecipeComponents.clear();
     await db.recipeIngredients.clear();
     await db.recipeProductLinks.clear();
     await db.recipes.clear();
@@ -1305,7 +1580,7 @@ export async function resetAllData() {
     await db.processLogs.clear();
     await db.flowPortionPresets.clear();
     await db.groupPortionPresets.clear();
-    await db.flowPreparations.clear();
+    await db.groupPreparations.clear();
     await db.flowSteps.clear();
     await db.flows.clear();
     await db.runPreparationChecks.clear();
@@ -1392,7 +1667,7 @@ export async function exportAllData() {
     flows,
     flowPortionPresets,
     groupPortionPresets,
-    flowPreparations,
+    groupPreparations,
     productionRuns,
     runStepStates,
     productPreparations,
@@ -1415,9 +1690,12 @@ export async function exportAllData() {
     suppliers,
     rawMaterials,
     rawMaterialPriceHistory,
+    supplierShortages,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
     bakingProfiles,
+    bakingProfileProducts,
+    productRecipeComponents,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -1430,7 +1708,7 @@ export async function exportAllData() {
     db.flows.toArray(),
     db.flowPortionPresets.toArray(),
     db.groupPortionPresets.toArray(),
-    db.flowPreparations.toArray(),
+    db.groupPreparations.toArray(),
     db.productionRuns.toArray(),
     db.runStepStates.toArray(),
     db.productPreparations.toArray(),
@@ -1453,9 +1731,12 @@ export async function exportAllData() {
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
     db.rawMaterialPriceHistory?.toArray?.() ?? Promise.resolve([]),
+    db.supplierShortages?.toArray?.() ?? Promise.resolve([]),
     db.weeklyProductionPlans.toArray(),
     db.weeklyProductionPlanItems.toArray(),
     db.bakingProfiles?.toArray?.() ?? Promise.resolve([]),
+    db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
+    db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -1469,7 +1750,7 @@ export async function exportAllData() {
     flows,
     flowPortionPresets,
     groupPortionPresets,
-    flowPreparations,
+    groupPreparations,
     productionRuns,
     runStepStates,
     productPreparations,
@@ -1491,9 +1772,12 @@ export async function exportAllData() {
     suppliers,
     rawMaterials,
     rawMaterialPriceHistory,
+    supplierShortages,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
     bakingProfiles,
+    bakingProfileProducts,
+    productRecipeComponents,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -1521,6 +1805,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.flows)) payload.flows = [];
   if (!Array.isArray(payload.flowPortionPresets)) payload.flowPortionPresets = [];
   if (!Array.isArray(payload.groupPortionPresets)) payload.groupPortionPresets = [];
+  if (!Array.isArray(payload.groupPreparations)) payload.groupPreparations = [];
   if (!Array.isArray(payload.flowPreparations)) payload.flowPreparations = [];
   if (!Array.isArray(payload.productionRuns)) payload.productionRuns = [];
   if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
@@ -1536,6 +1821,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.suppliers)) payload.suppliers = [];
   if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
   if (!Array.isArray(payload.rawMaterialPriceHistory)) payload.rawMaterialPriceHistory = [];
+  if (!Array.isArray(payload.supplierShortages)) payload.supplierShortages = [];
   if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
   if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
   if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
@@ -1546,6 +1832,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
   if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
   if (!Array.isArray(payload.bakingProfiles)) payload.bakingProfiles = [];
+  if (!Array.isArray(payload.bakingProfileProducts)) payload.bakingProfileProducts = [];
+  if (!Array.isArray(payload.productRecipeComponents)) payload.productRecipeComponents = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -1577,7 +1865,7 @@ export async function importAllData(payload) {
     db.flows,
     db.flowPortionPresets,
     db.groupPortionPresets,
-    db.flowPreparations,
+    db.groupPreparations,
     db.productionRuns,
     db.runStepStates,
     db.productPreparations,
@@ -1600,22 +1888,28 @@ export async function importAllData(payload) {
     db.suppliers,
     db.rawMaterials,
     db.rawMaterialPriceHistory,
+    db.supplierShortages,
     db.weeklyProductionPlans,
     db.weeklyProductionPlanItems,
     db.bakingProfiles,
+    db.bakingProfileProducts,
+    db.productRecipeComponents,
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
       await db.weeklyProductionPlanItems.clear();
       await db.weeklyProductionPlans.clear();
+      await db.productRecipeComponents.clear();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
+      await db.bakingProfileProducts?.clear?.();
       await db.bakingProfiles?.clear?.();
       await db.rawMaterialPriceHistory?.clear?.();
       await db.rawMaterials.clear();
+      await db.supplierShortages?.clear?.();
       await db.suppliers.clear();
       await db.supplierCategories.clear();
       await db.runPreparationChecks.clear();
@@ -1623,7 +1917,7 @@ export async function importAllData(payload) {
       await db.productionRuns.clear();
       await db.flowPortionPresets.clear();
       await db.groupPortionPresets.clear();
-      await db.flowPreparations.clear();
+      await db.groupPreparations.clear();
       await db.flowSteps.clear();
       await db.flows.clear();
       await db.managerPlanItems.clear();
@@ -1654,7 +1948,17 @@ export async function importAllData(payload) {
       } else {
         await migrateImportedFlowPresetsToGroup(tx);
       }
-      if (payload.flowPreparations.length) await db.flowPreparations.bulkPut(payload.flowPreparations);
+      if (payload.groupPreparations.length) {
+        await db.groupPreparations.bulkPut(payload.groupPreparations);
+      } else if (payload.flowPreparations.length) {
+        const prepIdRemap = await migrateImportedFlowPreparationsToGroup(tx, payload);
+        if (prepIdRemap.size && payload.runPreparationChecks.length) {
+          payload.runPreparationChecks = payload.runPreparationChecks.map((check) => {
+            if (!check.flowPreparationId || !prepIdRemap.has(check.flowPreparationId)) return check;
+            return { ...check, flowPreparationId: prepIdRemap.get(check.flowPreparationId) };
+          });
+        }
+      }
       if (payload.productionRuns.length) await db.productionRuns.bulkPut(payload.productionRuns);
       if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
       if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
@@ -1665,10 +1969,17 @@ export async function importAllData(payload) {
       if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
       if (payload.recipeProductLinks.length) await db.recipeProductLinks.bulkPut(payload.recipeProductLinks);
       if (payload.bakingProfiles?.length) await db.bakingProfiles.bulkPut(payload.bakingProfiles);
+      if (payload.bakingProfileProducts?.length) {
+        await db.bakingProfileProducts.bulkPut(payload.bakingProfileProducts);
+      }
+      if (payload.productRecipeComponents?.length) {
+        await db.productRecipeComponents.bulkPut(payload.productRecipeComponents);
+      }
       await migrateLegacyRecipeCategoriesIfNeeded(tx);
       if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
       if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);
       if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
+      if (payload.supplierShortages?.length) await db.supplierShortages.bulkPut(payload.supplierShortages);
       if (payload.rawMaterialPriceHistory?.length) await db.rawMaterialPriceHistory.bulkPut(payload.rawMaterialPriceHistory);
       if (payload.weeklyProductionPlans.length) await db.weeklyProductionPlans.bulkPut(payload.weeklyProductionPlans);
       if (payload.weeklyProductionPlanItems.length) {
@@ -1761,7 +2072,7 @@ export async function updateProduct(id, data) {
     const unit = patch.priceUnit ?? existing?.priceUnit;
     if ('unitWeightKg' in patch) {
       patch.unitWeightKg = sanitizeUnitWeightKg(patch.unitWeightKg, unit);
-    } else if (unit !== 'kg_units') {
+    } else if (unit !== 'kg_units' && unit !== 'kg_with_units') {
       patch.unitWeightKg = null;
     }
   }
@@ -1847,7 +2158,7 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
   if (!product) throw new ValidationError('מוצר לא נמצא');
   const qty = sanitizeProductQuantity(quantity, product);
   if (qty === null) {
-    const msg = product.priceUnit === 'kg'
+    const msg = product.priceUnit === 'kg' || product.priceUnit === 'kg_with_units'
       ? 'משקל חייב להיות מספר חיובי (ק"ג)'
       : 'כמות חייבת להיות מספר שלם חיובי';
     throw new ValidationError(msg);
@@ -1882,7 +2193,7 @@ export async function updateProductionEntry(id, data) {
     const product = entry ? await db.products.get(entry.productId) : null;
     const qty = sanitizeProductQuantity(patch.quantity, product);
     if (qty === null) {
-      throw new ValidationError(product?.priceUnit === 'kg'
+      throw new ValidationError(product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units'
         ? 'משקל חייב להיות מספר חיובי (ק"ג)'
         : 'כמות חייבת להיות מספר שלם חיובי');
     }
@@ -2404,33 +2715,60 @@ export async function getProcessLogsForMonth(year, month) {
   return all.filter((e) => e.date.startsWith(prefix));
 }
 
-/* ── הכנות לתזרים (צ׳קליסט) ── */
+/* ── הכנות לתזרים (צ׳קליסט — רשימה קבועה לפי קטגוריה כללית) ── */
 
-export async function getFlowPreparations(flowId) {
-  const fid = sanitizeProductId(flowId);
-  if (!fid) return [];
-  const rows = await db.flowPreparations.where('flowId').equals(fid).toArray();
+async function resolveFlowPrepScope(flowId) {
+  const flow = await db.flows.get(Number(flowId));
+  if (!flow) return { categoryGroupId: null, categoryId: null };
+  if (flow.categoryId) {
+    const cat = await db.categories.get(flow.categoryId);
+    return { categoryGroupId: cat?.groupId || null, categoryId: flow.categoryId };
+  }
+  return { categoryGroupId: flow.categoryGroupId || null, categoryId: null };
+}
+
+export async function getGroupPreparations(categoryGroupId, categoryId = null) {
+  const gid = sanitizeProductId(categoryGroupId);
+  if (!gid) return [];
+  const cid = categoryId ? sanitizeProductId(categoryId) : null;
+  let rows = await db.groupPreparations.where('categoryGroupId').equals(gid).toArray();
+  if (cid) {
+    rows = rows.filter((p) => p.categoryId === cid);
+  } else {
+    rows = rows.filter((p) => !p.categoryId);
+  }
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
 }
 
+export async function getFlowPreparations(flowId) {
+  const scope = await resolveFlowPrepScope(flowId);
+  if (!scope.categoryGroupId) return [];
+  return getGroupPreparations(scope.categoryGroupId, scope.categoryId);
+}
+
 export async function addFlowPreparation(flowId, name) {
-  const fid = sanitizeProductId(flowId);
+  const scope = await resolveFlowPrepScope(flowId);
   const trimmed = sanitizeName(name, 80);
-  if (!fid) throw new ValidationError('תזרים לא תקין');
+  if (!scope.categoryGroupId) throw new ValidationError('תזרים לא תקין');
   if (!trimmed) throw new ValidationError('שם הכנה לא תקין');
-  const existing = await getFlowPreparations(fid);
+  const existing = await getGroupPreparations(scope.categoryGroupId, scope.categoryId);
   if (existing.some((p) => p.name === trimmed)) {
-    throw new ValidationError('הכנה זו כבר קיימת בתזרים');
+    throw new ValidationError('הכנה זו כבר קיימת ברשימה');
   }
   const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
-  return db.flowPreparations.add({ flowId: fid, name: trimmed, sortOrder: maxOrder + 1 });
+  return db.groupPreparations.add({
+    categoryGroupId: scope.categoryGroupId,
+    categoryId: scope.categoryId || null,
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+  });
 }
 
 export async function deleteFlowPreparation(id) {
   const prepId = sanitizeProductId(id);
   if (!prepId) return;
-  await db.flowPreparations.delete(prepId);
+  await db.groupPreparations.delete(prepId);
 }
 
 async function resolveFlowCategoryIdForPresets(flowId) {
@@ -2466,8 +2804,7 @@ async function seedRunPreparationChecksInTx(tx, runId, flowId) {
   const fid = sanitizeProductId(flowId);
   const rid = sanitizeProductId(runId);
   if (!fid || !rid) return;
-  const preps = await tx.table('flowPreparations').where('flowId').equals(fid).toArray();
-  preps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const preps = await getFlowPreparations(fid);
   for (const prep of preps) {
     await tx.table('runPreparationChecks').add({
       runId: rid,
@@ -2536,7 +2873,7 @@ export async function addRunPreparationFromFlow(flowId, name, runId) {
   const prepId = await addFlowPreparation(flowId, name);
   const rid = sanitizeProductId(runId);
   if (!rid) return prepId;
-  const prep = await db.flowPreparations.get(prepId);
+  const prep = await db.groupPreparations.get(prepId);
   if (prep) {
     const existing = await getRunPreparationChecks(rid);
     if (!existing.some((c) => c.flowPreparationId === prep.id)) {
@@ -2551,6 +2888,18 @@ export async function addRunPreparationFromFlow(flowId, name, runId) {
     }
   }
   return prepId;
+}
+
+export function resolveFlowPlanCategoryFromFlow(flow, catMap) {
+  if (flow.categoryId) {
+    const cat = catMap.get(Number(flow.categoryId));
+    return {
+      categoryId: Number(flow.categoryId),
+      categoryGroupId: cat?.groupId ? Number(cat.groupId) : (flow.categoryGroupId ? Number(flow.categoryGroupId) : null),
+    };
+  }
+  const gid = flow.categoryGroupId || flow.groupId;
+  return { categoryId: null, categoryGroupId: gid ? Number(gid) : null };
 }
 
 /* ── תזרים יצור ── */
@@ -2799,7 +3148,7 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
   ]);
   const maxOrder = existing.reduce((m, f) => Math.max(m, f.sortOrder ?? 0), 0);
 
-  return db.transaction('rw', db.flows, db.flowSteps, db.flowPreparations, async () => {
+  return db.transaction('rw', db.flows, db.flowSteps, async () => {
     const newFlowId = await db.flows.add({
       categoryId: isCategoryTarget ? cid : null,
       categoryGroupId: isCategoryTarget ? null : gid,
@@ -2819,15 +3168,6 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
         tracksProduction: !!s.tracksProduction,
         portionUnit: s.portionUnit || null,
         portionSize: s.portionSize ?? null,
-      });
-    }
-
-    const sourcePreps = await getFlowPreparations(sourceId);
-    for (const prep of sourcePreps) {
-      await db.flowPreparations.add({
-        flowId: newFlowId,
-        name: prep.name,
-        sortOrder: prep.sortOrder ?? 0,
       });
     }
 
@@ -2880,8 +3220,7 @@ export async function deleteFlow(flowId) {
     throw new ValidationError('לא ניתן למחוק את התזרים האחרון');
   }
 
-  await db.transaction('rw', db.flows, db.flowSteps, db.flowPreparations, async () => {
-    await db.flowPreparations.where('flowId').equals(fid).delete();
+  await db.transaction('rw', db.flows, db.flowSteps, async () => {
     await db.flowSteps.where('flowId').equals(fid).delete();
     await db.flows.delete(fid);
     if (flow.isDefault) {
@@ -3339,7 +3678,7 @@ export async function startProductionRun({
 
   const startedAt = mergeDateIntoIso(date, nowISO());
 
-  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.flowPreparations, db.runPreparationChecks, async () => {
+  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, async () => {
     const runId = await db.productionRuns.add({
       date,
       batchNumber: batch,
@@ -3385,6 +3724,7 @@ export async function startProductionRun({
       const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
       await db.settings.put({ key: RUN_SETTINGS_KEY, value: { ...runSettings, nextBatchNumber: next } });
     }
+    syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date }).catch(() => {});
     return runId;
   });
 }
@@ -3486,9 +3826,70 @@ export async function getProductionRunsForDate(date) {
   return runs;
 }
 
+/** כל תהליכי יצור של תזרים — מהחדש לישן */
+export async function getProductionRunsForFlow(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const runs = await db.productionRuns.filter((r) => Number(r.flowId) === fid).toArray();
+  runs.sort((a, b) => {
+    const ta = a.completedAt || a.startedAt || `${a.date || ''}T00:00:00`;
+    const tb = b.completedAt || b.startedAt || `${b.date || ''}T00:00:00`;
+    return tb.localeCompare(ta) || (b.id - a.id);
+  });
+  const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
+  return full.filter(Boolean);
+}
+
+/** סיכום מוצרים שיוצרו בכל תהליכי התזרים */
+export async function getFlowProductsHistory(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const runs = await db.productionRuns.filter((r) => Number(r.flowId) === fid).toArray();
+  const runIds = new Set(runs.map((r) => r.id));
+  if (!runIds.size) return [];
+
+  const entries = await db.productionEntries.filter((e) => runIds.has(Number(e.runId))).toArray();
+  const byProduct = new Map();
+  for (const e of entries) {
+    const pid = Number(e.productId);
+    if (!pid) continue;
+    let row = byProduct.get(pid);
+    if (!row) {
+      row = { productId: pid, totalQty: 0, entryCount: 0, runIds: new Set(), lastDate: '' };
+      byProduct.set(pid, row);
+    }
+    row.totalQty += Number(e.quantity) || 0;
+    row.entryCount += 1;
+    if (e.runId) row.runIds.add(Number(e.runId));
+    if (e.date && e.date > row.lastDate) row.lastDate = e.date;
+  }
+
+  return [...byProduct.values()]
+    .map((row) => ({
+      productId: row.productId,
+      totalQty: Math.round(row.totalQty * 1000) / 1000,
+      entryCount: row.entryCount,
+      runCount: row.runIds.size,
+      lastDate: row.lastDate,
+    }))
+    .sort((a, b) => b.lastDate.localeCompare(a.lastDate) || a.productId - b.productId);
+}
+
 export async function getActiveProductionRuns() {
   const runs = await db.productionRuns.where('status').equals('active').toArray();
   runs.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id);
+  const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
+  return full.filter(Boolean);
+}
+
+/** כל תהליכי היצור — ממוינים לפי תאריך (חדש → ישן) */
+export async function getAllProductionRuns() {
+  const runs = await db.productionRuns.toArray();
+  runs.sort((a, b) => {
+    const dateCmp = b.date.localeCompare(a.date);
+    if (dateCmp) return dateCmp;
+    return (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id;
+  });
   const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
   return full.filter(Boolean);
 }
@@ -4220,6 +4621,12 @@ export async function addManagerPlanFlowSteps({
   );
 
   let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+  let categoryId = flow.categoryId || null;
+  let categoryGroupId = flow.categoryGroupId || null;
+  if (categoryId && !categoryGroupId) {
+    const cat = await db.categories.get(categoryId);
+    categoryGroupId = cat?.groupId || null;
+  }
   const rows = [];
   for (const sid of selected) {
     if (existingStepIds.has(sid)) continue;
@@ -4233,7 +4640,8 @@ export async function addManagerPlanFlowSteps({
       flowId: fid,
       flowStepId: sid,
       productId: null,
-      categoryId: null,
+      categoryId,
+      categoryGroupId,
       label: `${flow.name} · ${step.name}`,
       quantity: null,
       done: false,
@@ -4242,6 +4650,80 @@ export async function addManagerPlanFlowSteps({
   }
   if (!rows.length) throw new ValidationError('כל המשימות שנבחרו כבר בתוכנית');
   await db.managerPlanItems.bulkAdd(rows);
+  return rows.length;
+}
+
+/** סנכרון אוטומטי של משימות מתזרימים לתוכנית — idempotent */
+export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, dayOffset = 0 } = {}) {
+  if (!isValidISODate(anchorDate)) return 0;
+  const [flowsOverview, existingItems] = await Promise.all([
+    getAllFlowsOverview(),
+    getManagerPlanItems(planType, anchorDate),
+  ]);
+
+  const existingStepIds = new Set(
+    existingItems.filter((i) => i.itemKind === 'flow_step' && i.flowStepId).map((i) => i.flowStepId),
+  );
+  const existingPrepIds = new Set(
+    existingItems.filter((i) => i.itemKind === 'flow_preparation' && i.flowPreparationId).map((i) => i.flowPreparationId),
+  );
+
+  let sortOrder = existingItems.length
+    ? Math.max(...existingItems.map((i) => i.sortOrder ?? 0)) + 1
+    : 1;
+  const rows = [];
+
+  for (const flow of flowsOverview) {
+    const categoryId = flow.categoryId || null;
+    const categoryGroupId = flow.groupId || flow.categoryGroupId || null;
+    const [steps, preps] = await Promise.all([
+      getFlowStepsForFlow(flow.id),
+      getFlowPreparations(flow.id),
+    ]);
+
+    for (const step of steps) {
+      if (step.tracksProduction) continue;
+      if (existingStepIds.has(step.id)) continue;
+      rows.push({
+        planType,
+        anchorDate,
+        dayOffset: Number(dayOffset) || 0,
+        itemKind: 'flow_step',
+        flowId: flow.id,
+        flowStepId: step.id,
+        productId: null,
+        categoryId,
+        categoryGroupId,
+        label: `${flow.name} · ${step.name}`,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+      existingStepIds.add(step.id);
+    }
+
+    for (const prep of preps) {
+      if (existingPrepIds.has(prep.id)) continue;
+      rows.push({
+        planType,
+        anchorDate,
+        dayOffset: Number(dayOffset) || 0,
+        itemKind: 'flow_preparation',
+        flowId: flow.id,
+        flowPreparationId: prep.id,
+        productId: null,
+        categoryId,
+        categoryGroupId,
+        label: `${flow.name} · ${prep.name}`,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+      existingPrepIds.add(prep.id);
+    }
+  }
+
+  if (rows.length) await db.managerPlanItems.bulkAdd(rows);
   return rows.length;
 }
 

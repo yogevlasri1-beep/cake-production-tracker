@@ -1,4 +1,4 @@
-import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=187';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=202';
 
 export { roundMoney };
 
@@ -36,7 +36,7 @@ export function productUnitCost(product) {
 export function productLineValue(product, qty) {
   const q = Number(qty) || 0;
   const price = Number(product?.unitPrice) || 0;
-  if (product?.priceUnit === 'kg') return roundMoney(q * price);
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units') return roundMoney(q * price);
   if (product?.priceUnit === 'kg_units') {
     const uw = Number(product?.unitWeightKg) || 0;
     return roundMoney(q * uw * price);
@@ -45,7 +45,7 @@ export function productLineValue(product, qty) {
 }
 
 export function entryQuantityForProduct(raw, product) {
-  if (product?.priceUnit === 'kg') {
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units') {
     return sanitizePortionSize(raw, { min: 0.001, max: 100_000 });
   }
   return sanitizeQuantity(raw, { allowZero: false });

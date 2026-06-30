@@ -8,6 +8,8 @@ import {
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   getFlowPreparations, addFlowPreparation, deleteFlowPreparation, importFlowPreparationsFromActivityPresets,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
+  getAllProductionRuns,
+  getProductionRunsForFlow, getFlowProductsHistory, getFlow,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
@@ -16,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=187';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime } from '../utils.js?v=187';
-import { openModal, closeModal } from '../modal.js?v=187';
-import { requestAutoBackupNow } from '../backup-service.js?v=187';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=187';
+} from '../db.js?v=202';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=202';
+import { openModal, closeModal } from '../modal.js?v=202';
+import { requestAutoBackupNow } from '../backup-service.js?v=202';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=202';
 
 function parseIdList(str) {
   try {
@@ -241,14 +243,17 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
   const { flowsByCategory, flowsByGroup, otherFlows } = bucketFlowsForCatalog(flowsOverview, layout);
 
   const renderFlowRow = (f) => `
-    <button type="button" class="flows-overview-open"
-      data-flow-id="${f.id}"
-      data-target-type="${f.targetType}"
-      data-group-id="${f.groupId || f.categoryGroupId || ''}"
-      data-category-id="${f.categoryId || ''}">
-      <strong>${escapeHtml(f.name)}</strong>${f.isDefault ? ' ★' : ''}
-      <span class="flows-overview-open-meta"> · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
-    </button>`;
+    <div class="flows-overview-row">
+      <button type="button" class="flows-overview-open"
+        data-flow-id="${f.id}"
+        data-target-type="${f.targetType}"
+        data-group-id="${f.groupId || f.categoryGroupId || ''}"
+        data-category-id="${f.categoryId || ''}">
+        <strong>${escapeHtml(f.name)}</strong>${f.isDefault ? ' ★' : ''}
+        <span class="flows-overview-open-meta"> · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
+      </button>
+      <button type="button" class="btn btn-secondary btn-sm flows-overview-history" data-flow-id="${f.id}" title="היסטוריה">📋</button>
+    </div>`;
 
   const sections = [];
   for (const group of layout.groups) {
@@ -289,6 +294,12 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
   }
 
   return sections.join('');
+}
+
+function openFlowHistoryView(container, flowId) {
+  container.dataset.view = 'flow-history';
+  container.dataset.flowHistoryId = String(flowId);
+  renderProcess(container);
 }
 
 function openFlowInManageView(container, { flowId, targetType, groupId, categoryId }) {
@@ -357,12 +368,12 @@ function stepPortionLabel(step) {
   const batches = getStepPortionBatches(step);
   if (batches.some((b) => b.name)) {
     const names = [...new Set(batches.filter((b) => b.name).map((b) => b.name))];
-    return `${total} מנות · ${names.join(', ')}`;
+    return `${formatPortionCount(total)} מנות · ${names.join(', ')}`;
   }
-  if (step.portionSize == null) return `${total} מנות`;
+  if (step.portionSize == null) return `${formatPortionCount(total)} מנות`;
   const unit = step.portionUnit === 'weight' ? 'ק"ג' : "יח'";
-  const size = step.portionUnit === 'weight' ? Number(step.portionSize) : step.portionSize;
-  return `${total} מנות × ${size} ${unit}`;
+  const size = step.portionUnit === 'weight' ? formatDecimal(step.portionSize) : step.portionSize;
+  return `${formatPortionCount(total)} מנות × ${size} ${unit}`;
 }
 
 function portionPresetOptionLabel(p) {
@@ -511,9 +522,9 @@ function stepDatetimeFieldsHTML(step, stepIndex) {
     </div>`;
 }
 
-function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions = false, presets = [], showDatetime = false } = {}) {
+function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = false } = {}) {
   return `
-    <div class="flow-step-edit${expanded ? '' : ' hidden'}" data-step-edit="${stepIndex}">
+    <div class="flow-step-notes-panel${hidden ? ' hidden' : ''}" data-step-notes="${stepIndex}">
       <div class="form-group">
         <label for="step-${stepIndex}-notes">הערות</label>
         <textarea id="step-${stepIndex}-notes" rows="2" placeholder="הערות כלליות">${escapeHtml(step.notes || '')}</textarea>
@@ -527,9 +538,11 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false, includePortions
         <textarea id="step-${stepIndex}-improvements" rows="2" placeholder="מה אפשר לשפר">${escapeHtml(step.improvements || '')}</textarea>
       </div>
       ${showDatetime ? stepDatetimeFieldsHTML(step, stepIndex) : ''}
-      ${includePortions ? stepPortionFieldsHTML(step, stepIndex, presets) : ''}
-      <button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור שינויים</button>
     </div>`;
+}
+
+function stepInlineEditHTML(step, stepIndex, { expanded = false, showDatetime = false } = {}) {
+  return stepNotesPanelHTML(step, stepIndex, { hidden: !expanded, showDatetime });
 }
 
 function resolveRunCategoryIds(run) {
@@ -722,12 +735,12 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const isActive = visual === 'active';
   const isDone = visual === 'done';
   const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
-  const showPreview = hasNotes && !isActive && !editAllMode;
   const runActive = run?.status === 'active';
   const useTopProductionPanel = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
+  const showDatetimeInNotes = isDone || step.status === 'completed' || editAllMode;
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
@@ -752,7 +765,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   }
 
   return `
-    <div class="flow-step flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
+    <div class="flow-step flow-step--compact flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
       <div class="flow-step-marker" aria-hidden="true"></div>
       <div class="flow-step-body">
         <div class="flow-step-header">
@@ -761,31 +774,24 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
           ${stepCompletedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepCompletedLabel)}</span>` : (timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : '')}
           ${stepDurationLabel ? `<span class="flow-step-duration">⏱ ${stepDurationLabel}</span>` : ''}
           ${flowStepProductionSummary(step)}
-          ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽 מנות</span>' : ''}
+          ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽</span>' : ''}
+          <div class="flow-step-header-actions">
+            ${canEditFields ? `
+              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="הערות · תקלות · שיפור" aria-label="הערות תקלות ושיפור">📝</button>` : ''}
+            ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
+            ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
+          </div>
         </div>
         ${prodPanel}
         ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${step.tracksPortions && portionEditable
     ? stepPortionBatchesHTML(step, stepIndex, { canAdd: portionEditable, canEdit: portionEditable, presets: portionPresets }) : ''}
-        ${showPreview ? `
-          <div class="flow-step-notes-preview">
-            ${step.notes ? `<span>📝 ${escapeHtml(step.notes)}</span>` : ''}
-            ${step.issues ? `<span>⚠️ ${escapeHtml(step.issues)}</span>` : ''}
-            ${step.improvements ? `<span>💡 ${escapeHtml(step.improvements)}</span>` : ''}
-          </div>` : ''}
-        ${canEditFields ? stepInlineEditHTML(step, stepIndex, {
-    expanded: isActive || editAllMode,
-    includePortions: true,
-    presets: portionPresets,
-    showDatetime: isDone || step.status === 'completed' || editAllMode,
-  }) : ''}
+        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true, showDatetime: showDatetimeInNotes }) : ''}
+        ${(canEditCompleted || (isDone && canEditFields)) ? `
         <div class="flow-step-actions">
-          ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור לשלב</button>` : ''}
-          ${isDone && (runActive || run?.status === 'completed') ? `<button type="button" class="btn btn-secondary btn-sm flow-step-edit-toggle" data-step="${stepIndex}">✏️ ערוך</button>` : ''}
-          ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
-          ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם שלב</button>` : ''}
+          ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור</button>` : ''}
           ${isDone && canEditFields ? `<button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור</button>` : ''}
-        </div>
+        </div>` : ''}
       </div>
     </div>`;
 }
@@ -893,6 +899,167 @@ function renderRunsListGroupedHTML(runs, layout, catMap, productMap, groupMap, {
   return blocks.length
     ? `<div class="run-list-grouped">${blocks.join('')}</div>`
     : runs.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate })).join('');
+}
+
+function groupRunsByDate(runs) {
+  const groups = [];
+  const indexByDate = new Map();
+  for (const run of runs) {
+    const date = run.date || runStartDateIso(run) || '';
+    if (!indexByDate.has(date)) {
+      const group = { date, runs: [] };
+      indexByDate.set(date, groups.length);
+      groups.push(group);
+    }
+    groups[indexByDate.get(date)].runs.push(run);
+  }
+  return groups;
+}
+
+function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
+  if (!runs.length) {
+    return '<p class="form-hint" style="text-align:center;padding:12px">עדיין לא התחלת תהליכי יצור</p>';
+  }
+  const groups = groupRunsByDate(runs);
+  return groups.map(({ date, runs: dayRuns }) => `
+    <div class="flow-runs-date-group">
+      <div class="flow-runs-date-label">${formatDate(date)}</div>
+      ${dayRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap)).join('')}
+    </div>`).join('');
+}
+
+function formatRunEntriesSummary(entries, productMap) {
+  if (!entries?.length) return '';
+  const byProduct = new Map();
+  for (const e of entries) {
+    const pid = e.productId;
+    byProduct.set(pid, (byProduct.get(pid) || 0) + (Number(e.quantity) || 0));
+  }
+  return [...byProduct.entries()]
+    .map(([pid, qty]) => {
+      const p = productMap.get(pid);
+      const name = p?.name || `#${pid}`;
+      const qtyText = p ? formatProductQuantity(p, qty) : formatDecimal(qty);
+      return `${escapeHtml(name)} · ${qtyText}`;
+    })
+    .join(' · ');
+}
+
+async function renderFlowHistoryView(container, ctx) {
+  const flowId = Number(container.dataset.flowHistoryId);
+  const backView = container.dataset.flowHistoryBack || 'list';
+
+  if (!flowId) {
+    container.dataset.view = backView;
+    delete container.dataset.flowHistoryId;
+    delete container.dataset.flowHistoryBack;
+    return renderProcess(container);
+  }
+
+  const { catMap, productMap, groupMap } = ctx;
+  const allFlows = await getAllFlowsOverview();
+  const flowMeta = allFlows.find((f) => f.id === flowId);
+  const flow = await getFlow(flowId);
+
+  if (!flow) {
+    showToast('תזרים לא נמצא');
+    container.dataset.view = backView;
+    delete container.dataset.flowHistoryId;
+    return renderProcess(container);
+  }
+
+  const [runs, productsHistory] = await Promise.all([
+    getProductionRunsForFlow(flowId),
+    getFlowProductsHistory(flowId),
+  ]);
+
+  const runsWithEntries = await Promise.all(runs.map(async (run) => ({
+    run,
+    entries: await getRunProductionEntries(run.id),
+  })));
+
+  const productRows = productsHistory
+    .map((row) => ({ ...row, product: productMap.get(row.productId) }))
+    .sort((a, b) => (a.product?.name || '').localeCompare(b.product?.name || '', 'he'));
+
+  const flowName = flowMeta?.name || flow.name || 'תזרים';
+  const targetLabel = flowMeta?.targetLabel || '';
+
+  container.innerHTML = `
+    <div class="card">
+      <button type="button" class="btn btn-secondary btn-sm" id="back-from-flow-history">← חזרה</button>
+      <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריה · ${escapeHtml(flowName)}</h2>
+      ${targetLabel ? `<p class="form-hint" style="margin-bottom:0">${escapeHtml(targetLabel)}</p>` : ''}
+    </div>
+
+    <div class="card">
+      <div class="card-title">מוצרים שיוצרו (${productRows.length})</div>
+      ${productRows.length === 0
+    ? '<p class="form-hint" style="text-align:center;padding:12px">עדיין לא תועד ייצור בתזרים זה</p>'
+    : `<div class="report-table-wrap">
+          <table class="report-table">
+            <thead><tr>
+              <th>מוצר</th><th>סה"כ</th><th>תהליכים</th><th>אחרון</th>
+            </tr></thead>
+            <tbody>
+              ${productRows.map((row) => {
+    const p = row.product;
+    const qtyText = p ? formatProductQuantity(p, row.totalQty) : formatDecimal(row.totalQty);
+    return `<tr>
+                  <td class="report-cell-text">${escapeHtml(p?.name || `#${row.productId}`)}</td>
+                  <td class="report-cell-num"><strong>${qtyText}</strong></td>
+                  <td class="report-cell-num">${row.runCount}</td>
+                  <td class="report-cell-text">${row.lastDate ? formatDate(row.lastDate) : '—'}</td>
+                </tr>`;
+  }).join('')}
+            </tbody>
+          </table>
+        </div>`}
+    </div>
+
+    <div class="card">
+      <div class="card-title">היסטוריית תהליכים (${runs.length})</div>
+      ${runs.length === 0
+    ? '<p class="form-hint" style="text-align:center;padding:12px">לא הופעל תהליך בתזרים זה</p>'
+    : runsWithEntries.map(({ run, entries }) => {
+      const statusLabel = run.status === 'active' ? 'פעיל' : 'הושלם';
+      const duration = runDurationMs(run);
+      const productsLine = formatRunEntriesSummary(entries, productMap);
+      return `
+          <div class="list-item flow-history-run-item ${run.status === 'active' ? 'flow-run-active' : 'flow-run-done'}">
+            <div class="list-item-info">
+              <div class="list-item-name">
+                ${batchPrefix(run.batchNumber)}${runTitle(run, catMap, productMap, groupMap)}
+              </div>
+              <div class="list-item-meta">
+                <span class="flow-status-badge flow-status-badge--${run.status}">${statusLabel}</span>
+                · ${runDatesLabel(run)}
+                ${duration != null ? ` · ${formatDuration(duration)}` : ''}
+              </div>
+              ${entries.length ? `<div class="flow-history-run-products form-hint">📦 ${productsLine}</div>` : ''}
+            </div>
+            <div class="list-item-actions">
+              <button type="button" class="btn btn-primary btn-sm open-run" data-id="${run.id}" data-date="${run.date}">פתח</button>
+            </div>
+          </div>`;
+    }).join('')}
+    </div>`;
+
+  document.getElementById('back-from-flow-history')?.addEventListener('click', () => {
+    container.dataset.view = backView;
+    delete container.dataset.flowHistoryId;
+    delete container.dataset.flowHistoryBack;
+    renderProcess(container);
+  });
+
+  container.querySelectorAll('.open-run').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.date) container.dataset.selectedDate = btn.dataset.date;
+      container.dataset.view = 'run';
+      container.dataset.runId = btn.dataset.id;
+      renderProcess(container);
+    });
+  });
 }
 
 function flowPreparationsPopoverHTML({ checks, flowLabel, canManageList }) {
@@ -1266,10 +1433,22 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  container.querySelectorAll('.flow-step-notes-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const stepIndex = Number(btn.dataset.step);
+      const panel = container.querySelector(`[data-step-notes="${stepIndex}"]`);
+      if (!panel) return;
+      const opening = panel.classList.contains('hidden');
+      panel.classList.toggle('hidden');
+      btn.classList.toggle('is-open', opening);
+      if (opening) panel.querySelector('textarea')?.focus();
+    });
+  });
+
   container.querySelectorAll('.flow-step-edit-toggle').forEach((btn) => {
     btn.addEventListener('click', () => {
       const stepIndex = Number(btn.dataset.step);
-      const panel = container.querySelector(`[data-step-edit="${stepIndex}"]`);
+      const panel = container.querySelector(`[data-step-notes="${stepIndex}"]`);
       if (!panel) return;
       const opening = panel.classList.contains('hidden');
       panel.classList.toggle('hidden');
@@ -1495,7 +1674,7 @@ function bindRunProductionPanels(container, run, productionCtx) {
           </div>
           <div class="form-group">
             <label for="flow-edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
-            <input type="number" id="flow-edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${entry.quantity}">
+            <input type="number" id="flow-edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${formatDecimal(entry.quantity)}">
           </div>`,
         footerHTML: `
           <button class="btn btn-secondary modal-cancel">ביטול</button>
@@ -1682,6 +1861,7 @@ async function renderManageView(container, ctx) {
           ${activeFlow ? `
             <div class="filter-row" style="margin-top:12px;margin-bottom:12px">
               <button type="button" class="btn btn-secondary btn-sm" id="rename-flow-btn">✏️ שנה שם</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="flow-history-btn">📋 היסטוריה</button>
               <button type="button" class="btn btn-secondary btn-sm" id="duplicate-flow-btn">📋 שכפל</button>
               ${!activeFlow.isDefault ? `<button type="button" class="btn btn-secondary btn-sm" id="set-default-flow-btn">★ ברירת מחדל</button>` : ''}
               ${targetFlowsOverview.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" id="delete-flow-btn">🗑 מחק</button>` : ''}
@@ -1691,7 +1871,7 @@ async function renderManageView(container, ctx) {
         ${activeFlow ? `
         <div class="flow-prep-manage-card">
           <div class="card-title" style="margin-bottom:6px">🧁 צ׳קליסט הכנות</div>
-          <p class="form-hint" style="margin-bottom:10px">מופיע בראש כל תהליך שמשתמש בתזרים «${escapeHtml(activeFlow.name)}»</p>
+          <p class="form-hint" style="margin-bottom:10px">רשימה קבועה לקטגוריה כללית — נשמרת לתמיד · מופיעה בכל תהליך שמשתמש בתזרים «${escapeHtml(activeFlow.name)}»</p>
           ${flowPreps.length ? `
             <ul class="product-prep-list flow-prep-manage-list">
               ${flowPreps.map((p, i) => `
@@ -1938,6 +2118,12 @@ async function renderManageView(container, ctx) {
         showToast(err.message || 'שגיאה');
       }
     });
+  });
+
+  document.getElementById('flow-history-btn')?.addEventListener('click', () => {
+    if (!activeFlow) return;
+    container.dataset.flowHistoryBack = 'manage';
+    openFlowHistoryView(container, activeFlow.id);
   });
 
   document.getElementById('duplicate-flow-btn')?.addEventListener('click', () => {
@@ -2608,11 +2794,15 @@ export async function renderProcess(container) {
   if (view === 'start') {
     return renderStartView(container, ctx);
   }
+  if (view === 'flow-history') {
+    return renderFlowHistoryView(container, ctx);
+  }
 
-  const [activeRuns, dateRuns, flowsOverview, sheetsHTML] = await Promise.all([
+  const [activeRuns, dateRuns, flowsOverview, allRuns, sheetsHTML] = await Promise.all([
     getActiveProductionRuns(),
     getProductionRunsForDate(date),
     getAllFlowsOverview(),
+    getAllProductionRuns(),
     renderSheetsStatusHTML(),
   ]);
   syncAllActiveProductionRuns().catch(() => {});
@@ -2655,7 +2845,7 @@ export async function renderProcess(container) {
     ${flowsOverview.length ? `
     <div class="card flows-overview">
       <div class="card-title">תזרימים מוגדרים (${flowsOverview.length})</div>
-      <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לצפייה בשלבים — ללא הפעלת תהליך</p>
+      <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לצפייה בשלבים · 📋 להיסטוריה</p>
       ${renderFlowsOverviewGrouped(flowsOverview, layout)}
     </div>` : ''}
 
@@ -2677,7 +2867,13 @@ export async function renderProcess(container) {
       <button type="button" class="btn btn-secondary btn-sm" id="process-template-btn" style="width:100%">
         הורד קובץ דוגמה
       </button>
-    </details>`;
+    </details>
+
+    <div class="card flow-all-runs-history">
+      <div class="card-title">כל התהליכים (${allRuns.length})</div>
+      <p class="form-hint" style="margin-bottom:10px">היסטוריה מלאה לפי תאריך — מהחדש לישן</p>
+      ${renderAllRunsByDateHTML(allRuns, layout, catMap, productMap, groupMap)}
+    </div>`;
 
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
@@ -2715,6 +2911,14 @@ export async function renderProcess(container) {
         groupId: btn.dataset.groupId,
         categoryId: btn.dataset.categoryId,
       });
+    });
+  });
+
+  container.querySelectorAll('.flows-overview-history').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      container.dataset.flowHistoryBack = 'list';
+      openFlowHistoryView(container, btn.dataset.flowId);
     });
   });
 

@@ -2,27 +2,22 @@ import { db, ValidationError } from './db.js';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
 } from './validators.js';
-import { weekStartISO, todayISO } from './utils.js';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
 export const RECIPE_WEIGHT_UNITS = [
   { id: 'kg', label: 'ק"ג' },
   { id: 'g', label: 'גרם' },
+  { id: 'l', label: 'ליטר' },
 ];
 
 function roundQty(n) {
-  return Math.round(n * 1000) / 1000;
+  return roundDecimal(n);
 }
 
 export function formatRecipeQuantity(qty) {
-  const n = Number(qty);
-  if (!Number.isFinite(n)) return '—';
-  const r = roundQty(n);
-  if (Math.abs(r - Math.round(r * 100) / 100) > 0.0004) return r.toFixed(3);
-  if (Math.abs(r - Math.round(r * 10) / 10) > 0.004) return r.toFixed(2);
-  if (Math.abs(r - Math.round(r)) > 0.04) return r.toFixed(1);
-  return String(Math.round(r));
+  return formatDecimal(qty);
 }
 
 export function normalizeRecipeUnitKind(unit) {
@@ -157,12 +152,14 @@ export async function updateBakingProfile(id, patch) {
 export async function deleteBakingProfile(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return;
-  const recipes = await db.recipes.toArray();
-  const using = recipes.filter((r) => Number(r.bakingProfileId) === pid);
-  if (using.length) {
-    throw new ValidationError(`פרופיל בשימוש ב-${using.length} מתכונים — הסר שיוך קודם`);
-  }
-  await db.bakingProfiles.delete(pid);
+  await db.transaction('rw', db.bakingProfiles, db.bakingProfileProducts, db.recipes, async () => {
+    await db.bakingProfileProducts.where('bakingProfileId').equals(pid).delete();
+    const recipes = await db.recipes.filter((r) => Number(r.bakingProfileId) === pid).toArray();
+    for (const recipe of recipes) {
+      await db.recipes.update(recipe.id, normalizeRecipeBakingFields({ hasBaking: false }));
+    }
+    await db.bakingProfiles.delete(pid);
+  });
 }
 
 export async function setBakingProfileOrder(orderedIds) {
@@ -178,6 +175,79 @@ export async function countRecipesUsingBakingProfile(profileId) {
   if (!pid) return 0;
   const recipes = await db.recipes.toArray();
   return recipes.filter((r) => Number(r.bakingProfileId) === pid).length;
+}
+
+export async function countProductsUsingBakingProfile(profileId) {
+  const pid = sanitizeProductId(profileId);
+  if (!pid) return 0;
+  return db.bakingProfileProducts.where('bakingProfileId').equals(pid).count();
+}
+
+export async function getProductsForBakingProfile(profileId) {
+  const pid = sanitizeProductId(profileId);
+  if (!pid) return [];
+  const links = await db.bakingProfileProducts.where('bakingProfileId').equals(pid).toArray();
+  links.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const products = [];
+  for (const link of links) {
+    const product = await db.products.get(Number(link.productId));
+    if (product) products.push({ ...product, linkId: link.id });
+  }
+  return products;
+}
+
+export async function getRecipesForBakingProfile(profileId) {
+  const pid = sanitizeProductId(profileId);
+  if (!pid) return [];
+  const recipes = await db.recipes.filter((r) => Number(r.bakingProfileId) === pid).toArray();
+  return recipes.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+export async function linkProductToBakingProfile(profileId, productId) {
+  const pid = sanitizeProductId(profileId);
+  const prodId = sanitizeProductId(productId);
+  if (!pid || !prodId) throw new ValidationError('שיוך לא תקין');
+  const profile = await db.bakingProfiles.get(pid);
+  if (!profile) throw new ValidationError('פרופיל לא נמצא');
+  const product = await db.products.get(prodId);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+  const existing = await db.bakingProfileProducts
+    .where('[bakingProfileId+productId]')
+    .equals([pid, prodId])
+    .first();
+  if (existing) return existing.id;
+  await db.bakingProfileProducts.where('productId').equals(prodId).delete();
+  const all = await db.bakingProfileProducts.where('bakingProfileId').equals(pid).toArray();
+  const maxOrder = all.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
+  return db.bakingProfileProducts.add({
+    bakingProfileId: pid,
+    productId: prodId,
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function unlinkProductFromBakingProfile(profileId, productId) {
+  const pid = sanitizeProductId(profileId);
+  const prodId = sanitizeProductId(productId);
+  if (!pid || !prodId) return;
+  await db.bakingProfileProducts.where('[bakingProfileId+productId]').equals([pid, prodId]).delete();
+}
+
+export async function linkRecipeToBakingProfile(profileId, recipeId) {
+  const pid = sanitizeProductId(profileId);
+  const rid = sanitizeProductId(recipeId);
+  if (!pid || !rid) throw new ValidationError('שיוך לא תקין');
+  const profile = await db.bakingProfiles.get(pid);
+  if (!profile) throw new ValidationError('פרופיל לא נמצא');
+  const recipe = await db.recipes.get(rid);
+  if (!recipe) throw new ValidationError('מתכון לא נמצא');
+  await db.recipes.update(rid, normalizeRecipeBakingFields({ hasBaking: true, bakingProfileId: pid }));
+}
+
+export async function unlinkRecipeFromBakingProfile(recipeId) {
+  const rid = sanitizeProductId(recipeId);
+  if (!rid) return;
+  await db.recipes.update(rid, normalizeRecipeBakingFields({ hasBaking: false }));
 }
 
 function normalizeBakeOvenType(raw) {
@@ -843,6 +913,19 @@ export function getRecipeWeightSummary(ingredients, options = {}) {
   };
 }
 
+/** כמה יחידות מוצר יוצאות מהמתכון — לפי משקל יחידה ומנות */
+export function computeRecipeProductUnits(totalRecipeKg, yieldPortions, unitWeightGrams) {
+  const totalG = (Number(totalRecipeKg) || 0) * 1000;
+  const unitG = Number(unitWeightGrams) || 0;
+  const yieldP = Number(yieldPortions) || 1;
+  if (totalG <= 0 || unitG <= 0 || yieldP <= 0) return null;
+  const totalUnits = totalG / unitG;
+  return {
+    totalUnits: roundQty(totalUnits),
+    unitsPerPortion: roundQty(totalUnits / yieldP),
+  };
+}
+
 export function formatRecipeIngredientsTotal(ingredients, options) {
   const { mainText, breakdownText } = getRecipeWeightSummary(ingredients, options);
   if (!mainText) return '';
@@ -1244,6 +1327,209 @@ export async function syncProductCostFromRecipe(recipeId) {
   for (const pid of productIds) {
     await db.products.update(pid, { rawMaterialsCost: cost });
   }
+  return cost;
+}
+
+/** משקל כולל של מתכון בגרמים (יבשים + נוזלים כק"ג) */
+export function recipeTotalWeightGrams(ingredients) {
+  const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients);
+  return Math.round((totalKg + totalLiters) * 1000);
+}
+
+/** קנה מידה לרכיבי מתכון לפי משקל יעד בגרמים */
+export function scaleIngredientsToTargetGrams(ingredients, targetGrams) {
+  const totalG = recipeTotalWeightGrams(ingredients);
+  if (!totalG || !targetGrams || targetGrams <= 0) {
+    return (ingredients || []).map((ing) => ({ ...ing, scaledQuantity: ing.quantity }));
+  }
+  const ratio = targetGrams / totalG;
+  return (ingredients || []).map((ing) => ({
+    ...ing,
+    scaledQuantity: roundQty(Number(ing.quantity) * ratio),
+  }));
+}
+
+function ingredientsWithScaledQuantity(ingredients) {
+  return (ingredients || []).map((ing) => (
+    ing.scaledQuantity != null ? { ...ing, quantity: ing.scaledQuantity } : ing
+  ));
+}
+
+/** עלות חומרי גלם — אופציונלית רק מחירי ספק */
+export async function computeRecipeMaterialsCostFiltered(ingredients, materials, { supplierOnly = false } = {}) {
+  const mats = materials || await getRawMaterials();
+  const matById = new Map(mats.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(mats);
+  let total = 0;
+  for (const ing of ingredientsWithScaledQuantity(ingredients)) {
+    const source = getIngredientPriceSource(ing);
+    if (supplierOnly && source !== 'supplier') continue;
+    const { mat, priceSource } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
+    if (supplierOnly && priceSource !== 'supplier') continue;
+    if (supplierOnly && (!mat || !(Number(mat.unitPrice) > 0))) continue;
+    total += computeIngredientLineCost(ing, mat);
+  }
+  return roundQty(total);
+}
+
+export async function getProductRecipeComponents(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return [];
+  const rows = await db.productRecipeComponents.where('productId').equals(pid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function addProductRecipeComponent({ productId, recipeId, weightGrams, notes }) {
+  const pid = sanitizeProductId(productId);
+  const rid = sanitizeProductId(recipeId);
+  if (!pid || !rid) throw new ValidationError('שיוך לא תקין');
+  const recipe = await db.recipes.get(rid);
+  if (!recipe) throw new ValidationError('מתכון לא נמצא');
+  const dup = await db.productRecipeComponents
+    .where('[productId+recipeId]')
+    .equals([pid, rid])
+    .first();
+  if (dup) throw new ValidationError('מתכון כבר ברכיבי המוצר');
+  const existing = await getProductRecipeComponents(pid);
+  const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
+  const wg = weightGrams != null && weightGrams !== ''
+    ? sanitizeQuantity(weightGrams, { allowZero: false })
+    : null;
+  return db.productRecipeComponents.add({
+    productId: pid,
+    recipeId: rid,
+    weightGrams: wg,
+    notes: String(notes || '').trim().slice(0, 500),
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateProductRecipeComponent(id, patch) {
+  const cid = sanitizeProductId(id);
+  if (!cid) return;
+  const data = { ...patch };
+  if ('weightGrams' in data) {
+    data.weightGrams = data.weightGrams != null && data.weightGrams !== ''
+      ? sanitizeQuantity(data.weightGrams, { allowZero: false })
+      : null;
+  }
+  if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 500);
+  if (Object.keys(data).length) await db.productRecipeComponents.update(cid, data);
+}
+
+export async function deleteProductRecipeComponent(id) {
+  const cid = sanitizeProductId(id);
+  if (cid) await db.productRecipeComponents.delete(cid);
+}
+
+export async function getRecipesForProduct(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return [];
+  const links = await db.recipeProductLinks.where('productId').equals(pid).toArray();
+  const recipeIds = new Set(links.map((l) => l.recipeId));
+  const legacy = await db.recipes.where('linkedProductId').equals(pid).toArray();
+  for (const r of legacy) recipeIds.add(r.id);
+  const recipes = [];
+  for (const rid of recipeIds) {
+    const recipe = await getRecipe(rid);
+    if (recipe) recipes.push(recipe);
+  }
+  recipes.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  return recipes;
+}
+
+export async function getProductBakingProfileLink(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return null;
+  const link = await db.bakingProfileProducts.where('productId').equals(pid).first();
+  if (!link) return null;
+  const profile = await db.bakingProfiles.get(link.bakingProfileId);
+  return { ...link, profile: profile || null };
+}
+
+export async function getProductDetail(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  const product = await db.products.get(pid);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+
+  const [components, linkedRecipes, bakingLink, materials, profiles, category] = await Promise.all([
+    getProductRecipeComponents(pid),
+    getRecipesForProduct(pid),
+    getProductBakingProfileLink(pid),
+    getRawMaterials(),
+    getBakingProfiles(),
+    db.categories.get(product.categoryId),
+  ]);
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+
+  let totalWeightGrams = 0;
+  let recommendedCost = 0;
+  let fullCost = 0;
+  const enrichedComponents = [];
+
+  for (const comp of components) {
+    const recipe = await getRecipe(comp.recipeId);
+    if (!recipe) continue;
+    const recipeTotalG = recipeTotalWeightGrams(recipe.ingredients);
+    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
+    const scaledIngredients = targetG > 0 && recipeTotalG > 0
+      ? scaleIngredientsToTargetGrams(recipe.ingredients, targetG)
+      : recipe.ingredients;
+
+    const lineSupplierCost = await computeRecipeMaterialsCostFiltered(
+      scaledIngredients, materials, { supplierOnly: true },
+    );
+    const lineFullCost = await computeRecipeMaterialsCost(
+      ingredientsWithScaledQuantity(scaledIngredients), materials,
+    );
+
+    totalWeightGrams += targetG || 0;
+    recommendedCost += lineSupplierCost;
+    fullCost += lineFullCost;
+
+    enrichedComponents.push({
+      ...comp,
+      recipe,
+      recipeTotalGrams: recipeTotalG,
+      effectiveWeightGrams: targetG,
+      scaledIngredients,
+      supplierCost: lineSupplierCost,
+      fullCost: lineFullCost,
+      bakingLine: formatRecipeBakingParamsLine(recipe, profileMap),
+    });
+  }
+
+  const totalCost = (product.rawMaterialsCost || 0) + (product.packagingCost || 0) + (product.additionalCosts || 0);
+  const unitPrice = Number(product.unitPrice) || 0;
+
+  return {
+    product,
+    category,
+    components: enrichedComponents,
+    linkedRecipes,
+    bakingProfileLink: bakingLink,
+    bakingProfile: bakingLink?.profile || null,
+    totalWeightGrams,
+    recommendedCost: roundQty(recommendedCost),
+    fullCost: roundQty(fullCost),
+    currentCosts: {
+      rawMaterialsCost: product.rawMaterialsCost || 0,
+      packagingCost: product.packagingCost || 0,
+      additionalCosts: product.additionalCosts || 0,
+      unitPrice,
+      totalCost: roundQty(totalCost),
+    },
+    margin: unitPrice > 0 ? roundQty(unitPrice - totalCost) : null,
+  };
+}
+
+/** סנכרון עלות חומרי גלם במוצר מסכום הרכיבים (מחירי ספק) */
+export async function syncProductCostFromComposition(productId) {
+  const detail = await getProductDetail(productId);
+  const cost = detail.recommendedCost;
+  await db.products.update(detail.product.id, { rawMaterialsCost: cost });
   return cost;
 }
 
@@ -2055,11 +2341,147 @@ export function formatWhatsAppOrderText({ weekStart, categories }) {
   return lines.join('\n');
 }
 
+/* ── חוסרים לפי ספק ── */
+
+export async function getSupplierShortages() {
+  const rows = await db.supplierShortages.toArray();
+  rows.sort((a, b) => (a.supplierId - b.supplierId)
+    || (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+    || a.id - b.id);
+  return rows;
+}
+
+export async function getSupplierShortagesGrouped() {
+  const [items, suppliers, materials] = await Promise.all([
+    getSupplierShortages(),
+    getSuppliers(),
+    getRawMaterials(),
+  ]);
+  const supMap = new Map(suppliers.map((s) => [s.id, s]));
+  const matMap = new Map(materials.map((m) => [m.id, m]));
+  const groups = new Map();
+
+  for (const item of items) {
+    if (!groups.has(item.supplierId)) {
+      groups.set(item.supplierId, {
+        supplier: supMap.get(item.supplierId) || null,
+        items: [],
+      });
+    }
+    const mat = item.rawMaterialId ? matMap.get(item.rawMaterialId) : null;
+    groups.get(item.supplierId).items.push({
+      ...item,
+      displayName: mat?.name || item.name || '—',
+      unit: item.unit || mat?.unit || '',
+    });
+  }
+
+  return [...groups.values()].sort((a, b) =>
+    (a.supplier?.name || '').localeCompare(b.supplier?.name || '', 'he'));
+}
+
+export async function addSupplierShortage({
+  supplierId, rawMaterialId, name, orderQuantity, unit, notes,
+}) {
+  const sid = sanitizeProductId(supplierId);
+  if (!sid) throw new ValidationError('בחר ספק');
+  const sup = await db.suppliers.get(sid);
+  if (!sup) throw new ValidationError('ספק לא נמצא');
+
+  let matId = rawMaterialId ? Number(rawMaterialId) : null;
+  let label = sanitizeName(name, 80);
+  if (matId) {
+    const mat = await db.rawMaterials.get(matId);
+    if (!mat) throw new ValidationError('חומר גלם לא נמצא');
+    label = mat.name;
+  } else if (!label) {
+    throw new ValidationError('הזן שם חומר או בחר מהמחסן');
+  }
+
+  const inSupplier = (await getSupplierShortages()).filter((i) => i.supplierId === sid);
+  const dup = inSupplier.some((i) =>
+    (matId && i.rawMaterialId === matId) || (!matId && i.name === label));
+  if (dup) throw new ValidationError('פריט זה כבר ברשימה');
+
+  const maxOrder = inSupplier.reduce((m, i) => Math.max(m, i.sortOrder ?? 0), 0);
+  let qty = null;
+  if (orderQuantity !== '' && orderQuantity != null) {
+    qty = sanitizeQuantity(orderQuantity, { allowZero: false });
+    if (qty == null) throw new ValidationError('כמות הזמנה לא תקינה');
+  }
+
+  return db.supplierShortages.add({
+    supplierId: sid,
+    rawMaterialId: matId,
+    name: label,
+    orderQuantity: qty,
+    unit: unit ? String(unit).trim().slice(0, 24) : '',
+    notes: notes ? String(notes).trim().slice(0, 200) : '',
+    done: false,
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateSupplierShortage(id, patch) {
+  const rowId = sanitizeProductId(id);
+  if (!rowId) throw new ValidationError('פריט לא תקין');
+  const row = await db.supplierShortages.get(rowId);
+  if (!row) throw new ValidationError('פריט לא נמצא');
+  const next = {};
+  if (patch.orderQuantity !== undefined) {
+    next.orderQuantity = patch.orderQuantity === '' || patch.orderQuantity == null
+      ? null
+      : sanitizeQuantity(patch.orderQuantity, { allowZero: false });
+  }
+  if (patch.unit !== undefined) next.unit = String(patch.unit || '').trim().slice(0, 24);
+  if (patch.notes !== undefined) next.notes = String(patch.notes || '').trim().slice(0, 200);
+  if (patch.done !== undefined) next.done = !!patch.done;
+  if (!Object.keys(next).length) return;
+  await db.supplierShortages.update(rowId, next);
+}
+
+export async function deleteSupplierShortage(id) {
+  const rowId = sanitizeProductId(id);
+  if (!rowId) return;
+  await db.supplierShortages.delete(rowId);
+}
+
+export async function clearDoneSupplierShortages() {
+  const done = await db.supplierShortages.filter((i) => i.done).toArray();
+  await db.transaction('rw', db.supplierShortages, async () => {
+    for (const row of done) await db.supplierShortages.delete(row.id);
+  });
+  return done.length;
+}
+
+export function formatSupplierShortagesText(grouped, { includeDone = false } = {}) {
+  const lines = ['*רשימת חוסרים*', ''];
+  let hasAny = false;
+  for (const { supplier, items } of grouped) {
+    const active = includeDone ? items : items.filter((i) => !i.done);
+    if (!active.length) continue;
+    hasAny = true;
+    lines.push(`*${supplier?.name || 'ספק'}*`);
+    for (const item of active) {
+      const qtyPart = item.orderQuantity != null
+        ? ` — ${formatDecimal(item.orderQuantity)}${item.unit ? ` ${item.unit}` : ''}`
+        : '';
+      lines.push(`• ${item.displayName}${qtyPart}`);
+      if (item.notes) lines.push(`  _${item.notes}_`);
+    }
+    lines.push('');
+  }
+  if (!hasAny) return 'אין חוסרים ברשימה';
+  lines.push('_נוצר מאפליקציית מעקב יצור_');
+  return lines.join('\n').trim();
+}
+
 export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
-    bakingProfiles,
-    supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory,
+    productRecipeComponents,
+    bakingProfiles, bakingProfileProducts,
+    supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory, supplierShortages,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
     db.recipeGroups.toArray(),
@@ -2067,11 +2489,14 @@ export async function exportKitchenTables() {
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
     db.recipeProductLinks.toArray(),
+    db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfiles.toArray(),
+    db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
     db.rawMaterialPriceHistory.toArray(),
+    db.supplierShortages?.toArray?.() ?? Promise.resolve([]),
     db.weeklyProductionPlans.toArray(),
     db.weeklyProductionPlanItems.toArray(),
   ]);
@@ -2081,11 +2506,14 @@ export async function exportKitchenTables() {
     recipes,
     recipeIngredients,
     recipeProductLinks,
+    productRecipeComponents,
     bakingProfiles,
+    bakingProfileProducts,
     supplierCategories,
     suppliers,
     rawMaterials,
     rawMaterialPriceHistory,
+    supplierShortages,
     weeklyProductionPlans,
     weeklyProductionPlanItems,
   };
@@ -2094,8 +2522,9 @@ export async function exportKitchenTables() {
 export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
-    'bakingProfiles',
-    'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory',
+    'productRecipeComponents',
+    'bakingProfiles', 'bakingProfileProducts',
+    'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
   await db.transaction('rw', ...tables.map((t) => db[t]), async () => {
@@ -2139,19 +2568,23 @@ async function ensureRecipeHierarchyInTx(dbRef) {
 export async function clearKitchenTables() {
   await db.transaction('rw',
     db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
-    db.bakingProfiles,
-    db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory,
+    db.productRecipeComponents,
+    db.bakingProfiles, db.bakingProfileProducts,
+    db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.supplierShortages,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
       await db.weeklyProductionPlanItems.clear();
       await db.weeklyProductionPlans.clear();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
+      await db.productRecipeComponents.clear();
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
+      await db.bakingProfileProducts?.clear?.();
       await db.bakingProfiles.clear();
       await db.rawMaterialPriceHistory.clear();
+      await db.supplierShortages?.clear?.();
       await db.rawMaterials.clear();
       await db.suppliers.clear();
       await db.supplierCategories.clear();

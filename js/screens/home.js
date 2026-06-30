@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=187';
+} from '../db.js?v=202';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
-  formatPortionCount,
-} from '../utils.js?v=187';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=187';
+  formatPortionCount, formatDecimal,
+} from '../utils.js?v=202';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=202';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=187';
-import { requestAutoBackupNow } from '../backup-service.js?v=187';
+} from '../calc.js?v=202';
+import { requestAutoBackupNow } from '../backup-service.js?v=202';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -190,7 +190,7 @@ function buildProductionEntriesListHTML(entries, productMap, categories, catMap,
 
   return `
     <p class="history-summary">
-      סה"כ ${sorted.length} רישומים · ${totalQty} יח' · ${formatMoney(totalVal)}
+      סה"כ ${sorted.length} רישומים · ${formatDecimal(totalQty)} יח' · ${formatMoney(totalVal)}
     </p>
     ${html}`;
 }
@@ -315,8 +315,7 @@ function renderHomeQtyValueLabels() {
 }
 
 function formatHomeProductQty(product, qty) {
-  if (product?.priceUnit === 'kg') return formatProductQuantity(product, qty);
-  return formatPortionCount(qty);
+  return formatProductQuantity(product, qty);
 }
 
 function renderHomeQtyValueProductRow(product, qty, value) {
@@ -390,7 +389,7 @@ function buildProcessSection(processLogs, catMap, viewMode, periodLabel) {
   const renderLog = (log) => `
     <div class="list-item">
       <div class="list-item-info">
-        <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${log.quantity}` : ''}</div>
+        <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
         <div class="list-item-meta">
           <span class="category-chip">${escapeHtml(catMap.get(log.categoryId) || '')}</span>
           ${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}
@@ -523,7 +522,7 @@ export async function renderHome(container) {
     <p class="home-section-subtitle">${periodLabel}</p>
     <div class="stat-grid">
       <div class="stat-box stat-box-clickable ${isDay ? 'stat-box-day' : ''}" id="home-open-prod-list" role="button" tabindex="0" title="לחץ לרשימת ייצור">
-        <div class="stat-value">${totals.total}</div>
+        <div class="stat-value">${formatDecimal(totals.total)}</div>
         <div class="stat-label">${qtyLabel}</div>
         <span class="stat-open-hint">לחץ לרשימה ›</span>
       </div>
@@ -605,13 +604,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=187');
+      const { navigate } = await import('../app.js?v=202');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=187');
+    const { navigate } = await import('../app.js?v=202');
     navigate('backup');
   });
 

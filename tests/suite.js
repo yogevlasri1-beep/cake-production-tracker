@@ -1,21 +1,21 @@
 import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=187';
+} from '../js/validators.js?v=202';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=187';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=187';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=187';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=187';
+} from '../js/calc.js?v=202';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=202';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=202';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=202';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=187';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=187';
+} from '../js/supplier-import.js?v=202';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=202';
 
 export async function runAllTests() {
   /* validators */
@@ -463,6 +463,7 @@ export async function runAllTests() {
       flows: [{ id: 1 }],
       flowSteps: [{ id: 1 }],
       flowPreparations: [{ id: 1 }, { id: 2 }],
+      groupPreparations: [{ id: 1 }, { id: 2 }],
       productPreparations: [{ id: 1 }],
       runPreparationChecks: [{ id: 1 }],
       productionRuns: [{ id: 1 }],
@@ -480,6 +481,7 @@ export async function runAllTests() {
       weeklyProductionPlanItems: [{ id: 1 }, { id: 2 }],
     });
     const counts = summarizeBackupData(data);
+    assertEqual(counts.groupPreparations, 2);
     assertEqual(counts.flowPreparations, 2);
     assertEqual(counts.productPreparations, 1);
     assertEqual(counts.runPreparationChecks, 1);

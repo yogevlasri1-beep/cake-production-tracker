@@ -5,12 +5,21 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=187';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=187';
-import { openModal, closeModal } from '../modal.js?v=187';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=187';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=187';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=187';
+} from '../db.js?v=202';
+import {
+  getProductDetail,
+  addProductRecipeComponent,
+  updateProductRecipeComponent, deleteProductRecipeComponent,
+  getRecipesCatalogLayout, getBakingProfiles, getProductBakingProfileLink,
+  linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
+  formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
+  recipeTotalWeightGrams,
+} from '../kitchen-db.js?v=202';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=202';
+import { openModal, closeModal } from '../modal.js?v=202';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=202';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=202';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=202';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -129,12 +138,15 @@ function bindColorPickerInModal(prefix = 'cat') {
 
 function productPriceMeta(p) {
   const parts = [];
-  const unitBadge = p.priceUnit === 'kg' || p.priceUnit === 'kg_units' ? '⚖️ ' : '';
+  const unitBadge = p.priceUnit === 'kg' || p.priceUnit === 'kg_units' || p.priceUnit === 'kg_with_units' ? '⚖️ ' : '';
   if (p.unitPrice > 0) {
     parts.push(`${unitBadge}ללקוח: ${formatMoney(p.unitPrice)}/${productPriceUnitLabel(p).replace('₪/', '')}`);
     if (p.priceUnit === 'kg_units') {
       parts.push('רישום: יח\'');
       if (p.unitWeightKg) parts.push(`~${p.unitWeightKg} ק"ג/יח'`);
+    } else if (p.priceUnit === 'kg_with_units') {
+      parts.push('רישום: ק"ג');
+      if (p.unitWeightKg) parts.push(`≈${p.unitWeightKg} ק"ג/יח'`);
     }
   }
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
@@ -155,13 +167,13 @@ function categoryUniformPricing(products) {
 }
 
 function uniformPriceUnitLabel(priceUnit) {
-  if (priceUnit === 'kg' || priceUnit === 'kg_units') return 'ק"ג';
+  if (priceUnit === 'kg' || priceUnit === 'kg_units' || priceUnit === 'kg_with_units') return 'ק"ג';
   return "יח'";
 }
 
 function renderProductItem(p, index) {
   return `
-    <div class="list-item product-list-item ${p.active ? '' : 'inactive-label'}" data-product-id="${p.id}">
+    <div class="list-item product-list-item product-list-item--clickable ${p.active ? '' : 'inactive-label'}" data-product-id="${p.id}" role="button" tabindex="0">
       <div class="product-order-col">
         <span class="product-order-num" aria-label="מיקום ${index + 1}">${index + 1}</span>
         <span class="product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
@@ -343,7 +355,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=187');
+    const { navigate } = await import('../app.js?v=202');
     navigate('backup');
   });
 
@@ -514,18 +526,322 @@ export async function renderProducts(container) {
   });
 
   container.querySelectorAll('.edit-product').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       const p = await getProduct(Number(btn.dataset.id));
       if (p) showProductForm(container, { ...p });
     });
   });
 
   container.querySelectorAll('.toggle-product').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       await toggleProductActive(Number(btn.dataset.id));
       showToast('עודכן');
       renderProducts(container);
     });
+  });
+
+  bindProductDetailOpen(container);
+}
+
+function bindProductDetailOpen(container) {
+  const openById = (id) => openProductDetailModal(container, Number(id));
+  container.querySelectorAll('.product-list-item--clickable').forEach((row) => {
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.edit-product, .toggle-product, .product-drag-handle')) return;
+      openById(row.dataset.productId);
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      if (e.target.closest('.product-drag-handle')) return;
+      e.preventDefault();
+      openById(row.dataset.productId);
+    });
+  });
+}
+
+function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap }) {
+  const { product, category, components, linkedRecipes, bakingProfile, totalWeightGrams } = detail;
+  const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
+  const usedRecipeIds = new Set(components.map((c) => c.recipeId));
+  const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
+  const quickAddRecipes = linkedRecipes.filter((r) => !usedRecipeIds.has(r.id));
+
+  const compositionRows = components.length
+    ? components.map((comp) => {
+      const defaultG = comp.recipeTotalGrams || '';
+      const weightVal = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : '';
+      return `
+        <div class="product-composition-row" data-component-id="${comp.id}">
+          <div class="product-composition-main">
+            <span class="product-composition-name">${escapeHtml(comp.recipe?.name || 'מתכון')}</span>
+            <span class="product-composition-meta">בסיס: ${defaultG ? `${defaultG} גרם` : '—'}</span>
+          </div>
+          <label class="product-composition-weight">
+            <span>גרם</span>
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" min="1" step="1"
+              value="${weightVal}" placeholder="${defaultG || ''}">
+          </label>
+          <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
+          <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" title="הסר">🗑</button>
+        </div>`;
+    }).join('')
+    : '<p class="recipe-sheet-empty">אין רכיבים — הוסף מתכון מהרשימה</p>';
+
+  const quickAddBanner = !components.length && quickAddRecipes.length
+    ? `<div class="product-detail-quick-add">
+        <p>מתכונים מקושרים למוצר:</p>
+        <div class="product-detail-quick-add-btns">
+          ${quickAddRecipes.map((r) => {
+            const g = recipeTotalWeightGrams(r.ingredients);
+            return `<button type="button" class="btn btn-secondary btn-sm product-quick-add-recipe" data-recipe-id="${r.id}" data-weight="${g || ''}">+ ${escapeHtml(r.name)}${g ? ` (${g} גרם)` : ''}</button>`;
+          }).join('')}
+        </div>
+      </div>`
+    : '';
+
+  const recipeOptions = availableRecipes.length
+    ? availableRecipes.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')
+    : '<option value="" disabled>— אין מתכונים זמינים —</option>';
+
+  const productBakingHtml = bakingProfile
+    ? `<div class="product-baking-profile">
+        <strong>${escapeHtml(bakingProfile.name)}</strong>
+        <span class="product-baking-params">${escapeHtml(formatRecipeBakingParamsLine({ bakingProfileId: bakingProfile.id, hasBaking: true }, bakingProfile))}</span>
+      </div>`
+    : '<p class="recipe-sheet-empty">לא שויך פרופיל אפייה למוצר</p>';
+
+  const profileOptions = bakingProfiles.map((p) =>
+    `<option value="${p.id}" ${bakingProfile?.id === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`,
+  ).join('');
+
+  const componentBakingRows = components.length
+    ? components.map((comp) => {
+      const baking = resolveRecipeBaking(comp.recipe, profileMap);
+      const line = formatRecipeBakingParamsLine(comp.recipe, profileMap);
+      if (!baking.hasBaking && !line) return '';
+      return `<li><strong>${escapeHtml(comp.recipe?.name || '')}</strong>${line ? `: ${escapeHtml(line)}` : ''}${baking.bakeOvenType ? ` · ${escapeHtml(getRecipeOvenLabel(baking.bakeOvenType))}` : ''}</li>`;
+    }).filter(Boolean).join('')
+    : '';
+
+  const marginHtml = detail.margin != null
+    ? `<span class="product-detail-margin ${detail.margin >= 0 ? 'positive' : 'negative'}">רווח: ${formatMoney(detail.margin)}</span>`
+    : '';
+
+  return `
+    <article class="product-detail-sheet">
+      <header class="recipe-sheet-header">
+        <p class="recipe-sheet-breadcrumb">${category ? escapeHtml(category.name) : ''}</p>
+        <h1 class="recipe-sheet-title">${escapeHtml(product.name)}</h1>
+        <div class="recipe-sheet-meta">
+          <span class="recipe-meta-pill">⚖️ ${totalWeightText}</span>
+          ${product.active ? '' : '<span class="recipe-meta-pill">לא פעיל</span>'}
+        </div>
+      </header>
+
+      <section class="recipe-sheet-section product-detail-section" aria-label="הרכב מוצר">
+        <h2 class="recipe-sheet-section-title">הרכב מוצר</h2>
+        ${quickAddBanner}
+        <div class="product-composition-list">${compositionRows}</div>
+        <div class="product-composition-add">
+          <select id="product-add-recipe-select" class="product-add-recipe-select">
+            <option value="">— בחר מתכון —</option>
+            ${recipeOptions}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" id="product-add-recipe-btn">+ הוסף</button>
+        </div>
+      </section>
+
+      <section class="recipe-sheet-section product-detail-section" aria-label="אפייה">
+        <h2 class="recipe-sheet-section-title">אפייה</h2>
+        <div class="product-baking-product">
+          <label for="product-baking-profile-select">פרופיל אפייה למוצר</label>
+          <select id="product-baking-profile-select">
+            <option value="">— ללא —</option>
+            ${profileOptions}
+          </select>
+        </div>
+        ${productBakingHtml}
+        ${componentBakingRows ? `<div class="product-baking-recipes"><p class="product-detail-subtitle">מתכוני הרכב:</p><ul>${componentBakingRows}</ul></div>` : ''}
+      </section>
+
+      <section class="recipe-sheet-section product-detail-section" aria-label="תמחור">
+        <h2 class="recipe-sheet-section-title">תמחור</h2>
+        <div class="product-pricing-grid">
+          <div class="product-pricing-row highlight">
+            <span>עלות מומלצת (ספק)</span>
+            <strong>${formatMoney(detail.recommendedCost)}</strong>
+          </div>
+          <div class="product-pricing-row">
+            <span>עלות מלאה (כל המחירים)</span>
+            <span>${formatMoney(detail.fullCost)}</span>
+          </div>
+          <div class="product-pricing-row">
+            <span>חומרי גלם (נוכחי)</span>
+            <span>${formatMoney(detail.currentCosts.rawMaterialsCost)}</span>
+          </div>
+          <div class="product-pricing-row">
+            <span>אריזה</span>
+            <span>${formatMoney(detail.currentCosts.packagingCost)}</span>
+          </div>
+          <div class="product-pricing-row">
+            <span>עלויות נוספות</span>
+            <span>${formatMoney(detail.currentCosts.additionalCosts)}</span>
+          </div>
+          <div class="product-pricing-row">
+            <span>סה״כ עלות</span>
+            <span>${formatMoney(detail.currentCosts.totalCost)}</span>
+          </div>
+          ${detail.currentCosts.unitPrice > 0 ? `
+          <div class="product-pricing-row">
+            <span>מחיר ללקוח</span>
+            <span>${formatMoney(detail.currentCosts.unitPrice)}</span>
+          </div>` : ''}
+        </div>
+        ${marginHtml}
+        <button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">
+          החל עלות מומלצת
+        </button>
+      </section>
+    </article>`;
+}
+
+async function openProductDetailModal(container, productId) {
+  let detail;
+  let allRecipes = [];
+  let bakingProfiles = [];
+  let profileMap = new Map();
+
+  async function loadContext() {
+    const [d, layout, profiles] = await Promise.all([
+      getProductDetail(productId),
+      getRecipesCatalogLayout(),
+      getBakingProfiles(),
+    ]);
+    detail = d;
+    bakingProfiles = profiles;
+    profileMap = new Map(profiles.map((p) => [p.id, p]));
+    allRecipes = [];
+    for (const group of layout.groups) {
+      for (const cat of group.categories) {
+        for (const r of cat.recipes) allRecipes.push(r);
+      }
+    }
+    allRecipes.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+
+  async function refreshModal() {
+    await loadContext();
+    const body = document.querySelector('.modal-body');
+    if (body) body.innerHTML = buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap });
+    bindProductDetailModalEvents(container, productId, refreshModal);
+  }
+
+  await loadContext();
+
+  openModal({
+    title: '',
+    modalClass: 'modal-product-detail',
+    bodyHTML: buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap }),
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-primary" id="product-detail-edit">עריכת פרטים</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('product-detail-edit')?.addEventListener('click', async () => {
+    closeModal();
+    const p = await getProduct(productId);
+    if (p) showProductForm(container, { ...p });
+  });
+
+  bindProductDetailModalEvents(container, productId, refreshModal);
+}
+
+function bindProductDetailModalEvents(container, productId, refreshModal) {
+  document.querySelectorAll('.product-comp-weight-input').forEach((input) => {
+    input.addEventListener('change', async () => {
+      const id = Number(input.dataset.id);
+      const val = input.value.trim();
+      try {
+        await updateProductRecipeComponent(id, { weightGrams: val || null });
+        await refreshModal();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.querySelectorAll('.product-comp-remove').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await deleteProductRecipeComponent(Number(btn.dataset.id));
+        showToast('הוסר');
+        await refreshModal();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.querySelectorAll('.product-quick-add-recipe').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await addProductRecipeComponent({
+          productId,
+          recipeId: Number(btn.dataset.recipeId),
+          weightGrams: btn.dataset.weight || null,
+        });
+        showToast('נוסף');
+        await refreshModal();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('product-add-recipe-btn')?.addEventListener('click', async () => {
+    const sel = document.getElementById('product-add-recipe-select');
+    const recipeId = Number(sel?.value);
+    if (!recipeId) return showToast('בחר מתכון');
+    try {
+      await addProductRecipeComponent({ productId, recipeId });
+      showToast('נוסף');
+      await refreshModal();
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('product-baking-profile-select')?.addEventListener('change', async (e) => {
+    const val = e.target.value;
+    try {
+      if (val) {
+        const link = await getProductBakingProfileLink(productId);
+        if (link && Number(link.bakingProfileId) !== Number(val)) {
+          await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
+        }
+        await linkProductToBakingProfile(Number(val), productId);
+      } else {
+        const link = await getProductBakingProfileLink(productId);
+        if (link) await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
+      }
+      await refreshModal();
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('product-apply-recommended-cost')?.addEventListener('click', async () => {
+    try {
+      const cost = await syncProductCostFromComposition(productId);
+      showToast(`עלות חומרי גלם עודכנה ל-${formatMoney(cost)}`);
+      await refreshModal();
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }
 
@@ -991,6 +1307,8 @@ function productPriceUnitFieldsHTML(opts = {}) {
   const isUnit = mode === 'unit';
   const isKg = mode === 'kg';
   const isKgUnits = mode === 'kg_units';
+  const isKgWithUnits = mode === 'kg_with_units';
+  const showWeightField = isKgUnits || isKgWithUnits;
   const priceSuffix = isUnit ? '₪/יח\'' : '₪/ק"ג';
   return `
       <div class="form-group">
@@ -1006,26 +1324,36 @@ function productPriceUnitFieldsHTML(opts = {}) {
             <span class="price-unit-option-title">לפי משקל</span>
             <span class="price-unit-option-sub">מחיר ורישום בק"ג</span>
           </label>
-          <label class="price-unit-option${isKgUnits ? ' is-selected' : ''}">
-            <input type="radio" name="prod-price-unit" value="kg_units" ${isKgUnits ? 'checked' : ''}>
+          <label class="price-unit-option${isKgWithUnits ? ' is-selected' : ''}">
+            <input type="radio" name="prod-price-unit" value="kg_with_units" ${isKgWithUnits ? 'checked' : ''}>
             <span class="price-unit-option-title">משקל + יחידות</span>
-            <span class="price-unit-option-sub">מחיר לק"ג · רישום ביחידות</span>
+            <span class="price-unit-option-sub">רישום ותמחור בק"ג · הצגת יחידות</span>
           </label>
+          ${isKgUnits ? `
+          <label class="price-unit-option is-selected">
+            <input type="radio" name="prod-price-unit" value="kg_units" checked>
+            <span class="price-unit-option-title">יחידות (מצב קיים)</span>
+            <span class="price-unit-option-sub">רישום ביחידות · מחיר לק"ג</span>
+          </label>` : ''}
         </div>
       </div>
-      <div class="form-group${isKgUnits ? '' : ' hidden'}" id="prod-unit-weight-group">
+      <div class="form-group${showWeightField ? '' : ' hidden'}" id="prod-unit-weight-group">
         <label for="prod-unit-weight">משקל ממוצע ליחידה (ק"ג)</label>
         <input type="number" id="prod-unit-weight" min="0.001" step="0.001" value="${opts.unitWeightKg != null && opts.unitWeightKg !== '' ? opts.unitWeightKg : ''}" placeholder="לדוגמה: 0.8">
-        <p class="form-hint">לחישוב ערך בדוחות: יחידות × משקל ממוצע × מחיר לק"ג</p>
+        <p class="form-hint" id="prod-unit-weight-hint">${isKgWithUnits
+    ? 'יוצג גם כמות יחידות (משקל ÷ משקל ליחידה)'
+    : 'לחישוב ערך: יחידות × משקל ממוצע × מחיר לק"ג'}</p>
       </div>
       <div class="form-group">
         <label for="prod-price" id="prod-price-label">מחיר ללקוח (${priceSuffix})</label>
         <input type="number" id="prod-price" min="0" step="${isUnit ? '0.5' : '0.01'}" value="${opts.unitPrice != null && opts.unitPrice !== '' ? opts.unitPrice : ''}" placeholder="${isUnit ? 'לדוגמה: 25' : 'לדוגמה: 45'}">
-        <p class="form-hint" id="prod-price-hint">${isKgUnits
-    ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
-    : isKg
-      ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
-      : 'ברישום ייצור יזינו מספר יחידות'}</p>
+        <p class="form-hint" id="prod-price-hint">${isKgWithUnits
+    ? 'ברישום ייצור יזינו משקל בק"ג; יוצג גם מספר יחידות משוער'
+    : isKgUnits
+      ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
+      : isKg
+        ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
+        : 'ברישום ייצור יזינו מספר יחידות'}</p>
       </div>`;
 }
 
@@ -1037,21 +1365,31 @@ function bindProductPriceUnitFields() {
   const priceHint = root.querySelector('#prod-price-hint');
   const weightGroup = root.querySelector('#prod-unit-weight-group');
   const optionGroup = root.querySelector('[data-price-unit-group="prod"]');
+  const weightHint = root.querySelector('#prod-unit-weight-hint');
   const sync = () => {
     const mode = root.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit';
     const isUnit = mode === 'unit';
     const isKgUnits = mode === 'kg_units';
+    const isKgWithUnits = mode === 'kg_with_units';
+    const showWeight = isKgUnits || isKgWithUnits;
     optionGroup?.querySelectorAll('.price-unit-option').forEach((el) => {
       el.classList.toggle('is-selected', el.querySelector('input')?.checked);
     });
-    weightGroup?.classList.toggle('hidden', !isKgUnits);
+    weightGroup?.classList.toggle('hidden', !showWeight);
     if (priceLabel) priceLabel.textContent = `מחיר ללקוח (${isUnit ? '₪/יח\'' : '₪/ק"ג'})`;
+    if (weightHint) {
+      weightHint.textContent = isKgWithUnits
+        ? 'יוצג גם כמות יחידות (משקל ÷ משקל ליחידה)'
+        : 'לחישוב ערך: יחידות × משקל ממוצע × מחיר לק"ג';
+    }
     if (priceHint) {
-      priceHint.textContent = isKgUnits
-        ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
-        : mode === 'kg'
-          ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
-          : 'ברישום ייצור יזינו מספר יחידות';
+      priceHint.textContent = isKgWithUnits
+        ? 'ברישום ייצור יזינו משקל בק"ג; יוצג גם מספר יחידות משוער'
+        : isKgUnits
+          ? 'ברישום ייצור יזינו מספר יחידות; המחיר ללקוח לפי ק"ג'
+          : mode === 'kg'
+            ? 'ברישום ייצור יזינו משקל בק"ג (2.5, 0.8...)'
+            : 'ברישום ייצור יזינו מספר יחידות';
     }
     if (priceInput) {
       priceInput.step = isUnit ? '0.5' : '0.01';
@@ -1114,6 +1452,9 @@ async function showProductForm(container, opts) {
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,
     };
+    if (data.priceUnit === 'kg_with_units' && !Number(data.unitWeightKg)) {
+      return showToast('הזן משקל ממוצע ליחידה');
+    }
 
     try {
       if (opts.id) await updateProduct(opts.id, data);

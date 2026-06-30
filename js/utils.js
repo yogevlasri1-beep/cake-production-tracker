@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=187';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=202';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -18,31 +18,64 @@ export function formatMoney(n) {
   return `₪${val.toLocaleString('he-IL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 
-export function formatPortionCount(n) {
+/** עיגול ל-3 ספרות אחרי הנקודה */
+export function roundDecimal(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return NaN;
+  return Math.round(num * 1000) / 1000;
+}
+
+/** תצוגה חכמה — עד 3 ספרות, בלי אפסים מיותרים בסוף */
+export function formatDecimal(n) {
   const num = Number(n);
   if (!Number.isFinite(num)) return '—';
-  if (Number.isInteger(num)) return String(num);
-  return String(Math.round(num * 10) / 10);
+  const r = roundDecimal(num);
+  if (Math.abs(r - Math.round(r * 100) / 100) > 0.0004) return r.toFixed(3);
+  if (Math.abs(r - Math.round(r * 10) / 10) > 0.004) return r.toFixed(2);
+  if (Math.abs(r - Math.round(r)) > 0.04) return r.toFixed(1);
+  return String(Math.round(r));
+}
+
+export function formatPortionCount(n) {
+  return formatDecimal(n);
+}
+
+export function productUnitsFromKg(kgQty, product) {
+  const uw = Number(product?.unitWeightKg) || 0;
+  if (!uw || kgQty == null || kgQty === '') return null;
+  const kg = Number(kgQty);
+  if (!Number.isFinite(kg) || kg <= 0) return null;
+  return roundDecimal(kg / uw);
 }
 
 export function productUnitLabel(product) {
-  if (product?.priceUnit === 'kg') return 'ק"ג';
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units') return 'ק"ג';
   return "יח'";
 }
 
 export function productPriceUnitLabel(product) {
-  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_units') return '₪/ק"ג';
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_units' || product?.priceUnit === 'kg_with_units') {
+    return '₪/ק"ג';
+  }
   return '₪/יח\'';
 }
 
 export function productRecordUsesKg(product) {
-  return product?.priceUnit === 'kg';
+  return product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units';
 }
 
 export function formatProductQuantity(product, qty) {
   if (qty == null || qty === '') return '—';
-  if (product?.priceUnit === 'kg') return `${qty} ק"ג`;
-  return `${qty} יח'`;
+  const formatted = formatDecimal(qty);
+  if (product?.priceUnit === 'kg' || product?.priceUnit === 'kg_with_units') {
+    const weight = `${formatted} ק"ג`;
+    if (product?.priceUnit === 'kg_with_units') {
+      const units = productUnitsFromKg(qty, product);
+      if (units != null) return `${weight} (≈${formatDecimal(units)} יח')`;
+    }
+    return weight;
+  }
+  return `${formatted} יח'`;
 }
 
 /** משך זמן קריא (ms → "2 ימים 3 שע' 15 דק'") */
@@ -114,8 +147,8 @@ export function progressBar(current, target, label) {
   const cls = progressClass(p);
   const tgt = Number(target) || 0;
   const numbers = tgt > 0
-    ? `${current} / ${target} (${pctDisplay(current, target)})`
-    : `${current} / —`;
+    ? `${formatDecimal(current)} / ${formatDecimal(target)} (${pctDisplay(current, target)})`
+    : `${formatDecimal(current)} / —`;
   return `
     <div class="progress-item">
       <div class="progress-header">

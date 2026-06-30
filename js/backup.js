@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=187';
-import { APP_VERSION } from './version.js?v=187';
-import { defaultColorForIndex } from './chart.js?v=187';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=187';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=187';
-import { ValidationError } from './validators.js?v=187';
+import { exportAllData, importAllData } from './db.js?v=202';
+import { APP_VERSION } from './version.js?v=202';
+import { defaultColorForIndex } from './chart.js?v=202';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=202';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=202';
+import { ValidationError } from './validators.js?v=202';
 
 export const BACKUP_VERSION = 3;
 
@@ -99,7 +99,8 @@ export function normalizeBackupProduct(product, category, stats, indexInCategory
     active: product.active !== false,
     sortOrder: product.sortOrder ?? indexInCategory + 1,
     unitPrice,
-    priceUnit: product.priceUnit === 'kg' || product.priceUnit === 'kg_units' ? product.priceUnit : 'unit',
+    priceUnit: product.priceUnit === 'kg' || product.priceUnit === 'kg_units' || product.priceUnit === 'kg_with_units'
+      ? product.priceUnit : 'unit',
     unitWeightKg: product.unitWeightKg != null ? Number(product.unitWeightKg) : null,
     rawMaterialsCost,
     packagingCost,
@@ -172,6 +173,7 @@ export function enrichBackupData(raw) {
     flowSteps,
     flowPortionPresets: raw.flowPortionPresets || [],
     groupPortionPresets: raw.groupPortionPresets || [],
+    groupPreparations: raw.groupPreparations || [],
     flowPreparations: raw.flowPreparations || [],
     recipeGroups: raw.recipeGroups || [],
     recipeProductLinks: raw.recipeProductLinks || [],
@@ -179,9 +181,12 @@ export function enrichBackupData(raw) {
     recipes: raw.recipes || [],
     recipeIngredients: raw.recipeIngredients || [],
     bakingProfiles: raw.bakingProfiles || [],
+    bakingProfileProducts: raw.bakingProfileProducts || [],
+    productRecipeComponents: raw.productRecipeComponents || [],
     supplierCategories: raw.supplierCategories || [],
     suppliers: raw.suppliers || [],
     rawMaterials: raw.rawMaterials || [],
+    supplierShortages: raw.supplierShortages || [],
     rawMaterialPriceHistory: raw.rawMaterialPriceHistory || [],
     weeklyProductionPlans: raw.weeklyProductionPlans || [],
     weeklyProductionPlanItems: raw.weeklyProductionPlanItems || [],
@@ -214,6 +219,7 @@ export function summarizeBackupData(data) {
     flows: data.flows?.length || 0,
     flowPortionPresets: data.flowPortionPresets?.length || 0,
     groupPortionPresets: data.groupPortionPresets?.length || 0,
+    groupPreparations: data.groupPreparations?.length || 0,
     flowPreparations: data.flowPreparations?.length || 0,
     productionRuns: data.productionRuns?.length || 0,
     runStepStates: data.runStepStates?.length || 0,
@@ -235,10 +241,12 @@ export function summarizeBackupData(data) {
     recipes: data.recipes?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
     recipeProductLinks: data.recipeProductLinks?.length || 0,
+    productRecipeComponents: data.productRecipeComponents?.length || 0,
     bakingProfiles: data.bakingProfiles?.length || 0,
     supplierCategories: data.supplierCategories?.length || 0,
     suppliers: data.suppliers?.length || 0,
     rawMaterials: data.rawMaterials?.length || 0,
+    supplierShortages: data.supplierShortages?.length || 0,
     rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
   };
 }
@@ -256,7 +264,8 @@ export function formatBackupSummary(counts) {
   if (counts.flowSteps) parts.push(`${counts.flowSteps} שלבי תזרים`);
   const portionCount = counts.groupPortionPresets || counts.flowPortionPresets;
   if (portionCount) parts.push(`${portionCount} מנות מוכנות`);
-  if (counts.flowPreparations) parts.push(`${counts.flowPreparations} הכנות תזרים`);
+  const prepCount = counts.groupPreparations || counts.flowPreparations;
+  if (prepCount) parts.push(`${prepCount} הכנות תזרים`);
   if (counts.productionRuns) parts.push(`${counts.productionRuns} תהליכי יצור`);
   if (counts.runStepStates) parts.push(`${counts.runStepStates} שלבי תהליך`);
   if (counts.productPreparations) parts.push(`${counts.productPreparations} הכנות מוצר`);
@@ -275,10 +284,12 @@ export function formatBackupSummary(counts) {
   if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
   if (counts.recipeIngredients) parts.push(`${counts.recipeIngredients} רכיבי מתכון`);
   if (counts.recipeProductLinks) parts.push(`${counts.recipeProductLinks} קישורי מתכון`);
+  if (counts.productRecipeComponents) parts.push(`${counts.productRecipeComponents} רכיבי מוצר`);
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
+  if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
   if (counts.rawMaterialPriceHistory) parts.push(`${counts.rawMaterialPriceHistory} היסטוריית מחירים`);
   return parts.join(' · ');
 }
@@ -315,6 +326,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.flowPortionPresets)) data.flowPortionPresets = [];
   if (!Array.isArray(data.productionRuns)) data.productionRuns = [];
   if (!Array.isArray(data.runStepStates)) data.runStepStates = [];
+  if (!Array.isArray(data.groupPreparations)) data.groupPreparations = [];
   if (!Array.isArray(data.flowPreparations)) data.flowPreparations = [];
   if (!Array.isArray(data.productPreparations)) data.productPreparations = [];
   if (!Array.isArray(data.runPreparationChecks)) data.runPreparationChecks = [];
@@ -324,9 +336,12 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.recipes)) data.recipes = [];
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
   if (!Array.isArray(data.bakingProfiles)) data.bakingProfiles = [];
+  if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];
+  if (!Array.isArray(data.productRecipeComponents)) data.productRecipeComponents = [];
   if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
   if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];
+  if (!Array.isArray(data.supplierShortages)) data.supplierShortages = [];
   if (!Array.isArray(data.rawMaterialPriceHistory)) data.rawMaterialPriceHistory = [];
   if (!Array.isArray(data.weeklyProductionPlans)) data.weeklyProductionPlans = [];
   if (!Array.isArray(data.weeklyProductionPlanItems)) data.weeklyProductionPlanItems = [];

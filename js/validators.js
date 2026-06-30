@@ -40,12 +40,12 @@ export function sanitizeRecipeQuantity(raw, { min = 0.001, max = 1_000_000, allo
   return rounded;
 }
 
-/** כמות מנות — מאפשר עשרוניות מ-0.1 (למשל 0.3 מנה) */
+/** כמות מנות — מאפשר עשרוניות עד 3 ספרות (למשל 0.333 מנה) */
 export function sanitizePortionCount(raw, { min = 0.1, max = 1_000_000 } = {}) {
   if (raw === '' || raw == null) return null;
   const n = Number(String(raw).replace(/,/g, '').trim());
   if (!Number.isFinite(n) || n < min || n > max) return null;
-  return Math.round(n * 10) / 10;
+  return Math.round(n * 1000) / 1000;
 }
 
 /** משקל מנה בק"ג — מאפשר עשרוניות (למשל 0.1 = 100 גרם) */
