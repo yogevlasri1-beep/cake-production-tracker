@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=205';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=205';
-import { openModal, closeModal } from '../modal.js?v=205';
-import { requestAutoBackupNow } from '../backup-service.js?v=205';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=205';
+} from '../db.js?v=206';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=206';
+import { openModal, closeModal } from '../modal.js?v=206';
+import { requestAutoBackupNow } from '../backup-service.js?v=206';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=206';
 
 function parseIdList(str) {
   try {
@@ -297,9 +297,21 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
 }
 
 function openFlowHistoryView(container, flowId) {
+  container.dataset.processScrollRestore = String(container.scrollTop || 0);
   container.dataset.view = 'flow-history';
   container.dataset.flowHistoryId = String(flowId);
   renderProcess(container);
+}
+
+function restoreProcessScrollIfNeeded(container) {
+  const raw = container.dataset.processScrollRestore;
+  if (raw == null || raw === '') return;
+  const y = Number(raw);
+  delete container.dataset.processScrollRestore;
+  if (!Number.isFinite(y) || y <= 0) return;
+  requestAnimationFrame(() => {
+    container.scrollTop = y;
+  });
 }
 
 function openFlowInManageView(container, { flowId, targetType, groupId, categoryId }) {
@@ -2275,6 +2287,7 @@ async function renderManageView(container, ctx) {
   });
 
   if (activeFlow && steps.length) bindFlowStepDrag(container);
+  restoreProcessScrollIfNeeded(container);
 }
 
 function bindFlowStepDrag(container) {
@@ -2978,6 +2991,8 @@ export async function renderProcess(container) {
     const { handleProductionImportFile } = await import('../import-flow.js');
     await handleProductionImportFile(file, { onComplete: () => renderProcess(container) });
   });
+
+  restoreProcessScrollIfNeeded(container);
 }
 
 export function processMeta() {
