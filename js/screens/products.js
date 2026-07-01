@@ -5,7 +5,7 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=206';
+} from '../db.js?v=210';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -14,12 +14,12 @@ import {
   linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=206';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel } from '../utils.js?v=206';
-import { openModal, closeModal } from '../modal.js?v=206';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=206';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=206';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=206';
+} from '../kitchen-db.js?v=210';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=210';
+import { openModal, closeModal } from '../modal.js?v=210';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=210';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=210';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=210';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -355,7 +355,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=206');
+    const { navigate } = await import('../app.js?v=210');
     navigate('backup');
   });
 
@@ -545,6 +545,24 @@ export async function renderProducts(container) {
   bindProductDetailOpen(container);
 }
 
+function formatCompositionKg(grams) {
+  if (!grams || grams <= 0) return '—';
+  return `${formatDecimal(grams / 1000)} ק"ג`;
+}
+
+function gramsToKgInput(grams) {
+  if (grams == null || grams === '' || Number(grams) <= 0) return '';
+  return formatDecimal(Number(grams) / 1000);
+}
+
+function parseCompositionKgInput(val) {
+  const trimmed = String(val ?? '').trim();
+  if (!trimmed) return null;
+  const kg = Number(trimmed);
+  if (!Number.isFinite(kg) || kg <= 0) return null;
+  return Math.round(kg * 1000);
+}
+
 function bindProductDetailOpen(container) {
   const openById = (id) => openProductDetailModal(container, Number(id));
   container.querySelectorAll('.product-list-item--clickable').forEach((row) => {
@@ -562,7 +580,7 @@ function bindProductDetailOpen(container) {
 }
 
 function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap }) {
-  const { product, category, components, linkedRecipes, bakingProfile, totalWeightGrams } = detail;
+  const { product, category, components, linkedRecipes, bakingProfile, bakingProfileLink, totalWeightGrams } = detail;
   const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
   const usedRecipeIds = new Set(components.map((c) => c.recipeId));
   const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
@@ -570,18 +588,19 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
 
   const compositionRows = components.length
     ? components.map((comp) => {
-      const defaultG = comp.recipeTotalGrams || '';
-      const weightVal = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : '';
+      const defaultG = comp.recipeTotalGrams || 0;
+      const weightKg = gramsToKgInput(comp.weightGrams);
+      const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
       return `
         <div class="product-composition-row" data-component-id="${comp.id}">
           <div class="product-composition-main">
             <span class="product-composition-name">${escapeHtml(comp.recipe?.name || 'מתכון')}</span>
-            <span class="product-composition-meta">בסיס: ${defaultG ? `${defaultG} גרם` : '—'}</span>
+            <span class="product-composition-meta">בסיס: ${formatCompositionKg(defaultG)}</span>
           </div>
           <label class="product-composition-weight">
-            <span>גרם</span>
-            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" min="1" step="1"
-              value="${weightVal}" placeholder="${defaultG || ''}">
+            <span>ק"ג</span>
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" min="0.001" step="0.001"
+              value="${weightKg}" placeholder="${placeholderKg}">
           </label>
           <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
           <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" title="הסר">🗑</button>
@@ -595,7 +614,7 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
         <div class="product-detail-quick-add-btns">
           ${quickAddRecipes.map((r) => {
             const g = recipeTotalWeightGrams(r.ingredients);
-            return `<button type="button" class="btn btn-secondary btn-sm product-quick-add-recipe" data-recipe-id="${r.id}" data-weight="${g || ''}">+ ${escapeHtml(r.name)}${g ? ` (${g} גרם)` : ''}</button>`;
+            return `<button type="button" class="btn btn-secondary btn-sm product-quick-add-recipe" data-recipe-id="${r.id}" data-weight="${g || ''}">+ ${escapeHtml(r.name)}${g ? ` (${formatCompositionKg(g)})` : ''}</button>`;
           }).join('')}
         </div>
       </div>`
@@ -605,15 +624,23 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
     ? availableRecipes.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')
     : '<option value="" disabled>— אין מתכונים זמינים —</option>';
 
+  const directProfileId = bakingProfileLink?.source === 'product' ? bakingProfile?.id : null;
+  const inheritedHint = bakingProfile && bakingProfileLink?.source !== 'product'
+    ? (bakingProfileLink.source === 'category'
+      ? `יורש מקטגוריה ${bakingProfileLink.scopeName || ''}`
+      : `יורש מקבוצה ${bakingProfileLink.scopeName || ''}`)
+    : '';
+
   const productBakingHtml = bakingProfile
     ? `<div class="product-baking-profile">
         <strong>${escapeHtml(bakingProfile.name)}</strong>
         <span class="product-baking-params">${escapeHtml(formatRecipeBakingParamsLine({ bakingProfileId: bakingProfile.id, hasBaking: true }, bakingProfile))}</span>
+        ${inheritedHint ? `<span class="form-hint product-baking-inherited">${escapeHtml(inheritedHint)}</span>` : ''}
       </div>`
     : '<p class="recipe-sheet-empty">לא שויך פרופיל אפייה למוצר</p>';
 
   const profileOptions = bakingProfiles.map((p) =>
-    `<option value="${p.id}" ${bakingProfile?.id === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`,
+    `<option value="${p.id}" ${directProfileId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`,
   ).join('');
 
   const componentBakingRows = components.length
@@ -763,9 +790,9 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   document.querySelectorAll('.product-comp-weight-input').forEach((input) => {
     input.addEventListener('change', async () => {
       const id = Number(input.dataset.id);
-      const val = input.value.trim();
+      const grams = parseCompositionKgInput(input.value);
       try {
-        await updateProductRecipeComponent(id, { weightGrams: val || null });
+        await updateProductRecipeComponent(id, { weightGrams: grams });
         await refreshModal();
       } catch (err) {
         showToast(err.message || 'שגיאה');
@@ -817,15 +844,14 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   document.getElementById('product-baking-profile-select')?.addEventListener('change', async (e) => {
     const val = e.target.value;
     try {
+      const link = await getProductBakingProfileLink(productId);
       if (val) {
-        const link = await getProductBakingProfileLink(productId);
-        if (link && Number(link.bakingProfileId) !== Number(val)) {
+        if (link?.source === 'product' && Number(link.bakingProfileId) !== Number(val)) {
           await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
         }
         await linkProductToBakingProfile(Number(val), productId);
-      } else {
-        const link = await getProductBakingProfileLink(productId);
-        if (link) await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
+      } else if (link?.source === 'product') {
+        await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
       }
       await refreshModal();
     } catch (err) {

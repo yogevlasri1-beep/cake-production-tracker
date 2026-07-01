@@ -15,22 +15,24 @@ import {
   RECIPE_OVEN_TYPES, normalizeRecipeBakingFields, resolveRecipeBaking,
   getRecipeOvenLabel, formatRecipeBakingParamsLine,
   getBakingProfiles, getBakingProfile, addBakingProfile, updateBakingProfile, deleteBakingProfile,
-  getProductsForBakingProfile, getRecipesForBakingProfile,
+  getProductsForBakingProfile, getRecipesForBakingProfile, getBakingProfileScopes,
   linkProductToBakingProfile, unlinkProductFromBakingProfile,
+  linkBakingProfileScope, unlinkBakingProfileScope,
   linkRecipeToBakingProfile, unlinkRecipeFromBakingProfile,
   countProductsUsingBakingProfile,
+  BAKING_SCOPE_GROUP, BAKING_SCOPE_CATEGORY,
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=206';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=206';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=206';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=206';
-import { openModal, closeModal } from '../modal.js?v=206';
+} from '../kitchen-db.js?v=210';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=210';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=210';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=210';
+import { openModal, closeModal } from '../modal.js?v=210';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=206';
-import { defaultColorForIndex } from '../chart.js?v=206';
+} from '../product-drag.js?v=210';
+import { defaultColorForIndex } from '../chart.js?v=210';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -740,9 +742,13 @@ function renderBakingParamsCells(baking) {
     ${cell(baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '' ? `${baking.bakeDryMinutes} דק׳` : null)}`;
 }
 
-function renderBakingProfileCatalogRow(profile, productCount, recipeCount) {
+function renderBakingProfileCatalogRow(profile, productCount, recipeCount, scopeCounts = {}) {
   const oven = profile.bakeOvenType ? getRecipeOvenLabel(profile.bakeOvenType) : '—';
   const params = formatRecipeBakingParamsLine({}, profile) || '—';
+  const scopeParts = [];
+  if (scopeCounts.groups) scopeParts.push(`${scopeCounts.groups} קבוצות`);
+  if (scopeCounts.categories) scopeParts.push(`${scopeCounts.categories} קטגוריות`);
+  const scopeMeta = scopeParts.length ? `${scopeParts.join(' · ')} · ` : '';
   return `
     <div class="baking-profile-row baking-profile-row--clickable" data-profile-id="${profile.id}" role="button" tabindex="0">
       <div class="baking-profile-row-main">
@@ -751,8 +757,8 @@ function renderBakingProfileCatalogRow(profile, productCount, recipeCount) {
         ${profile.notes ? `<span class="baking-profile-notes">${escapeHtml(profile.notes)}</span>` : ''}
       </div>
       <div class="baking-profile-row-side">
-        <span class="baking-profile-count">${productCount} מוצרים · ${recipeCount} מתכונים</span>
-        <button type="button" class="btn btn-primary btn-sm btn-icon link-baking-profile" data-id="${profile.id}" title="שייך מוצר / מתכון">+</button>
+        <span class="baking-profile-count">${scopeMeta}${productCount} מוצרים · ${recipeCount} מתכונים</span>
+        <button type="button" class="btn btn-primary btn-sm btn-icon link-baking-profile" data-id="${profile.id}" title="שייך קבוצה / קטגוריה / מוצר / מתכון">+</button>
         <button type="button" class="btn btn-secondary btn-sm btn-icon edit-baking-profile" data-id="${profile.id}" title="עריכת פרופיל">✏️</button>
         <button type="button" class="btn btn-danger btn-sm btn-icon delete-baking-profile" data-id="${profile.id}" title="מחיקה">🗑</button>
       </div>
@@ -806,9 +812,12 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
   const groups = groupBakingByOven(allItems);
   const recipeCounts = new Map();
   const productCounts = new Map();
+  const scopeCounts = new Map();
   for (const profile of profiles) {
     recipeCounts.set(profile.id, allItems.filter((i) => Number(i.recipe.bakingProfileId) === profile.id).length);
     productCounts.set(profile.id, await countProductsUsingBakingProfile(profile.id));
+    const scopes = await getBakingProfileScopes(profile.id);
+    scopeCounts.set(profile.id, { groups: scopes.groups.length, categories: scopes.categories.length });
   }
 
   const profileCatalog = profiles.length
@@ -816,13 +825,14 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
       p,
       productCounts.get(p.id) || 0,
       recipeCounts.get(p.id) || 0,
+      scopeCounts.get(p.id) || {},
     )).join('')
     : '<p class="form-hint baking-profile-empty">אין פרופילי אפייה — צור פרופיל ראשון</p>';
 
   container.innerHTML = `
     <div class="card baking-station-intro">
       <div class="card-title">רשימת אפיות</div>
-      <p class="form-hint" style="margin:0">לחץ על אפייה לרשימת מוצרים ומתכונים · <strong>+</strong> לשיוך חדש</p>
+      <p class="form-hint" style="margin:0">לחץ על פרופיל לניהול שיוכים · שייך לפי קבוצה, קטגוריה או מוצר · <strong>+</strong> לשיוך חדש</p>
     </div>
     <div class="card baking-profiles-card">
       <div class="section-header baking-profiles-header">
@@ -886,7 +896,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
   container.querySelectorAll('.delete-baking-profile').forEach((btn) => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (!confirm('למחוק פרופיל אפייה? השיוכים למוצרים ומתכונים יוסרו.')) return;
+      if (!confirm('למחוק פרופיל אפייה? השיוכים לקבוצות, קטגוריות, מוצרים ומתכונים יוסרו.')) return;
       try {
         await deleteBakingProfile(Number(btn.dataset.id));
         showToast('נמחק');
@@ -2299,18 +2309,76 @@ function findRecipePathById(layout, recipeId) {
   return '';
 }
 
+function buildProductGroupSelectOptions(productCatalog, selectedId, linkedGroupIds) {
+  const linked = new Set(linkedGroupIds || []);
+  const parts = ['<option value="">בחר קבוצה...</option>'];
+  for (const group of productCatalog.groups) {
+    if (linked.has(group.id)) continue;
+    const sel = Number(selectedId) === group.id ? ' selected' : '';
+    parts.push(`<option value="${group.id}"${sel}>${escapeHtml(group.name)}</option>`);
+  }
+  return parts.join('');
+}
+
+function buildProductCategoryScopeSelectOptions(productCatalog, selectedId, linkedCategoryIds) {
+  const linked = new Set(linkedCategoryIds || []);
+  const parts = ['<option value="">בחר קטגוריה...</option>'];
+  for (const group of productCatalog.groups) {
+    for (const cat of group.categories) {
+      if (linked.has(cat.id)) continue;
+      const sel = Number(selectedId) === cat.id ? ' selected' : '';
+      parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(group.name)} › ${escapeHtml(cat.name)}</option>`);
+    }
+  }
+  for (const cat of productCatalog.ungrouped || []) {
+    if (linked.has(cat.id)) continue;
+    const sel = Number(selectedId) === cat.id ? ' selected' : '';
+    parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(cat.name)}</option>`);
+  }
+  return parts.join('');
+}
+
+function findProductGroupName(productCatalog, groupId) {
+  const group = productCatalog.groups.find((g) => Number(g.id) === Number(groupId));
+  return group?.name || '';
+}
+
+function buildBakingScopeAddRowHTML(scopeType, productCatalog, {
+  linkedGroupIds, linkedCategoryIds, linkedProductIds, defaultProductCat,
+}) {
+  if (scopeType === 'group') {
+    return `
+      <select id="baking-link-scope-pick" style="flex:1">${buildProductGroupSelectOptions(productCatalog, '', linkedGroupIds)}</select>
+      <button type="button" class="btn btn-primary btn-sm" id="baking-link-scope-btn">+</button>`;
+  }
+  if (scopeType === 'category') {
+    return `
+      <select id="baking-link-scope-pick" style="flex:1">${buildProductCategoryScopeSelectOptions(productCatalog, '', linkedCategoryIds)}</select>
+      <button type="button" class="btn btn-primary btn-sm" id="baking-link-scope-btn">+</button>`;
+  }
+  return `
+    <select id="baking-link-product-cat" style="flex:1">${buildProductCategorySelectOptions(productCatalog, defaultProductCat)}</select>
+    <select id="baking-link-product-pick" style="flex:1">${buildProductsSelectForCategory(productCatalog, defaultProductCat, linkedProductIds)}</select>
+    <button type="button" class="btn btn-primary btn-sm" id="baking-link-scope-btn">+</button>`;
+}
+
 async function openBakingProfileLinksModal(container, profileId, { layout, productCatalog }, { focusAdd = false } = {}) {
   const profile = await getBakingProfile(profileId);
   if (!profile) return showToast('פרופיל לא נמצא');
 
-  const [linkedProducts, linkedRecipes] = await Promise.all([
+  const [linkedProducts, linkedRecipes, scopes] = await Promise.all([
     getProductsForBakingProfile(profileId),
     getRecipesForBakingProfile(profileId),
+    getBakingProfileScopes(profileId),
   ]);
+  const { groups: linkedGroups, categories: linkedCategories } = scopes;
 
   const availableRecipes = collectAvailableRecipesForBaking(layout, profileId);
   const linkedProductIds = linkedProducts.map((p) => p.id);
+  const linkedGroupIds = linkedGroups.map((s) => s.scopeId);
+  const linkedCategoryIds = linkedCategories.map((s) => s.scopeId);
   const defaultProductCat = productCatalog.allCategories.find((c) => c.products?.length)?.id || '';
+  const defaultScopeType = 'group';
   const recipeOptions = availableRecipes.length
     ? availableRecipes.map(({ recipe, path }) => `<option value="${recipe.id}">${escapeHtml(recipe.name)} (${escapeHtml(path)})</option>`).join('')
     : '<option value="">אין מתכונים לשיוך</option>';
@@ -2321,6 +2389,38 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
     title: `שיוך · ${escapeHtml(profile.name)}`,
     bodyHTML: `
       ${paramsLine ? `<p class="form-hint baking-links-params">${escapeHtml(paramsLine)}</p>` : ''}
+      <div class="baking-links-section">
+        <div class="baking-links-section-head">
+          <h3 class="baking-links-title">קבוצות (${linkedGroups.length})</h3>
+        </div>
+        ${linkedGroups.length ? `
+          <ul class="baking-links-list">
+            ${linkedGroups.map((s) => `
+              <li class="baking-links-item">
+                <div class="baking-links-item-info">
+                  <strong>${escapeHtml(s.group?.name || findProductGroupName(productCatalog, s.scopeId))}</strong>
+                  <span class="form-hint">קטגוריה כללית · כל המוצרים בקבוצה</span>
+                </div>
+                <button type="button" class="btn btn-danger btn-sm unlink-baking-scope" data-scope-type="${BAKING_SCOPE_GROUP}" data-scope-id="${s.scopeId}">הסר</button>
+              </li>`).join('')}
+          </ul>` : '<p class="form-hint baking-links-empty">אין קבוצות משויכות</p>'}
+      </div>
+      <div class="baking-links-section">
+        <div class="baking-links-section-head">
+          <h3 class="baking-links-title">קטגוריות (${linkedCategories.length})</h3>
+        </div>
+        ${linkedCategories.length ? `
+          <ul class="baking-links-list">
+            ${linkedCategories.map((s) => `
+              <li class="baking-links-item">
+                <div class="baking-links-item-info">
+                  <strong>${escapeHtml(findProductCategoryName(productCatalog, s.scopeId) || s.category?.name || '')}</strong>
+                  <span class="form-hint">קטגוריה · כל המוצרים בקטגוריה</span>
+                </div>
+                <button type="button" class="btn btn-danger btn-sm unlink-baking-scope" data-scope-type="${BAKING_SCOPE_CATEGORY}" data-scope-id="${s.scopeId}">הסר</button>
+              </li>`).join('')}
+          </ul>` : '<p class="form-hint baking-links-empty">אין קטגוריות משויכות</p>'}
+      </div>
       <div class="baking-links-section">
         <div class="baking-links-section-head">
           <h3 class="baking-links-title">מוצרים (${linkedProducts.length})</h3>
@@ -2335,14 +2435,20 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
                 </div>
                 <button type="button" class="btn btn-danger btn-sm unlink-baking-product" data-product-id="${p.id}">הסר</button>
               </li>`).join('')}
-          </ul>` : '<p class="form-hint baking-links-empty">אין מוצרים משויכים</p>'}
-        <div class="baking-links-add${focusAdd ? ' baking-links-add--focus' : ''}" id="baking-add-product-block">
-          <label class="baking-links-add-label">הוסף מוצר</label>
-          <div class="filter-row">
-            <select id="baking-link-product-cat" style="flex:1">${buildProductCategorySelectOptions(productCatalog, defaultProductCat)}</select>
-            <select id="baking-link-product-pick" style="flex:1">${buildProductsSelectForCategory(productCatalog, defaultProductCat, linkedProductIds)}</select>
-            <button type="button" class="btn btn-primary btn-sm" id="baking-link-product-btn">+</button>
-          </div>
+          </ul>` : '<p class="form-hint baking-links-empty">אין מוצרים משויכים ישירות</p>'}
+        <p class="form-hint">שיוך ישיר למוצר גובר על שיוך לפי קטגוריה או קבוצה</p>
+      </div>
+      <div class="baking-links-add baking-scope-add${focusAdd ? ' baking-links-add--focus' : ''}" id="baking-add-scope-block">
+        <label class="baking-links-add-label">הוסף שיוך</label>
+        <div class="baking-scope-type-row" role="radiogroup" aria-label="סוג שיוך">
+          <label class="baking-scope-type-option"><input type="radio" name="baking-scope-type" value="group"${defaultScopeType === 'group' ? ' checked' : ''}> קטגוריה כללית</label>
+          <label class="baking-scope-type-option"><input type="radio" name="baking-scope-type" value="category"${defaultScopeType === 'category' ? ' checked' : ''}> קטגוריה</label>
+          <label class="baking-scope-type-option"><input type="radio" name="baking-scope-type" value="product"${defaultScopeType === 'product' ? ' checked' : ''}> מוצר</label>
+        </div>
+        <div class="filter-row" id="baking-scope-add-row">
+          ${buildBakingScopeAddRowHTML(defaultScopeType, productCatalog, {
+    linkedGroupIds, linkedCategoryIds, linkedProductIds, defaultProductCat,
+  })}
         </div>
       </div>
       <div class="baking-links-section">
@@ -2377,27 +2483,55 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
     renderRecipesBaking(container, { layout, productCatalog });
   });
 
-  const refreshProductPick = () => {
-    const catId = document.getElementById('baking-link-product-cat')?.value;
-    const pick = document.getElementById('baking-link-product-pick');
-    if (!pick) return;
-    pick.innerHTML = buildProductsSelectForCategory(productCatalog, catId, linkedProductIds);
+  const getSelectedScopeType = () => document.querySelector('input[name="baking-scope-type"]:checked')?.value || 'group';
+
+  const refreshScopeAddRow = () => {
+    const row = document.getElementById('baking-scope-add-row');
+    if (!row) return;
+    row.innerHTML = buildBakingScopeAddRowHTML(getSelectedScopeType(), productCatalog, {
+      linkedGroupIds, linkedCategoryIds, linkedProductIds, defaultProductCat,
+    });
+    bindScopeAddControls();
   };
 
-  document.getElementById('baking-link-product-cat')?.addEventListener('change', refreshProductPick);
+  const bindScopeAddControls = () => {
+    document.getElementById('baking-link-product-cat')?.addEventListener('change', () => {
+      const catId = document.getElementById('baking-link-product-cat')?.value;
+      const pick = document.getElementById('baking-link-product-pick');
+      if (pick) pick.innerHTML = buildProductsSelectForCategory(productCatalog, catId, linkedProductIds);
+    });
 
-  document.getElementById('baking-link-product-btn')?.addEventListener('click', async () => {
-    const productId = Number(document.getElementById('baking-link-product-pick')?.value);
-    if (!productId) return showToast('בחר מוצר');
-    try {
-      await linkProductToBakingProfile(profileId, productId);
-      closeModal();
-      openBakingProfileLinksModal(container, profileId, { layout, productCatalog }, { focusAdd: true });
-      showToast('מוצר שויך ✓');
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
+    document.getElementById('baking-link-scope-btn')?.addEventListener('click', async () => {
+      const scopeType = getSelectedScopeType();
+      try {
+        if (scopeType === 'product') {
+          const productId = Number(document.getElementById('baking-link-product-pick')?.value);
+          if (!productId) return showToast('בחר מוצר');
+          await linkProductToBakingProfile(profileId, productId);
+          showToast('מוצר שויך ✓');
+        } else if (scopeType === 'category') {
+          const categoryId = Number(document.getElementById('baking-link-scope-pick')?.value);
+          if (!categoryId) return showToast('בחר קטגוריה');
+          await linkBakingProfileScope(profileId, BAKING_SCOPE_CATEGORY, categoryId);
+          showToast('קטגוריה שויכה ✓');
+        } else {
+          const groupId = Number(document.getElementById('baking-link-scope-pick')?.value);
+          if (!groupId) return showToast('בחר קבוצה');
+          await linkBakingProfileScope(profileId, BAKING_SCOPE_GROUP, groupId);
+          showToast('קבוצה שויכה ✓');
+        }
+        closeModal();
+        openBakingProfileLinksModal(container, profileId, { layout, productCatalog }, { focusAdd: true });
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  };
+
+  document.querySelectorAll('input[name="baking-scope-type"]').forEach((radio) => {
+    radio.addEventListener('change', refreshScopeAddRow);
   });
+  bindScopeAddControls();
 
   document.getElementById('baking-link-recipe-btn')?.addEventListener('click', async () => {
     const recipeId = Number(document.getElementById('baking-link-recipe-pick')?.value);
@@ -2425,6 +2559,19 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
     });
   });
 
+  document.querySelectorAll('.unlink-baking-scope').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await unlinkBakingProfileScope(profileId, btn.dataset.scopeType, Number(btn.dataset.scopeId));
+        closeModal();
+        openBakingProfileLinksModal(container, profileId, { layout, productCatalog });
+        showToast('הוסר ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
   document.querySelectorAll('.unlink-baking-recipe').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
@@ -2439,7 +2586,7 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
   });
 
   if (focusAdd) {
-    document.getElementById('baking-add-product-block')?.scrollIntoView({ block: 'nearest' });
+    document.getElementById('baking-add-scope-block')?.scrollIntoView({ block: 'nearest' });
   }
 }
 

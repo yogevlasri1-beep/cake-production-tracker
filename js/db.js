@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=206';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=206';
-import { defaultColorForIndex } from './chart.js?v=206';
+} from './validators.js?v=210';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=210';
+import { defaultColorForIndex } from './chart.js?v=210';
 
 export { ValidationError };
 
@@ -1146,6 +1146,103 @@ db.version(36).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
 });
 
+db.version(37).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
+db.version(38).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const cats = await tx.table('supplierCategories').toArray();
+  for (const cat of cats) {
+    if (cat.name === 'אריזה' && !cat.isPackaging) {
+      await tx.table('supplierCategories').update(cat.id, { isPackaging: true });
+    }
+  }
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -1695,6 +1792,7 @@ export async function exportAllData() {
     weeklyProductionPlanItems,
     bakingProfiles,
     bakingProfileProducts,
+    bakingProfileScopes,
     productRecipeComponents,
   ] = await Promise.all([
     db.categories.toArray(),
@@ -1736,6 +1834,7 @@ export async function exportAllData() {
     db.weeklyProductionPlanItems.toArray(),
     db.bakingProfiles?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
+    db.bakingProfileScopes?.toArray?.() ?? Promise.resolve([]),
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
@@ -1777,6 +1876,7 @@ export async function exportAllData() {
     weeklyProductionPlanItems,
     bakingProfiles,
     bakingProfileProducts,
+    bakingProfileScopes,
     productRecipeComponents,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
@@ -1833,6 +1933,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
   if (!Array.isArray(payload.bakingProfiles)) payload.bakingProfiles = [];
   if (!Array.isArray(payload.bakingProfileProducts)) payload.bakingProfileProducts = [];
+  if (!Array.isArray(payload.bakingProfileScopes)) payload.bakingProfileScopes = [];
   if (!Array.isArray(payload.productRecipeComponents)) payload.productRecipeComponents = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
@@ -1893,6 +1994,7 @@ export async function importAllData(payload) {
     db.weeklyProductionPlanItems,
     db.bakingProfiles,
     db.bakingProfileProducts,
+    db.bakingProfileScopes,
     db.productRecipeComponents,
     async (tx) => {
       await db.productionEntries.clear();
@@ -1906,6 +2008,7 @@ export async function importAllData(payload) {
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
       await db.bakingProfileProducts?.clear?.();
+      await db.bakingProfileScopes?.clear?.();
       await db.bakingProfiles?.clear?.();
       await db.rawMaterialPriceHistory?.clear?.();
       await db.rawMaterials.clear();
@@ -1971,6 +2074,9 @@ export async function importAllData(payload) {
       if (payload.bakingProfiles?.length) await db.bakingProfiles.bulkPut(payload.bakingProfiles);
       if (payload.bakingProfileProducts?.length) {
         await db.bakingProfileProducts.bulkPut(payload.bakingProfileProducts);
+      }
+      if (payload.bakingProfileScopes?.length) {
+        await db.bakingProfileScopes.bulkPut(payload.bakingProfileScopes);
       }
       if (payload.productRecipeComponents?.length) {
         await db.productRecipeComponents.bulkPut(payload.productRecipeComponents);

@@ -1,8 +1,8 @@
-import { db, ValidationError } from './db.js?v=206';
+import { db, ValidationError } from './db.js?v=210';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
-} from './validators.js?v=206';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=206';
+} from './validators.js?v=210';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=210';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -114,6 +114,9 @@ export function normalizeBakingProfileFields(raw) {
   };
 }
 
+export const BAKING_SCOPE_GROUP = 'group';
+export const BAKING_SCOPE_CATEGORY = 'category';
+
 export async function getBakingProfiles() {
   const rows = await db.bakingProfiles.toArray();
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
@@ -152,8 +155,9 @@ export async function updateBakingProfile(id, patch) {
 export async function deleteBakingProfile(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return;
-  await db.transaction('rw', db.bakingProfiles, db.bakingProfileProducts, db.recipes, async () => {
+  await db.transaction('rw', db.bakingProfiles, db.bakingProfileProducts, db.bakingProfileScopes, db.recipes, async () => {
     await db.bakingProfileProducts.where('bakingProfileId').equals(pid).delete();
+    await db.bakingProfileScopes.where('bakingProfileId').equals(pid).delete();
     const recipes = await db.recipes.filter((r) => Number(r.bakingProfileId) === pid).toArray();
     for (const recipe of recipes) {
       await db.recipes.update(recipe.id, normalizeRecipeBakingFields({ hasBaking: false }));
@@ -180,7 +184,140 @@ export async function countRecipesUsingBakingProfile(profileId) {
 export async function countProductsUsingBakingProfile(profileId) {
   const pid = sanitizeProductId(profileId);
   if (!pid) return 0;
-  return db.bakingProfileProducts.where('bakingProfileId').equals(pid).count();
+  const products = await db.products.toArray();
+  let count = 0;
+  for (const product of products) {
+    const resolved = await resolveBakingProfileForProduct(product.id);
+    if (resolved?.profile?.id === pid) count++;
+  }
+  return count;
+}
+
+export async function getBakingProfileScopes(profileId) {
+  const pid = sanitizeProductId(profileId);
+  if (!pid) return { groups: [], categories: [] };
+  const scopes = await db.bakingProfileScopes.where('bakingProfileId').equals(pid).toArray();
+  scopes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const groups = [];
+  const categories = [];
+  for (const scope of scopes) {
+    if (scope.scopeType === BAKING_SCOPE_GROUP) {
+      const group = await db.categoryGroups.get(Number(scope.scopeId));
+      if (group) groups.push({ ...scope, group });
+    } else if (scope.scopeType === BAKING_SCOPE_CATEGORY) {
+      const category = await db.categories.get(Number(scope.scopeId));
+      if (category) categories.push({ ...scope, category });
+    }
+  }
+  return { groups, categories };
+}
+
+export async function linkBakingProfileScope(profileId, scopeType, scopeId) {
+  const pid = sanitizeProductId(profileId);
+  const sid = sanitizeProductId(scopeId);
+  if (!pid || !sid) throw new ValidationError('שיוך לא תקין');
+  if (scopeType !== BAKING_SCOPE_GROUP && scopeType !== BAKING_SCOPE_CATEGORY) {
+    throw new ValidationError('סוג טווח לא תקין');
+  }
+  const profile = await db.bakingProfiles.get(pid);
+  if (!profile) throw new ValidationError('פרופיל לא נמצא');
+  if (scopeType === BAKING_SCOPE_GROUP) {
+    const group = await db.categoryGroups.get(sid);
+    if (!group) throw new ValidationError('קבוצה לא נמצאה');
+  } else {
+    const category = await db.categories.get(sid);
+    if (!category) throw new ValidationError('קטגוריה לא נמצאה');
+  }
+  const existing = await db.bakingProfileScopes
+    .where('[bakingProfileId+scopeType+scopeId]')
+    .equals([pid, scopeType, sid])
+    .first();
+  if (existing) return existing.id;
+  await db.bakingProfileScopes.where('[scopeType+scopeId]').equals([scopeType, sid]).delete();
+  const all = await db.bakingProfileScopes.where('bakingProfileId').equals(pid).toArray();
+  const maxOrder = all.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
+  return db.bakingProfileScopes.add({
+    bakingProfileId: pid,
+    scopeType,
+    scopeId: sid,
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function unlinkBakingProfileScope(profileId, scopeType, scopeId) {
+  const pid = sanitizeProductId(profileId);
+  const sid = sanitizeProductId(scopeId);
+  if (!pid || !sid) return;
+  await db.bakingProfileScopes
+    .where('[bakingProfileId+scopeType+scopeId]')
+    .equals([pid, scopeType, sid])
+    .delete();
+}
+
+export async function resolveBakingProfileForProduct(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return null;
+
+  const directLink = await db.bakingProfileProducts.where('productId').equals(pid).first();
+  if (directLink) {
+    const profile = await db.bakingProfiles.get(directLink.bakingProfileId);
+    if (profile) {
+      return {
+        profile,
+        source: 'product',
+        scopeType: null,
+        scopeId: null,
+        scopeName: null,
+        link: directLink,
+      };
+    }
+  }
+
+  const product = await db.products.get(pid);
+  if (!product) return null;
+
+  const catScope = await db.bakingProfileScopes
+    .where('[scopeType+scopeId]')
+    .equals([BAKING_SCOPE_CATEGORY, product.categoryId])
+    .first();
+  if (catScope) {
+    const profile = await db.bakingProfiles.get(catScope.bakingProfileId);
+    const category = await db.categories.get(product.categoryId);
+    if (profile) {
+      return {
+        profile,
+        source: 'category',
+        scopeType: BAKING_SCOPE_CATEGORY,
+        scopeId: product.categoryId,
+        scopeName: category?.name || null,
+        link: null,
+      };
+    }
+  }
+
+  const category = await db.categories.get(product.categoryId);
+  if (category?.groupId) {
+    const groupScope = await db.bakingProfileScopes
+      .where('[scopeType+scopeId]')
+      .equals([BAKING_SCOPE_GROUP, category.groupId])
+      .first();
+    if (groupScope) {
+      const profile = await db.bakingProfiles.get(groupScope.bakingProfileId);
+      const group = await db.categoryGroups.get(category.groupId);
+      if (profile) {
+        return {
+          profile,
+          source: 'group',
+          scopeType: BAKING_SCOPE_GROUP,
+          scopeId: category.groupId,
+          scopeName: group?.name || null,
+          link: null,
+        };
+      }
+    }
+  }
+
+  return null;
 }
 
 export async function getProductsForBakingProfile(profileId) {
@@ -1440,12 +1577,21 @@ export async function getRecipesForProduct(productId) {
 }
 
 export async function getProductBakingProfileLink(productId) {
-  const pid = sanitizeProductId(productId);
-  if (!pid) return null;
-  const link = await db.bakingProfileProducts.where('productId').equals(pid).first();
-  if (!link) return null;
-  const profile = await db.bakingProfiles.get(link.bakingProfileId);
-  return { ...link, profile: profile || null };
+  const resolved = await resolveBakingProfileForProduct(productId);
+  if (!resolved?.profile) return null;
+  const { profile, source, scopeType, scopeId, scopeName, link } = resolved;
+  if (source === 'product' && link) {
+    return { ...link, profile, source, scopeType, scopeId, scopeName };
+  }
+  return {
+    bakingProfileId: profile.id,
+    productId: sanitizeProductId(productId),
+    profile,
+    source,
+    scopeType,
+    scopeId,
+    scopeName,
+  };
 }
 
 export async function getProductDetail(productId) {
@@ -1533,7 +1679,60 @@ export async function syncProductCostFromComposition(productId) {
   return cost;
 }
 
-/* ── קטגוריות ספקים ── */
+/* ── קטגוריות ספקים / אריזות ── */
+
+export const PACKAGING_KIND_CARTON = 'carton';
+export const PACKAGING_KIND_PLASTIC = 'plastic';
+
+export function getPackagingKindLabel(kind) {
+  if (kind === PACKAGING_KIND_CARTON) return 'קרטון';
+  if (kind === PACKAGING_KIND_PLASTIC) return 'פלסטיק';
+  return '';
+}
+
+export function isPackagingSupplierCategory(cat) {
+  return !!cat?.isPackaging;
+}
+
+function sanitizePackagingKind(value) {
+  if (value === PACKAGING_KIND_CARTON || value === PACKAGING_KIND_PLASTIC) return value;
+  return null;
+}
+
+function sanitizePackCount(value, { defaultValue = 1 } = {}) {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n < 1) return defaultValue;
+  return Math.min(n, 100000);
+}
+
+export function computePackagingCostPerProduct(material) {
+  if (!material?.packagingKind) return null;
+  const price = Number(material.unitPrice) || 0;
+  if (price <= 0) return null;
+  const unitsInPack = sanitizePackCount(material.packUnitsCount);
+  const pricePerUnit = price / unitsInPack;
+  if (material.packagingKind === PACKAGING_KIND_CARTON) {
+    const productsPerUnit = sanitizePackCount(material.packProductsPerUnit);
+    return Math.round((pricePerUnit / productsPerUnit) * 100) / 100;
+  }
+  return Math.round(pricePerUnit * 100) / 100;
+}
+
+function normalizePackagingFields(raw, { categoryIsPackaging = false } = {}) {
+  if (!categoryIsPackaging && !raw?.packagingKind) {
+    return {
+      packagingKind: null,
+      packUnitsCount: null,
+      packProductsPerUnit: null,
+    };
+  }
+  const kind = sanitizePackagingKind(raw?.packagingKind) || PACKAGING_KIND_CARTON;
+  const packUnitsCount = sanitizePackCount(raw?.packUnitsCount);
+  const packProductsPerUnit = kind === PACKAGING_KIND_CARTON
+    ? sanitizePackCount(raw?.packProductsPerUnit)
+    : null;
+  return { packagingKind: kind, packUnitsCount, packProductsPerUnit };
+}
 
 export async function getSupplierCategories() {
   const rows = await db.supplierCategories.toArray();
@@ -1541,13 +1740,17 @@ export async function getSupplierCategories() {
   return rows;
 }
 
-export async function addSupplierCategory(name) {
+export async function addSupplierCategory(name, { isPackaging = false } = {}) {
   const trimmed = sanitizeName(name, 40);
   if (!trimmed) throw new ValidationError('שם קטגוריה לא תקין');
   const existing = await getSupplierCategories();
   if (existing.some((c) => c.name === trimmed)) throw new ValidationError('קטגוריה כבר קיימת');
   const maxOrder = existing.reduce((m, c) => Math.max(m, c.sortOrder ?? 0), 0);
-  return db.supplierCategories.add({ name: trimmed, sortOrder: maxOrder + 1 });
+  return db.supplierCategories.add({
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+    isPackaging: !!isPackaging,
+  });
 }
 
 export async function updateSupplierCategory(id, patch) {
@@ -1562,6 +1765,7 @@ export async function updateSupplierCategory(id, patch) {
       throw new ValidationError('קטגוריה כבר קיימת');
     }
   }
+  if ('isPackaging' in data) data.isPackaging = !!data.isPackaging;
   if (Object.keys(data).length) await db.supplierCategories.update(cid, data);
 }
 
@@ -1676,23 +1880,32 @@ export function computePricePerKg(unitPrice, packageWeightGrams) {
   return Math.round((price / (grams / 1000)) * 100) / 100;
 }
 
-export async function addRawMaterial({ supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams }) {
+export async function addRawMaterial({
+  supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
+  packagingKind, packUnitsCount, packProductsPerUnit,
+}) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
+  const category = await db.supplierCategories.get(cid);
   const inCat = await getRawMaterials(cid);
   const maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const price = sanitizeMoney(unitPrice);
   const sid = supplierId ? sanitizeProductId(supplierId) : null;
   const pkg = sanitizePackageWeightGrams(packageWeightGrams);
+  const packaging = normalizePackagingFields(
+    { packagingKind, packUnitsCount, packProductsPerUnit },
+    { categoryIsPackaging: isPackagingSupplierCategory(category) },
+  );
   const id = await db.rawMaterials.add({
     supplierCategoryId: cid,
     name: trimmed,
-    unit: String(unit || 'ק"ג').trim().slice(0, 20),
+    unit: String(unit || (isPackagingSupplierCategory(category) ? 'חבילה' : 'ק"ג')).trim().slice(0, 20),
     unitPrice: price,
     supplierId: sid,
-    packageWeightGrams: pkg,
+    packageWeightGrams: isPackagingSupplierCategory(category) ? null : pkg,
+    ...packaging,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {
@@ -1725,6 +1938,21 @@ export async function updateRawMaterial(id, patch) {
   if ('supplierId' in data) data.supplierId = data.supplierId ? sanitizeProductId(data.supplierId) : null;
   if ('unit' in data) data.unit = String(data.unit || '').trim().slice(0, 20);
   if ('packageWeightGrams' in data) data.packageWeightGrams = sanitizePackageWeightGrams(data.packageWeightGrams);
+  if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data) {
+    const current = await db.rawMaterials.get(mid);
+    const category = current
+      ? await db.supplierCategories.get(current.supplierCategoryId)
+      : null;
+    const packaging = normalizePackagingFields(
+      {
+        packagingKind: 'packagingKind' in data ? data.packagingKind : current?.packagingKind,
+        packUnitsCount: 'packUnitsCount' in data ? data.packUnitsCount : current?.packUnitsCount,
+        packProductsPerUnit: 'packProductsPerUnit' in data ? data.packProductsPerUnit : current?.packProductsPerUnit,
+      },
+      { categoryIsPackaging: isPackagingSupplierCategory(category) },
+    );
+    Object.assign(data, packaging);
+  }
   if (Object.keys(data).length) await db.rawMaterials.update(mid, data);
 }
 
@@ -2480,7 +2708,7 @@ export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
     productRecipeComponents,
-    bakingProfiles, bakingProfileProducts,
+    bakingProfiles, bakingProfileProducts, bakingProfileScopes,
     supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory, supplierShortages,
     weeklyProductionPlans, weeklyProductionPlanItems,
   ] = await Promise.all([
@@ -2492,6 +2720,7 @@ export async function exportKitchenTables() {
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfiles.toArray(),
     db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
+    db.bakingProfileScopes?.toArray?.() ?? Promise.resolve([]),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
@@ -2509,6 +2738,7 @@ export async function exportKitchenTables() {
     productRecipeComponents,
     bakingProfiles,
     bakingProfileProducts,
+    bakingProfileScopes,
     supplierCategories,
     suppliers,
     rawMaterials,
@@ -2523,7 +2753,7 @@ export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
     'productRecipeComponents',
-    'bakingProfiles', 'bakingProfileProducts',
+    'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
@@ -2569,7 +2799,7 @@ export async function clearKitchenTables() {
   await db.transaction('rw',
     db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
     db.productRecipeComponents,
-    db.bakingProfiles, db.bakingProfileProducts,
+    db.bakingProfiles, db.bakingProfileProducts, db.bakingProfileScopes,
     db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.supplierShortages,
     db.weeklyProductionPlans, db.weeklyProductionPlanItems,
     async () => {
@@ -2582,6 +2812,7 @@ export async function clearKitchenTables() {
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
       await db.bakingProfileProducts?.clear?.();
+      await db.bakingProfileScopes?.clear?.();
       await db.bakingProfiles.clear();
       await db.rawMaterialPriceHistory.clear();
       await db.supplierShortages?.clear?.();

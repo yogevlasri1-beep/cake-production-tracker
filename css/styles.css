@@ -475,6 +475,56 @@ body {
   margin: 0 0 12px;
 }
 
+.packaging-kind-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+
+.packaging-kind-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.packaging-cat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  cursor: pointer;
+}
+
+.packaging-cost-hint strong {
+  color: var(--primary);
+}
+
+.baking-scope-type-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 8px;
+}
+
+.baking-scope-type-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.baking-scope-add {
+  margin-top: 4px;
+}
+
+.product-baking-inherited {
+  display: block;
+  margin-top: 4px;
+}
+
 .baking-profile-row-main {
   display: flex;
   flex-direction: column;

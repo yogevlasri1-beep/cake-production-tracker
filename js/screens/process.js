@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=206';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=206';
-import { openModal, closeModal } from '../modal.js?v=206';
-import { requestAutoBackupNow } from '../backup-service.js?v=206';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=206';
+} from '../db.js?v=210';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=210';
+import { openModal, closeModal } from '../modal.js?v=210';
+import { requestAutoBackupNow } from '../backup-service.js?v=210';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=210';
 
 function parseIdList(str) {
   try {
@@ -37,7 +37,8 @@ function applyFlowSelectionToStart(container, flow, layout) {
   container.dataset.scopeType = 'category';
   container.dataset.selectedProduct = '';
   if (flow.targetType === 'category' && flow.categoryId) {
-    container.dataset.selectedGroup = String(flow.groupId || flow.categoryGroupId || '');
+    const cat = layout.allCategories.find((c) => c.id === flow.categoryId);
+    container.dataset.selectedGroup = String(flow.groupId || flow.categoryGroupId || cat?.groupId || '');
     container.dataset.selectedCategories = JSON.stringify([flow.categoryId]);
   } else {
     const gid = flow.categoryGroupId || flow.groupId;
@@ -47,15 +48,26 @@ function applyFlowSelectionToStart(container, flow, layout) {
   }
 }
 
-function readStartViewState(container, ctx) {
-  const groupId = container.dataset.selectedGroup || '';
-  const scopeType = container.dataset.scopeType || 'category';
-  const selectedCategories = parseIdList(container.dataset.selectedCategories);
-  const productId = container.dataset.selectedProduct || '';
-  const selectedFlowId = container.dataset.selectedFlowId || '';
-  const date = document.getElementById('start-date')?.value
-    || container.dataset.selectedDate
-    || todayISO();
+function resolveStartGroupContext(container, ctx, {
+  selectedCategories: inputCategories,
+  groupId: inputGroupId,
+  scopeType,
+  productId,
+  selectedFlowId,
+  allFlowsOverview,
+} = {}) {
+  const selectedCategories = inputCategories ?? parseIdList(container.dataset.selectedCategories);
+  let groupId = inputGroupId ?? container.dataset.selectedGroup ?? '';
+
+  if (!groupId && selectedCategories.length) {
+    const cat = ctx.layout.allCategories.find((c) => c.id === selectedCategories[0]);
+    if (cat?.groupId) groupId = String(cat.groupId);
+  }
+  if (!groupId && selectedFlowId && allFlowsOverview?.length) {
+    const flow = allFlowsOverview.find((f) => String(f.id) === String(selectedFlowId));
+    groupId = String(flow?.groupId || flow?.categoryGroupId || '');
+  }
+
   const groupCategories = groupId
     ? ctx.layout.allCategories.filter((c) => Number(c.groupId) === Number(groupId))
     : [];
@@ -63,14 +75,41 @@ function readStartViewState(container, ctx) {
   let scopeMode = 'group';
   if (scopeType === 'product') {
     if (productId) scopeMode = 'product';
-  } else if (groupId && selectedCategories.length) {
-    const allGroupIds = groupCategories.map((c) => c.id);
-    const allSelected = allGroupIds.length > 0
-      && allGroupIds.every((id) => selectedCategories.includes(id));
-    if (allSelected) scopeMode = 'group';
-    else if (selectedCategories.length === 1) scopeMode = 'category';
-    else scopeMode = 'categories';
+  } else if (selectedCategories.length) {
+    if (groupCategories.length) {
+      const allGroupIds = groupCategories.map((c) => c.id);
+      const allSelected = allGroupIds.every((id) => selectedCategories.includes(id));
+      if (allSelected) scopeMode = 'group';
+      else if (selectedCategories.length === 1) scopeMode = 'category';
+      else scopeMode = 'categories';
+    } else if (selectedCategories.length === 1) {
+      scopeMode = 'category';
+    } else {
+      scopeMode = 'categories';
+    }
   }
+
+  return { groupId, selectedCategories, groupCategories, scopeMode };
+}
+
+function readStartViewState(container, ctx, allFlowsOverview) {
+  const scopeType = container.dataset.scopeType || 'category';
+  const productId = container.dataset.selectedProduct || '';
+  const selectedFlowId = container.dataset.selectedFlowId || '';
+  const date = document.getElementById('start-date')?.value
+    || container.dataset.selectedDate
+    || todayISO();
+  const {
+    groupId,
+    selectedCategories,
+    groupCategories,
+    scopeMode,
+  } = resolveStartGroupContext(container, ctx, {
+    scopeType,
+    productId,
+    selectedFlowId,
+    allFlowsOverview,
+  });
 
   return {
     groupId,
@@ -2448,19 +2487,35 @@ async function renderStartView(container, ctx) {
   const { layout, groups, products, catMap } = ctx;
   const runSettings = await getRunSettings();
   const allFlowsOverview = await getAllFlowsOverview();
-  const groupId = container.dataset.selectedGroup || '';
   const scopeType = container.dataset.scopeType || 'category';
-  let selectedCategories = parseIdList(container.dataset.selectedCategories);
   const productId = container.dataset.selectedProduct || '';
   const date = container.dataset.selectedDate || todayISO();
 
-  const groupCategories = groupId
-    ? layout.allCategories.filter((c) => Number(c.groupId) === Number(groupId))
-    : [];
+  let {
+    groupId,
+    selectedCategories,
+    groupCategories,
+    scopeMode,
+  } = resolveStartGroupContext(container, ctx, {
+    scopeType,
+    productId,
+    selectedFlowId: container.dataset.selectedFlowId || '',
+    allFlowsOverview,
+  });
+
+  if (groupId && groupId !== container.dataset.selectedGroup) {
+    container.dataset.selectedGroup = groupId;
+  }
 
   if (scopeType === 'category' && groupId && !selectedCategories.length && groupCategories.length) {
     selectedCategories = groupCategories.map((c) => c.id);
     container.dataset.selectedCategories = JSON.stringify(selectedCategories);
+    ({ scopeMode } = resolveStartGroupContext(container, ctx, {
+      scopeType,
+      selectedCategories,
+      groupId,
+      allFlowsOverview,
+    }));
   }
 
   const filteredProducts = groupId
@@ -2470,7 +2525,6 @@ async function renderStartView(container, ctx) {
   let selectedFlowId = container.dataset.selectedFlowId || '';
   let stepCount = 0;
   let canStart = false;
-  let scopeMode = 'group';
 
   const selectedFlowOverview = selectedFlowId
     ? allFlowsOverview.find((f) => String(f.id) === String(selectedFlowId))
@@ -2480,18 +2534,6 @@ async function renderStartView(container, ctx) {
     const prod = productId ? products.find((p) => p.id === Number(productId)) : null;
     if (prod) {
       scopeMode = 'product';
-    }
-  } else if (groupId && selectedCategories.length) {
-    const allGroupIds = groupCategories.map((c) => c.id);
-    const allSelected = allGroupIds.length > 0
-      && allGroupIds.every((id) => selectedCategories.includes(id));
-
-    if (allSelected) {
-      scopeMode = 'group';
-    } else if (selectedCategories.length === 1) {
-      scopeMode = 'category';
-    } else {
-      scopeMode = 'categories';
     }
   }
 
@@ -2727,8 +2769,8 @@ async function renderStartView(container, ctx) {
   });
 
   document.getElementById('start-run-btn')?.addEventListener('click', async () => {
-    const state = readStartViewState(container, ctx);
-    const {
+    const state = readStartViewState(container, ctx, allFlowsOverview);
+    let {
       groupId: startGroupId,
       scopeType: startScopeType,
       selectedCategories: startCategories,
@@ -2763,16 +2805,25 @@ async function renderStartView(container, ctx) {
       if (!prod) return showToast('בחר מוצר');
       payload.productId = pid;
       payload.scopeMode = 'product';
+      if (!startGroupId && prod.categoryId) {
+        const cat = layout.allCategories.find((c) => c.id === prod.categoryId);
+        if (cat?.groupId) payload.categoryGroupId = cat.groupId;
+      }
     } else if (startScopeMode === 'group') {
+      if (!startGroupId) return showToast('בחר קטגוריה כללית');
       payload.scopeMode = 'group';
+      payload.categoryGroupId = Number(startGroupId);
     } else if (startScopeMode === 'category') {
       if (startCategories.length !== 1) return showToast('בחר קטגוריה אחת');
       payload.categoryId = startCategories[0];
       payload.scopeMode = 'category';
+      if (startGroupId) payload.categoryGroupId = Number(startGroupId);
     } else if (startScopeMode === 'categories') {
       if (startCategories.length < 2) return showToast('בחר לפחות שתי קטגוריות, או סמן הכל');
+      if (!startGroupId) return showToast('בחר קטגוריה כללית');
       payload.categoryIds = startCategories;
       payload.scopeMode = 'categories';
+      payload.categoryGroupId = Number(startGroupId);
     } else if (!startCategories.length) {
       return showToast('בחר לפחות קטגוריה אחת');
     } else {

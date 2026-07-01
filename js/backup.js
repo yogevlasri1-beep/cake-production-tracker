@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=206';
-import { APP_VERSION } from './version.js?v=206';
-import { defaultColorForIndex } from './chart.js?v=206';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=206';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=206';
-import { ValidationError } from './validators.js?v=206';
+import { exportAllData, importAllData } from './db.js?v=210';
+import { APP_VERSION } from './version.js?v=210';
+import { defaultColorForIndex } from './chart.js?v=210';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=210';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=210';
+import { ValidationError } from './validators.js?v=210';
 
 export const BACKUP_VERSION = 3;
 
@@ -182,6 +182,7 @@ export function enrichBackupData(raw) {
     recipeIngredients: raw.recipeIngredients || [],
     bakingProfiles: raw.bakingProfiles || [],
     bakingProfileProducts: raw.bakingProfileProducts || [],
+    bakingProfileScopes: raw.bakingProfileScopes || [],
     productRecipeComponents: raw.productRecipeComponents || [],
     supplierCategories: raw.supplierCategories || [],
     suppliers: raw.suppliers || [],
@@ -337,6 +338,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
   if (!Array.isArray(data.bakingProfiles)) data.bakingProfiles = [];
   if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];
+  if (!Array.isArray(data.bakingProfileScopes)) data.bakingProfileScopes = [];
   if (!Array.isArray(data.productRecipeComponents)) data.productRecipeComponents = [];
   if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
