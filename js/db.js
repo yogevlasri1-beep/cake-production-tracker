@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=210';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=210';
-import { defaultColorForIndex } from './chart.js?v=210';
+} from './validators.js?v=211';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=211';
+import { defaultColorForIndex } from './chart.js?v=211';
 
 export { ValidationError };
 
@@ -3172,8 +3172,7 @@ export async function resolveFlowsForCategorySelection({ categoryIds, categoryGr
 
 export async function resolveFlowSteps({ categoryId, categoryGroupId, flowId } = {}) {
   if (flowId) {
-    const steps = await getFlowStepsForFlow(flowId);
-    if (steps.length) return steps;
+    return getFlowStepsForFlow(flowId);
   }
   if (categoryGroupId) {
     const flows = await getFlowsForGroup(categoryGroupId);
@@ -3783,6 +3782,7 @@ export async function startProductionRun({
   if (!steps.length) throw new ValidationError('אין שלבי תזרים — הגדר שלבים ב«נהל תזרים»');
 
   const startedAt = mergeDateIntoIso(date, nowISO());
+  const prepChecks = resolvedFlowId ? await getFlowPreparations(resolvedFlowId) : [];
 
   return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, async () => {
     const runId = await db.productionRuns.add({
@@ -3824,7 +3824,16 @@ export async function startProductionRun({
       });
     }
     if (resolvedFlowId) {
-      await seedRunPreparationChecksInTx(db, runId, resolvedFlowId);
+      for (const prep of prepChecks) {
+        await db.runPreparationChecks.add({
+          runId,
+          flowPreparationId: prep.id,
+          name: prep.name,
+          sortOrder: prep.sortOrder ?? 0,
+          checked: false,
+          checkedAt: null,
+        });
+      }
     }
     if (runSettings.autoBatchEnabled) {
       const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;

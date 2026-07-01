@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=210';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=210';
-import { openModal, closeModal } from '../modal.js?v=210';
-import { requestAutoBackupNow } from '../backup-service.js?v=210';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=210';
+} from '../db.js?v=211';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=211';
+import { openModal, closeModal } from '../modal.js?v=211';
+import { requestAutoBackupNow } from '../backup-service.js?v=211';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=211';
 
 function parseIdList(str) {
   try {
@@ -92,7 +92,49 @@ function resolveStartGroupContext(container, ctx, {
   return { groupId, selectedCategories, groupCategories, scopeMode };
 }
 
+function syncStartStateFromDOM(container) {
+  const root = container || document;
+  const activeFlow = root.querySelector?.('.start-flow-pick.is-active');
+  if (activeFlow?.dataset.flowId) {
+    container.dataset.selectedFlowId = activeFlow.dataset.flowId;
+  }
+  const groupSel = root.querySelector?.('#start-group');
+  if (groupSel?.value) {
+    container.dataset.selectedGroup = groupSel.value;
+  }
+  const checked = [...(root.querySelectorAll?.('.start-cat-check:checked') || [])];
+  if (checked.length) {
+    container.dataset.selectedCategories = JSON.stringify(
+      checked.map((el) => Number(el.value)).filter(Boolean),
+    );
+  }
+  const productSel = root.querySelector?.('#start-product');
+  if (productSel?.value) {
+    container.dataset.selectedProduct = productSel.value;
+  }
+}
+
+function computeCanStartRun({
+  scopeType,
+  productId,
+  selectedFlowId,
+  stepCount,
+  groupId,
+  selectedCategories,
+  selectedFlowOverview,
+}) {
+  if (!selectedFlowId || stepCount <= 0) return false;
+  if (scopeType === 'product') return !!productId;
+  if (groupId || selectedCategories.length) return true;
+  if (selectedFlowOverview?.targetType === 'group') {
+    return !!(selectedFlowOverview.categoryGroupId || selectedFlowOverview.groupId);
+  }
+  if (selectedFlowOverview?.categoryId) return true;
+  return false;
+}
+
 function readStartViewState(container, ctx, allFlowsOverview) {
+  syncStartStateFromDOM(container);
   const scopeType = container.dataset.scopeType || 'category';
   const productId = container.dataset.selectedProduct || '';
   const selectedFlowId = container.dataset.selectedFlowId || '';
@@ -2540,19 +2582,15 @@ async function renderStartView(container, ctx) {
   if (selectedFlowId) {
     const steps = await getFlowStepsForFlow(selectedFlowId);
     stepCount = steps.length;
-    const effectiveGroupId = groupId || String(selectedFlowOverview?.groupId || selectedFlowOverview?.categoryGroupId || '');
-    const effectiveCategories = selectedCategories.length
-      ? selectedCategories
-      : (selectedFlowOverview?.targetType === 'category' && selectedFlowOverview.categoryId
-        ? [selectedFlowOverview.categoryId]
-        : []);
-    if (scopeType === 'product') {
-      canStart = !!productId && stepCount > 0;
-    } else if ((effectiveGroupId && effectiveCategories.length) || (selectedFlowOverview && stepCount > 0 && effectiveCategories.length)) {
-      canStart = stepCount > 0;
-    } else if (selectedFlowOverview && stepCount > 0 && selectedFlowOverview.targetType === 'group') {
-      canStart = !!effectiveGroupId;
-    }
+    canStart = computeCanStartRun({
+      scopeType,
+      productId,
+      selectedFlowId,
+      stepCount,
+      groupId,
+      selectedCategories,
+      selectedFlowOverview,
+    });
   } else if (scopeType === 'product') {
     const prod = productId ? products.find((p) => p.id === Number(productId)) : null;
     if (prod && groupId) {
@@ -2677,9 +2715,13 @@ async function renderStartView(container, ctx) {
         ? `<p class="form-hint" style="margin-bottom:12px">${stepCount} שלבים${selectedFlow ? ` · ${escapeHtml(selectedFlow.name)}` : ''}</p>`
         : !selectedFlowId
           ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ בחר תזרים מהרשימה למעלה</p>`
-          : groupId
-            ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ השלם בחירת קטגוריות</p>`
-            : ''}
+          : stepCount <= 0
+            ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ לתזרים אין שלבים — הוסף ב«נהל תזרים»</p>`
+            : scopeType === 'product'
+              ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ בחר מוצר</p>`
+              : !groupId && !selectedCategories.length
+                ? `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ בחר קטגוריה כללית או תזרים מהרשימה</p>`
+                : `<p class="form-hint" style="color:var(--warning);margin-bottom:12px">⚠️ השלם בחירת קטגוריות</p>`}
 
       <button type="button" class="btn btn-primary" id="start-run-btn" style="width:100%" ${canStart ? '' : 'disabled'}>
         התחל תזרים יצור
@@ -2769,6 +2811,7 @@ async function renderStartView(container, ctx) {
   });
 
   document.getElementById('start-run-btn')?.addEventListener('click', async () => {
+    syncStartStateFromDOM(container);
     const state = readStartViewState(container, ctx, allFlowsOverview);
     let {
       groupId: startGroupId,
@@ -2790,6 +2833,28 @@ async function renderStartView(container, ctx) {
     }
     const flowId = startFlowId ? Number(startFlowId) : null;
     if (!flowId) return showToast('בחר תזרים מהרשימה');
+
+    const flowMeta = allFlowsOverview.find((f) => f.id === flowId);
+    if (!startGroupId && flowMeta) {
+      startGroupId = String(flowMeta.groupId || flowMeta.categoryGroupId || '');
+      if (!startCategories.length && flowMeta.categoryId) {
+        startCategories = [flowMeta.categoryId];
+      }
+    }
+    if (startScopeType !== 'product') {
+      const groupCategoriesForStart = startGroupId
+        ? layout.allCategories.filter((c) => Number(c.groupId) === Number(startGroupId))
+        : [];
+      if (startCategories.length) {
+        const allSelected = groupCategoriesForStart.length > 0
+          && groupCategoriesForStart.every((c) => startCategories.includes(c.id));
+        if (allSelected) startScopeMode = 'group';
+        else if (startCategories.length === 1) startScopeMode = 'category';
+        else startScopeMode = 'categories';
+      } else if (startGroupId) {
+        startScopeMode = 'group';
+      }
+    }
 
     const payload = {
       date: startDate,

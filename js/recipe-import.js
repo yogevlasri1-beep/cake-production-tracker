@@ -1,5 +1,5 @@
-import { loadFFlate } from './docx-loader.js?v=210';
-import { formatRecipeIngredientsTotal, formatRecipeQuantity } from './kitchen-db.js?v=210';
+import { loadFFlate } from './docx-loader.js?v=211';
+import { formatRecipeIngredientsTotal, formatRecipeQuantity } from './kitchen-db.js?v=211';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
