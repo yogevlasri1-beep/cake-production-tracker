@@ -1,7 +1,7 @@
 /**
  * API אחיד — בחירת תיקייה ב«קבצים» (iOS native) או Chrome/Mac
  */
-import { getSetting, setSetting } from './db.js?v=216';
+import { getSetting, setSetting } from './db.js?v=217';
 
 const SETTINGS_KEY = 'backupSettings';
 

@@ -2156,50 +2156,78 @@ body {
 }
 
 .home-flow-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  align-items: start;
   margin-bottom: 10px;
 }
 
 .home-flow-card-info {
-  flex: 1;
   min-width: 0;
 }
 
 .home-flow-card-title {
+  display: block;
+  line-height: 1.35;
+}
+
+.home-flow-card-target {
+  display: block;
   font-weight: 800;
-  font-size: 1.06rem;
-  line-height: 1.3;
+  font-size: 1.05rem;
   color: var(--text);
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.home-flow-card-flow {
+  display: block;
+  margin-top: 2px;
+  font-weight: 600;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  word-break: normal;
+  overflow-wrap: normal;
 }
 
 .home-flow-card-batch {
   font-size: 0.72rem;
   font-weight: 500;
   color: var(--text-muted);
-  margin-top: 3px;
+  margin-top: 4px;
+  word-break: normal;
 }
 
 .home-flow-card-date-row {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
+  display: block;
   margin-top: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .home-flow-card-date {
   font-weight: 700;
-  font-size: 0.94rem;
+  font-size: 0.9rem;
   color: var(--text);
 }
 
+.home-flow-card-time-sep {
+  margin: 0 5px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
 .home-flow-card-time {
-  font-size: 0.74rem;
+  font-size: 0.82rem;
   font-weight: 600;
   color: var(--text-muted);
+}
+
+.home-flow-open {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .home-flow-card-meta {
@@ -2237,8 +2265,13 @@ body {
 .home-flow-slot-name {
   font-size: 0.66rem;
   font-weight: 600;
-  line-height: 1.25;
-  word-break: break-word;
+  line-height: 1.2;
+  word-break: normal;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .home-flow-slot--done {

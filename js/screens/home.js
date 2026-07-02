@@ -3,32 +3,35 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=216';
+} from '../db.js?v=217';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=216';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=216';
+} from '../utils.js?v=217';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=217';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=216';
-import { requestAutoBackupNow } from '../backup-service.js?v=216';
+} from '../calc.js?v=217';
+import { requestAutoBackupNow } from '../backup-service.js?v=217';
 
-function homeRunTitle(run, catMap, productMap, groupMap) {
-  const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
+function homeRunTitleParts(run, catMap, productMap, groupMap) {
+  let targetName = 'תהליך';
   if (run.productId && productMap.get(run.productId)) {
-    const p = productMap.get(run.productId);
-    return `${flowPrefix}${escapeHtml(p.name)}`;
+    targetName = productMap.get(run.productId).name;
+  } else if (run.scopeMode === 'group' && run.categoryGroupId) {
+    targetName = groupMap.get(run.categoryGroupId) || 'קבוצה';
+  } else {
+    const ids = run.categoryIds?.length ? run.categoryIds : (run.categoryId ? [run.categoryId] : []);
+    const names = ids.map((id) => catMap.get(id)).filter(Boolean);
+    if (names.length > 1) targetName = `${names[0]} +${names.length - 1}`;
+    else targetName = catMap.get(run.categoryId) || names[0] || 'תהליך';
   }
-  if (run.scopeMode === 'group' && run.categoryGroupId) {
-    return `${flowPrefix}${escapeHtml(groupMap.get(run.categoryGroupId) || 'קבוצה')}`;
-  }
-  const ids = run.categoryIds?.length ? run.categoryIds : (run.categoryId ? [run.categoryId] : []);
-  const names = ids.map((id) => catMap.get(id)).filter(Boolean);
-  if (names.length > 1) return `${flowPrefix}${escapeHtml(names[0])} +${names.length - 1}`;
-  return `${flowPrefix}${escapeHtml(catMap.get(run.categoryId) || names[0] || 'תהליך')}`;
+  return {
+    targetName: escapeHtml(targetName),
+    flowName: run.flowName ? escapeHtml(run.flowName) : '',
+  };
 }
 
 function runDateParts(run) {
@@ -39,26 +42,9 @@ function runDateParts(run) {
     return { date: formatDate(String(iso).slice(0, 10)), time: '' };
   }
   return {
-    date: d.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+    date: d.toLocaleDateString('he-IL', { day: 'numeric', month: 'short', year: 'numeric' }),
     time: d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
   };
-}
-
-function formatRunTimestamp(iso, fallbackDate) {
-  if (!iso) return fallbackDate ? formatDate(fallbackDate) : '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return formatDate(String(iso).slice(0, 10));
-  const date = d.toLocaleDateString('he-IL');
-  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-  return `${date} · ${time}`;
-}
-
-function runDatesLabel(run) {
-  const start = formatRunTimestamp(run.startedAt, run.date);
-  if (run.status === 'completed' && run.completedAt) {
-    return `${start} → ${formatRunTimestamp(run.completedAt)}`;
-  }
-  return `התחיל ${start}`;
 }
 
 function homeTimelineSlot(step, role, emptyLabel) {
@@ -93,15 +79,18 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
     </div>
     ${activeRuns.map((run) => {
       const { date, time } = runDateParts(run);
+      const { targetName, flowName } = homeRunTitleParts(run, catMap, productMap, groupMap);
       return `
       <div class="card home-flow-card" data-run-id="${run.id}">
         <div class="home-flow-card-header">
           <div class="home-flow-card-info">
-            <div class="home-flow-card-title">${homeRunTitle(run, catMap, productMap, groupMap)}</div>
+            <div class="home-flow-card-title">
+              <span class="home-flow-card-target">${targetName}</span>
+              ${flowName ? `<span class="home-flow-card-flow">${flowName}</span>` : ''}
+            </div>
             ${run.batchNumber ? `<div class="home-flow-card-batch">אצווה ${escapeHtml(String(run.batchNumber))}</div>` : ''}
             <div class="home-flow-card-date-row">
-              <span class="home-flow-card-date">${escapeHtml(date)}</span>
-              ${time ? `<span class="home-flow-card-time">${escapeHtml(time)}</span>` : ''}
+              <span class="home-flow-card-date">${escapeHtml(date)}</span>${time ? `<span class="home-flow-card-time-sep">·</span><span class="home-flow-card-time">${escapeHtml(time)}</span>` : ''}
             </div>
             <div class="home-flow-card-meta">שלב ${idxDisplay(run)}</div>
           </div>
@@ -625,13 +614,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=216');
+      const { navigate } = await import('../app.js?v=217');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=216');
+    const { navigate } = await import('../app.js?v=217');
     navigate('backup');
   });
 
