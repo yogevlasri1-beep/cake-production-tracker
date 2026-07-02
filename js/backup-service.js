@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=211';
+} from './db.js?v=212';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=211';
-import { downloadBlob } from './download.js?v=211';
-import { ValidationError } from './validators.js?v=211';
-import { openModal, closeModal } from './modal.js?v=211';
-import { escapeHtml, showToast } from './utils.js?v=211';
+} from './backup.js?v=212';
+import { downloadBlob } from './download.js?v=212';
+import { ValidationError } from './validators.js?v=212';
+import { openModal, closeModal } from './modal.js?v=212';
+import { escapeHtml, showToast } from './utils.js?v=212';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,17 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=211';
+} from './backup-folder-bridge.js?v=212';
+import {
+  uploadBackupToSupabase,
+  listSupabaseBackups,
+  restoreSupabaseBackup,
+  getSupabaseBackupConfig,
+  isSupabaseBackupConfigured,
+  testSupabaseBackupConnection,
+  saveSupabaseBackupConfig,
+  getOrCreateDeviceId,
+} from './supabase-backup.js?v=212';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -264,6 +274,15 @@ export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) 
     console.warn('External backup failed', err);
   }
 
+  try {
+    const cloud = await uploadBackupToSupabase(payload, kind);
+    result.supabase = cloud.uploaded === true;
+  } catch (err) {
+    console.warn('Supabase backup failed', err);
+    result.supabase = false;
+    result.supabaseError = err.message;
+  }
+
   const iosPwa = isIOSDevice() && !isNativeApp();
   const shouldExportFile = shareToFiles || (kind === 'manual' && iosPwa);
 
@@ -342,6 +361,17 @@ export async function getBackupStatus() {
   const settings = await getBackupSettings();
   const snapshots = await listLocalSnapshots(5);
   const hasDefaultFolder = hasDefaultBackupFolder(settings);
+  const supabaseConfig = await getSupabaseBackupConfig();
+  const supabaseConfigured = await isSupabaseBackupConfigured();
+  let supabaseBackups = [];
+  if (supabaseConfigured) {
+    try {
+      supabaseBackups = await listSupabaseBackups(5);
+    } catch (err) {
+      console.warn('List Supabase backups', err);
+    }
+  }
+  const deviceId = await getOrCreateDeviceId();
   return {
     settings,
     snapshots,
@@ -356,8 +386,20 @@ export async function getBackupStatus() {
     supportsLocationPicker: supportsFolderPicker(),
     isIOS: isIOSDevice(),
     isNativeApp: isNativeApp(),
+    supabaseConfig,
+    supabaseConfigured,
+    supabaseBackups,
+    deviceId,
   };
 }
+
+export {
+  restoreSupabaseBackup,
+  testSupabaseBackupConnection,
+  saveSupabaseBackupConfig,
+  uploadBackupToSupabase,
+  listSupabaseBackups,
+};
 
 export function confirmAndRestoreBackupFile(file, navigate) {
   openModal({

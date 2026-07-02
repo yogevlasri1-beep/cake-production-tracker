@@ -1,21 +1,27 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=211';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=212';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=211';
+} from '../js/validators.js?v=212';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=211';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=211';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=211';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=211';
+} from '../js/calc.js?v=212';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=212';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=212';
+import {
+  buildSupabaseRestUrl,
+  buildSupabaseHeaders,
+  parseSupabaseBackupRow,
+  normalizeSupabaseUrl,
+} from '../js/supabase-backup.js?v=212';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=212';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=211';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=211';
+} from '../js/supplier-import.js?v=212';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=212';
 
 export async function runAllTests() {
   /* validators */
@@ -513,6 +519,34 @@ export async function runAllTests() {
     const d = enrichBackupData(raw);
     assertEqual(d.managerPlans.length, 1);
     assertEqual(d.managerTasks.length, 2);
+  });
+
+  test('buildSupabaseRestUrl — מנרמל כתובת', () => {
+    assertEqual(
+      buildSupabaseRestUrl('https://abc.supabase.co/', '/app_backups'),
+      'https://abc.supabase.co/rest/v1/app_backups',
+    );
+    assertEqual(normalizeSupabaseUrl('https://abc.supabase.co///'), 'https://abc.supabase.co');
+  });
+
+  test('buildSupabaseHeaders — כולל apikey ו-Authorization', () => {
+    const h = buildSupabaseHeaders('test-key');
+    assertEqual(h.apikey, 'test-key');
+    assertEqual(h.Authorization, 'Bearer test-key');
+  });
+
+  test('parseSupabaseBackupRow — ממפה שדות', () => {
+    const row = parseSupabaseBackupRow({
+      id: 'uuid-1',
+      device_id: 'dev-1',
+      kind: 'auto',
+      exported_at: '2026-07-02T12:00:00.000Z',
+      summary: '1 קטגוריות',
+    });
+    assertEqual(row.id, 'uuid-1');
+    assertEqual(row.deviceId, 'dev-1');
+    assertEqual(row.kind, 'auto');
+    assertEqual(row.exportedAt, '2026-07-02T12:00:00.000Z');
   });
 
   test('sortProductsForReport — סדר קטגוריה ומוצר', () => {
