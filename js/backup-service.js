@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=212';
+} from './db.js?v=213';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=212';
-import { downloadBlob } from './download.js?v=212';
-import { ValidationError } from './validators.js?v=212';
-import { openModal, closeModal } from './modal.js?v=212';
-import { escapeHtml, showToast } from './utils.js?v=212';
+} from './backup.js?v=213';
+import { downloadBlob } from './download.js?v=213';
+import { ValidationError } from './validators.js?v=213';
+import { openModal, closeModal } from './modal.js?v=213';
+import { escapeHtml, showToast } from './utils.js?v=213';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=212';
+} from './backup-folder-bridge.js?v=213';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -28,14 +28,14 @@ import {
   testSupabaseBackupConnection,
   saveSupabaseBackupConfig,
   getOrCreateDeviceId,
-} from './supabase-backup.js?v=212';
+} from './supabase-backup.js?v=213';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
 
 const DEFAULT_SETTINGS = {
   autoEnabled: true,
-  autoIntervalHours: 6,
+  autoIntervalHours: 24,
   maxLocalSnapshots: 1,
   lastAutoAt: null,
   lastManualAt: null,
@@ -247,13 +247,27 @@ export async function downloadLatestBackupFile() {
   return exportBackupToFile(JSON.parse(snapshots[0].payloadJson));
 }
 
-export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) {
-  const payload = await createBackupPayload();
-  const filename = backupFilename(new Date(payload.exportedAt));
-  const json = JSON.stringify(payload, null, 2);
-  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+export function isAutoBackupDue(settings, now = Date.now()) {
+  if (!settings?.autoEnabled) return false;
+  const last = settings.lastAutoAt ? new Date(settings.lastAutoAt).getTime() : 0;
+  if (!last) return true;
 
-  await saveLocalSnapshot(payload, kind);
+  const intervalMs = Math.max(1, Number(settings.autoIntervalHours) || 24) * 3600000;
+  if (now - last >= intervalMs) return true;
+
+  const lastDay = new Date(last);
+  const nowDay = new Date(now);
+  const sameCalendarDay = lastDay.getFullYear() === nowDay.getFullYear()
+    && lastDay.getMonth() === nowDay.getMonth()
+    && lastDay.getDate() === nowDay.getDate();
+  return !sameCalendarDay;
+}
+
+export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) {
+  const deviceId = await getOrCreateDeviceId();
+  const supabaseCfg = await getSupabaseBackupConfig();
+  let payload = await createBackupPayload();
+  const filename = backupFilename(new Date(payload.exportedAt));
 
   const result = {
     payload,
@@ -263,25 +277,44 @@ export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) 
     shared: false,
     downloaded: false,
     fileExport: false,
+    supabase: false,
   };
-
-  try {
-    result.external = await writePayloadToExternal(payload);
-    if (result.external) {
-      await saveBackupSettings({ lastExternalAt: payload.exportedAt });
-    }
-  } catch (err) {
-    console.warn('External backup failed', err);
-  }
 
   try {
     const cloud = await uploadBackupToSupabase(payload, kind);
     result.supabase = cloud.uploaded === true;
   } catch (err) {
     console.warn('Supabase backup failed', err);
-    result.supabase = false;
     result.supabaseError = err.message;
   }
+
+  payload = {
+    ...payload,
+    exportMeta: {
+      deviceId,
+      kind,
+      syncedToSupabase: result.supabase === true,
+      supabaseProjectUrl: supabaseCfg.supabaseUrl || null,
+      savedToFolder: false,
+    },
+  };
+  result.payload = payload;
+
+  await saveLocalSnapshot(payload, kind);
+
+  try {
+    result.external = await writePayloadToExternal(payload);
+    if (result.external) {
+      payload.exportMeta.savedToFolder = true;
+      result.payload = payload;
+      await saveBackupSettings({ lastExternalAt: payload.exportedAt });
+    }
+  } catch (err) {
+    console.warn('External backup failed', err);
+  }
+
+  const json = JSON.stringify(payload, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
 
   const iosPwa = isIOSDevice() && !isNativeApp();
   const shouldExportFile = shareToFiles || (kind === 'manual' && iosPwa);
@@ -304,16 +337,11 @@ export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) 
   return result;
 }
 
-export async function runAutoBackupIfDue(forceFromChange = false) {
+export async function runAutoBackupIfDue(force = false) {
   if (autoBackupRunning) return null;
   const settings = await getBackupSettings();
   if (!settings.autoEnabled) return null;
-
-  const now = Date.now();
-  const last = settings.lastAutoAt ? new Date(settings.lastAutoAt).getTime() : 0;
-  const intervalMs = (settings.autoIntervalHours || 6) * 3600000;
-
-  if (!forceFromChange && last && now - last < intervalMs) return null;
+  if (!force && !isAutoBackupDue(settings)) return null;
 
   autoBackupRunning = true;
   try {
@@ -328,7 +356,7 @@ export function requestAutoBackupNow() {
 }
 
 const scheduleChangeBackup = debounce(() => {
-  runAutoBackupIfDue(true).catch((err) => console.warn('Auto backup', err));
+  runAutoBackupIfDue(false).catch((err) => console.warn('Auto backup', err));
 }, 45000);
 
 function installDbChangeHooks() {
@@ -355,6 +383,23 @@ export function initAutoBackupSystem() {
       runAutoBackupIfDue(false).catch((err) => console.warn('Visibility backup', err));
     }
   });
+}
+
+export async function getBackupHistory() {
+  const [local, external, supabase] = await Promise.all([
+    listLocalSnapshots(10),
+    listExternalBackupFiles().catch(() => []),
+    (async () => {
+      if (!(await isSupabaseBackupConfigured())) return [];
+      try {
+        return await listSupabaseBackups(10);
+      } catch (err) {
+        console.warn('List Supabase backups', err);
+        return [];
+      }
+    })(),
+  ]);
+  return { local, external, supabase };
 }
 
 export async function getBackupStatus() {

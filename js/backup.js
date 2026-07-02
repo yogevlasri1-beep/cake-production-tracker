@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=212';
-import { APP_VERSION } from './version.js?v=212';
-import { defaultColorForIndex } from './chart.js?v=212';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=212';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=212';
-import { ValidationError } from './validators.js?v=212';
+import { exportAllData, importAllData } from './db.js?v=213';
+import { APP_VERSION } from './version.js?v=213';
+import { defaultColorForIndex } from './chart.js?v=213';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=213';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=213';
+import { ValidationError } from './validators.js?v=213';
 
 export const BACKUP_VERSION = 3;
 
@@ -359,16 +359,20 @@ function validateBackupPayload(raw) {
   return enrichBackupData(data);
 }
 
-export async function createBackupPayload() {
+export async function createBackupPayload(exportMeta = null) {
   const raw = await exportAllData();
   const data = enrichBackupData(raw);
-  return {
+  const payload = {
     backupVersion: BACKUP_VERSION,
     appVersion: APP_VERSION,
     exportedAt: new Date().toISOString(),
     data,
     counts: summarizeBackupData(data),
   };
+  if (exportMeta && typeof exportMeta === 'object') {
+    payload.exportMeta = exportMeta;
+  }
+  return payload;
 }
 
 export async function downloadBackupFile() {

@@ -13,16 +13,17 @@ import {
   testSupabaseBackupConnection,
   saveSupabaseBackupConfig,
   uploadBackupToSupabase,
+  getBackupHistory,
   formatBackupSummary,
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=212';
-import { describeDownloadMethod } from '../download.js?v=212';
-import { showToast, escapeHtml } from '../utils.js?v=212';
-import { openModal, closeModal } from '../modal.js?v=212';
-import { APP_VERSION } from '../version.js?v=212';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=212';
+} from '../backup-service.js?v=213';
+import { describeDownloadMethod } from '../download.js?v=213';
+import { showToast, escapeHtml } from '../utils.js?v=213';
+import { openModal, closeModal } from '../modal.js?v=213';
+import { APP_VERSION } from '../version.js?v=213';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=213';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -102,10 +103,13 @@ export async function renderBackup(container, { navigate } = {}) {
         <button type="button" class="btn btn-primary" id="backup-now-btn" style="width:100%;margin-bottom:8px">
           💾 גיבוי ידני עכשיו
         </button>
-        <button type="button" class="btn btn-secondary" id="backup-share-btn" style="width:100%">
+        <button type="button" class="btn btn-secondary" id="backup-share-btn" style="width:100%;margin-bottom:8px">
           📤 שמור קובץ גיבוי (Share / הורדה)
         </button>
       `}
+      <button type="button" class="btn btn-secondary" id="backup-history-btn" style="width:100%">
+        📜 היסטוריית גיבויים
+      </button>
     </div>
 
     <div class="card backup-supabase-card">
@@ -139,20 +143,14 @@ export async function renderBackup(container, { navigate } = {}) {
         גיבוי אחרון לענן: ${formatWhen(supabaseConfig.lastSyncAt)}${supabaseConfig.lastSyncKind ? ` (${kindLabel(supabaseConfig.lastSyncKind)})` : ''}<br>
         ${supabaseConfig.lastSyncError
           ? `<span style="color:var(--danger)">שגיאה אחרונה: ${escapeHtml(supabaseConfig.lastSyncError)}</span>`
-          : supabaseConfigured ? '✓ מחובר — גיבויים נשמרים אוטומטית' : 'הזן כתובת ומפתח ולחץ «בדוק חיבור»'}
+          : supabaseConfigured ? '✓ מחובר — גיבויים נשמרים אוטומטית פעם ביום' : 'הזן כתובת ומפתח ולחץ «בדוק חיבור»'}
       </p>
-      ${supabaseBackups.length ? `
-        <p class="form-hint" style="margin-top:8px;margin-bottom:6px">גיבויים בענן (מכשיר זה):</p>
-        <div class="backup-snapshot-list">${supabaseBackups.map((s) => `
-          <div class="backup-snapshot-item">
-            <div class="backup-snapshot-info">
-              <strong>${formatWhen(s.exportedAt)}</strong>
-              <span class="backup-snapshot-meta">${kindLabel(s.kind)} · ${escapeHtml(s.summary || '')}</span>
-            </div>
-            <button type="button" class="btn btn-secondary btn-sm restore-supabase-backup" data-id="${escapeHtml(s.id)}">שחזר</button>
-          </div>`).join('')}
-        </div>
-      ` : supabaseConfigured ? '<p class="report-empty">אין עדיין גיבויים בענן — לחץ «גיבוי לענן עכשיו»</p>' : ''}
+      ${supabaseConfigured ? `
+        <p class="form-hint" style="margin-top:8px">
+          ${supabaseBackups.length ? `${supabaseBackups.length} גיבויים בענן · ` : ''}
+          <button type="button" class="btn btn-link btn-sm" id="supabase-open-history" style="padding:0">צפה בהיסטוריה</button>
+        </p>
+      ` : ''}
     </div>
 
     <div class="card">
@@ -162,10 +160,10 @@ export async function renderBackup(container, { navigate } = {}) {
         <input type="checkbox" id="backup-auto-enabled" ${settings.autoEnabled ? 'checked' : ''}>
       </label>
       <div class="form-group" style="margin-top:12px">
-        <label for="backup-auto-hours">תדירות (שעות)</label>
+        <label for="backup-auto-hours">תדירות</label>
         <select id="backup-auto-hours">
-          ${[1, 3, 6, 12, 24].map((h) =>
-            `<option value="${h}" ${Number(settings.autoIntervalHours) === h ? 'selected' : ''}>כל ${h} שעות</option>`
+          ${[24, 12, 6, 3, 1].map((h) =>
+            `<option value="${h}" ${Number(settings.autoIntervalHours) === h ? 'selected' : ''}>${h === 24 ? 'פעם ביום (24 שעות)' : `כל ${h} שעות`}</option>`
           ).join('')}
         </select>
       </div>
@@ -175,8 +173,8 @@ export async function renderBackup(container, { navigate } = {}) {
         גיבוי אחרון לתיקייה: ${formatWhen(settings.lastExternalAt)}
       </p>
       <p class="form-hint">${iosPwa
-        ? 'באייפון: גיבוי אוטומטי = פנימי + ענן (אם מוגדר). לקובץ ב«קבצים» — לחץ «גיבוי — שמור קובץ».'
-        : 'הגיבוי האוטומטי שומר על המכשיר, ל-Supabase (אם מוגדר), וגם לתיקיית ברירת המחדל (אם נבחרה).'}</p>
+        ? 'באייפון: גיבוי אוטומטי פעם ביום — פנימי + Supabase (אם מוגדר). לקובץ ב«קבצים» — לחץ «גיבוי — שמור קובץ».'
+        : 'גיבוי אוטומטי פעם ביום — על המכשיר, ל-Supabase (אם מוגדר), ולתיקיית ברירת המחדל (אם נבחרה). קובץ JSON כולל מטא-דאטה של Supabase.'}</p>
     </div>
 
     <div class="card backup-folder-card">
@@ -329,9 +327,9 @@ export async function renderBackup(container, { navigate } = {}) {
     }
   });
 
-  container.querySelectorAll('.restore-supabase-backup').forEach((btn) => {
-    btn.addEventListener('click', () => confirmRestoreSupabase(btn.dataset.id, navigate));
-  });
+  const openHistory = () => openBackupHistoryModal(navigate);
+  document.getElementById('backup-history-btn')?.addEventListener('click', openHistory);
+  document.getElementById('supabase-open-history')?.addEventListener('click', openHistory);
 
   const runManual = async (shareToFiles) => {
     const btn = document.getElementById(shareToFiles ? 'backup-share-btn' : 'backup-now-btn');
@@ -461,6 +459,87 @@ function formatFileSize(bytes) {
   if (!bytes) return '—';
   if (bytes < 1024) return `${bytes} B`;
   return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+async function openBackupHistoryModal(navigate) {
+  const history = await getBackupHistory();
+  const { local, external, supabase } = history;
+  const hasAny = local.length || external.length || supabase.length;
+
+  const section = (title, itemsHtml) => {
+    if (!itemsHtml) return '';
+    return `
+      <div class="backup-history-section">
+        <h4 class="backup-history-title">${escapeHtml(title)}</h4>
+        <div class="backup-snapshot-list">${itemsHtml}</div>
+      </div>`;
+  };
+
+  const localHtml = local.map((s) => `
+    <div class="backup-snapshot-item">
+      <div class="backup-snapshot-info">
+        <strong>${formatWhen(s.createdAt)}</strong>
+        <span class="backup-snapshot-meta">${kindLabel(s.kind)} · ${escapeHtml(s.summary)} · מקומי</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm restore-local-backup" data-id="${s.id}">שחזר</button>
+    </div>`).join('');
+
+  const supabaseHtml = supabase.map((s) => `
+    <div class="backup-snapshot-item">
+      <div class="backup-snapshot-info">
+        <strong>${formatWhen(s.exportedAt)}</strong>
+        <span class="backup-snapshot-meta">${kindLabel(s.kind)} · ${escapeHtml(s.summary || '')} · Supabase</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm restore-supabase-backup" data-id="${escapeHtml(s.id)}">שחזר</button>
+    </div>`).join('');
+
+  const externalHtml = external.map((f, i) => `
+    <div class="backup-snapshot-item">
+      <div class="backup-snapshot-info">
+        <strong>${escapeHtml(f.name)}</strong>
+        <span class="backup-snapshot-meta">
+          ${f.modified ? new Date(f.modified).toLocaleString('he-IL') : '—'} · ${formatFileSize(f.size)} · תיקייה
+        </span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm restore-external-file" data-idx="${i}">שחזר</button>
+    </div>`).join('');
+
+  openModal({
+    title: 'היסטוריית גיבויים',
+    bodyHTML: hasAny
+      ? [
+        section('☁️ Supabase', supabaseHtml),
+        section('📱 על המכשיר', localHtml),
+        section('📁 בתיקייה', externalHtml),
+      ].join('')
+      : '<p class="report-empty">אין גיבויים שמורים — בצע גיבוי ידני או הגדר Supabase</p>',
+    footerHTML: '<button type="button" class="btn btn-primary modal-cancel">סגור</button>',
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  document.querySelectorAll('.restore-local-backup').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeModal();
+      confirmRestoreLocal(Number(btn.dataset.id), navigate);
+    });
+  });
+
+  document.querySelectorAll('.restore-supabase-backup').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      closeModal();
+      confirmRestoreSupabase(btn.dataset.id, navigate);
+    });
+  });
+
+  document.querySelectorAll('.restore-external-file').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const file = external[Number(btn.dataset.idx)];
+      if (!file?.nativePath && !file?.name) return;
+      closeModal();
+      confirmRestoreExternal(file.nativePath || file.name, file.name, navigate);
+    });
+  });
 }
 
 async function openBrowseExternalModal(navigate) {

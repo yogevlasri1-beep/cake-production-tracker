@@ -4629,9 +4629,24 @@ table.report-cat-summary-table td:not(:first-child) {
   font-size: 0.84rem;
 }
 
+.backup-history-section {
+  margin-bottom: 16px;
+}
+
+.backup-history-section:last-child {
+  margin-bottom: 0;
+}
+
+.backup-history-title {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .backup-snapshot-meta {
   font-size: 0.75rem;
   color: var(--text-muted);
+}
 }
 
 .ios-backup-steps {
