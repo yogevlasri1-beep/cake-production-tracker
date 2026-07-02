@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=213';
-import { describeDownloadMethod } from '../download.js?v=213';
-import { showToast, escapeHtml } from '../utils.js?v=213';
-import { openModal, closeModal } from '../modal.js?v=213';
-import { APP_VERSION } from '../version.js?v=213';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=213';
+} from '../backup-service.js?v=214';
+import { describeDownloadMethod } from '../download.js?v=214';
+import { showToast, escapeHtml } from '../utils.js?v=214';
+import { openModal, closeModal } from '../modal.js?v=214';
+import { APP_VERSION } from '../version.js?v=214';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=214';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -148,7 +148,7 @@ export async function renderBackup(container, { navigate } = {}) {
       ${supabaseConfigured ? `
         <p class="form-hint" style="margin-top:8px">
           ${supabaseBackups.length ? `${supabaseBackups.length} גיבויים בענן · ` : ''}
-          <button type="button" class="btn btn-link btn-sm" id="supabase-open-history" style="padding:0">צפה בהיסטוריה</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="supabase-open-history">צפה בהיסטוריה</button>
         </p>
       ` : ''}
     </div>

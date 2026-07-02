@@ -5,7 +5,7 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=213';
+} from '../db.js?v=214';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -14,12 +14,12 @@ import {
   linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=213';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=213';
-import { openModal, closeModal } from '../modal.js?v=213';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=213';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=213';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=213';
+} from '../kitchen-db.js?v=214';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=214';
+import { openModal, closeModal } from '../modal.js?v=214';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=214';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=214';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=214';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -355,7 +355,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=213');
+    const { navigate } = await import('../app.js?v=214');
     navigate('backup');
   });
 
