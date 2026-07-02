@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=215';
+} from '../db.js?v=216';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=215';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=215';
+} from '../utils.js?v=216';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=216';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=215';
-import { requestAutoBackupNow } from '../backup-service.js?v=215';
+} from '../calc.js?v=216';
+import { requestAutoBackupNow } from '../backup-service.js?v=216';
 
 function homeRunTitle(run, catMap, productMap, groupMap) {
   const flowPrefix = run.flowName ? `${escapeHtml(run.flowName)} · ` : '';
@@ -29,6 +29,19 @@ function homeRunTitle(run, catMap, productMap, groupMap) {
   const names = ids.map((id) => catMap.get(id)).filter(Boolean);
   if (names.length > 1) return `${flowPrefix}${escapeHtml(names[0])} +${names.length - 1}`;
   return `${flowPrefix}${escapeHtml(catMap.get(run.categoryId) || names[0] || 'תהליך')}`;
+}
+
+function runDateParts(run) {
+  const iso = run.startedAt || run.date;
+  if (!iso) return { date: '—', time: '' };
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return { date: formatDate(String(iso).slice(0, 10)), time: '' };
+  }
+  return {
+    date: d.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+    time: d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }),
+  };
 }
 
 function formatRunTimestamp(iso, fallbackDate) {
@@ -78,17 +91,25 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
     <div class="section-header home-section-header">
       <h2>תזרימי יצור פעילים</h2>
     </div>
-    ${activeRuns.map((run) => `
+    ${activeRuns.map((run) => {
+      const { date, time } = runDateParts(run);
+      return `
       <div class="card home-flow-card" data-run-id="${run.id}">
         <div class="home-flow-card-header">
-          <div>
-            <div class="home-flow-card-title">${run.batchNumber ? `אצווה ${escapeHtml(run.batchNumber)} · ` : ''}${homeRunTitle(run, catMap, productMap, groupMap)}</div>
-            <div class="home-flow-card-meta">${runDatesLabel(run)} · שלב ${idxDisplay(run)}</div>
+          <div class="home-flow-card-info">
+            <div class="home-flow-card-title">${homeRunTitle(run, catMap, productMap, groupMap)}</div>
+            ${run.batchNumber ? `<div class="home-flow-card-batch">אצווה ${escapeHtml(String(run.batchNumber))}</div>` : ''}
+            <div class="home-flow-card-date-row">
+              <span class="home-flow-card-date">${escapeHtml(date)}</span>
+              ${time ? `<span class="home-flow-card-time">${escapeHtml(time)}</span>` : ''}
+            </div>
+            <div class="home-flow-card-meta">שלב ${idxDisplay(run)}</div>
           </div>
           <button type="button" class="btn btn-primary btn-sm home-flow-open" data-run-id="${run.id}" data-run-date="${run.date}">פתח</button>
         </div>
         ${buildHomeFlowTimeline(run)}
-      </div>`).join('')}`;
+      </div>`;
+    }).join('')}`;
 }
 
 function idxDisplay(run) {
@@ -604,13 +625,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=215');
+      const { navigate } = await import('../app.js?v=216');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=215');
+    const { navigate } = await import('../app.js?v=216');
     navigate('backup');
   });
 
