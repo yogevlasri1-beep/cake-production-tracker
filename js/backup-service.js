@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=214';
+} from './db.js?v=215';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=214';
-import { downloadBlob } from './download.js?v=214';
-import { ValidationError } from './validators.js?v=214';
-import { openModal, closeModal } from './modal.js?v=214';
-import { escapeHtml, showToast } from './utils.js?v=214';
+} from './backup.js?v=215';
+import { downloadBlob } from './download.js?v=215';
+import { ValidationError } from './validators.js?v=215';
+import { openModal, closeModal } from './modal.js?v=215';
+import { escapeHtml, showToast } from './utils.js?v=215';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=214';
+} from './backup-folder-bridge.js?v=215';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -28,7 +28,10 @@ import {
   testSupabaseBackupConnection,
   saveSupabaseBackupConfig,
   getOrCreateDeviceId,
-} from './supabase-backup.js?v=214';
+  fetchLatestSupabaseBackup,
+  ensureSupabaseDefaults,
+  getBackupScopeId,
+} from './supabase-backup.js?v=215';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -376,6 +379,7 @@ function installDbChangeHooks() {
 }
 
 export function initAutoBackupSystem() {
+  ensureSupabaseDefaults().catch((err) => console.warn('Supabase defaults', err));
   installDbChangeHooks();
   runAutoBackupIfDue(false).catch((err) => console.warn('Startup backup', err));
   document.addEventListener('visibilitychange', () => {
@@ -435,6 +439,7 @@ export async function getBackupStatus() {
     supabaseConfigured,
     supabaseBackups,
     deviceId,
+    backupScopeId: getBackupScopeId(),
   };
 }
 
@@ -476,9 +481,14 @@ export async function promptRestoreIfNeeded(navigate) {
   if (!(await isDatabaseEmpty())) return false;
 
   const snapshots = await listLocalSnapshots(1);
-  if (!snapshots.length) return false;
+  if (snapshots.length) {
+    return promptRestoreFromLocal(snapshots[0], navigate);
+  }
 
-  const latest = snapshots[0];
+  return promptRestoreFromSupabase(navigate);
+}
+
+function promptRestoreFromLocal(latest, navigate) {
   openModal({
     title: 'שחזור מגיבוי מקומי',
     bodyHTML: `
@@ -519,6 +529,64 @@ export async function promptRestoreIfNeeded(navigate) {
         footerHTML: '<button type="button" class="btn btn-primary modal-cancel">סגור</button>',
       });
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    }
+  });
+  return true;
+}
+
+export async function promptRestoreFromSupabase(navigate) {
+  try {
+    await ensureSupabaseDefaults();
+  } catch {
+    return false;
+  }
+  if (!(await isSupabaseBackupConfigured())) return false;
+
+  let latest;
+  try {
+    latest = await fetchLatestSupabaseBackup();
+  } catch (err) {
+    console.warn('Fetch Supabase backup', err);
+    return false;
+  }
+  if (!latest) return false;
+
+  openModal({
+    title: 'שחזור מ-Supabase',
+    bodyHTML: `
+      <p style="line-height:1.6;margin-bottom:10px">
+        האפליקציה ריקה (למשל אחרי מחיקה), אבל נמצא <strong>גיבוי בענן</strong>:
+      </p>
+      <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:10px">
+        ${new Date(latest.exportedAt).toLocaleString('he-IL')} · ${escapeHtml(latest.summary || '')}
+      </p>
+      <p style="font-size:0.82rem;color:var(--primary-dark)">
+        לשחזר את כל הנתונים — לחץ «שחזר מענן». דורש חיבור לאינטרנט.
+      </p>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">לא עכשיו</button>
+      <button type="button" class="btn btn-secondary" id="goto-backup-screen">היסטוריית גיבויים</button>
+      <button type="button" class="btn btn-primary" id="restore-supabase-latest">שחזר מענן</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('goto-backup-screen')?.addEventListener('click', () => {
+    closeModal();
+    navigate?.('backup');
+  });
+  document.getElementById('restore-supabase-latest')?.addEventListener('click', async () => {
+    const btn = document.getElementById('restore-supabase-latest');
+    btn.disabled = true;
+    btn.textContent = 'משחזר...';
+    try {
+      const meta = await restoreSupabaseBackup(latest.id);
+      closeModal();
+      showToast(`שוחזר מענן ✓ · ${formatBackupSummary(meta.counts)}`);
+      if (navigate) await navigate('home');
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'שחזר מענן';
+      showToast(err.message || 'שגיאה בשחזור');
     }
   });
   return true;

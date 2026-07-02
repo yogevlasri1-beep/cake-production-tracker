@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=214';
-import { describeDownloadMethod } from '../download.js?v=214';
-import { showToast, escapeHtml } from '../utils.js?v=214';
-import { openModal, closeModal } from '../modal.js?v=214';
-import { APP_VERSION } from '../version.js?v=214';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=214';
+} from '../backup-service.js?v=215';
+import { describeDownloadMethod } from '../download.js?v=215';
+import { showToast, escapeHtml } from '../utils.js?v=215';
+import { openModal, closeModal } from '../modal.js?v=215';
+import { APP_VERSION } from '../version.js?v=215';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=215';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -48,6 +48,7 @@ export async function renderBackup(container, { navigate } = {}) {
     settings, snapshots, hasDefaultFolder, canWriteToFolder,
     supportsLocationPicker, isNativeApp, isIOS,
     supabaseConfig, supabaseConfigured, supabaseBackups, deviceId,
+    backupScopeId,
   } = status;
   const iosPwa = isIOS && !isNativeApp;
 
@@ -115,8 +116,9 @@ export async function renderBackup(container, { navigate } = {}) {
     <div class="card backup-supabase-card">
       <div class="card-title">☁️ גיבוי בענן — Supabase</div>
       <p class="form-hint" style="margin-bottom:10px">
-        כל הגיבויים (ידני + אוטומטי) נשמרים גם בענן — גיבוי מלא של כל האפליקציה.
-        מזהה מכשיר: <code style="font-size:0.78rem">${escapeHtml(deviceId || '—')}</code>
+        כל הגיבויים (ידני + אוטומטי) נשמרים בענן — גם אחרי מחיקת האפליקציה אפשר לשחזר.
+        מזהה גיבוי: <code style="font-size:0.78rem">${escapeHtml(backupScopeId || 'yitzur')}</code>
+        · מכשיר: <code style="font-size:0.78rem">${escapeHtml(deviceId || '—')}</code>
       </p>
       <div class="form-group">
         <label for="supabase-url">כתובת Supabase (Project URL)</label>

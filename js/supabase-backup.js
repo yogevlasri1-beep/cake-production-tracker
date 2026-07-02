@@ -1,15 +1,23 @@
-import { getSetting, setSetting } from './db.js?v=214';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=214';
-import { ValidationError } from './validators.js?v=214';
+import { getSetting, setSetting } from './db.js?v=215';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=215';
+import { ValidationError } from './validators.js?v=215';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
 const TABLE = 'app_backups';
 const MAX_CLOUD_SNAPSHOTS = 10;
 
+/** מזהה קבוע — כל ההתקנות / אחרי מחיקה משתמשים באותו מקום בענן */
+export const BACKUP_SCOPE_ID = 'yitzur';
+
+const BUILTIN_DEFAULTS = {
+  supabaseUrl: 'https://ravhjceukjsjfigcqgob.supabase.co',
+  anonKey: 'sb_publishable_sqjU-cQOQnQiqh7-_5Fi4g_6azXKnad',
+};
+
 const DEFAULT_CONFIG = {
-  supabaseUrl: '',
-  anonKey: '',
+  supabaseUrl: BUILTIN_DEFAULTS.supabaseUrl,
+  anonKey: BUILTIN_DEFAULTS.anonKey,
   enabled: true,
   lastSyncAt: null,
   lastSyncError: null,
@@ -42,6 +50,20 @@ export function buildSupabaseHeaders(anonKey, extra = {}) {
 export async function getSupabaseBackupConfig() {
   const saved = await getSetting(SETTINGS_KEY);
   return { ...DEFAULT_CONFIG, ...(saved || {}) };
+}
+
+export async function ensureSupabaseDefaults() {
+  const saved = await getSetting(SETTINGS_KEY);
+  if (saved?.supabaseUrl && saved?.anonKey) return getSupabaseBackupConfig();
+  return saveSupabaseBackupConfig({
+    supabaseUrl: BUILTIN_DEFAULTS.supabaseUrl,
+    anonKey: BUILTIN_DEFAULTS.anonKey,
+    enabled: true,
+  });
+}
+
+export function getBackupScopeId() {
+  return BACKUP_SCOPE_ID;
 }
 
 export async function saveSupabaseBackupConfig(patch) {
@@ -133,8 +155,9 @@ export async function uploadBackupToSupabase(payload, kind = 'manual') {
   }
 
   const deviceId = await getOrCreateDeviceId();
+  const scopeId = getBackupScopeId();
   const row = {
-    device_id: deviceId,
+    device_id: scopeId,
     kind,
     exported_at: payload.exportedAt,
     app_version: payload.appVersion,
@@ -149,13 +172,13 @@ export async function uploadBackupToSupabase(payload, kind = 'manual') {
       headers: { Prefer: 'return=minimal' },
       body: row,
     });
-    await pruneSupabaseBackups(cfg, deviceId);
+    await pruneSupabaseBackups(cfg, scopeId);
     await saveSupabaseBackupConfig({
       lastSyncAt: payload.exportedAt,
       lastSyncKind: kind,
       lastSyncError: null,
     });
-    return { uploaded: true, deviceId };
+    return { uploaded: true, deviceId, scopeId };
   } catch (err) {
     await saveSupabaseBackupConfig({
       lastSyncError: err.message || String(err),
@@ -164,10 +187,10 @@ export async function uploadBackupToSupabase(payload, kind = 'manual') {
   }
 }
 
-async function pruneSupabaseBackups(cfg, deviceId) {
+async function pruneSupabaseBackups(cfg, scopeId) {
   const rows = await supabaseFetch(
     cfg,
-    `/${TABLE}?device_id=eq.${encodeURIComponent(deviceId)}&select=id,exported_at&order=exported_at.desc`,
+    `/${TABLE}?device_id=eq.${encodeURIComponent(scopeId)}&select=id,exported_at&order=exported_at.desc`,
   );
   if (!Array.isArray(rows) || rows.length <= MAX_CLOUD_SNAPSHOTS) return 0;
   const toDelete = rows.slice(MAX_CLOUD_SNAPSHOTS).map((r) => r.id);
@@ -182,12 +205,16 @@ async function pruneSupabaseBackups(cfg, deviceId) {
 export async function listSupabaseBackups(limit = 10) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return [];
-  const deviceId = await getOrCreateDeviceId();
   const rows = await supabaseFetch(
     cfg,
-    `/${TABLE}?device_id=eq.${encodeURIComponent(deviceId)}&select=id,device_id,kind,exported_at,app_version,backup_version,summary,created_at&order=exported_at.desc&limit=${Math.max(1, limit)}`,
+    `/${TABLE}?select=id,device_id,kind,exported_at,app_version,backup_version,summary,created_at&order=exported_at.desc&limit=${Math.max(1, limit)}`,
   );
   return (rows || []).map(parseSupabaseBackupRow);
+}
+
+export async function fetchLatestSupabaseBackup() {
+  const rows = await listSupabaseBackups(1);
+  return rows[0] || null;
 }
 
 export async function fetchSupabaseBackupPayload(id) {
