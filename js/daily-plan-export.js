@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=229';
+import { escapeHtml } from './utils.js?v=232';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -103,15 +103,54 @@ function sortByOrder(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
 
+function checklistDedupeKey(item) {
+  if (item.itemKind === 'flow_preparation') {
+    return `prep:${item.flowId || ''}:${item.flowPreparationId || item.label}`;
+  }
+  if (item.itemKind === 'flow_cleaning') {
+    return `clean:${item.flowId || ''}:${item.flowCleaningTaskId || item.label}`;
+  }
+  return `other:${item.id}`;
+}
+
+function dedupeChecklistItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = checklistDedupeKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function groupChecklistForExport(items, flowNames) {
+  const byFlow = new Map();
+  const orphans = [];
+  for (const item of dedupeChecklistItems(items)) {
+    const fid = item.flowId || null;
+    if (fid) {
+      if (!byFlow.has(fid)) byFlow.set(fid, []);
+      byFlow.get(fid).push(item);
+    } else {
+      orphans.push(item);
+    }
+  }
+  const groups = [...byFlow.entries()].map(([flowId, groupItems]) => ({
+    title: flowNames?.get(flowId) || 'תזרים',
+    items: groupItems.map((i) => i.label),
+  }));
+  return { groups, orphans };
+}
+
 /** מפרק פריטי תוכנית לסקשנים להדפסה */
-export function organizeDailyPlanForExport(items, products, plan, { dayOffset = null } = {}) {
+export function organizeDailyPlanForExport(items, products, plan, { dayOffset = null, flowNames = null } = {}) {
   let filtered = items;
   if (dayOffset != null) {
     filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
   }
   filtered = filtered.slice().sort(sortByOrder);
-
-  const productMap = new Map(products.map((p) => [p.id, p]));
 
   const productsInPlan = filtered.filter((i) => i.itemKind === 'product');
   const preparations = filtered.filter((i) => i.itemKind === 'flow_preparation');
@@ -119,27 +158,8 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
   const manualTasks = filtered.filter((i) => i.itemKind === 'text');
   const extraTasks = filtered.filter((i) => ['flow_step', 'portion'].includes(i.itemKind));
 
-  const prepGroups = new Map();
-  const orphanPreps = [];
-  for (const item of preparations) {
-    if (item.productId) {
-      if (!prepGroups.has(item.productId)) prepGroups.set(item.productId, []);
-      prepGroups.get(item.productId).push(item);
-    } else {
-      orphanPreps.push(item);
-    }
-  }
-
-  const cleanGroups = new Map();
-  const orphanClean = [];
-  for (const item of cleanings) {
-    if (item.productId) {
-      if (!cleanGroups.has(item.productId)) cleanGroups.set(item.productId, []);
-      cleanGroups.get(item.productId).push(item);
-    } else {
-      orphanClean.push(item);
-    }
-  }
+  const prepGrouped = groupChecklistForExport(preparations, flowNames);
+  const cleanGrouped = groupChecklistForExport(cleanings, flowNames);
 
   return {
     highlights: (plan?.notes || '').trim(),
@@ -148,20 +168,14 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
       quantity: item.quantity,
     })),
     taskGroups: [
-      ...[...prepGroups.entries()].map(([pid, groupItems]) => ({
-        title: productMap.get(pid)?.name || 'מוצר',
-        items: groupItems.map((i) => i.label),
-      })),
-      ...(orphanPreps.length ? [{ title: 'הכנות', items: orphanPreps.map((i) => i.label) }] : []),
+      ...prepGrouped.groups,
+      ...(prepGrouped.orphans.length ? [{ title: 'הכנות', items: prepGrouped.orphans.map((i) => i.label) }] : []),
       ...(manualTasks.length ? [{ title: 'ידני', items: manualTasks.map((i) => i.label) }] : []),
       ...(extraTasks.length ? [{ title: 'נוסף', items: extraTasks.map((i) => i.label) }] : []),
     ],
     cleaningGroups: [
-      ...[...cleanGroups.entries()].map(([pid, groupItems]) => ({
-        title: productMap.get(pid)?.name || 'מוצר',
-        items: groupItems.map((i) => i.label),
-      })),
-      ...(orphanClean.length ? [{ title: 'כללי', items: orphanClean.map((i) => i.label) }] : []),
+      ...cleanGrouped.groups,
+      ...(cleanGrouped.orphans.length ? [{ title: 'כללי', items: cleanGrouped.orphans.map((i) => i.label) }] : []),
     ],
   };
 }
@@ -203,16 +217,16 @@ export function buildDailyPlanBodyHtml(organized) {
       : renderPlanList(allTasks))
     : '<p class="plan-empty">—</p>'}
       </section>
-      <section class="plan-section">
-        <h2 class="plan-section-title">🧹 נקיונות</h2>
-        ${allClean.length
-    ? (cleaningGroups.length > 1 ? renderGroupedList(cleaningGroups) : renderPlanList(allClean))
-    : '<p class="plan-empty">—</p>'}
-      </section>
       <section class="plan-section plan-section--full">
         <h2 class="plan-section-title">📝 הדגשים</h2>
         ${highlights
     ? `<div class="plan-highlights">${escapeHtml(highlights)}</div>`
+    : '<p class="plan-empty">—</p>'}
+      </section>
+      <section class="plan-section">
+        <h2 class="plan-section-title">🧹 נקיונות</h2>
+        ${allClean.length
+    ? (cleaningGroups.length > 1 ? renderGroupedList(cleaningGroups) : renderPlanList(allClean))
     : '<p class="plan-empty">—</p>'}
       </section>
     </div>`;
@@ -288,8 +302,8 @@ export function printDailyPlanHtml(html) {
   return true;
 }
 
-export function buildDailyPlanExportHtml({ dateLabel, subtitle, items, products, plan }) {
-  const organized = organizeDailyPlanForExport(items, products, plan);
+export function buildDailyPlanExportHtml({ dateLabel, subtitle, items, products, plan, flowNames }) {
+  const organized = organizeDailyPlanForExport(items, products, plan, { flowNames });
   const bodyHtml = buildDailyPlanBodyHtml(organized);
   return buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml });
 }

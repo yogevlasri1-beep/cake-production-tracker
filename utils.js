@@ -221,18 +221,16 @@ export function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** תחילת שבוע (יום שני) לפי ISO date */
+/** תחילת שבוע (יום ראשון) לפי ISO date */
 export function weekStartISO(iso) {
   const base = iso || todayISO();
   const d = new Date(`${base}T12:00:00`);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
+  d.setDate(d.getDate() - d.getDay());
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 export function weekDayLabels() {
-  return ['שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת', 'ראשון'];
+  return ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
 }
 
 export function addDaysISO(iso, days) {

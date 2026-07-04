@@ -24,15 +24,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=229';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=229';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=229';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=229';
-import { openModal, closeModal } from '../modal.js?v=229';
+} from '../kitchen-db.js?v=232';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=232';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=232';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=232';
+import { openModal, closeModal } from '../modal.js?v=232';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=229';
-import { defaultColorForIndex } from '../chart.js?v=229';
+} from '../product-drag.js?v=232';
+import { defaultColorForIndex } from '../chart.js?v=232';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1114,23 +1114,80 @@ function buildProductCategorySelectHTML(productCatalog, selectedId) {
   return parts.join('');
 }
 
-function collectProductsFromCatalog(productCatalog, { categoryId, groupId } = {}) {
-  const products = [];
-  const pushCat = (cat) => {
+function compareCatalogCategories(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function iterateProductCatalogCategories(productCatalog, { categoryId, groupId } = {}) {
+  const sections = [];
+  const pushSection = (cat, groupName) => {
     if (categoryId && Number(cat.id) !== Number(categoryId)) return;
-    for (const p of cat.products || []) products.push(p);
+    const products = (cat.products || []).filter((p) => p.active !== false);
+    if (!products.length) return;
+    sections.push({ cat, groupName, products });
   };
+
   if (groupId) {
-    const group = productCatalog.groups.find((g) => Number(g.id) === Number(groupId));
-    if (group) for (const cat of group.categories) pushCat(cat);
-  } else {
-    for (const group of productCatalog.groups) {
-      for (const cat of group.categories) pushCat(cat);
+    const group = productCatalog.groups?.find((g) => Number(g.id) === Number(groupId));
+    if (group) {
+      for (const cat of group.categories.slice().sort(compareCatalogCategories)) {
+        pushSection(cat, group.name);
+      }
     }
-    for (const cat of productCatalog.ungrouped || []) pushCat(cat);
+    return sections;
   }
-  products.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-  return products;
+
+  for (const group of productCatalog.groups || []) {
+    for (const cat of group.categories.slice().sort(compareCatalogCategories)) {
+      pushSection(cat, group.name);
+    }
+  }
+  for (const cat of (productCatalog.ungrouped || []).slice().sort(compareCatalogCategories)) {
+    pushSection(cat, '');
+  }
+  return sections;
+}
+
+function collectProductsFromCatalog(productCatalog, { categoryId, groupId } = {}) {
+  return iterateProductCatalogCategories(productCatalog, { categoryId, groupId })
+    .flatMap((section) => section.products);
+}
+
+function buildRecipeProductCheckboxListHTML(productCatalog, recipe, { selectedIds } = {}) {
+  const filterCatId = recipe?._productFilterCategoryId || '';
+  const selected = selectedIds
+    ? new Set(selectedIds)
+    : new Set(recipe?.linkedProductIds || []);
+  const sections = iterateProductCatalogCategories(productCatalog, {
+    categoryId: filterCatId ? Number(filterCatId) : null,
+  });
+
+  if (!sections.length) {
+    return '<p class="form-hint">אין מוצרים — בחר סינון קטגוריה או הוסף מוצרים</p>';
+  }
+
+  return sections.map(({ cat, groupName, products }) => {
+    const heading = groupName ? `${groupName} › ${cat.name}` : cat.name;
+    const items = products.map((p) => `
+        <label class="checkbox-label recipe-product-pick">
+          <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
+          ${escapeHtml(p.name)}
+        </label>`).join('');
+    return `
+      <div class="recipe-product-cat-block">
+        <div class="recipe-product-cat-heading">${escapeHtml(heading)}</div>
+        ${items}
+      </div>`;
+  }).join('');
+}
+
+function sortProductIdsByCatalogOrder(productIds, productCatalog) {
+  const orderMap = new Map();
+  let idx = 0;
+  for (const { products } of iterateProductCatalogCategories(productCatalog)) {
+    for (const p of products) orderMap.set(p.id, idx++);
+  }
+  return [...productIds].sort((a, b) => (orderMap.get(a) ?? 999999) - (orderMap.get(b) ?? 999999));
 }
 
 function inferRecipeProductLinkScope(recipe) {
@@ -1145,18 +1202,13 @@ function inferRecipeProductLinkScope(recipe) {
 function collectProductCategoriesFromCatalog(productCatalog) {
   const categories = [];
   for (const group of productCatalog.groups || []) {
-    for (const cat of group.categories || []) {
+    for (const cat of group.categories.slice().sort(compareCatalogCategories)) {
       categories.push({ ...cat, groupName: group.name });
     }
   }
-  for (const cat of productCatalog.ungrouped || []) categories.push({ ...cat, groupName: '' });
-  categories.sort((a, b) => {
-    const ga = a.groupName || '';
-    const gb = b.groupName || '';
-    const byGroup = ga.localeCompare(gb, 'he');
-    if (byGroup) return byGroup;
-    return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
-  });
+  for (const cat of (productCatalog.ungrouped || []).slice().sort(compareCatalogCategories)) {
+    categories.push({ ...cat, groupName: '' });
+  }
   return categories;
 }
 
@@ -1198,15 +1250,6 @@ function buildRecipeProductScopePickHTML(scopeType, productCatalog, recipe) {
   }
   if (scopeType === 'product') {
     const filterCatId = recipe?._productFilterCategoryId || '';
-    const selected = new Set(recipe?.linkedProductIds || []);
-    const products = collectProductsFromCatalog(productCatalog, { categoryId: filterCatId || null });
-    const productList = products.length
-      ? products.map((p) => `
-          <label class="checkbox-label recipe-product-pick">
-            <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
-            ${escapeHtml(p.name)}
-          </label>`).join('')
-      : '<p class="form-hint">אין מוצרים — בחר סינון קטגוריה או הוסף מוצרים</p>';
     const catOptions = buildProductCategorySelectHTML(productCatalog, filterCatId)
       .replace('<option value="">— ללא (אופציונלי) —</option>', '<option value="">כל המוצרים</option>');
     return `
@@ -1214,8 +1257,8 @@ function buildRecipeProductScopePickHTML(scopeType, productCatalog, recipe) {
         <label for="recipe-product-filter-category">סינון לפי קטגוריה (אופציונלי)</label>
         <select id="recipe-product-filter-category" style="width:100%">${catOptions}</select>
       </div>
-      <div class="recipe-product-picker" id="recipe-product-list" style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
-        ${productList}
+      <div class="recipe-product-picker" id="recipe-product-list" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+        ${buildRecipeProductCheckboxListHTML(productCatalog, recipe)}
       </div>`;
   }
   return '<p class="form-hint">ללא שיוך למוצרים</p>';
@@ -1247,17 +1290,11 @@ function bindOptionalProductLinker(productCatalog, recipe) {
       const filterCatId = e.target.value || '';
       const listHost = document.getElementById('recipe-product-list');
       const selected = [...(listHost?.querySelectorAll('.recipe-product-cb:checked') || [])].map((cb) => Number(cb.value));
-      const products = collectProductsFromCatalog(productCatalog, { categoryId: filterCatId ? Number(filterCatId) : null });
       if (!listHost) return;
-      if (!products.length) {
-        listHost.innerHTML = '<p class="form-hint">אין מוצרים בקטגוריה זו</p>';
-        return;
-      }
-      listHost.innerHTML = products.map((p) => `
-        <label class="checkbox-label recipe-product-pick">
-          <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.includes(p.id) ? 'checked' : ''}>
-          ${escapeHtml(p.name)}
-        </label>`).join('');
+      listHost.innerHTML = buildRecipeProductCheckboxListHTML(productCatalog, {
+        ...recipe,
+        _productFilterCategoryId: filterCatId,
+      }, { selectedIds: selected });
     });
   };
 
@@ -1356,7 +1393,8 @@ async function renderRecipeBook(container, { groups, allSubs, productMap, produc
         const detail = details.find((d) => d.id === r.id);
         const linkedLabel = formatRecipeProductLinkLabel(detail, productCatalog);
         const linked = detail?.linkedProductIds || [];
-        const prodNames = linked.map((id) => productMap.get(id)?.name).filter(Boolean);
+        const prodNames = sortProductIdsByCatalogOrder(linked, productCatalog)
+          .map((id) => productMap.get(id)?.name).filter(Boolean);
         const productLine = linkedLabel
           || (prodNames.length ? `מוצרים: ${prodNames.join(', ')}` : '');
         const ingTotal = detail?.ingredients?.length ? renderRecipeTotalHTML(detail.ingredients) : '';
@@ -2832,7 +2870,8 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   const [products, profiles] = await Promise.all([getProducts(true), getBakingProfiles()]);
   const productMap = new Map(products.map((p) => [p.id, p]));
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
-  const linkedNames = (recipe.linkedProductIds || []).map((id) => productMap.get(id)?.name).filter(Boolean);
+  const linkedNames = sortProductIdsByCatalogOrder(recipe.linkedProductIds || [], productCatalog)
+    .map((id) => productMap.get(id)?.name).filter(Boolean);
   const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
   const productLinkLabel = formatRecipeProductLinkLabel(recipe, productCatalog);
 

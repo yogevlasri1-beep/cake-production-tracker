@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=229';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=229';
-import { defaultColorForIndex } from './chart.js?v=229';
+} from './validators.js?v=232';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=232';
+import { defaultColorForIndex } from './chart.js?v=232';
 
 export { ValidationError };
 
@@ -1779,6 +1779,124 @@ db.version(46).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
   departmentCleaningLists: '++id, name, sortOrder',
   departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+});
+
+function shiftISODate(iso, days) {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+db.version(47).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, categoryGroupId, [recipeId+categoryGroupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+}).upgrade(async (tx) => {
+  const migrated = await tx.table('settings').get('weekStartSundayMigrated');
+  if (migrated?.value === '1') return;
+
+  const planItems = await tx.table('managerPlanItems').toArray();
+  for (const item of planItems) {
+    if (item.planType !== 'weekly') continue;
+    await tx.table('managerPlanItems').update(item.id, {
+      anchorDate: shiftISODate(item.anchorDate, -1),
+      dayOffset: ((Number(item.dayOffset) || 0) + 1) % 7,
+    });
+  }
+
+  const managerPlans = await tx.table('managerPlans').toArray();
+  const weeklyPlans = managerPlans.filter((p) => p.planType === 'weekly');
+  const anchorMap = new Map(weeklyPlans.map((p) => [p.anchorDate, p]));
+  for (const plan of weeklyPlans) {
+    const newAnchor = shiftISODate(plan.anchorDate, -1);
+    if (newAnchor === plan.anchorDate) continue;
+    const existing = anchorMap.get(newAnchor);
+    if (existing && existing.id !== plan.id) {
+      if (!existing.notes && plan.notes) {
+        await tx.table('managerPlans').update(existing.id, { notes: plan.notes });
+      }
+      await tx.table('managerPlans').delete(plan.id);
+      anchorMap.delete(plan.anchorDate);
+    } else {
+      await tx.table('managerPlans').update(plan.id, { anchorDate: newAnchor });
+      anchorMap.delete(plan.anchorDate);
+      anchorMap.set(newAnchor, { ...plan, anchorDate: newAnchor });
+    }
+  }
+
+  const productionPlans = await tx.table('weeklyProductionPlans').toArray();
+  const weekMap = new Map(productionPlans.map((p) => [p.weekStart, p]));
+  for (const plan of productionPlans) {
+    const newWeekStart = shiftISODate(plan.weekStart, -1);
+    if (newWeekStart === plan.weekStart) continue;
+    const existing = weekMap.get(newWeekStart);
+    if (existing && existing.id !== plan.id) {
+      const items = await tx.table('weeklyProductionPlanItems').where('planId').equals(plan.id).toArray();
+      for (const item of items) {
+        const dup = await tx.table('weeklyProductionPlanItems')
+          .where('[planId+productId]')
+          .equals([existing.id, item.productId])
+          .first();
+        if (dup) {
+          await tx.table('weeklyProductionPlanItems').delete(item.id);
+        } else {
+          await tx.table('weeklyProductionPlanItems').update(item.id, { planId: existing.id });
+        }
+      }
+      await tx.table('weeklyProductionPlans').delete(plan.id);
+      weekMap.delete(plan.weekStart);
+    } else {
+      await tx.table('weeklyProductionPlans').update(plan.id, { weekStart: newWeekStart });
+      weekMap.delete(plan.weekStart);
+      weekMap.set(newWeekStart, { ...plan, weekStart: newWeekStart });
+    }
+  }
+
+  await tx.table('settings').put({ key: 'weekStartSundayMigrated', value: '1' });
 });
 
 async function migrateFlowPreparationsToGroup(tx) {
@@ -5747,12 +5865,12 @@ export async function addManagerPlanProductWithChecklists({
 
   const existingPrepKeys = new Set(
     sameDay
-      .filter((i) => i.itemKind === 'flow_preparation' && i.productId === pid)
+      .filter((i) => i.itemKind === 'flow_preparation' && i.flowId === flow.id)
       .map((i) => i.flowPreparationId),
   );
   const existingCleanKeys = new Set(
     sameDay
-      .filter((i) => i.itemKind === 'flow_cleaning' && i.productId === pid)
+      .filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === flow.id)
       .map((i) => i.flowCleaningTaskId),
   );
 
@@ -5954,14 +6072,40 @@ export async function deleteManagerPlanItem(id) {
   if (!row) return;
   if (row.itemKind === 'product' && row.productId) {
     const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
-    const linked = siblings.filter((i) => i.id !== row.id
-      && i.productId === row.productId
-      && (i.dayOffset ?? 0) === (row.dayOffset ?? 0)
-      && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
-    await db.transaction('rw', db.managerPlanItems, async () => {
-      for (const l of linked) await db.managerPlanItems.delete(l.id);
-      await db.managerPlanItems.delete(row.id);
-    });
+    const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
+    const flow = await resolveDefaultFlowForProduct(row.productId);
+    const flowId = flow?.id || null;
+
+    let linked = [];
+    if (flowId) {
+      let otherSameFlow = false;
+      for (const p of sameDay) {
+        if (p.itemKind !== 'product' || p.productId === row.productId) continue;
+        const otherFlow = await resolveDefaultFlowForProduct(p.productId);
+        if (otherFlow?.id === flowId) {
+          otherSameFlow = true;
+          break;
+        }
+      }
+      if (!otherSameFlow) {
+        linked = sameDay.filter((i) => i.id !== row.id
+          && i.flowId === flowId
+          && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
+      }
+    } else {
+      linked = sameDay.filter((i) => i.id !== row.id
+        && i.productId === row.productId
+        && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
+    }
+
+    if (linked.length) {
+      await db.transaction('rw', db.managerPlanItems, async () => {
+        for (const l of linked) await db.managerPlanItems.delete(l.id);
+        await db.managerPlanItems.delete(row.id);
+      });
+      return;
+    }
+    await db.managerPlanItems.delete(row.id);
     return;
   }
   await db.managerPlanItems.delete(Number(id));

@@ -3,7 +3,7 @@ import {
   getProducts, getProductsCatalogLayout,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
   addManagerPlanItem, addManagerPlanProductWithChecklists,
-  updateManagerPlanItem, deleteManagerPlanItem,
+  updateManagerPlanItem, deleteManagerPlanItem, resolveDefaultFlowForProduct,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
@@ -13,18 +13,30 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask,
-} from '../db.js?v=229';
+} from '../db.js?v=232';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=229';
-import { openModal, closeModal } from '../modal.js?v=229';
-import { renderTargets } from './targets.js?v=229';
-import { forceAppUpdate } from '../sw-register.js?v=229';
+} from '../utils.js?v=232';
+import { openModal, closeModal } from '../modal.js?v=232';
+import { renderTargets } from './targets.js?v=232';
+import { forceAppUpdate } from '../sw-register.js?v=232';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=229';
+} from '../daily-plan-export.js?v=232';
+
+function syncManagerPlanNavigation(container) {
+  const today = todayISO();
+  if (container.dataset.planDate && container.dataset.planDate < today) {
+    container.dataset.planDate = today;
+  }
+  const storedWeek = container.dataset.weekStart;
+  if (storedWeek && addDaysISO(storedWeek, 6) < today) {
+    container.dataset.weekStart = weekStartISO(today);
+    delete container.dataset.planWeekDay;
+  }
+}
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -89,13 +101,15 @@ function bindManagerTabs(container) {
 }
 
 async function renderOverview(container) {
+  syncManagerPlanNavigation(container);
   const today = todayISO();
   const stats = await getManagerDashboardStats(today);
-  const [allTasks, allIncidents, planItems] = await Promise.all([
+  const [allTasks, allIncidents, rawPlanItems] = await Promise.all([
     getManagerTasks(),
     getManagerIncidents(),
     getManagerPlanItems('daily', today),
   ]);
+  const planItems = rawPlanItems.filter((i) => i.anchorDate === today);
   const tasks = allTasks.filter((t) => t.status !== 'done');
   const incidents = allIncidents.filter((i) => i.status !== 'resolved');
   const highTasks = tasks.filter((t) => t.priority === 'high').slice(0, 5);
@@ -329,31 +343,93 @@ function renderPlanProductSelectHTML(products, layout) {
   return blocks.join('');
 }
 
-function renderProductCentricPlanHTML(items, products, { dayOffset = null } = {}) {
+function checklistDedupeKey(item) {
+  if (item.itemKind === 'flow_preparation') {
+    return `prep:${item.flowId || ''}:${item.flowPreparationId || item.label}`;
+  }
+  if (item.itemKind === 'flow_cleaning') {
+    return `clean:${item.flowId || ''}:${item.flowCleaningTaskId || item.label}`;
+  }
+  return `other:${item.id}`;
+}
+
+function dedupeChecklistItems(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    const key = checklistDedupeKey(item);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
+}
+
+function groupChecklistByFlow(items, { productFlowMap, flowNames, productsInPlan, productMap } = {}) {
+  const byFlow = new Map();
+  const orphans = [];
+  for (const item of dedupeChecklistItems(items)) {
+    const fid = item.flowId || null;
+    if (fid) {
+      if (!byFlow.has(fid)) byFlow.set(fid, []);
+      byFlow.get(fid).push(item);
+    } else {
+      orphans.push(item);
+    }
+  }
+
+  const groups = [...byFlow.entries()].map(([flowId, groupItems]) => {
+    const productNames = productsInPlan
+      .filter((p) => productFlowMap?.get(p.productId) === flowId)
+      .map((p) => productMap.get(p.productId)?.name || p.label)
+      .filter(Boolean);
+    const flowLabel = flowNames?.get(flowId) || 'תזרים';
+    const title = productNames.length
+      ? `${flowLabel} · ${productNames.join(', ')}`
+      : flowLabel;
+    return { flowId, title, items: groupItems };
+  });
+
+  return { groups, orphans };
+}
+
+function renderPlanHighlightsHTML(plan) {
+  return `
+    <div class="manager-plan-section manager-plan-highlights-section">
+      <div class="manager-plan-section-title">📝 דגשים ליום</div>
+      <textarea id="plan-notes" rows="2" placeholder="הערות משמרת, הזמנות מיוחדות, דגשים לייצור...">${escapeHtml(plan?.notes || '')}</textarea>
+      <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור דגשים</button>
+    </div>`;
+}
+
+function renderProductCentricPlanHTML(items, products, {
+  dayOffset = null,
+  plan = null,
+  showHighlights = false,
+  productFlowMap = null,
+  flowNames = null,
+} = {}) {
   let filtered = items;
   if (dayOffset != null) {
     filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
   }
   if (!filtered.length) {
+    if (showHighlights) {
+      return `${renderPlanHighlightsHTML(plan)}<p class="form-hint manager-plan-empty">עדיין אין פריטים — בחר מוצרים לייצור למעלה</p>`;
+    }
     return '<p class="form-hint manager-plan-empty">עדיין אין פריטים — בחר מוצרים לייצור למעלה</p>';
   }
 
   const productMap = new Map(products.map((p) => [p.id, p]));
   const productsInPlan = filtered.filter((i) => i.itemKind === 'product');
   const manualItems = filtered.filter((i) => i.itemKind === 'text');
-  const checklistItems = filtered.filter((i) => i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning');
+  const preparations = filtered.filter((i) => i.itemKind === 'flow_preparation');
+  const cleanings = filtered.filter((i) => i.itemKind === 'flow_cleaning');
   const legacyItems = filtered.filter((i) => !['product', 'text', 'flow_preparation', 'flow_cleaning'].includes(i.itemKind));
 
-  const checklistByProduct = new Map();
-  const orphanChecklist = [];
-  for (const item of checklistItems) {
-    if (item.productId) {
-      if (!checklistByProduct.has(item.productId)) checklistByProduct.set(item.productId, []);
-      checklistByProduct.get(item.productId).push(item);
-    } else {
-      orphanChecklist.push(item);
-    }
-  }
+  const groupCtx = { productFlowMap, flowNames, productsInPlan, productMap };
+  const prepGrouped = groupChecklistByFlow(preparations, groupCtx);
+  const cleanGrouped = groupChecklistByFlow(cleanings, groupCtx);
 
   let html = '';
 
@@ -365,28 +441,21 @@ function renderProductCentricPlanHTML(items, products, { dayOffset = null } = {}
       </div>`;
   }
 
-  const taskProductIds = [...new Set([
-    ...productsInPlan.map((p) => p.productId),
-    ...checklistByProduct.keys(),
-  ])];
-
-  if (taskProductIds.length || orphanChecklist.length || manualItems.length) {
+  const hasTasks = prepGrouped.groups.length || prepGrouped.orphans.length || manualItems.length;
+  if (hasTasks) {
     html += `<div class="manager-plan-section"><div class="manager-plan-section-title">✅ משימות</div>`;
-    for (const pid of taskProductIds) {
-      const prod = productMap.get(pid);
-      const tasks = checklistByProduct.get(pid) || [];
-      if (!tasks.length) continue;
+    for (const group of prepGrouped.groups) {
       html += `
         <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">${escapeHtml(prod?.name || 'מוצר')}</div>
-          ${tasks.map((item) => planItemRow(item)).join('')}
+          <div class="manager-plan-product-heading">${escapeHtml(group.title)}</div>
+          ${group.items.map((item) => planItemRow(item)).join('')}
         </div>`;
     }
-    if (orphanChecklist.length) {
+    if (prepGrouped.orphans.length) {
       html += `
         <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">צ׳קליסט</div>
-          ${orphanChecklist.map((item) => planItemRow(item)).join('')}
+          <div class="manager-plan-product-heading">הכנות</div>
+          ${prepGrouped.orphans.map((item) => planItemRow(item)).join('')}
         </div>`;
     }
     if (manualItems.length) {
@@ -394,6 +463,29 @@ function renderProductCentricPlanHTML(items, products, { dayOffset = null } = {}
         <div class="manager-plan-product-group">
           <div class="manager-plan-product-heading">משימות ידניות</div>
           ${manualItems.map((item) => planItemRow(item)).join('')}
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (showHighlights) {
+    html += renderPlanHighlightsHTML(plan);
+  }
+
+  if (cleanGrouped.groups.length || cleanGrouped.orphans.length) {
+    html += `<div class="manager-plan-section"><div class="manager-plan-section-title">🧹 נקיונות</div>`;
+    for (const group of cleanGrouped.groups) {
+      html += `
+        <div class="manager-plan-product-group">
+          <div class="manager-plan-product-heading">${escapeHtml(group.title)}</div>
+          ${group.items.map((item) => planItemRow(item)).join('')}
+        </div>`;
+    }
+    if (cleanGrouped.orphans.length) {
+      html += `
+        <div class="manager-plan-product-group">
+          <div class="manager-plan-product-heading">ניקיון</div>
+          ${cleanGrouped.orphans.map((item) => planItemRow(item)).join('')}
         </div>`;
     }
     html += '</div>';
@@ -551,7 +643,9 @@ function bindPlanItems(container, planType, anchorDate) {
         ? `נוסף ✓ · ${res.checklistsAdded} משימות מהצ׳קליסט`
         : res.hasFlow === false
           ? 'מוצר נוסף · אין תזרim משויך — הוסף משימות ידנית'
-          : 'מוצר נוסף ✓';
+          : res.hasFlow
+            ? 'מוצר נוסף ✓ · משימות משותפות לתזרים'
+            : 'מוצר נוסף ✓';
       showToast(msg);
       renderManager(container);
     } catch (err) {
@@ -600,7 +694,27 @@ function bindPlanItems(container, planType, anchorDate) {
   });
 }
 
+async function buildPlanFlowContext(items, { dayOffset = null } = {}) {
+  let filtered = items;
+  if (dayOffset != null) {
+    filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
+  }
+  const productIds = [...new Set(
+    filtered.filter((i) => i.itemKind === 'product').map((i) => i.productId).filter(Boolean),
+  )];
+  const productFlowMap = new Map();
+  const flowNames = new Map();
+  for (const pid of productIds) {
+    const flow = await resolveDefaultFlowForProduct(pid);
+    if (!flow) continue;
+    productFlowMap.set(pid, flow.id);
+    flowNames.set(flow.id, flow.name);
+  }
+  return { productFlowMap, flowNames };
+}
+
 async function renderDailyPlan(container) {
+  syncManagerPlanNavigation(container);
   const date = container.dataset.planDate || todayISO();
   const [plan, items, products, layout] = await Promise.all([
     getManagerPlan('daily', date),
@@ -608,6 +722,7 @@ async function renderDailyPlan(container) {
     getProducts(true),
     getProductsCatalogLayout(),
   ]);
+  const { productFlowMap, flowNames } = await buildPlanFlowContext(items);
   const done = items.filter((i) => i.done).length;
   const progressPct = items.length ? Math.round((done / items.length) * 100) : 0;
 
@@ -631,17 +746,16 @@ async function renderDailyPlan(container) {
       </div>
     </div>
 
-    <details class="card manager-plan-notes-details"${plan?.notes ? ' open' : ''}>
-      <summary class="manager-plan-notes-summary">📝 דגשים ליום</summary>
-      <textarea id="plan-notes" rows="2" placeholder="הערות משמרת, הזמנות מיוחדות...">${escapeHtml(plan?.notes || '')}</textarea>
-      <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור</button>
-    </details>
-
     ${renderPlanAddProductHTML(products, layout)}
 
     <div class="card manager-plan-list-card">
       <div class="card-title">3 · רשימת היום</div>
-      ${renderProductCentricPlanHTML(items, products)}
+      ${renderProductCentricPlanHTML(items, products, {
+    plan,
+    showHighlights: true,
+    productFlowMap,
+    flowNames,
+  })}
     </div>`;
 
   bindManagerTabs(container);
@@ -654,7 +768,7 @@ async function renderDailyPlan(container) {
 
   const exportPlan = () => {
     const dateLabel = formatDateHebrew(date);
-    const organized = organizeDailyPlanForExport(items, products, plan);
+    const organized = organizeDailyPlanForExport(items, products, plan, { flowNames });
     const bodyHtml = buildDailyPlanBodyHtml(organized);
     return { dateLabel, bodyHtml };
   };
@@ -682,6 +796,7 @@ async function renderDailyPlan(container) {
       items,
       products,
       plan,
+      flowNames,
     });
     if (!printDailyPlanHtml(html)) {
       showToast('חסום חלון קופץ — אפשר הדפסה מהדפדפן');
@@ -703,6 +818,7 @@ async function renderWeeklyPlan(container) {
   ]);
   const weekEnd = addDaysISO(weekStart, 6);
   const dayItems = items.filter((i) => (i.dayOffset ?? 0) === selectedDay);
+  const { productFlowMap, flowNames } = await buildPlanFlowContext(items, { dayOffset: selectedDay });
   const done = dayItems.filter((i) => i.done).length;
   const progressPct = dayItems.length ? Math.round((done / dayItems.length) * 100) : 0;
 
@@ -710,7 +826,7 @@ async function renderWeeklyPlan(container) {
     ${managerTabsHTML('weekly')}
     <div class="card manager-plan-header-card">
       <div class="form-group" style="margin-bottom:8px">
-        <label for="week-start">שבוע (מתחיל ביום שני)</label>
+        <label for="week-start">שבוע (מתחיל ביום ראשון)</label>
         <input type="date" id="week-start" value="${weekStart}">
       </div>
       <p class="form-hint">${formatDate(weekStart)} — ${formatDate(weekEnd)}</p>
@@ -745,7 +861,11 @@ async function renderWeeklyPlan(container) {
         <div class="manager-plan-progress-bar" style="width:${progressPct}%"></div>
       </div>
       <p class="form-hint manager-plan-progress-label">${done}/${dayItems.length} הושלמו</p>` : ''}
-      ${renderProductCentricPlanHTML(items, products, { dayOffset: selectedDay })}
+      ${renderProductCentricPlanHTML(items, products, {
+        dayOffset: selectedDay,
+        productFlowMap,
+        flowNames,
+      })}
     </div>
 
     ${items.length ? `
@@ -1503,6 +1623,7 @@ async function renderDepartmentCleaning(container) {
 
 export async function renderManager(container) {
   await loadManagerDepartments();
+  syncManagerPlanNavigation(container);
   const tab = container.dataset.managerTab || 'overview';
 
   if (tab === 'targets') {

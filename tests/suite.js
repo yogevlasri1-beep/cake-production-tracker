@@ -1,28 +1,28 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=229';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=232';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=229';
+} from '../js/validators.js?v=232';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=229';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=229';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=229';
+} from '../js/calc.js?v=232';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=232';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=232';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=229';
-import { isAutoBackupDue } from '../js/backup-service.js?v=229';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=229';
+} from '../js/supabase-backup.js?v=232';
+import { isAutoBackupDue } from '../js/backup-service.js?v=232';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=232';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=229';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=229';
+} from '../js/supplier-import.js?v=232';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=232';
 
 export async function runAllTests() {
   /* validators */
@@ -565,7 +565,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=229');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=232');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

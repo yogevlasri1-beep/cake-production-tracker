@@ -5925,6 +5925,26 @@ body {
   margin-bottom: 8px;
 }
 
+.manager-plan-highlights-section textarea {
+  width: 100%;
+  min-height: 64px;
+  margin-top: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #facc15;
+  background: #fefce8;
+  font: inherit;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.manager-plan-highlights-section {
+  background: linear-gradient(180deg, #fefce8 0%, transparent 100%);
+  border-radius: 10px;
+  padding: 4px 2px 8px;
+}
+
 .manager-plan-empty {
   text-align: center;
   padding: 16px 8px;
@@ -6317,7 +6337,20 @@ body.supplier-drag-active {
 }
 
 .recipe-product-cat-block {
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.recipe-product-cat-block:last-child {
+  margin-bottom: 0;
+}
+
+.recipe-product-cat-heading {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
 }
 
 .recipe-product-pick {
