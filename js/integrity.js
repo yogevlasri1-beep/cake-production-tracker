@@ -1,7 +1,7 @@
 import {
   getCategories, getProducts, db,
-} from './db.js?v=232';
-import { auditProductionData } from './calc.js?v=232';
+} from './db.js?v=233';
+import { auditProductionData } from './calc.js?v=233';
 
 const ISSUE_LABELS = {
   invalid_quantity: 'כמות לא תקינה ברישום',

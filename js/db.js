@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=232';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=232';
-import { defaultColorForIndex } from './chart.js?v=232';
+} from './validators.js?v=233';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=233';
+import { defaultColorForIndex } from './chart.js?v=233';
 
 export { ValidationError };
 
@@ -5808,6 +5808,32 @@ export async function addManagerPlanItem({
     done: false,
     sortOrder,
   });
+}
+
+/** תזרימים ייחודיים למוצרים בתוכנית — לפי סדר הופעה, ללא כפילות תזרים */
+export async function collectPlanProductFlowsForExport(items) {
+  const productItems = items
+    .filter((i) => i.itemKind === 'product' && i.productId)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+
+  const flowOrder = [];
+  const flowData = new Map();
+
+  for (const item of productItems) {
+    const flow = await resolveDefaultFlowForProduct(item.productId);
+    if (!flow) continue;
+    if (!flowData.has(flow.id)) {
+      const steps = await getFlowStepsForFlow(flow.id);
+      flowData.set(flow.id, { flow, steps, products: [] });
+      flowOrder.push(flow.id);
+    }
+    flowData.get(flow.id).products.push({
+      label: item.label,
+      quantity: item.quantity,
+    });
+  }
+
+  return flowOrder.map((id) => flowData.get(id)).filter(Boolean);
 }
 
 /** תזרים ברירת מחדל למוצר (לפי קטגוריה / קבוצה) */

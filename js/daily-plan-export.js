@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=232';
+import { escapeHtml } from './utils.js?v=233';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -90,12 +90,113 @@ const DAILY_PLAN_PRINT_CSS = `
     color: #94a3b8;
     text-align: center;
   }
+  .plan-page-break {
+    page-break-before: always;
+    break-before: page;
+  }
+  .plan-page--flows {
+    min-height: 0;
+    padding-top: 4mm;
+    display: flex;
+    flex-direction: column;
+  }
+  .plan-flows-header {
+    text-align: center;
+    border-bottom: 3px solid #1d4ed8;
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+  }
+  .plan-flows-header h2 {
+    font-size: 18pt;
+    font-weight: 800;
+    color: #1d4ed8;
+  }
+  .plan-flows-grid {
+    display: grid;
+    grid-template-columns: repeat(var(--flow-cols, 1), minmax(0, 1fr));
+    gap: 8px 10px;
+    flex: 1;
+    align-items: stretch;
+    align-content: start;
+  }
+  .plan-flow-col {
+    border: 2px solid #bfdbfe;
+    border-radius: 8px;
+    padding: 6px 8px;
+    background: #f8fafc;
+    break-inside: avoid;
+    min-width: 0;
+  }
+  .plan-flow-col-title {
+    font-size: 11pt;
+    font-weight: 800;
+    color: #1e40af;
+    border-bottom: 1px solid #cbd5e1;
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+    line-height: 1.2;
+  }
+  .plan-flow-col-products {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #64748b;
+    margin-bottom: 6px;
+    line-height: 1.25;
+  }
+  .plan-flow-steps {
+    list-style: none;
+    padding: 0;
+    counter-reset: flow-step;
+  }
+  .plan-flow-steps li {
+    counter-increment: flow-step;
+    font-size: 9.5pt;
+    font-weight: 600;
+    padding: 2px 0;
+    border-bottom: 1px dotted #e2e8f0;
+    line-height: 1.25;
+    display: flex;
+    gap: 4px;
+    align-items: baseline;
+  }
+  .plan-flow-steps li:last-child { border-bottom: none; }
+  .plan-flow-steps li::before {
+    content: counter(flow-step);
+    flex-shrink: 0;
+    width: 1.4em;
+    height: 1.4em;
+    line-height: 1.4em;
+    text-align: center;
+    font-size: 8pt;
+    font-weight: 800;
+    color: #fff;
+    background: #3b82f6;
+    border-radius: 50%;
+  }
+  .plan-flow-step--production::after {
+    content: " 📦";
+    font-size: 8pt;
+  }
+  .plan-flow-step--portions::after {
+    content: " 🍽";
+    font-size: 8pt;
+  }
   @media print {
     body { padding: 0; font-size: 13pt; }
     .plan-header h1 { font-size: 20pt; }
     .plan-section-title { font-size: 15pt; }
     .plan-list li { font-size: 13pt; padding: 2px 0; }
     .plan-highlights { font-size: 13pt; padding: 6px 8px; }
+    .plan-page--flows {
+      height: calc(100vh - 16mm);
+      max-height: calc(100vh - 16mm);
+      overflow: hidden;
+      page-break-after: avoid;
+      break-after: avoid;
+    }
+    .plan-flow-col-title { font-size: 10pt; }
+    .plan-flow-steps li { font-size: 9pt; padding: 1px 0; }
   }
 `;
 
@@ -232,7 +333,42 @@ export function buildDailyPlanBodyHtml(organized) {
     </div>`;
 }
 
-export function buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, exportedAt }) {
+export function buildDailyPlanFlowsPageHtml(flowsData) {
+  if (!flowsData?.length) return '';
+
+  const cols = Math.min(flowsData.length, 4);
+  const columns = flowsData.map(({ flow, steps, products }) => {
+    const productLine = products.map((p) => (
+      p.quantity ? `${p.label} ×${p.quantity}` : p.label
+    )).join(' · ');
+    const stepItems = steps.length
+      ? steps.map((step) => {
+        const flags = [
+          step.tracksProduction ? 'plan-flow-step--production' : '',
+          step.tracksPortions ? 'plan-flow-step--portions' : '',
+        ].filter(Boolean).join(' ');
+        return `<li class="${flags}">${escapeHtml(step.name)}</li>`;
+      }).join('')
+      : '<li style="font-style:italic;color:#64748b">אין שלבים</li>';
+
+    return `
+      <section class="plan-flow-col">
+        <h3 class="plan-flow-col-title">${escapeHtml(flow.name)}</h3>
+        ${productLine ? `<p class="plan-flow-col-products">${escapeHtml(productLine)}</p>` : ''}
+        <ol class="plan-flow-steps">${stepItems}</ol>
+      </section>`;
+  }).join('');
+
+  return `
+    <div class="plan-page-break plan-page--flows" style="--flow-cols:${cols}">
+      <header class="plan-flows-header">
+        <h2>🔄 תזרימי ייצור</h2>
+      </header>
+      <div class="plan-flows-grid">${columns}</div>
+    </div>`;
+}
+
+export function buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, flowsPageHtml = '', exportedAt }) {
   const when = exportedAt || new Date().toLocaleString('he-IL');
   return `<!DOCTYPE html>
 <html lang="he" dir="rtl">
@@ -251,6 +387,7 @@ export function buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, ex
     </header>
     <main>${bodyHtml}</main>
     <footer class="plan-footer">מעקב יצור · ${escapeHtml(when)}</footer>
+    ${flowsPageHtml}
   </article>
 </body>
 </html>`;
@@ -281,8 +418,8 @@ async function shareOrDownloadBlob(blob, filename, shareText) {
   return 'download';
 }
 
-export async function saveDailyPlanAsHtml({ dateLabel, subtitle, bodyHtml, filename }) {
-  const html = buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml });
+export async function saveDailyPlanAsHtml({ dateLabel, subtitle, bodyHtml, flowsPageHtml, filename }) {
+  const html = buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, flowsPageHtml });
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
   const safeName = filename.endsWith('.html') ? filename : `${filename}.html`;
   return shareOrDownloadBlob(blob, safeName, `תוכנית יומית · ${dateLabel}`);
@@ -302,8 +439,9 @@ export function printDailyPlanHtml(html) {
   return true;
 }
 
-export function buildDailyPlanExportHtml({ dateLabel, subtitle, items, products, plan, flowNames }) {
+export function buildDailyPlanExportHtml({ dateLabel, subtitle, items, products, plan, flowNames, flowsData }) {
   const organized = organizeDailyPlanForExport(items, products, plan, { flowNames });
   const bodyHtml = buildDailyPlanBodyHtml(organized);
-  return buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml });
+  const flowsPageHtml = buildDailyPlanFlowsPageHtml(flowsData);
+  return buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, flowsPageHtml });
 }

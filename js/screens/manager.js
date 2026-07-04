@@ -4,6 +4,7 @@ import {
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
   addManagerPlanItem, addManagerPlanProductWithChecklists,
   updateManagerPlanItem, deleteManagerPlanItem, resolveDefaultFlowForProduct,
+  collectPlanProductFlowsForExport,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
@@ -13,18 +14,18 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask,
-} from '../db.js?v=232';
+} from '../db.js?v=233';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=232';
-import { openModal, closeModal } from '../modal.js?v=232';
-import { renderTargets } from './targets.js?v=232';
-import { forceAppUpdate } from '../sw-register.js?v=232';
+} from '../utils.js?v=233';
+import { openModal, closeModal } from '../modal.js?v=233';
+import { renderTargets } from './targets.js?v=233';
+import { forceAppUpdate } from '../sw-register.js?v=233';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
-  buildDailyPlanBodyHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=232';
+  buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
+} from '../daily-plan-export.js?v=233';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -766,20 +767,23 @@ async function renderDailyPlan(container) {
     renderManager(container);
   });
 
-  const exportPlan = () => {
+  const exportPlan = async () => {
     const dateLabel = formatDateHebrew(date);
+    const flowsData = await collectPlanProductFlowsForExport(items);
     const organized = organizeDailyPlanForExport(items, products, plan, { flowNames });
     const bodyHtml = buildDailyPlanBodyHtml(organized);
-    return { dateLabel, bodyHtml };
+    const flowsPageHtml = buildDailyPlanFlowsPageHtml(flowsData);
+    return { dateLabel, bodyHtml, flowsPageHtml, flowsData };
   };
 
   document.getElementById('export-daily-plan')?.addEventListener('click', async () => {
-    const { dateLabel, bodyHtml } = exportPlan();
+    const { dateLabel, bodyHtml, flowsPageHtml } = await exportPlan();
     try {
       const result = await saveDailyPlanAsHtml({
         dateLabel,
         subtitle: formatDate(date),
         bodyHtml,
+        flowsPageHtml,
         filename: `תוכנית-יומית-${date}.html`,
       });
       if (result !== 'cancelled') showToast('הקובץ נשמר ✓');
@@ -788,8 +792,8 @@ async function renderDailyPlan(container) {
     }
   });
 
-  document.getElementById('print-daily-plan')?.addEventListener('click', () => {
-    const { dateLabel, bodyHtml } = exportPlan();
+  document.getElementById('print-daily-plan')?.addEventListener('click', async () => {
+    const { dateLabel, bodyHtml, flowsData } = await exportPlan();
     const html = buildDailyPlanExportHtml({
       dateLabel,
       subtitle: formatDate(date),
@@ -797,6 +801,7 @@ async function renderDailyPlan(container) {
       products,
       plan,
       flowNames,
+      flowsData,
     });
     if (!printDailyPlanHtml(html)) {
       showToast('חסום חלון קופץ — אפשר הדפסה מהדפדפן');
