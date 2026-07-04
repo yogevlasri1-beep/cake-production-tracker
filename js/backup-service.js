@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=224';
+} from './db.js?v=229';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=224';
-import { downloadBlob } from './download.js?v=224';
-import { ValidationError } from './validators.js?v=224';
-import { openModal, closeModal } from './modal.js?v=224';
-import { escapeHtml, showToast } from './utils.js?v=224';
+} from './backup.js?v=229';
+import { downloadBlob } from './download.js?v=229';
+import { ValidationError } from './validators.js?v=229';
+import { openModal, closeModal } from './modal.js?v=229';
+import { escapeHtml, showToast } from './utils.js?v=229';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=224';
+} from './backup-folder-bridge.js?v=229';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -31,7 +31,7 @@ import {
   fetchLatestSupabaseBackup,
   ensureSupabaseDefaults,
   getBackupScopeId,
-} from './supabase-backup.js?v=224';
+} from './supabase-backup.js?v=229';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -366,9 +366,11 @@ function installDbChangeHooks() {
   const tables = [
     'categories', 'categoryGroups', 'products', 'productionEntries', 'targets',
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
+    'managerResponsibilityAreas', 'managerEmployees', 'managerDepartments',
+    'departmentCleaningLists', 'departmentCleaningTasks',
     'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'groupPreparations', 'checklistTasks', 'flowChecklistItems', 'flowCleaningTasks', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks', 'runCleaningChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'settings',
   ];
   for (const name of tables) {

@@ -1,0 +1,295 @@
+import { escapeHtml } from './utils.js?v=229';
+
+const DAILY_PLAN_PRINT_CSS = `
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  @page { size: A4 portrait; margin: 8mm; }
+  html, body {
+    font-family: "Arial Hebrew", Arial, sans-serif;
+    direction: rtl;
+    color: #0f172a;
+    background: #fff;
+    line-height: 1.3;
+  }
+  body { padding: 10mm; font-size: 14pt; }
+  .plan-doc { max-width: 100%; }
+  .plan-header {
+    text-align: center;
+    border-bottom: 3px solid #1d4ed8;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+  }
+  .plan-header h1 {
+    font-size: 22pt;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .plan-header .plan-date {
+    font-size: 16pt;
+    font-weight: 600;
+    color: #1e40af;
+  }
+  .plan-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 14px;
+    align-items: start;
+  }
+  .plan-section {
+    break-inside: avoid;
+    margin-bottom: 8px;
+  }
+  .plan-section--full { grid-column: 1 / -1; }
+  .plan-section-title {
+    font-size: 16pt;
+    font-weight: 800;
+    color: #1d4ed8;
+    border-bottom: 2px solid #bfdbfe;
+    padding-bottom: 3px;
+    margin-bottom: 6px;
+  }
+  .plan-list {
+    list-style: none;
+    padding: 0;
+  }
+  .plan-list li {
+    font-size: 14pt;
+    font-weight: 600;
+    padding: 3px 0;
+    border-bottom: 1px dotted #cbd5e1;
+  }
+  .plan-list li:last-child { border-bottom: none; }
+  .plan-qty {
+    font-weight: 800;
+    color: #b45309;
+    margin-right: 6px;
+  }
+  .plan-group-title {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #475569;
+    margin: 6px 0 2px;
+  }
+  .plan-highlights {
+    font-size: 14pt;
+    font-weight: 600;
+    white-space: pre-wrap;
+    background: #fef9c3;
+    border: 2px solid #facc15;
+    border-radius: 8px;
+    padding: 8px 10px;
+    line-height: 1.35;
+  }
+  .plan-empty {
+    font-size: 12pt;
+    color: #64748b;
+    font-style: italic;
+  }
+  .plan-footer {
+    margin-top: 8px;
+    font-size: 9pt;
+    color: #94a3b8;
+    text-align: center;
+  }
+  @media print {
+    body { padding: 0; font-size: 13pt; }
+    .plan-header h1 { font-size: 20pt; }
+    .plan-section-title { font-size: 15pt; }
+    .plan-list li { font-size: 13pt; padding: 2px 0; }
+    .plan-highlights { font-size: 13pt; padding: 6px 8px; }
+  }
+`;
+
+function sortByOrder(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+/** מפרק פריטי תוכנית לסקשנים להדפסה */
+export function organizeDailyPlanForExport(items, products, plan, { dayOffset = null } = {}) {
+  let filtered = items;
+  if (dayOffset != null) {
+    filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
+  }
+  filtered = filtered.slice().sort(sortByOrder);
+
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  const productsInPlan = filtered.filter((i) => i.itemKind === 'product');
+  const preparations = filtered.filter((i) => i.itemKind === 'flow_preparation');
+  const cleanings = filtered.filter((i) => i.itemKind === 'flow_cleaning');
+  const manualTasks = filtered.filter((i) => i.itemKind === 'text');
+  const extraTasks = filtered.filter((i) => ['flow_step', 'portion'].includes(i.itemKind));
+
+  const prepGroups = new Map();
+  const orphanPreps = [];
+  for (const item of preparations) {
+    if (item.productId) {
+      if (!prepGroups.has(item.productId)) prepGroups.set(item.productId, []);
+      prepGroups.get(item.productId).push(item);
+    } else {
+      orphanPreps.push(item);
+    }
+  }
+
+  const cleanGroups = new Map();
+  const orphanClean = [];
+  for (const item of cleanings) {
+    if (item.productId) {
+      if (!cleanGroups.has(item.productId)) cleanGroups.set(item.productId, []);
+      cleanGroups.get(item.productId).push(item);
+    } else {
+      orphanClean.push(item);
+    }
+  }
+
+  return {
+    highlights: (plan?.notes || '').trim(),
+    products: productsInPlan.map((item) => ({
+      label: item.label,
+      quantity: item.quantity,
+    })),
+    taskGroups: [
+      ...[...prepGroups.entries()].map(([pid, groupItems]) => ({
+        title: productMap.get(pid)?.name || 'מוצר',
+        items: groupItems.map((i) => i.label),
+      })),
+      ...(orphanPreps.length ? [{ title: 'הכנות', items: orphanPreps.map((i) => i.label) }] : []),
+      ...(manualTasks.length ? [{ title: 'ידני', items: manualTasks.map((i) => i.label) }] : []),
+      ...(extraTasks.length ? [{ title: 'נוסף', items: extraTasks.map((i) => i.label) }] : []),
+    ],
+    cleaningGroups: [
+      ...[...cleanGroups.entries()].map(([pid, groupItems]) => ({
+        title: productMap.get(pid)?.name || 'מוצר',
+        items: groupItems.map((i) => i.label),
+      })),
+      ...(orphanClean.length ? [{ title: 'כללי', items: orphanClean.map((i) => i.label) }] : []),
+    ],
+  };
+}
+
+function renderPlanList(items, { qtyField = false } = {}) {
+  if (!items?.length) return '<p class="plan-empty">—</p>';
+  return `<ul class="plan-list">${items.map((item) => {
+    const label = typeof item === 'string' ? item : item.label;
+    const qty = typeof item === 'object' && item.quantity ? item.quantity : null;
+    return `<li>${qty ? `<span class="plan-qty">×${escapeHtml(String(qty))}</span>` : ''}${escapeHtml(label)}</li>`;
+  }).join('')}</ul>`;
+}
+
+function renderGroupedList(groups) {
+  if (!groups?.length) return '<p class="plan-empty">—</p>';
+  return groups.map((group) => `
+    <div class="plan-group">
+      <div class="plan-group-title">${escapeHtml(group.title)}</div>
+      ${renderPlanList(group.items)}
+    </div>`).join('');
+}
+
+export function buildDailyPlanBodyHtml(organized) {
+  const { products, taskGroups, cleaningGroups, highlights } = organized;
+  const allTasks = taskGroups.flatMap((g) => g.items);
+  const allClean = cleaningGroups.flatMap((g) => g.items);
+
+  return `
+    <div class="plan-grid">
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">📦 מוצרים לייצור היום</h2>
+        ${renderPlanList(products, { qtyField: true })}
+      </section>
+      <section class="plan-section">
+        <h2 class="plan-section-title">✅ משימות</h2>
+        ${allTasks.length
+    ? (taskGroups.length > 1 || taskGroups[0]?.title !== 'ידני'
+      ? renderGroupedList(taskGroups)
+      : renderPlanList(allTasks))
+    : '<p class="plan-empty">—</p>'}
+      </section>
+      <section class="plan-section">
+        <h2 class="plan-section-title">🧹 נקיונות</h2>
+        ${allClean.length
+    ? (cleaningGroups.length > 1 ? renderGroupedList(cleaningGroups) : renderPlanList(allClean))
+    : '<p class="plan-empty">—</p>'}
+      </section>
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">📝 הדגשים</h2>
+        ${highlights
+    ? `<div class="plan-highlights">${escapeHtml(highlights)}</div>`
+    : '<p class="plan-empty">—</p>'}
+      </section>
+    </div>`;
+}
+
+export function buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml, exportedAt }) {
+  const when = exportedAt || new Date().toLocaleString('he-IL');
+  return `<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>תוכנית יומית · ${escapeHtml(dateLabel)}</title>
+  <style>${DAILY_PLAN_PRINT_CSS}</style>
+</head>
+<body>
+  <article class="plan-doc">
+    <header class="plan-header">
+      <h1>תוכנית יומית</h1>
+      <p class="plan-date">${escapeHtml(dateLabel)}</p>
+      ${subtitle ? `<p style="font-size:11pt;color:#64748b;margin-top:4px">${escapeHtml(subtitle)}</p>` : ''}
+    </header>
+    <main>${bodyHtml}</main>
+    <footer class="plan-footer">מעקב יצור · ${escapeHtml(when)}</footer>
+  </article>
+</body>
+</html>`;
+}
+
+async function shareOrDownloadBlob(blob, filename, shareText) {
+  const file = new File([blob], filename, { type: blob.type });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: filename, text: shareText });
+      return 'share';
+    } catch (err) {
+      if (err?.name === 'AbortError') return 'cancelled';
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 2000);
+  return 'download';
+}
+
+export async function saveDailyPlanAsHtml({ dateLabel, subtitle, bodyHtml, filename }) {
+  const html = buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml });
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const safeName = filename.endsWith('.html') ? filename : `${filename}.html`;
+  return shareOrDownloadBlob(blob, safeName, `תוכנית יומית · ${dateLabel}`);
+}
+
+export function printDailyPlanHtml(html) {
+  const win = window.open('', '_blank', 'noopener,noreferrer');
+  if (!win) return false;
+  win.document.write(html);
+  win.document.close();
+  const trigger = () => {
+    win.focus();
+    win.print();
+  };
+  if (win.document.readyState === 'complete') trigger();
+  else win.addEventListener('load', trigger, { once: true });
+  return true;
+}
+
+export function buildDailyPlanExportHtml({ dateLabel, subtitle, items, products, plan }) {
+  const organized = organizeDailyPlanForExport(items, products, plan);
+  const bodyHtml = buildDailyPlanBodyHtml(organized);
+  return buildStandaloneDailyPlanHtml({ dateLabel, subtitle, bodyHtml });
+}

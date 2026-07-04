@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=224';
-import { APP_VERSION } from './version.js?v=224';
-import { defaultColorForIndex } from './chart.js?v=224';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=224';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=224';
-import { ValidationError } from './validators.js?v=224';
+import { exportAllData, importAllData } from './db.js?v=229';
+import { APP_VERSION } from './version.js?v=229';
+import { defaultColorForIndex } from './chart.js?v=229';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=229';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=229';
+import { ValidationError } from './validators.js?v=229';
 
 export const BACKUP_VERSION = 3;
 
@@ -177,6 +177,8 @@ export function enrichBackupData(raw) {
     flowPreparations: raw.flowPreparations || [],
     recipeGroups: raw.recipeGroups || [],
     recipeProductLinks: raw.recipeProductLinks || [],
+    recipeProductCategoryLinks: raw.recipeProductCategoryLinks || [],
+    recipeProductGroupLinks: raw.recipeProductGroupLinks || [],
     recipeCategories: raw.recipeCategories || [],
     recipes: raw.recipes || [],
     recipeIngredients: raw.recipeIngredients || [],
@@ -207,6 +209,8 @@ export function enrichBackupData(raw) {
     managerResponsibilityAreas: raw.managerResponsibilityAreas || [],
     managerEmployees: raw.managerEmployees || [],
     managerDepartments: raw.managerDepartments || [],
+    departmentCleaningLists: raw.departmentCleaningLists || [],
+    departmentCleaningTasks: raw.departmentCleaningTasks || [],
     settings: raw.settings || [],
   };
 }
@@ -248,6 +252,8 @@ export function summarizeBackupData(data) {
     recipes: data.recipes?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
     recipeProductLinks: data.recipeProductLinks?.length || 0,
+    recipeProductCategoryLinks: data.recipeProductCategoryLinks?.length || 0,
+    recipeProductGroupLinks: data.recipeProductGroupLinks?.length || 0,
     productRecipeComponents: data.productRecipeComponents?.length || 0,
     bakingProfiles: data.bakingProfiles?.length || 0,
     supplierCategories: data.supplierCategories?.length || 0,
@@ -291,6 +297,8 @@ export function formatBackupSummary(counts) {
   if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
   if (counts.recipeIngredients) parts.push(`${counts.recipeIngredients} רכיבי מתכון`);
   if (counts.recipeProductLinks) parts.push(`${counts.recipeProductLinks} קישורי מתכון`);
+  if (counts.recipeProductCategoryLinks) parts.push(`${counts.recipeProductCategoryLinks} קישורי קטגוריה`);
+  if (counts.recipeProductGroupLinks) parts.push(`${counts.recipeProductGroupLinks} קישורי קבוצה`);
   if (counts.productRecipeComponents) parts.push(`${counts.productRecipeComponents} רכיבי מוצר`);
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
@@ -343,6 +351,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.runCleaningChecks)) data.runCleaningChecks = [];
   if (!Array.isArray(data.recipeGroups)) data.recipeGroups = [];
   if (!Array.isArray(data.recipeProductLinks)) data.recipeProductLinks = [];
+  if (!Array.isArray(data.recipeProductCategoryLinks)) data.recipeProductCategoryLinks = [];
+  if (!Array.isArray(data.recipeProductGroupLinks)) data.recipeProductGroupLinks = [];
   if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
   if (!Array.isArray(data.recipes)) data.recipes = [];
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
@@ -366,6 +376,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.managerResponsibilityAreas)) data.managerResponsibilityAreas = [];
   if (!Array.isArray(data.managerEmployees)) data.managerEmployees = [];
   if (!Array.isArray(data.managerDepartments)) data.managerDepartments = [];
+  if (!Array.isArray(data.departmentCleaningLists)) data.departmentCleaningLists = [];
+  if (!Array.isArray(data.departmentCleaningTasks)) data.departmentCleaningTasks = [];
   return enrichBackupData(data);
 }
 

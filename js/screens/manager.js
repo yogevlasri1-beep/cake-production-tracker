@@ -10,20 +10,28 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=224';
+  getDepartmentCleaningLists, getDepartmentCleaningTasks,
+  addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
+  addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask,
+} from '../db.js?v=229';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=224';
-import { openModal, closeModal } from '../modal.js?v=224';
-import { renderTargets } from './targets.js?v=224';
-import { forceAppUpdate } from '../sw-register.js?v=224';
+} from '../utils.js?v=229';
+import { openModal, closeModal } from '../modal.js?v=229';
+import { renderTargets } from './targets.js?v=229';
+import { forceAppUpdate } from '../sw-register.js?v=229';
+import {
+  buildDailyPlanExportHtml, organizeDailyPlanForExport,
+  buildDailyPlanBodyHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
+} from '../daily-plan-export.js?v=229';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
   { id: 'daily', label: 'תוכנית יומית', icon: '📅' },
   { id: 'weekly', label: 'תוכנית שבועית', icon: '🗓' },
   { id: 'team', label: 'צוות', icon: '👥' },
+  { id: 'cleaning', label: 'ניקוי מחלקות', icon: '🧹' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'improvements', label: 'שיפורים', icon: '💡' },
   { id: 'incidents', label: 'תקלות', icon: '⚠️' },
@@ -617,6 +625,10 @@ async function renderDailyPlan(container) {
       </div>
       <p class="form-hint manager-plan-progress-label">${done}/${items.length} הושלמו (${progressPct}%)</p>` : `
       <p class="form-hint">התחל בבחירת מוצרים — משימות יופיעו אוטומטית</p>`}
+      <div class="filter-row" style="margin-top:10px;margin-bottom:0">
+        <button type="button" class="btn btn-secondary btn-sm" id="export-daily-plan" style="flex:1">⬇️ ייצוא לקובץ</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="print-daily-plan" style="flex:1">🖨️ הדפס</button>
+      </div>
     </div>
 
     <details class="card manager-plan-notes-details"${plan?.notes ? ' open' : ''}>
@@ -638,6 +650,42 @@ async function renderDailyPlan(container) {
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;
     renderManager(container);
+  });
+
+  const exportPlan = () => {
+    const dateLabel = formatDateHebrew(date);
+    const organized = organizeDailyPlanForExport(items, products, plan);
+    const bodyHtml = buildDailyPlanBodyHtml(organized);
+    return { dateLabel, bodyHtml };
+  };
+
+  document.getElementById('export-daily-plan')?.addEventListener('click', async () => {
+    const { dateLabel, bodyHtml } = exportPlan();
+    try {
+      const result = await saveDailyPlanAsHtml({
+        dateLabel,
+        subtitle: formatDate(date),
+        bodyHtml,
+        filename: `תוכנית-יומית-${date}.html`,
+      });
+      if (result !== 'cancelled') showToast('הקובץ נשמר ✓');
+    } catch {
+      showToast('שגיאה בייצוא');
+    }
+  });
+
+  document.getElementById('print-daily-plan')?.addEventListener('click', () => {
+    const { dateLabel, bodyHtml } = exportPlan();
+    const html = buildDailyPlanExportHtml({
+      dateLabel,
+      subtitle: formatDate(date),
+      items,
+      products,
+      plan,
+    });
+    if (!printDailyPlanHtml(html)) {
+      showToast('חסום חלון קופץ — אפשר הדפסה מהדפדפן');
+    }
   });
 }
 
@@ -1272,6 +1320,187 @@ async function renderTeam(container) {
   });
 }
 
+async function renderDepartmentCleaning(container) {
+  const lists = await getDepartmentCleaningLists();
+  let selectedId = container.dataset.cleaningListId || '';
+  if (!lists.some((l) => String(l.id) === String(selectedId))) {
+    selectedId = lists[0]?.id ? String(lists[0].id) : '';
+    container.dataset.cleaningListId = selectedId;
+  }
+  const selectedList = lists.find((l) => String(l.id) === String(selectedId)) || null;
+  const tasks = selectedList ? await getDepartmentCleaningTasks(selectedList.id) : [];
+
+  container.innerHTML = `
+    ${managerTabsHTML('cleaning')}
+    <div class="card">
+      <div class="card-title">🧹 ניקוי מחלקות</div>
+      <p class="form-hint" style="margin-bottom:12px">בנה רשימת משימות ניקוי לכל מחלקה — עריכה חופשית, כל מחלקה בנפרד</p>
+      <div class="filter-row" style="margin-bottom:12px">
+        <input type="text" id="new-cleaning-dept-name" placeholder="שם מחלקה (למשל: קונדיטוריה)" style="flex:1">
+        <button type="button" class="btn btn-primary btn-sm" id="add-cleaning-dept-btn">+ מחלקה</button>
+      </div>
+      ${lists.length ? `
+        <div class="manager-cleaning-dept-tabs">
+          ${lists.map((l) => `
+            <button type="button" class="manager-cleaning-dept-tab${String(l.id) === String(selectedId) ? ' is-active' : ''}" data-id="${l.id}">
+              <span class="manager-cleaning-dept-tab-label">${escapeHtml(l.name)}</span>
+              <span class="manager-cleaning-dept-tab-meta">${l.taskCount || '—'}</span>
+            </button>`).join('')}
+        </div>` : '<p class="form-hint">אין מחלקות — הוסף את הראשונה למעלה</p>'}
+    </div>
+
+    ${selectedList ? `
+    <div class="card manager-cleaning-tasks-card">
+      <div class="filter-row" style="margin-bottom:10px;align-items:flex-start">
+        <div style="flex:1">
+          <div class="card-title" style="margin:0">${escapeHtml(selectedList.name)}</div>
+          ${selectedList.notes ? `<p class="form-hint manager-cleaning-dept-notes">${escapeHtml(selectedList.notes)}</p>` : ''}
+        </div>
+        <button type="button" class="btn btn-secondary btn-sm edit-cleaning-dept"
+          data-id="${selectedList.id}"
+          data-name="${escapeHtml(selectedList.name)}"
+          data-notes="${escapeHtml(selectedList.notes || '')}">✏️</button>
+        <button type="button" class="btn btn-danger btn-sm delete-cleaning-dept" data-id="${selectedList.id}">🗑</button>
+      </div>
+
+      <div class="card-title" style="font-size:0.9rem;margin:12px 0 8px">משימות ניקוי מוכנות</div>
+      ${tasks.length ? `
+        <ul class="manager-cleaning-task-list">
+          ${tasks.map((t, i) => `
+            <li class="manager-cleaning-task-item" data-id="${t.id}">
+              <span class="manager-cleaning-task-num">${i + 1}.</span>
+              <span class="manager-cleaning-task-name">${escapeHtml(t.name)}</span>
+              <button type="button" class="btn btn-secondary btn-sm edit-cleaning-task"
+                data-id="${t.id}" data-name="${escapeHtml(t.name)}" title="ערוך">✏️</button>
+              <button type="button" class="btn btn-danger btn-sm delete-cleaning-task" data-id="${t.id}" title="מחק">🗑</button>
+            </li>`).join('')}
+        </ul>` : '<p class="form-hint">אין משימות — הוסף למטה</p>'}
+
+      <div class="filter-row" style="margin-top:12px">
+        <input type="text" id="new-cleaning-task-name" placeholder="משימת ניקוי (למשל: ניקוי משטחי עבודה)" style="flex:1">
+        <button type="button" class="btn btn-primary btn-sm" id="add-cleaning-task-btn">+ הוסף</button>
+      </div>
+    </div>` : ''}`;
+
+  bindManagerTabs(container);
+
+  document.getElementById('add-cleaning-dept-btn')?.addEventListener('click', async () => {
+    try {
+      const id = await addDepartmentCleaningList({
+        name: document.getElementById('new-cleaning-dept-name')?.value,
+      });
+      container.dataset.cleaningListId = String(id);
+      showToast('מחלקה נוספה ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.manager-cleaning-dept-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.cleaningListId = btn.dataset.id;
+      renderManager(container);
+    });
+  });
+
+  container.querySelectorAll('.edit-cleaning-dept').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal({
+        title: 'עריכת מחלקה',
+        bodyHTML: `
+          <div class="form-group"><label>שם מחלקה</label>
+            <input type="text" id="edit-cleaning-dept-name" value="${btn.dataset.name}"></div>
+          <div class="form-group"><label>הערות (אופציונלי)</label>
+            <textarea id="edit-cleaning-dept-notes" rows="2">${btn.dataset.notes || ''}</textarea></div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-cleaning-dept">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-cleaning-dept')?.addEventListener('click', async () => {
+        try {
+          await updateDepartmentCleaningList(btn.dataset.id, {
+            name: document.getElementById('edit-cleaning-dept-name').value,
+            notes: document.getElementById('edit-cleaning-dept-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderManager(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  container.querySelectorAll('.delete-cleaning-dept').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק מחלקה ואת כל משימות הניקוי שלה?')) return;
+      try {
+        await deleteDepartmentCleaningList(btn.dataset.id);
+        container.dataset.cleaningListId = '';
+        showToast('נמחק');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('add-cleaning-task-btn')?.addEventListener('click', async () => {
+    if (!selectedList) return;
+    try {
+      await addDepartmentCleaningTask(selectedList.id, document.getElementById('new-cleaning-task-name')?.value);
+      showToast('משימה נוספה ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('new-cleaning-task-name')?.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter' || !selectedList) return;
+    e.preventDefault();
+    document.getElementById('add-cleaning-task-btn')?.click();
+  });
+
+  container.querySelectorAll('.edit-cleaning-task').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal({
+        title: 'עריכת משימת ניקוי',
+        bodyHTML: `<div class="form-group"><label>שם משימה</label>
+          <input type="text" id="edit-cleaning-task-name" value="${btn.dataset.name}"></div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-cleaning-task">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-cleaning-task')?.addEventListener('click', async () => {
+        try {
+          await updateDepartmentCleaningTask(btn.dataset.id, {
+            name: document.getElementById('edit-cleaning-task-name').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderManager(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  container.querySelectorAll('.delete-cleaning-task').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק משימה?')) return;
+      try {
+        await deleteDepartmentCleaningTask(btn.dataset.id);
+        showToast('נמחק');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+}
+
 export async function renderManager(container) {
   await loadManagerDepartments();
   const tab = container.dataset.managerTab || 'overview';
@@ -1290,6 +1519,7 @@ export async function renderManager(container) {
     case 'daily': return renderDailyPlan(container);
     case 'weekly': return renderWeeklyPlan(container);
     case 'team': return renderTeam(container);
+    case 'cleaning': return renderDepartmentCleaning(container);
     case 'tasks': return renderTaskList(container, 'task');
     case 'improvements': return renderTaskList(container, 'improvement');
     case 'incidents': return renderIncidents(container);

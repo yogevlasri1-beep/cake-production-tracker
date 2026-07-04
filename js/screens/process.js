@@ -21,11 +21,11 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=224';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=224';
-import { openModal, closeModal } from '../modal.js?v=224';
-import { requestAutoBackupNow } from '../backup-service.js?v=224';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=224';
+} from '../db.js?v=229';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=229';
+import { openModal, closeModal } from '../modal.js?v=229';
+import { requestAutoBackupNow } from '../backup-service.js?v=229';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=229';
 
 function parseIdList(str) {
   try {
@@ -473,8 +473,30 @@ function stepPortionLabel(step) {
 }
 
 function portionPresetOptionLabel(p) {
+  const star = p.sourceRecipeId ? '★ ' : '';
   const extra = p.extra ? ` · ${p.extra}` : '';
-  return `${p.name} (${p.weight} ק"ג${extra})`;
+  return `${star}${p.name} (${p.weight} ק"ג${extra})`;
+}
+
+function renderChecklistLibraryHTML(tasks, { categoryLabel = '' } = {}) {
+  if (!tasks.length) return '';
+  const scopeHint = categoryLabel
+    ? `מקטגוריה «${categoryLabel}» — סמן ✓ להוספה`
+    : 'סמן ✓ להוספה לתזרim';
+  return `
+    <details class="flow-checklist-library">
+      <summary class="flow-checklist-library-summary">
+        ספריית משימות <span class="flow-checklist-library-count">(${tasks.length})</span>
+      </summary>
+      <p class="flow-checklist-library-hint">${escapeHtml(scopeHint)}</p>
+      <div class="flow-checklist-library-grid">
+        ${tasks.map((t) => `
+          <label class="flow-checklist-library-pick" title="הוסף לתזרim">
+            <input type="checkbox" class="link-checklist-task-cb" data-task-id="${t.id}">
+            <span class="flow-checklist-library-pick-label">${escapeHtml(t.name)}</span>
+          </label>`).join('')}
+      </div>
+    </details>`;
 }
 
 function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = false, presets = [] } = {}) {
@@ -492,7 +514,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
             <li class="flow-portion-batch-item" data-batch-index="${batchIndex}">
               ${!editable ? `<span class="flow-portion-batch-date">${formatDate(b.date)}</span>` : ''}
               ${b.name ? `
-                <span class="flow-portion-batch-name">${escapeHtml(b.name)}</span>
+                <span class="flow-portion-batch-name">${b.fromRecipe ? '<span class="flow-preset-recipe-star" title="ממתכון">★</span> ' : ''}${escapeHtml(b.name)}</span>
                 ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
                 ${b.extra ? `<span class="flow-portion-batch-extra">${escapeHtml(b.extra)}</span>` : ''}
               ` : ''}
@@ -2241,18 +2263,9 @@ async function renderManageView(container, ctx) {
             <input type="text" id="new-flow-prep-name" placeholder="משימה חדשה (למשל: הכנת בצק)">
             <button type="button" class="btn btn-secondary btn-sm" id="add-flow-prep-btn">+ הוסף</button>
           </div>
-          ${availableChecklistTasks.length ? `
-          <div class="flow-checklist-library" style="margin-top:14px">
-            <div class="flow-checklist-library-title">ספריית משימות — שייך לתזרim זה</div>
-            <p class="form-hint" style="margin-bottom:8px">משימות שהוגדרו בתזרimים אחרים באותה קטגוריה כללית</p>
-            <ul class="product-prep-list flow-prep-manage-list flow-checklist-library-list">
-              ${availableChecklistTasks.map((t) => `
-                <li class="product-prep-item flow-checklist-library-item">
-                  <span style="flex:1">${escapeHtml(t.name)}</span>
-                  <button type="button" class="btn btn-primary btn-sm link-checklist-task" data-task-id="${t.id}">+ שייך</button>
-                </li>`).join('')}
-            </ul>
-          </div>` : ''}
+          ${renderChecklistLibraryHTML(availableChecklistTasks, {
+    categoryLabel: activeFlow.categoryId ? activeFlow.targetLabel : '',
+  })}
           <button type="button" class="btn btn-secondary btn-sm" id="import-flow-prep-btn" style="width:100%;margin-top:8px">ייבא מסוגי הכנה בקטגוריה</button>
         </div>
 
@@ -2326,23 +2339,24 @@ async function renderManageView(container, ctx) {
           </select>
         </div>
         ${portionManageGroupId ? `
-          ${portionGroupName ? `<p class="form-hint" style="margin-bottom:12px">מנות עבור: <strong>${escapeHtml(portionGroupName)}</strong></p>` : ''}
+          ${portionGroupName ? `<p class="form-hint" style="margin-bottom:12px">מנות עבור: <strong>${escapeHtml(portionGroupName)}</strong> · <span class="flow-preset-recipe-hint">★ ממתכון מקושר</span></p>` : ''}
           ${portionPresets.length ? `
             <ul class="flow-preset-list">
               ${portionPresets.map((p) => `
-                <li class="flow-preset-item list-item">
+                <li class="flow-preset-item list-item${p.sourceRecipeId ? ' flow-preset-item--recipe' : ''}">
                   <div class="list-item-info">
-                    <div class="list-item-name">${escapeHtml(p.name)}</div>
-                    <div class="list-item-meta">${p.weight} ק"ג${p.extra ? ` · ${escapeHtml(p.extra)}` : ''}</div>
+                    <div class="list-item-name">${p.sourceRecipeId ? '<span class="flow-preset-recipe-star" title="ממתכון מקושר">★</span> ' : ''}${escapeHtml(p.name)}</div>
+                    <div class="list-item-meta">${p.weight} ק"ג${p.extra ? ` · ${escapeHtml(p.extra)}` : ''}${p.sourceRecipeId ? ' · עריכה במתכונים' : ''}</div>
                   </div>
+                  ${p.sourceRecipeId ? '' : `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm edit-preset"
                       data-id="${p.id}" data-name="${escapeHtml(p.name)}"
                       data-weight="${p.weight}" data-extra="${escapeHtml(p.extra || '')}">✏️</button>
                     <button type="button" class="btn btn-danger btn-sm delete-preset" data-id="${p.id}">🗑</button>
-                  </div>
+                  </div>`}
                 </li>`).join('')}
-            </ul>` : '<p class="form-hint">אין מנות — הוסף מנה למטה</p>'}
+            </ul>` : '<p class="form-hint">אין מנות — הוסף מנה למטה או שייך מתכון למוצר</p>'}
           <div class="flow-new-preset-form" style="margin-top:12px">
             <div class="form-group">
               <label for="new-preset-name">שם מנה</label>
@@ -2487,15 +2501,19 @@ async function renderManageView(container, ctx) {
     });
   });
 
-  container.querySelectorAll('.link-checklist-task').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!activeFlow) return;
+  container.querySelectorAll('.link-checklist-task-cb').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      if (!cb.checked || !activeFlow) return;
+      const taskId = Number(cb.dataset.taskId);
+      cb.disabled = true;
       try {
-        await linkChecklistTaskToFlow(activeFlow.id, Number(btn.dataset.taskId));
+        await linkChecklistTaskToFlow(activeFlow.id, taskId);
         requestAutoBackupNow().catch(() => {});
-        showToast('משימה שויכה לתזרim ✓');
+        showToast('משימה נוספה ✓');
         renderProcess(container);
       } catch (err) {
+        cb.checked = false;
+        cb.disabled = false;
         showToast(err.message || 'שגיאה');
       }
     });

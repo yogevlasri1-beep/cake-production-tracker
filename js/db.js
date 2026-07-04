@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=224';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=224';
-import { defaultColorForIndex } from './chart.js?v=224';
+} from './validators.js?v=229';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=229';
+import { defaultColorForIndex } from './chart.js?v=229';
 
 export { ValidationError };
 
@@ -1512,6 +1512,275 @@ db.version(42).stores({
   }
 });
 
+async function migrateRecipeProductScopeLinks(tx) {
+  const catLinkTable = tx.table('recipeProductCategoryLinks');
+  const groupLinkTable = tx.table('recipeProductGroupLinks');
+  if (await catLinkTable.count() > 0 || await groupLinkTable.count() > 0) return;
+
+  const recipes = await tx.table('recipes').toArray();
+  for (const r of recipes) {
+    const patch = {};
+    if (r.linkedProductCategoryId) {
+      await catLinkTable.add({ recipeId: r.id, categoryId: r.linkedProductCategoryId });
+      patch.linkedProductCategoryId = null;
+    }
+    if (r.linkedProductGroupId) {
+      await groupLinkTable.add({ recipeId: r.id, groupId: r.linkedProductGroupId });
+      patch.linkedProductGroupId = null;
+    }
+    if (Object.keys(patch).length) await tx.table('recipes').update(r.id, patch);
+  }
+}
+
+db.version(43).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  await migrateRecipeProductScopeLinks(tx);
+});
+
+db.version(44).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async () => {
+  const { syncAllRecipePortionPresets } = await import('./kitchen-db.js');
+  await syncAllRecipePortionPresets();
+});
+
+db.version(45).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const tasks = await tx.table('checklistTasks').toArray();
+  if (tasks.some((t) => t.categoryId)) return;
+
+  const [links, flows, groupPreps] = await Promise.all([
+    tx.table('flowChecklistItems').toArray(),
+    tx.table('flows').toArray(),
+    tx.table('groupPreparations').toArray(),
+  ]);
+  const flowMap = new Map(flows.map((f) => [f.id, f]));
+
+  for (const prep of groupPreps) {
+    if (!prep.categoryId) continue;
+    for (const task of tasks) {
+      if (task.categoryGroupId === prep.categoryGroupId
+        && task.name === prep.name
+        && !task.categoryId) {
+        await tx.table('checklistTasks').update(task.id, { categoryId: prep.categoryId });
+      }
+    }
+  }
+
+  const refreshed = await tx.table('checklistTasks').toArray();
+  const taskCatVotes = new Map();
+  for (const link of links) {
+    const flow = flowMap.get(link.flowId);
+    if (!flow?.categoryId) continue;
+    const votes = taskCatVotes.get(link.checklistTaskId) || new Set();
+    votes.add(flow.categoryId);
+    taskCatVotes.set(link.checklistTaskId, votes);
+  }
+  for (const task of refreshed) {
+    if (task.categoryId) continue;
+    const votes = taskCatVotes.get(task.id);
+    if (votes?.size === 1) {
+      await tx.table('checklistTasks').update(task.id, { categoryId: [...votes][0] });
+    }
+  }
+});
+
+db.version(46).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -1929,11 +2198,13 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.groupPreparations, db.flowCleaningTasks, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.runCleaningChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.productRecipeComponents, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, async () => {
+  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.groupPreparations, db.flowCleaningTasks, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.runCleaningChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.recipeProductCategoryLinks, db.recipeProductGroupLinks, db.productRecipeComponents, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, db.departmentCleaningLists, db.departmentCleaningTasks, async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
     await db.productRecipeComponents.clear();
     await db.recipeIngredients.clear();
+    await db.recipeProductCategoryLinks.clear();
+    await db.recipeProductGroupLinks.clear();
     await db.recipeProductLinks.clear();
     await db.recipes.clear();
     await db.recipeCategories.clear();
@@ -1962,6 +2233,8 @@ export async function resetAllData() {
     await db.managerEmployees.clear();
     await db.managerResponsibilityAreas.clear();
     await db.managerDepartments.clear();
+    await db.departmentCleaningTasks?.clear?.();
+    await db.departmentCleaningLists?.clear?.();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -2053,11 +2326,15 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    departmentCleaningLists,
+    departmentCleaningTasks,
     recipeGroups,
     recipeCategories,
     recipes,
     recipeIngredients,
     recipeProductLinks,
+    recipeProductCategoryLinks,
+    recipeProductGroupLinks,
     supplierCategories,
     suppliers,
     rawMaterials,
@@ -2099,11 +2376,15 @@ export async function exportAllData() {
     db.managerResponsibilityAreas.toArray(),
     db.managerEmployees.toArray(),
     db.managerDepartments?.toArray?.() ?? Promise.resolve([]),
+    db.departmentCleaningLists?.toArray?.() ?? Promise.resolve([]),
+    db.departmentCleaningTasks?.toArray?.() ?? Promise.resolve([]),
     db.recipeGroups.toArray(),
     db.recipeCategories.toArray(),
     db.recipes.toArray(),
     db.recipeIngredients.toArray(),
     db.recipeProductLinks.toArray(),
+    db.recipeProductCategoryLinks?.toArray?.() ?? Promise.resolve([]),
+    db.recipeProductGroupLinks?.toArray?.() ?? Promise.resolve([]),
     db.supplierCategories.toArray(),
     db.suppliers.toArray(),
     db.rawMaterials.toArray(),
@@ -2145,11 +2426,15 @@ export async function exportAllData() {
     managerResponsibilityAreas,
     managerEmployees,
     managerDepartments,
+    departmentCleaningLists,
+    departmentCleaningTasks,
     recipeGroups,
     recipeCategories,
     recipes,
     recipeIngredients,
     recipeProductLinks,
+    recipeProductCategoryLinks,
+    recipeProductGroupLinks,
     supplierCategories,
     suppliers,
     rawMaterials,
@@ -2201,6 +2486,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.weeklyProductionPlanItems)) payload.weeklyProductionPlanItems = [];
   if (!Array.isArray(payload.recipeGroups)) payload.recipeGroups = [];
   if (!Array.isArray(payload.recipeProductLinks)) payload.recipeProductLinks = [];
+  if (!Array.isArray(payload.recipeProductCategoryLinks)) payload.recipeProductCategoryLinks = [];
+  if (!Array.isArray(payload.recipeProductGroupLinks)) payload.recipeProductGroupLinks = [];
   if (!Array.isArray(payload.recipeCategories)) payload.recipeCategories = [];
   if (!Array.isArray(payload.recipes)) payload.recipes = [];
   if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
@@ -2218,6 +2505,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.managerResponsibilityAreas)) payload.managerResponsibilityAreas = [];
   if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
   if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
+  if (!Array.isArray(payload.departmentCleaningLists)) payload.departmentCleaningLists = [];
+  if (!Array.isArray(payload.departmentCleaningTasks)) payload.departmentCleaningTasks = [];
   if (!Array.isArray(payload.bakingProfiles)) payload.bakingProfiles = [];
   if (!Array.isArray(payload.bakingProfileProducts)) payload.bakingProfileProducts = [];
   if (!Array.isArray(payload.bakingProfileScopes)) payload.bakingProfileScopes = [];
@@ -2271,8 +2560,12 @@ export async function importAllData(payload) {
     db.managerResponsibilityAreas,
     db.managerEmployees,
     db.managerDepartments,
+    db.departmentCleaningLists,
+    db.departmentCleaningTasks,
     db.recipeGroups,
     db.recipeProductLinks,
+    db.recipeProductCategoryLinks,
+    db.recipeProductGroupLinks,
     db.recipeCategories,
     db.recipes,
     db.recipeIngredients,
@@ -2295,6 +2588,8 @@ export async function importAllData(payload) {
       await db.productRecipeComponents.clear();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
+      await db.recipeProductCategoryLinks.clear();
+      await db.recipeProductGroupLinks.clear();
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();
@@ -2325,6 +2620,8 @@ export async function importAllData(payload) {
       await db.managerShiftNotes.clear();
       await db.managerEmployees.clear();
       await db.managerResponsibilityAreas.clear();
+      await db.departmentCleaningTasks?.clear?.();
+      await db.departmentCleaningLists?.clear?.();
       await db.productPreparations.clear();
       await db.products.clear();
       await db.categories.clear();
@@ -2370,6 +2667,13 @@ export async function importAllData(payload) {
       if (payload.recipes.length) await db.recipes.bulkPut(payload.recipes);
       if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
       if (payload.recipeProductLinks.length) await db.recipeProductLinks.bulkPut(payload.recipeProductLinks);
+      if (payload.recipeProductCategoryLinks.length) {
+        await db.recipeProductCategoryLinks.bulkPut(payload.recipeProductCategoryLinks);
+      }
+      if (payload.recipeProductGroupLinks.length) {
+        await db.recipeProductGroupLinks.bulkPut(payload.recipeProductGroupLinks);
+      }
+      await migrateRecipeProductScopeLinks(tx);
       if (payload.bakingProfiles?.length) await db.bakingProfiles.bulkPut(payload.bakingProfiles);
       if (payload.bakingProfileProducts?.length) {
         await db.bakingProfileProducts.bulkPut(payload.bakingProfileProducts);
@@ -2405,6 +2709,12 @@ export async function importAllData(payload) {
         for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
           await db.managerDepartments.add({ ...d, active: true });
         }
+      }
+      if (payload.departmentCleaningLists?.length) {
+        await db.departmentCleaningLists.bulkPut(payload.departmentCleaningLists);
+      }
+      if (payload.departmentCleaningTasks?.length) {
+        await db.departmentCleaningTasks.bulkPut(payload.departmentCleaningTasks);
       }
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
@@ -3152,9 +3462,13 @@ export async function getChecklistTaskLibrary(categoryGroupId) {
 }
 
 export async function getChecklistLibraryForFlow(flowId) {
+  const flow = await db.flows.get(Number(flowId));
   const gid = await resolveFlowCategoryGroupId(flowId);
   if (!gid) return [];
-  return getChecklistTaskLibrary(gid);
+  const rows = await getChecklistTaskLibrary(gid);
+  const cid = flow?.categoryId ? Number(flow.categoryId) : null;
+  if (cid) return rows.filter((t) => Number(t.categoryId) === cid);
+  return rows.filter((t) => !t.categoryId);
 }
 
 export async function getAvailableChecklistTasksForFlow(flowId) {
@@ -3182,16 +3496,22 @@ export async function getFlowPreparations(flowId) {
   return result;
 }
 
-async function findOrCreateChecklistTask(categoryGroupId, name) {
+async function findOrCreateChecklistTask(categoryGroupId, name, categoryId = null) {
   const gid = sanitizeProductId(categoryGroupId);
   const trimmed = sanitizeName(name, 80);
   if (!gid || !trimmed) return null;
+  const cid = categoryId ? sanitizeProductId(categoryId) : null;
   const library = await getChecklistTaskLibrary(gid);
-  const existing = library.find((t) => t.name === trimmed);
+  const existing = library.find((t) => {
+    if (t.name !== trimmed) return false;
+    if (cid) return Number(t.categoryId) === cid;
+    return !t.categoryId;
+  });
   if (existing) return existing;
   const maxOrder = library.reduce((m, t) => Math.max(m, t.sortOrder ?? 0), 0);
   const taskId = await db.checklistTasks.add({
     categoryGroupId: gid,
+    categoryId: cid,
     name: trimmed,
     sortOrder: maxOrder + 1,
   });
@@ -3222,11 +3542,12 @@ export async function linkChecklistTaskToFlow(flowId, checklistTaskId) {
 
 export async function addFlowPreparation(flowId, name) {
   const fid = sanitizeProductId(flowId);
+  const flow = await db.flows.get(fid);
   const gid = await resolveFlowCategoryGroupId(fid);
   const trimmed = sanitizeName(name, 80);
   if (!fid || !gid) throw new ValidationError('תזרים לא תקין');
   if (!trimmed) throw new ValidationError('שם משימה לא תקין');
-  const task = await findOrCreateChecklistTask(gid, trimmed);
+  const task = await findOrCreateChecklistTask(gid, trimmed, flow?.categoryId || null);
   if (!task) throw new ValidationError('שם משימה לא תקין');
   return linkChecklistTaskToFlow(fid, task.id);
 }
@@ -3977,6 +4298,9 @@ export async function addGroupPortionPreset(categoryGroupId, { name, weight, ext
 export async function updateGroupPortionPreset(id, { name, weight, extra } = {}) {
   const existing = await db.groupPortionPresets.get(id);
   if (!existing) throw new ValidationError('מנה לא נמצאה');
+  if (existing.sourceRecipeId) {
+    throw new ValidationError('מנה ממתכון מקושר — ערוך במסך המתכונים');
+  }
   const patch = {};
   if (name != null) {
     const cleanName = sanitizeName(name, 80);
@@ -3994,6 +4318,10 @@ export async function updateGroupPortionPreset(id, { name, weight, extra } = {})
 }
 
 export async function deleteGroupPortionPreset(id) {
+  const existing = await db.groupPortionPresets.get(id);
+  if (existing?.sourceRecipeId) {
+    throw new ValidationError('מנה ממתכון מקושר — ערוך במסך המתכונים');
+  }
   return db.groupPortionPresets.delete(id);
 }
 
@@ -4631,6 +4959,7 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
     entry.name = preset.name;
     entry.weight = preset.weight;
     entry.extra = preset.extra || '';
+    if (preset.sourceRecipeId) entry.fromRecipe = true;
   }
 
   batches.push(entry);
@@ -5136,6 +5465,92 @@ export async function deleteManagerDepartment(id) {
     await db.managerDepartments.delete(row.id);
   });
   await refreshManagerDeptKeysCache();
+}
+
+/* ── ניקוי מחלקות — רשימות ומשימות מוכנות ── */
+
+export async function getDepartmentCleaningLists() {
+  const [lists, tasks] = await Promise.all([
+    db.departmentCleaningLists?.toArray?.() ?? Promise.resolve([]),
+    db.departmentCleaningTasks?.toArray?.() ?? Promise.resolve([]),
+  ]);
+  const counts = new Map();
+  for (const t of tasks) counts.set(t.listId, (counts.get(t.listId) || 0) + 1);
+  return lists
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
+    .map((l) => ({ ...l, taskCount: counts.get(l.id) || 0 }));
+}
+
+export async function getDepartmentCleaningTasks(listId) {
+  const lid = sanitizeProductId(listId);
+  if (!lid) return [];
+  const rows = await db.departmentCleaningTasks.where('listId').equals(lid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addDepartmentCleaningList({ name, notes } = {}) {
+  const cleanName = sanitizeName(name, 60);
+  if (!cleanName) throw new ValidationError('שם מחלקה לא תקין');
+  const existing = await db.departmentCleaningLists.toArray();
+  const maxOrder = existing.reduce((m, l) => Math.max(m, l.sortOrder ?? 0), 0);
+  return db.departmentCleaningLists.add({
+    name: cleanName,
+    notes: String(notes || '').trim().slice(0, 500),
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateDepartmentCleaningList(id, { name, notes } = {}) {
+  const row = await db.departmentCleaningLists.get(Number(id));
+  if (!row) throw new ValidationError('מחלקה לא נמצאה');
+  const patch = {};
+  if (name != null) {
+    const clean = sanitizeName(name, 60);
+    if (!clean) throw new ValidationError('שם מחלקה לא תקין');
+    patch.name = clean;
+  }
+  if (notes !== undefined) patch.notes = String(notes || '').trim().slice(0, 500);
+  if (Object.keys(patch).length) await db.departmentCleaningLists.update(row.id, patch);
+}
+
+export async function deleteDepartmentCleaningList(id) {
+  const lid = sanitizeProductId(id);
+  if (!lid) return;
+  await db.transaction('rw', db.departmentCleaningLists, db.departmentCleaningTasks, async () => {
+    await db.departmentCleaningTasks.where('listId').equals(lid).delete();
+    await db.departmentCleaningLists.delete(lid);
+  });
+}
+
+export async function addDepartmentCleaningTask(listId, name) {
+  const lid = sanitizeProductId(listId);
+  const cleanName = sanitizeName(name, 120);
+  if (!lid) throw new ValidationError('מחלקה לא תקינה');
+  if (!cleanName) throw new ValidationError('שם משימה לא תקין');
+  const list = await db.departmentCleaningLists.get(lid);
+  if (!list) throw new ValidationError('מחלקה לא נמצאה');
+  const existing = await getDepartmentCleaningTasks(lid);
+  const maxOrder = existing.reduce((m, t) => Math.max(m, t.sortOrder ?? 0), 0);
+  return db.departmentCleaningTasks.add({
+    listId: lid,
+    name: cleanName,
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateDepartmentCleaningTask(id, { name } = {}) {
+  const row = await db.departmentCleaningTasks.get(Number(id));
+  if (!row) throw new ValidationError('משימה לא נמצאה');
+  if (name != null) {
+    const clean = sanitizeName(name, 120);
+    if (!clean) throw new ValidationError('שם משימה לא תקין');
+    await db.departmentCleaningTasks.update(row.id, { name: clean });
+  }
+}
+
+export async function deleteDepartmentCleaningTask(id) {
+  const tid = sanitizeProductId(id);
+  if (tid) await db.departmentCleaningTasks.delete(tid);
 }
 
 function managerNowISO() {
