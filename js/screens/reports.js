@@ -4,24 +4,24 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=219';
+} from '../db.js?v=220';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
-} from '../utils.js?v=219';
+} from '../utils.js?v=220';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=219';
-import { openModal, closeModal } from '../modal.js?v=219';
+} from '../export.js?v=220';
+import { openModal, closeModal } from '../modal.js?v=220';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=219';
-import { isSheetsConfigured } from '../google-sheets.js?v=219';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=219';
-import { defaultColorForIndex } from '../chart.js?v=219';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=219';
+} from '../sheets-flow.js?v=220';
+import { isSheetsConfigured } from '../google-sheets.js?v=220';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=220';
+import { defaultColorForIndex } from '../chart.js?v=220';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=220';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -497,6 +497,7 @@ function renderProductionRunsStepsTable(run) {
             <td class="report-cell-num">${i + 1}</td>
             <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
             <td class="report-cell-num">${status}</td>
+            <td class="report-cell-text">${startedAt}</td>
             <td class="report-cell-text">${completedAt}</td>
             <td class="report-cell-num">${stepDur}</td>
             <td class="report-cell-text">${portions}</td>

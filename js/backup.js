@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=219';
-import { APP_VERSION } from './version.js?v=219';
-import { defaultColorForIndex } from './chart.js?v=219';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=219';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=219';
-import { ValidationError } from './validators.js?v=219';
+import { exportAllData, importAllData } from './db.js?v=220';
+import { APP_VERSION } from './version.js?v=220';
+import { defaultColorForIndex } from './chart.js?v=220';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=220';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=220';
+import { ValidationError } from './validators.js?v=220';
 
 export const BACKUP_VERSION = 3;
 
@@ -195,6 +195,8 @@ export function enrichBackupData(raw) {
     runStepStates: raw.runStepStates || [],
     productPreparations: raw.productPreparations || [],
     runPreparationChecks: raw.runPreparationChecks || [],
+    flowCleaningTasks: raw.flowCleaningTasks || [],
+    runCleaningChecks: raw.runCleaningChecks || [],
     managerPlans: raw.managerPlans || [],
     managerPlanItems: raw.managerPlanItems || [],
     managerTasks: raw.managerTasks || [],
@@ -226,6 +228,8 @@ export function summarizeBackupData(data) {
     runStepStates: data.runStepStates?.length || 0,
     productPreparations: data.productPreparations?.length || 0,
     runPreparationChecks: data.runPreparationChecks?.length || 0,
+    flowCleaningTasks: data.flowCleaningTasks?.length || 0,
+    runCleaningChecks: data.runCleaningChecks?.length || 0,
     weeklyProductionPlans: data.weeklyProductionPlans?.length || 0,
     weeklyProductionPlanItems: data.weeklyProductionPlanItems?.length || 0,
     managerPlans: data.managerPlans?.length || 0,
@@ -331,6 +335,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.flowPreparations)) data.flowPreparations = [];
   if (!Array.isArray(data.productPreparations)) data.productPreparations = [];
   if (!Array.isArray(data.runPreparationChecks)) data.runPreparationChecks = [];
+  if (!Array.isArray(data.flowCleaningTasks)) data.flowCleaningTasks = [];
+  if (!Array.isArray(data.runCleaningChecks)) data.runCleaningChecks = [];
   if (!Array.isArray(data.recipeGroups)) data.recipeGroups = [];
   if (!Array.isArray(data.recipeProductLinks)) data.recipeProductLinks = [];
   if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];

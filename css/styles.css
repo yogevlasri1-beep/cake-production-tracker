@@ -1267,8 +1267,48 @@ body {
   flex: 1;
 }
 
-.flow-prep-compact-wrap {
+.flow-prep-compact-wrap,
+.flow-checklist-compact-wrap {
   position: relative;
+}
+
+.flow-run-checklist-tools {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+
+.flow-checklist-btn {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 2px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  line-height: 1;
+}
+
+.flow-checklist-btn-icon {
+  font-size: 0.95rem;
+}
+
+.flow-checklist-btn-count {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.flow-clean-manage-card {
+  margin-top: 12px;
+  border-color: #86efac;
+}
+
+.flow-clean-manage-card .card-title {
+  color: #166534;
 }
 
 .flow-prep-popover {
@@ -1781,6 +1821,7 @@ body {
   margin-bottom: 8px;
   position: relative;
   padding-top: 40px;
+  padding-inline: 12px;
 }
 
 .flow-run-corner-tools {
