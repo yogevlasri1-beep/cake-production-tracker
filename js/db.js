@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=223';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=223';
-import { defaultColorForIndex } from './chart.js?v=223';
+} from './validators.js?v=224';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=224';
+import { defaultColorForIndex } from './chart.js?v=224';
 
 export { ValidationError };
 
@@ -1402,6 +1402,116 @@ db.version(41).stores({
   managerDepartments: '++id, deptKey, sortOrder, active',
 });
 
+db.version(42).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const linkTable = tx.table('flowChecklistItems');
+  if (await linkTable.count() > 0) return;
+
+  const [groupPreps, flows, categories] = await Promise.all([
+    tx.table('groupPreparations').toArray(),
+    tx.table('flows').toArray(),
+    tx.table('categories').toArray(),
+  ]);
+  const catMap = new Map(categories.map((c) => [c.id, c]));
+  const checklistTable = tx.table('checklistTasks');
+  const taskKeyToId = new Map();
+  const oldPrepIdToTaskId = new Map();
+
+  for (const prep of groupPreps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+    const scopeKey = `${prep.categoryGroupId}|${prep.categoryId || ''}|${prep.name}`;
+    let taskId = taskKeyToId.get(scopeKey);
+    if (!taskId) {
+      taskId = await checklistTable.add({
+        categoryGroupId: prep.categoryGroupId,
+        name: prep.name,
+        sortOrder: prep.sortOrder ?? 0,
+      });
+      taskKeyToId.set(scopeKey, taskId);
+    }
+    oldPrepIdToTaskId.set(prep.id, taskId);
+  }
+
+  for (const flow of flows) {
+    let gid = flow.categoryGroupId || null;
+    const cid = flow.categoryId || null;
+    if (cid) {
+      const cat = catMap.get(cid);
+      gid = cat?.groupId || gid;
+    }
+    if (!gid) continue;
+
+    const scopePreps = groupPreps.filter((p) => {
+      if (p.categoryGroupId !== gid) return false;
+      if (cid) return p.categoryId === cid;
+      return !p.categoryId;
+    });
+
+    let sortOrder = 0;
+    const linked = new Set();
+    for (const prep of scopePreps.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)) {
+      const taskId = oldPrepIdToTaskId.get(prep.id);
+      if (!taskId || linked.has(taskId)) continue;
+      await linkTable.add({ flowId: flow.id, checklistTaskId: taskId, sortOrder: sortOrder++ });
+      linked.add(taskId);
+    }
+  }
+
+  const checks = await tx.table('runPreparationChecks').toArray();
+  for (const check of checks) {
+    if (check.flowPreparationId && oldPrepIdToTaskId.has(check.flowPreparationId)) {
+      await tx.table('runPreparationChecks').update(check.id, {
+        flowPreparationId: oldPrepIdToTaskId.get(check.flowPreparationId),
+      });
+    }
+  }
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -1926,6 +2036,8 @@ export async function exportAllData() {
     flowPortionPresets,
     groupPortionPresets,
     groupPreparations,
+    checklistTasks,
+    flowChecklistItems,
     flowCleaningTasks,
     productionRuns,
     runStepStates,
@@ -1970,6 +2082,8 @@ export async function exportAllData() {
     db.flowPortionPresets.toArray(),
     db.groupPortionPresets.toArray(),
     db.groupPreparations.toArray(),
+    db.checklistTasks?.toArray?.() ?? Promise.resolve([]),
+    db.flowChecklistItems?.toArray?.() ?? Promise.resolve([]),
     db.flowCleaningTasks?.toArray?.() ?? Promise.resolve([]),
     db.productionRuns.toArray(),
     db.runStepStates.toArray(),
@@ -2015,6 +2129,8 @@ export async function exportAllData() {
     flowPortionPresets,
     groupPortionPresets,
     groupPreparations,
+    checklistTasks,
+    flowChecklistItems,
     flowCleaningTasks,
     productionRuns,
     runStepStates,
@@ -2079,6 +2195,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
   if (!Array.isArray(payload.runPreparationChecks)) payload.runPreparationChecks = [];
   if (!Array.isArray(payload.flowCleaningTasks)) payload.flowCleaningTasks = [];
+  if (!Array.isArray(payload.checklistTasks)) payload.checklistTasks = [];
+  if (!Array.isArray(payload.flowChecklistItems)) payload.flowChecklistItems = [];
   if (!Array.isArray(payload.runCleaningChecks)) payload.runCleaningChecks = [];
   if (!Array.isArray(payload.weeklyProductionPlanItems)) payload.weeklyProductionPlanItems = [];
   if (!Array.isArray(payload.recipeGroups)) payload.recipeGroups = [];
@@ -2136,6 +2254,8 @@ export async function importAllData(payload) {
     db.flowPortionPresets,
     db.groupPortionPresets,
     db.groupPreparations,
+    db.checklistTasks,
+    db.flowChecklistItems,
     db.flowCleaningTasks,
     db.productionRuns,
     db.runStepStates,
@@ -2194,6 +2314,8 @@ export async function importAllData(payload) {
       await db.groupPortionPresets.clear();
       await db.groupPreparations.clear();
       await db.flowCleaningTasks?.clear?.();
+      await db.flowChecklistItems?.clear?.();
+      await db.checklistTasks?.clear?.();
       await db.flowSteps.clear();
       await db.flows.clear();
       await db.managerPlanItems.clear();
@@ -2240,6 +2362,8 @@ export async function importAllData(payload) {
       if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
       if (payload.runPreparationChecks.length) await db.runPreparationChecks.bulkPut(payload.runPreparationChecks);
       if (payload.flowCleaningTasks.length) await db.flowCleaningTasks.bulkPut(payload.flowCleaningTasks);
+      if (payload.checklistTasks.length) await db.checklistTasks.bulkPut(payload.checklistTasks);
+      if (payload.flowChecklistItems.length) await db.flowChecklistItems.bulkPut(payload.flowChecklistItems);
       if (payload.runCleaningChecks.length) await db.runCleaningChecks.bulkPut(payload.runCleaningChecks);
       if (payload.recipeGroups.length) await db.recipeGroups.bulkPut(payload.recipeGroups);
       if (payload.recipeCategories.length) await db.recipeCategories.bulkPut(payload.recipeCategories);
@@ -2996,8 +3120,124 @@ export async function getProcessLogsForMonth(year, month) {
   return all.filter((e) => e.date.startsWith(prefix));
 }
 
-/* ── הכנות לתזרים (צ׳קליסט — רשימה קבועה לפי קטגוריה כללית) ── */
+/* ── צ׳קליסט משימות לתזרים — ספרייה + שיוך לכל תזרim ── */
 
+async function resolveFlowCategoryGroupId(flowId) {
+  const flow = await db.flows.get(Number(flowId));
+  if (!flow) return null;
+  if (flow.categoryGroupId) return flow.categoryGroupId;
+  if (flow.categoryId) {
+    const cat = await db.categories.get(flow.categoryId);
+    return cat?.groupId || null;
+  }
+  return null;
+}
+
+function mapFlowChecklistItem(link, task) {
+  return {
+    id: link.id,
+    linkId: link.id,
+    checklistTaskId: task.id,
+    name: task.name,
+    sortOrder: link.sortOrder ?? task.sortOrder ?? 0,
+  };
+}
+
+export async function getChecklistTaskLibrary(categoryGroupId) {
+  const gid = sanitizeProductId(categoryGroupId);
+  if (!gid) return [];
+  const rows = await db.checklistTasks.where('categoryGroupId').equals(gid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function getChecklistLibraryForFlow(flowId) {
+  const gid = await resolveFlowCategoryGroupId(flowId);
+  if (!gid) return [];
+  return getChecklistTaskLibrary(gid);
+}
+
+export async function getAvailableChecklistTasksForFlow(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const [library, linked] = await Promise.all([
+    getChecklistLibraryForFlow(fid),
+    db.flowChecklistItems.where('flowId').equals(fid).toArray(),
+  ]);
+  const linkedIds = new Set(linked.map((l) => l.checklistTaskId));
+  return library.filter((t) => !linkedIds.has(t.id));
+}
+
+export async function getFlowPreparations(flowId) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return [];
+  const links = await db.flowChecklistItems.where('flowId').equals(fid).toArray();
+  links.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const result = [];
+  for (const link of links) {
+    const task = await db.checklistTasks.get(link.checklistTaskId);
+    if (!task) continue;
+    result.push(mapFlowChecklistItem(link, task));
+  }
+  return result;
+}
+
+async function findOrCreateChecklistTask(categoryGroupId, name) {
+  const gid = sanitizeProductId(categoryGroupId);
+  const trimmed = sanitizeName(name, 80);
+  if (!gid || !trimmed) return null;
+  const library = await getChecklistTaskLibrary(gid);
+  const existing = library.find((t) => t.name === trimmed);
+  if (existing) return existing;
+  const maxOrder = library.reduce((m, t) => Math.max(m, t.sortOrder ?? 0), 0);
+  const taskId = await db.checklistTasks.add({
+    categoryGroupId: gid,
+    name: trimmed,
+    sortOrder: maxOrder + 1,
+  });
+  return db.checklistTasks.get(taskId);
+}
+
+export async function linkChecklistTaskToFlow(flowId, checklistTaskId) {
+  const fid = sanitizeProductId(flowId);
+  const tid = sanitizeProductId(checklistTaskId);
+  if (!fid || !tid) throw new ValidationError('פריט לא תקין');
+  const task = await db.checklistTasks.get(tid);
+  if (!task) throw new ValidationError('משימה לא נמצאה');
+  const existing = await db.flowChecklistItems
+    .where('[flowId+checklistTaskId]')
+    .equals([fid, tid])
+    .first();
+  if (existing) return mapFlowChecklistItem(existing, task);
+
+  const links = await db.flowChecklistItems.where('flowId').equals(fid).toArray();
+  const maxOrder = links.reduce((m, l) => Math.max(m, l.sortOrder ?? 0), 0);
+  const linkId = await db.flowChecklistItems.add({
+    flowId: fid,
+    checklistTaskId: tid,
+    sortOrder: maxOrder + 1,
+  });
+  return mapFlowChecklistItem({ id: linkId, sortOrder: maxOrder + 1 }, task);
+}
+
+export async function addFlowPreparation(flowId, name) {
+  const fid = sanitizeProductId(flowId);
+  const gid = await resolveFlowCategoryGroupId(fid);
+  const trimmed = sanitizeName(name, 80);
+  if (!fid || !gid) throw new ValidationError('תזרים לא תקין');
+  if (!trimmed) throw new ValidationError('שם משימה לא תקין');
+  const task = await findOrCreateChecklistTask(gid, trimmed);
+  if (!task) throw new ValidationError('שם משימה לא תקין');
+  return linkChecklistTaskToFlow(fid, task.id);
+}
+
+export async function deleteFlowPreparation(linkId) {
+  const id = sanitizeProductId(linkId);
+  if (!id) return;
+  await db.flowChecklistItems.delete(id);
+}
+
+/** @deprecated — use resolveFlowCategoryGroupId */
 async function resolveFlowPrepScope(flowId) {
   const flow = await db.flows.get(Number(flowId));
   if (!flow) return { categoryGroupId: null, categoryId: null };
@@ -3008,48 +3248,9 @@ async function resolveFlowPrepScope(flowId) {
   return { categoryGroupId: flow.categoryGroupId || null, categoryId: null };
 }
 
+/** @deprecated */
 export async function getGroupPreparations(categoryGroupId, categoryId = null) {
-  const gid = sanitizeProductId(categoryGroupId);
-  if (!gid) return [];
-  const cid = categoryId ? sanitizeProductId(categoryId) : null;
-  let rows = await db.groupPreparations.where('categoryGroupId').equals(gid).toArray();
-  if (cid) {
-    rows = rows.filter((p) => p.categoryId === cid);
-  } else {
-    rows = rows.filter((p) => !p.categoryId);
-  }
-  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-  return rows;
-}
-
-export async function getFlowPreparations(flowId) {
-  const scope = await resolveFlowPrepScope(flowId);
-  if (!scope.categoryGroupId) return [];
-  return getGroupPreparations(scope.categoryGroupId, scope.categoryId);
-}
-
-export async function addFlowPreparation(flowId, name) {
-  const scope = await resolveFlowPrepScope(flowId);
-  const trimmed = sanitizeName(name, 80);
-  if (!scope.categoryGroupId) throw new ValidationError('תזרים לא תקין');
-  if (!trimmed) throw new ValidationError('שם הכנה לא תקין');
-  const existing = await getGroupPreparations(scope.categoryGroupId, scope.categoryId);
-  if (existing.some((p) => p.name === trimmed)) {
-    throw new ValidationError('הכנה זו כבר קיימת ברשימה');
-  }
-  const maxOrder = existing.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
-  return db.groupPreparations.add({
-    categoryGroupId: scope.categoryGroupId,
-    categoryId: scope.categoryId || null,
-    name: trimmed,
-    sortOrder: maxOrder + 1,
-  });
-}
-
-export async function deleteFlowPreparation(id) {
-  const prepId = sanitizeProductId(id);
-  if (!prepId) return;
-  await db.groupPreparations.delete(prepId);
+  return getChecklistTaskLibrary(categoryGroupId);
 }
 
 async function resolveFlowCategoryIdForPresets(flowId) {
@@ -3089,7 +3290,7 @@ async function seedRunPreparationChecksInTx(tx, runId, flowId) {
   for (const prep of preps) {
     await tx.table('runPreparationChecks').add({
       runId: rid,
-      flowPreparationId: prep.id,
+      flowPreparationId: prep.checklistTaskId,
       name: prep.name,
       sortOrder: prep.sortOrder ?? 0,
       checked: false,
@@ -3120,7 +3321,8 @@ export async function ensureRunPreparationChecks(runId) {
 
   await db.transaction('rw', db.runPreparationChecks, async () => {
     for (const prep of preps) {
-      const ex = byPrepId.get(prep.id);
+      const taskId = prep.checklistTaskId;
+      const ex = byPrepId.get(taskId);
       if (ex) {
         if (ex.name !== prep.name || ex.sortOrder !== prep.sortOrder) {
           await db.runPreparationChecks.update(ex.id, { name: prep.name, sortOrder: prep.sortOrder ?? 0 });
@@ -3128,7 +3330,7 @@ export async function ensureRunPreparationChecks(runId) {
       } else {
         await db.runPreparationChecks.add({
           runId: rid,
-          flowPreparationId: prep.id,
+          flowPreparationId: taskId,
           name: prep.name,
           sortOrder: prep.sortOrder ?? 0,
           checked: false,
@@ -3151,24 +3353,21 @@ export async function setRunPreparationChecked(checkId, checked) {
 }
 
 export async function addRunPreparationFromFlow(flowId, name, runId) {
-  const prepId = await addFlowPreparation(flowId, name);
+  const prep = await addFlowPreparation(flowId, name);
   const rid = sanitizeProductId(runId);
-  if (!rid) return prepId;
-  const prep = await db.groupPreparations.get(prepId);
-  if (prep) {
-    const existing = await getRunPreparationChecks(rid);
-    if (!existing.some((c) => c.flowPreparationId === prep.id)) {
-      await db.runPreparationChecks.add({
-        runId: rid,
-        flowPreparationId: prep.id,
-        name: prep.name,
-        sortOrder: prep.sortOrder ?? 0,
-        checked: false,
-        checkedAt: null,
-      });
-    }
+  if (!rid || !prep) return prep?.linkId;
+  const existing = await getRunPreparationChecks(rid);
+  if (!existing.some((c) => c.flowPreparationId === prep.checklistTaskId)) {
+    await db.runPreparationChecks.add({
+      runId: rid,
+      flowPreparationId: prep.checklistTaskId,
+      name: prep.name,
+      sortOrder: prep.sortOrder ?? 0,
+      checked: false,
+      checkedAt: null,
+    });
   }
-  return prepId;
+  return prep.linkId;
 }
 
 /* ── ניקיון לתזרים (צ׳קליסט — רשימה קבועה לכל תזרים) ── */
@@ -3534,7 +3733,7 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
   ]);
   const maxOrder = existing.reduce((m, f) => Math.max(m, f.sortOrder ?? 0), 0);
 
-  return db.transaction('rw', db.flows, db.flowSteps, db.flowCleaningTasks, async () => {
+  return db.transaction('rw', db.flows, db.flowSteps, db.flowCleaningTasks, db.flowChecklistItems, async () => {
     const newFlowId = await db.flows.add({
       categoryId: isCategoryTarget ? cid : null,
       categoryGroupId: isCategoryTarget ? null : gid,
@@ -3563,6 +3762,15 @@ export async function duplicateFlow(sourceFlowId, { name, categoryId, categoryGr
         flowId: newFlowId,
         name: task.name,
         sortOrder: task.sortOrder ?? 0,
+      });
+    }
+
+    const checklistLinks = await db.flowChecklistItems.where('flowId').equals(sourceId).toArray();
+    for (const link of checklistLinks) {
+      await db.flowChecklistItems.add({
+        flowId: newFlowId,
+        checklistTaskId: link.checklistTaskId,
+        sortOrder: link.sortOrder ?? 0,
       });
     }
 
@@ -3615,9 +3823,10 @@ export async function deleteFlow(flowId) {
     throw new ValidationError('לא ניתן למחוק את התזרים האחרון');
   }
 
-  await db.transaction('rw', db.flows, db.flowSteps, db.flowCleaningTasks, async () => {
+  await db.transaction('rw', db.flows, db.flowSteps, db.flowCleaningTasks, db.flowChecklistItems, async () => {
     await db.flowSteps.where('flowId').equals(fid).delete();
     await db.flowCleaningTasks.where('flowId').equals(fid).delete();
+    await db.flowChecklistItems.where('flowId').equals(fid).delete();
     await db.flows.delete(fid);
     if (flow.isDefault) {
       const remaining = siblings.filter((f) => f.id !== fid);
@@ -4125,7 +4334,7 @@ export async function startProductionRun({
       for (const prep of prepChecks) {
         await db.runPreparationChecks.add({
           runId,
-          flowPreparationId: prep.id,
+          flowPreparationId: prep.checklistTaskId,
           name: prep.name,
           sortOrder: prep.sortOrder ?? 0,
           checked: false,
@@ -5137,14 +5346,14 @@ export async function addManagerPlanProductWithChecklists({
   const rows = [];
 
   for (const prep of preps) {
-    if (existingPrepKeys.has(prep.id)) continue;
+    if (existingPrepKeys.has(prep.checklistTaskId)) continue;
     rows.push({
       planType,
       anchorDate,
       dayOffset: offset,
       itemKind: 'flow_preparation',
       flowId: flow.id,
-      flowPreparationId: prep.id,
+      flowPreparationId: prep.checklistTaskId,
       productId: pid,
       categoryId: prod.categoryId,
       categoryGroupId,
@@ -5281,14 +5490,14 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
     }
 
     for (const prep of preps) {
-      if (existingPrepIds.has(prep.id)) continue;
+      if (existingPrepIds.has(prep.checklistTaskId)) continue;
       rows.push({
         planType,
         anchorDate,
         dayOffset: Number(dayOffset) || 0,
         itemKind: 'flow_preparation',
         flowId: flow.id,
-        flowPreparationId: prep.id,
+        flowPreparationId: prep.checklistTaskId,
         productId: null,
         categoryId,
         categoryGroupId,
@@ -5297,7 +5506,7 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
         done: false,
         sortOrder: sortOrder++,
       });
-      existingPrepIds.add(prep.id);
+      existingPrepIds.add(prep.checklistTaskId);
     }
   }
 

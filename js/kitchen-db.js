@@ -1,8 +1,8 @@
-import { db, ValidationError } from './db.js?v=223';
+import { db, ValidationError } from './db.js?v=224';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
-} from './validators.js?v=223';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=223';
+} from './validators.js?v=224';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=224';
 
 const DEFAULT_RECIPE_YIELD = 1;
 

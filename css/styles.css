@@ -1302,6 +1302,21 @@ body {
   color: var(--text-muted);
 }
 
+.flow-checklist-library {
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+
+.flow-checklist-library-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 4px;
+}
+
+.flow-checklist-library-item {
+  gap: 8px;
+}
+
 .flow-clean-manage-card {
   margin-top: 12px;
   border-color: #86efac;

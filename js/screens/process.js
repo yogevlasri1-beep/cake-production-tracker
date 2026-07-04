@@ -7,6 +7,7 @@ import {
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   getFlowPreparations, addFlowPreparation, deleteFlowPreparation, importFlowPreparationsFromActivityPresets,
+  getAvailableChecklistTasksForFlow, linkChecklistTaskToFlow,
   getFlowCleaningTasks, addFlowCleaningTask, deleteFlowCleaningTask,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   getAllProductionRuns,
@@ -20,11 +21,11 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=223';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=223';
-import { openModal, closeModal } from '../modal.js?v=223';
-import { requestAutoBackupNow } from '../backup-service.js?v=223';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=223';
+} from '../db.js?v=224';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=224';
+import { openModal, closeModal } from '../modal.js?v=224';
+import { requestAutoBackupNow } from '../backup-service.js?v=224';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=224';
 
 function parseIdList(str) {
   try {
@@ -2149,10 +2150,11 @@ async function renderManageView(container, ctx) {
   if (activeFlow) {
     await ensureFlowProductionStep(activeFlow.id);
   }
-  const [steps, flowPreps, flowCleaningTasks, portionPresets] = await Promise.all([
+  const [steps, flowPreps, flowCleaningTasks, availableChecklistTasks, portionPresets] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getFlowPreparations(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getFlowCleaningTasks(activeFlow.id) : Promise.resolve([]),
+    activeFlow ? getAvailableChecklistTasksForFlow(activeFlow.id) : Promise.resolve([]),
     portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),
   ]);
 
@@ -2224,21 +2226,33 @@ async function renderManageView(container, ctx) {
 
         ${activeFlow ? `
         <div class="flow-prep-manage-card">
-          <div class="card-title" style="margin-bottom:6px">✅ צ׳קליסט משימות</div>
-          <p class="form-hint" style="margin-bottom:10px">רשימה קבועה לקטגוריה כללית — נשמרת לתמיד · מופיעה בכל תהליך שמשתמש בתזרים «${escapeHtml(activeFlow.name)}»</p>
+          <div class="card-title" style="margin-bottom:6px">✅ צ׳קליסט משימות · ${escapeHtml(activeFlow.name)}</div>
+          <p class="form-hint" style="margin-bottom:10px">רשימה ייחודית לתזרim זה — מחיקה מסירה מהתזרim בלבד</p>
           ${flowPreps.length ? `
             <ul class="product-prep-list flow-prep-manage-list">
               ${flowPreps.map((p, i) => `
                 <li class="product-prep-item" data-prep-id="${p.id}">
                   <span class="flow-prep-manage-num">${i + 1}.</span>
                   <span style="flex:1">${escapeHtml(p.name)}</span>
-                  <button type="button" class="btn btn-danger btn-sm delete-flow-prep" data-id="${p.id}">🗑</button>
+                  <button type="button" class="btn btn-danger btn-sm delete-flow-prep" data-id="${p.id}" title="הסר מהתזרim">🗑</button>
                 </li>`).join('')}
-            </ul>` : '<p class="form-hint" style="margin-bottom:8px">אין משימות — הוסף למטה</p>'}
+            </ul>` : '<p class="form-hint" style="margin-bottom:8px">אין משימות בתזרim — הוסף חדשה או שייך מהספרייה</p>'}
           <div class="filter-row" style="margin-top:10px">
-            <input type="text" id="new-flow-prep-name" placeholder="למשל: הכנת בצק, שקילות...">
+            <input type="text" id="new-flow-prep-name" placeholder="משימה חדשה (למשל: הכנת בצק)">
             <button type="button" class="btn btn-secondary btn-sm" id="add-flow-prep-btn">+ הוסף</button>
           </div>
+          ${availableChecklistTasks.length ? `
+          <div class="flow-checklist-library" style="margin-top:14px">
+            <div class="flow-checklist-library-title">ספריית משימות — שייך לתזרim זה</div>
+            <p class="form-hint" style="margin-bottom:8px">משימות שהוגדרו בתזרimים אחרים באותה קטגוריה כללית</p>
+            <ul class="product-prep-list flow-prep-manage-list flow-checklist-library-list">
+              ${availableChecklistTasks.map((t) => `
+                <li class="product-prep-item flow-checklist-library-item">
+                  <span style="flex:1">${escapeHtml(t.name)}</span>
+                  <button type="button" class="btn btn-primary btn-sm link-checklist-task" data-task-id="${t.id}">+ שייך</button>
+                </li>`).join('')}
+            </ul>
+          </div>` : ''}
           <button type="button" class="btn btn-secondary btn-sm" id="import-flow-prep-btn" style="width:100%;margin-top:8px">ייבא מסוגי הכנה בקטגוריה</button>
         </div>
 
@@ -2461,11 +2475,25 @@ async function renderManageView(container, ctx) {
 
   container.querySelectorAll('.delete-flow-prep').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm('למחוק הכנה זו מהתזרים?')) return;
+      if (!confirm('להסיר משימה זו מהתזרim? (תישאר בספרייה לתזרimים אחרים)')) return;
       try {
         await deleteFlowPreparation(Number(btn.dataset.id));
         requestAutoBackupNow().catch(() => {});
-        showToast('נמחק');
+        showToast('הוסר מהתזרim');
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.link-checklist-task').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!activeFlow) return;
+      try {
+        await linkChecklistTaskToFlow(activeFlow.id, Number(btn.dataset.taskId));
+        requestAutoBackupNow().catch(() => {});
+        showToast('משימה שויכה לתזרim ✓');
         renderProcess(container);
       } catch (err) {
         showToast(err.message || 'שגיאה');
