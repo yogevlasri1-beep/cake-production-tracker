@@ -24,15 +24,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=217';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=217';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=217';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=217';
-import { openModal, closeModal } from '../modal.js?v=217';
+} from '../kitchen-db.js?v=218';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=218';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=218';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=218';
+import { openModal, closeModal } from '../modal.js?v=218';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=217';
-import { defaultColorForIndex } from '../chart.js?v=217';
+} from '../product-drag.js?v=218';
+import { defaultColorForIndex } from '../chart.js?v=218';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1114,69 +1114,166 @@ function buildProductCategorySelectHTML(productCatalog, selectedId) {
   return parts.join('');
 }
 
-function collectProductsFromCatalog(productCatalog, categoryId) {
+function collectProductsFromCatalog(productCatalog, { categoryId, groupId } = {}) {
   const products = [];
   const pushCat = (cat) => {
     if (categoryId && Number(cat.id) !== Number(categoryId)) return;
     for (const p of cat.products || []) products.push(p);
   };
-  for (const group of productCatalog.groups) {
-    for (const cat of group.categories) pushCat(cat);
+  if (groupId) {
+    const group = productCatalog.groups.find((g) => Number(g.id) === Number(groupId));
+    if (group) for (const cat of group.categories) pushCat(cat);
+  } else {
+    for (const group of productCatalog.groups) {
+      for (const cat of group.categories) pushCat(cat);
+    }
+    for (const cat of productCatalog.ungrouped || []) pushCat(cat);
   }
-  for (const cat of productCatalog.ungrouped || []) pushCat(cat);
   products.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return products;
 }
 
-function buildOptionalProductLinkerHTML(productCatalog, { linkedProductCategoryId, linkedProductIds }) {
-  const categoryId = linkedProductCategoryId || '';
-  const selected = new Set(linkedProductIds || []);
-  const products = collectProductsFromCatalog(productCatalog, categoryId || null);
-  const productList = categoryId
-    ? (products.length
+function inferRecipeProductLinkScope(recipe) {
+  if (recipe?.linkedProductGroupId) return 'group';
+  if (recipe?.linkedProductCategoryId) return 'category';
+  if (recipe?.linkedProductIds?.length) return 'product';
+  return '';
+}
+
+function buildRecipeProductScopePickHTML(scopeType, productCatalog, recipe) {
+  if (scopeType === 'group') {
+    const selected = recipe?.linkedProductGroupId || '';
+    return `
+      <select id="recipe-product-scope-pick" style="width:100%">
+        ${buildProductGroupSelectOptions(productCatalog, selected, [])}
+      </select>
+      <p class="form-hint" style="margin-top:6px">המתכון ישויך לכל המוצרים בקטגוריה הכללית</p>`;
+  }
+  if (scopeType === 'category') {
+    const selected = recipe?.linkedProductCategoryId || '';
+    return `
+      <select id="recipe-product-scope-pick" style="width:100%">
+        ${buildProductCategoryScopeSelectOptions(productCatalog, selected, [])}
+      </select>
+      <p class="form-hint" style="margin-top:6px">המתכון ישויך לכל המוצרים בקטגוריה</p>`;
+  }
+  if (scopeType === 'product') {
+    const filterCatId = recipe?._productFilterCategoryId || '';
+    const selected = new Set(recipe?.linkedProductIds || []);
+    const products = collectProductsFromCatalog(productCatalog, { categoryId: filterCatId || null });
+    const productList = products.length
       ? products.map((p) => `
           <label class="checkbox-label recipe-product-pick">
             <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
             ${escapeHtml(p.name)}
           </label>`).join('')
-      : '<p class="form-hint">אין מוצרים בקטגוריה זו</p>')
-    : '<p class="form-hint">בחר קטגוריית מוצר (אופציונלי) כדי לקשר מוצרים</p>';
-  return `
-    <div class="form-group" style="margin-bottom:8px">
-      <label>קטגוריית מוצר (אופציונלי)</label>
-      <select id="recipe-product-category">${buildProductCategorySelectHTML(productCatalog, categoryId)}</select>
-    </div>
-    <div class="form-group" style="margin-bottom:0">
-      <label>מוצרים מקושרים (אופציונלי)</label>
+      : '<p class="form-hint">אין מוצרים — בחר סינון קטגוריה או הוסף מוצרים</p>';
+    const catOptions = buildProductCategorySelectHTML(productCatalog, filterCatId)
+      .replace('<option value="">— ללא (אופציונלי) —</option>', '<option value="">כל המוצרים</option>');
+    return `
+      <div class="form-group" style="margin-bottom:8px">
+        <label for="recipe-product-filter-category">סינון לפי קטגוריה (אופציונלי)</label>
+        <select id="recipe-product-filter-category" style="width:100%">${catOptions}</select>
+      </div>
       <div class="recipe-product-picker" id="recipe-product-list" style="max-height:160px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
         ${productList}
-      </div>
+      </div>`;
+  }
+  return '<p class="form-hint">ללא שיוך למוצרים</p>';
+}
+
+function buildOptionalProductLinkerHTML(productCatalog, recipe) {
+  const scopeType = inferRecipeProductLinkScope(recipe);
+  return `
+    <label>שיוך לקטגוריית מוצר (אופציונלי)</label>
+    <div class="baking-scope-type-row recipe-product-scope-row" role="radiogroup" aria-label="סוג שיוך מוצר" style="margin:8px 0 10px">
+      <label class="baking-scope-type-option"><input type="radio" name="recipe-product-scope-type" value=""${!scopeType ? ' checked' : ''}> ללא</label>
+      <label class="baking-scope-type-option"><input type="radio" name="recipe-product-scope-type" value="group"${scopeType === 'group' ? ' checked' : ''}> קטגוריה כללית</label>
+      <label class="baking-scope-type-option"><input type="radio" name="recipe-product-scope-type" value="category"${scopeType === 'category' ? ' checked' : ''}> קטגוריה</label>
+      <label class="baking-scope-type-option"><input type="radio" name="recipe-product-scope-type" value="product"${scopeType === 'product' ? ' checked' : ''}> מוצר</label>
+    </div>
+    <div id="recipe-product-scope-pick-row">
+      ${buildRecipeProductScopePickHTML(scopeType, productCatalog, recipe)}
     </div>`;
 }
 
-function bindOptionalProductLinker(productCatalog, { linkedProductCategoryId, linkedProductIds }) {
-  const catSelect = document.getElementById('recipe-product-category');
-  const listHost = document.getElementById('recipe-product-list');
-  if (!catSelect || !listHost) return;
-  const refreshList = () => {
-    const categoryId = catSelect.value ? Number(catSelect.value) : null;
-    const selected = [...listHost.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value));
-    const products = collectProductsFromCatalog(productCatalog, categoryId);
-    if (!categoryId) {
-      listHost.innerHTML = '<p class="form-hint">בחר קטגוריית מוצר (אופציונלי) כדי לקשר מוצרים</p>';
-      return;
-    }
-    if (!products.length) {
-      listHost.innerHTML = '<p class="form-hint">אין מוצרים בקטגוריה זו</p>';
-      return;
-    }
-    listHost.innerHTML = products.map((p) => `
-      <label class="checkbox-label recipe-product-pick">
-        <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.includes(p.id) ? 'checked' : ''}>
-        ${escapeHtml(p.name)}
-      </label>`).join('');
+function bindOptionalProductLinker(productCatalog, recipe) {
+  const pickRow = document.getElementById('recipe-product-scope-pick-row');
+  if (!pickRow) return;
+
+  const getSelectedScope = () => document.querySelector('input[name="recipe-product-scope-type"]:checked')?.value || '';
+
+  const bindProductScopePickEvents = () => {
+    document.getElementById('recipe-product-filter-category')?.addEventListener('change', (e) => {
+      const filterCatId = e.target.value || '';
+      const listHost = document.getElementById('recipe-product-list');
+      const selected = [...(listHost?.querySelectorAll('.recipe-product-cb:checked') || [])].map((cb) => Number(cb.value));
+      const products = collectProductsFromCatalog(productCatalog, { categoryId: filterCatId ? Number(filterCatId) : null });
+      if (!listHost) return;
+      if (!products.length) {
+        listHost.innerHTML = '<p class="form-hint">אין מוצרים בקטגוריה זו</p>';
+        return;
+      }
+      listHost.innerHTML = products.map((p) => `
+        <label class="checkbox-label recipe-product-pick">
+          <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.includes(p.id) ? 'checked' : ''}>
+          ${escapeHtml(p.name)}
+        </label>`).join('');
+    });
   };
-  catSelect.addEventListener('change', refreshList);
+
+  const refreshPickRow = () => {
+    const scopeType = getSelectedScope();
+    const selectedProducts = [...pickRow.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value));
+    pickRow.innerHTML = buildRecipeProductScopePickHTML(scopeType, productCatalog, {
+      ...recipe,
+      linkedProductIds: selectedProducts.length ? selectedProducts : recipe?.linkedProductIds,
+    });
+    bindProductScopePickEvents();
+  };
+
+  document.querySelectorAll('input[name="recipe-product-scope-type"]').forEach((radio) => {
+    radio.addEventListener('change', refreshPickRow);
+  });
+  bindProductScopePickEvents();
+}
+
+function readRecipeProductLinkFromForm() {
+  const scopeType = document.querySelector('input[name="recipe-product-scope-type"]:checked')?.value || '';
+  if (scopeType === 'group') {
+    return {
+      linkedProductGroupId: Number(document.getElementById('recipe-product-scope-pick')?.value) || null,
+      linkedProductCategoryId: null,
+      linkedProductIds: [],
+    };
+  }
+  if (scopeType === 'category') {
+    return {
+      linkedProductGroupId: null,
+      linkedProductCategoryId: Number(document.getElementById('recipe-product-scope-pick')?.value) || null,
+      linkedProductIds: [],
+    };
+  }
+  if (scopeType === 'product') {
+    return {
+      linkedProductGroupId: null,
+      linkedProductCategoryId: null,
+      linkedProductIds: [...document.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value)).filter(Boolean),
+    };
+  }
+  return { linkedProductGroupId: null, linkedProductCategoryId: null, linkedProductIds: [] };
+}
+
+function formatRecipeProductLinkLabel(recipe, productCatalog) {
+  if (recipe?.linkedProductGroupId) {
+    const name = findProductGroupName(productCatalog, recipe.linkedProductGroupId);
+    return name ? `קבוצה: ${name}` : 'קבוצה';
+  }
+  if (recipe?.linkedProductCategoryId) {
+    const name = findProductCategoryName(productCatalog, recipe.linkedProductCategoryId);
+    return name ? `קטגוריה: ${name}` : 'קטגוריה';
+  }
+  return '';
 }
 
 async function renderRecipeBook(container, { groups, allSubs, productMap }) {
@@ -2685,12 +2782,12 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
   const linkedNames = (recipe.linkedProductIds || []).map((id) => productMap.get(id)?.name).filter(Boolean);
   const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
-  const productCategoryName = findProductCategoryName(productCatalog, recipe.linkedProductCategoryId);
+  const productLinkLabel = formatRecipeProductLinkLabel(recipe, productCatalog);
 
   openModal({
     title: '',
     modalClass: 'modal-recipe-view',
-    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap }),
+    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName: productLinkLabel, profileMap }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
@@ -2814,10 +2911,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <p class="form-hint">הזן משקל יחידה — יוצג כמה מוצרים יוצאים ממנה אחת של המתכון</p>
       </div>
       <div class="form-group recipe-product-link-block">
-        ${buildOptionalProductLinkerHTML(catalog, {
-    linkedProductCategoryId: recipe?.linkedProductCategoryId,
-    linkedProductIds: recipe?.linkedProductIds,
-  })}
+        ${buildOptionalProductLinkerHTML(catalog, recipe)}
       </div>
       <div class="form-group">
         <label>הערות</label>
@@ -2853,10 +2947,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 
-  bindOptionalProductLinker(catalog, {
-    linkedProductCategoryId: recipe?.linkedProductCategoryId,
-    linkedProductIds: recipe?.linkedProductIds,
-  });
+  bindOptionalProductLinker(catalog, recipe);
 
   bindRecipeBakingFormToggle(bakingProfiles);
 
@@ -2947,9 +3038,6 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   });
 
   document.getElementById('save-recipe')?.addEventListener('click', async () => {
-    const linkedProductIds = [...document.querySelectorAll('.recipe-product-cb:checked')]
-      .map((cb) => Number(cb.value));
-    const linkedProductCategoryId = document.getElementById('recipe-product-category')?.value || null;
     const recipeCategoryId = Number(document.getElementById('recipe-category')?.value) || categoryId;
     const portionRaw = document.getElementById('recipe-portion-weight')?.value?.trim();
     const data = {
@@ -2957,9 +3045,8 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       yieldPortions: document.getElementById('recipe-yield').value,
       showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked || false,
       portionWeightGrams: portionRaw || null,
-      linkedProductIds,
-      linkedProductCategoryId: linkedProductCategoryId || null,
       notes: document.getElementById('recipe-notes').value,
+      ...readRecipeProductLinkFromForm(),
       ...readBakingFromForm(),
     };
     try {
