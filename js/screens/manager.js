@@ -1,9 +1,8 @@
 import {
   getManagerDepartments, addManagerDepartment, updateManagerDepartment, deleteManagerDepartment,
-  getProducts, getCategories, getProductsCatalogLayout, getAllFlowPortionPresetsWithContext,
-  getAllFlowsOverview, getFlowStepsForFlow,
+  getProducts, getProductsCatalogLayout,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
-  addManagerPlanItem, addManagerPlanFlowSteps, syncDailyPlanFromFlows,
+  addManagerPlanItem, addManagerPlanProductWithChecklists,
   updateManagerPlanItem, deleteManagerPlanItem,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
@@ -11,14 +10,14 @@ import {
   getManagerDashboardStats,
   getManagerResponsibilityAreas, addManagerResponsibilityArea, updateManagerResponsibilityArea, deleteManagerResponsibilityArea,
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
-} from '../db.js?v=221';
+} from '../db.js?v=222';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=221';
-import { openModal, closeModal } from '../modal.js?v=221';
-import { renderTargets } from './targets.js?v=221';
-import { forceAppUpdate } from '../sw-register.js?v=221';
+} from '../utils.js?v=222';
+import { openModal, closeModal } from '../modal.js?v=222';
+import { renderTargets } from './targets.js?v=222';
+import { forceAppUpdate } from '../sw-register.js?v=222';
 
 const TABS = [
   { id: 'overview', label: 'סקירה', icon: '📊' },
@@ -146,7 +145,7 @@ async function renderOverview(container) {
         <div class="manager-list-item">
           <span class="manager-check${item.done ? ' done' : ''}">${item.done ? '✓' : '○'}</span>
           <div class="manager-list-body">
-            <span>${item.itemKind === 'portion' ? '🍽 ' : item.itemKind === 'flow_step' ? '📋 ' : item.itemKind === 'flow_preparation' ? '🧁 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${formatDecimal(item.quantity)}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
+            <span>${item.itemKind === 'portion' ? '🍽 ' : item.itemKind === 'flow_step' ? '📋 ' : item.itemKind === 'flow_preparation' ? '✅ ' : item.itemKind === 'flow_cleaning' ? '🧹 ' : item.itemKind === 'product' ? '📦 ' : ''}${escapeHtml(item.label)}${item.quantity ? ` · ${formatDecimal(item.quantity)}${item.itemKind === 'portion' ? ' מנות' : ''}` : ''}</span>
           </div>
         </div>`).join('')}
       ${planItems.length > 6 ? `<p class="form-hint">+${planItems.length - 6} נוספים</p>` : ''}
@@ -301,6 +300,139 @@ function renderGroupedPlanItemsHTML(items, layout, products) {
   return sections.join('');
 }
 
+function renderPlanProductSelectHTML(products, layout) {
+  const blocks = [];
+  for (const group of layout.groups) {
+    for (const cat of group.categories.slice().sort(comparePlanCategories)) {
+      const catProducts = products.filter((p) => p.categoryId === cat.id);
+      if (!catProducts.length) continue;
+      blocks.push(`<optgroup label="${escapeHtml(`${group.name} › ${cat.name}`)}">
+        ${catProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+      </optgroup>`);
+    }
+  }
+  for (const cat of layout.ungrouped.slice().sort(comparePlanCategories)) {
+    const catProducts = products.filter((p) => p.categoryId === cat.id);
+    if (!catProducts.length) continue;
+    blocks.push(`<optgroup label="${escapeHtml(cat.name)}">
+      ${catProducts.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+    </optgroup>`);
+  }
+  return blocks.join('');
+}
+
+function renderProductCentricPlanHTML(items, products, { dayOffset = null } = {}) {
+  let filtered = items;
+  if (dayOffset != null) {
+    filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
+  }
+  if (!filtered.length) {
+    return '<p class="form-hint manager-plan-empty">עדיין אין פריטים — בחר מוצרים לייצור למעלה</p>';
+  }
+
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const productsInPlan = filtered.filter((i) => i.itemKind === 'product');
+  const manualItems = filtered.filter((i) => i.itemKind === 'text');
+  const checklistItems = filtered.filter((i) => i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning');
+  const legacyItems = filtered.filter((i) => !['product', 'text', 'flow_preparation', 'flow_cleaning'].includes(i.itemKind));
+
+  const checklistByProduct = new Map();
+  const orphanChecklist = [];
+  for (const item of checklistItems) {
+    if (item.productId) {
+      if (!checklistByProduct.has(item.productId)) checklistByProduct.set(item.productId, []);
+      checklistByProduct.get(item.productId).push(item);
+    } else {
+      orphanChecklist.push(item);
+    }
+  }
+
+  let html = '';
+
+  if (productsInPlan.length) {
+    html += `
+      <div class="manager-plan-section">
+        <div class="manager-plan-section-title">📦 מוצרים לייצור</div>
+        ${productsInPlan.map((item) => planItemRow(item)).join('')}
+      </div>`;
+  }
+
+  const taskProductIds = [...new Set([
+    ...productsInPlan.map((p) => p.productId),
+    ...checklistByProduct.keys(),
+  ])];
+
+  if (taskProductIds.length || orphanChecklist.length || manualItems.length) {
+    html += `<div class="manager-plan-section"><div class="manager-plan-section-title">✅ משימות</div>`;
+    for (const pid of taskProductIds) {
+      const prod = productMap.get(pid);
+      const tasks = checklistByProduct.get(pid) || [];
+      if (!tasks.length) continue;
+      html += `
+        <div class="manager-plan-product-group">
+          <div class="manager-plan-product-heading">${escapeHtml(prod?.name || 'מוצר')}</div>
+          ${tasks.map((item) => planItemRow(item)).join('')}
+        </div>`;
+    }
+    if (orphanChecklist.length) {
+      html += `
+        <div class="manager-plan-product-group">
+          <div class="manager-plan-product-heading">צ׳קליסט</div>
+          ${orphanChecklist.map((item) => planItemRow(item)).join('')}
+        </div>`;
+    }
+    if (manualItems.length) {
+      html += `
+        <div class="manager-plan-product-group">
+          <div class="manager-plan-product-heading">משימות ידניות</div>
+          ${manualItems.map((item) => planItemRow(item)).join('')}
+        </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (legacyItems.length) {
+    html += `
+      <div class="manager-plan-section">
+        <div class="manager-plan-section-title">📋 נוספים</div>
+        ${legacyItems.map((item) => planItemRow(item, { showDay: dayOffset == null })).join('')}
+      </div>`;
+  }
+
+  return html;
+}
+
+function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
+  const dayLabels = weekDayLabels();
+  return `
+    <div class="card manager-plan-add-card">
+      <div class="card-title">1 · מה מייצרים${showDay ? '' : ' היום'}</div>
+      <p class="form-hint" style="margin-bottom:12px">בחר מוצר — משימות מהצ׳קליסט (הכנות + ניקיון) יתווספו אוטומטית מהתזרim</p>
+      ${showDay ? `
+      <div class="form-group">
+        <label for="plan-day">יום</label>
+        <select id="plan-day">
+          ${dayLabels.map((label, i) => `<option value="${i}">${label}</option>`).join('')}
+        </select>
+      </div>` : ''}
+      <div class="filter-row">
+        <select id="plan-product" style="flex:1">
+          <option value="">בחר מוצר...</option>
+          ${renderPlanProductSelectHTML(products, layout)}
+        </select>
+        <input type="number" id="plan-qty" min="1" placeholder="כמות" style="width:76px" aria-label="כמות">
+        <button type="button" class="btn btn-primary btn-sm" id="add-plan-product">+</button>
+      </div>
+    </div>
+    <div class="card manager-plan-add-card">
+      <div class="card-title">2 · משימה ידנית</div>
+      <div class="filter-row">
+        <input type="text" id="plan-text" placeholder="למשל: הזמנה מיוחדת, ניקוי מקרר..." style="flex:1">
+        <button type="button" class="btn btn-secondary btn-sm" id="add-plan-text">+</button>
+      </div>
+    </div>`;
+}
+
 function planItemRow(item, { showDay = false } = {}) {
   const dayLabels = weekDayLabels();
   const isPortion = item.itemKind === 'portion';
@@ -322,14 +454,21 @@ function planItemRow(item, { showDay = false } = {}) {
         <span class="manager-plan-label">📋 ${escapeHtml(item.label)}</span>`;
   } else if (item.itemKind === 'flow_preparation') {
     bodyInner = `
-        <span class="manager-plan-label">🧁 ${escapeHtml(item.label)}</span>`;
+        <span class="manager-plan-label">✅ ${escapeHtml(item.label)}</span>`;
+  } else if (item.itemKind === 'flow_cleaning') {
+    bodyInner = `
+        <span class="manager-plan-label">🧹 ${escapeHtml(item.label)}</span>`;
+  } else if (item.itemKind === 'product') {
+    bodyInner = `
+        <span class="manager-plan-label">📦 ${escapeHtml(item.label)}</span>
+        ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   } else {
     bodyInner = `
         <span class="manager-plan-label">${escapeHtml(item.label)}</span>
         ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   }
   return `
-    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}" data-id="${item.id}">
+    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}${item.itemKind === 'flow_cleaning' ? ' manager-plan-item--flow-clean' : ''}${item.itemKind === 'product' ? ' manager-plan-item--product' : ''}" data-id="${item.id}">
       <label class="manager-plan-check">
         <input type="checkbox" class="plan-item-done" ${item.done ? 'checked' : ''}>
       </label>
@@ -396,11 +535,16 @@ function bindPlanItems(container, planType, anchorDate) {
     const dayOffset = document.getElementById('plan-day')?.value ?? 0;
     if (!productId) return showToast('בחר מוצר');
     try {
-      await addManagerPlanItem({
+      const res = await addManagerPlanProductWithChecklists({
         planType, anchorDate, dayOffset: Number(dayOffset),
-        itemKind: 'product', productId, quantity: qty || null,
+        productId, quantity: qty || null,
       });
-      showToast('נוסף ✓');
+      const msg = res.checklistsAdded
+        ? `נוסף ✓ · ${res.checklistsAdded} משימות מהצ׳קליסט`
+        : res.hasFlow === false
+          ? 'מוצר נוסף · אין תזרim משויך — הוסף משימות ידנית'
+          : 'מוצר נוסף ✓';
+      showToast(msg);
       renderManager(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
@@ -450,215 +594,74 @@ function bindPlanItems(container, planType, anchorDate) {
 
 async function renderDailyPlan(container) {
   const date = container.dataset.planDate || todayISO();
-  const selectedFlowId = container.dataset.planFlowId || '';
-  await syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date });
-  const [plan, items, products, categories, portionPresets, flowsOverview, layout] = await Promise.all([
+  const [plan, items, products, layout] = await Promise.all([
     getManagerPlan('daily', date),
     getManagerPlanItems('daily', date),
     getProducts(true),
-    getCategories(),
-    getAllFlowPortionPresetsWithContext(),
-    getAllFlowsOverview(),
     getProductsCatalogLayout(),
   ]);
-  const flowSteps = selectedFlowId
-    ? await getFlowStepsForFlow(selectedFlowId)
-    : [];
-  const planFlowStepIds = new Set(
-    items.filter((i) => i.itemKind === 'flow_step' && i.flowStepId).map((i) => i.flowStepId)
-  );
   const done = items.filter((i) => i.done).length;
+  const progressPct = items.length ? Math.round((done / items.length) * 100) : 0;
 
   container.innerHTML = `
     ${managerTabsHTML('daily')}
-    <div class="card">
-      <div class="form-group">
+    <div class="card manager-plan-header-card">
+      <div class="form-group" style="margin-bottom:8px">
         <label for="plan-date">תאריך</label>
         <input type="date" id="plan-date" value="${date}">
       </div>
-      <p class="form-hint">${formatDateHebrew(date)} · ${done}/${items.length} הושלמו</p>
+      <p class="form-hint" style="margin-bottom:8px">${formatDateHebrew(date)}</p>
+      ${items.length ? `
+      <div class="manager-plan-progress">
+        <div class="manager-plan-progress-bar" style="width:${progressPct}%"></div>
+      </div>
+      <p class="form-hint manager-plan-progress-label">${done}/${items.length} הושלמו (${progressPct}%)</p>` : `
+      <p class="form-hint">התחל בבחירת מוצרים — משימות יופיעו אוטומטית</p>`}
     </div>
 
-    <div class="card">
-      <div class="card-title">הערות / דגשים ליום</div>
-      <textarea id="plan-notes" rows="3" placeholder="דגשים, הערות משמרת, הודעות לצוות...">${escapeHtml(plan?.notes || '')}</textarea>
-      <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור הערות</button>
-    </div>
+    <details class="card manager-plan-notes-details"${plan?.notes ? ' open' : ''}>
+      <summary class="manager-plan-notes-summary">📝 דגשים ליום</summary>
+      <textarea id="plan-notes" rows="2" placeholder="הערות משמרת, הזמנות מיוחדות...">${escapeHtml(plan?.notes || '')}</textarea>
+      <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור</button>
+    </details>
 
-    ${flowsOverview.length ? `
-    <div class="card">
-      <div class="card-title">📋 משימות מתזרים יצור</div>
-      <p class="form-hint" style="margin-bottom:12px">בחר תזרים, סמן שלבים, והוסף לתוכנית היומית</p>
-      <div class="form-group">
-        <label for="plan-flow-pick">תזרים</label>
-        <select id="plan-flow-pick">
-          <option value="">בחר תזרים...</option>
-          ${flowsOverview.map((f) => `
-            <option value="${f.id}" ${String(f.id) === String(selectedFlowId) ? 'selected' : ''}>
-              ${escapeHtml(f.name)} · ${escapeHtml(f.targetLabel)} (${f.stepCount} שלבים)
-            </option>`).join('')}
-        </select>
-      </div>
-      ${selectedFlowId && flowSteps.length ? `
-      <div class="plan-flow-steps-list">
-        ${flowSteps.map((step, i) => {
-          const inPlan = planFlowStepIds.has(step.id);
-          return `
-          <label class="plan-flow-step-option${inPlan ? ' is-in-plan' : ''}">
-            <input type="checkbox" class="plan-flow-step-cb" value="${step.id}" ${inPlan ? 'disabled checked' : ''}>
-            <span class="plan-flow-step-num">${i + 1}</span>
-            <span class="plan-flow-step-name">${escapeHtml(step.name)}${step.tracksPortions ? ' 🍽' : ''}</span>
-            ${inPlan ? '<span class="plan-flow-step-badge">בתוכנית</span>' : ''}
-          </label>`;
-        }).join('')}
-      </div>
-      <button type="button" class="btn btn-primary btn-sm" id="add-plan-flow-steps" style="width:100%;margin-top:10px">
-        + הוסף נבחרות לתוכנית
-      </button>` : selectedFlowId ? `
-      <p class="form-hint">אין שלבים בתזרים — הגדר ב«תזרים» → «נהל תזרים»</p>` : `
-      <p class="form-hint">בחר תזרים כדי לראות את השלבים</p>`}
-    </div>` : `
-    <div class="card">
-      <div class="card-title">📋 משימות מתזרים יצור</div>
-      <p class="form-hint">אין תזרימים — הגדר ב«תזרים» → «נהל תזרים»</p>
-    </div>`}
+    ${renderPlanAddProductHTML(products, layout)}
 
-    ${portionPresets.length ? `
-    <div class="card">
-      <div class="card-title">🍽 מנות לייצור</div>
-      <p class="form-hint" style="margin-bottom:12px">בחר מנה מהרשימה (מ«נהל תזרים»), כמה מנות לייצור, ושייך למוצר או קטגוריה</p>
-      <div class="form-group">
-        <label for="plan-portion-preset">מנה</label>
-        <select id="plan-portion-preset">
-          <option value="">בחר מנה...</option>
-          ${portionPresets.map((p) => `<option value="${p.id}">${escapeHtml(p.name)} · ${p.weight} ק"ג${p.extra ? ` · ${p.extra}` : ''}${p.groupName ? ` (${p.groupName})` : ''}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="plan-portion-qty">כמה מנות לייצור</label>
-        <input type="number" id="plan-portion-qty" min="1" step="1" inputmode="numeric" placeholder="10">
-      </div>
-      <div class="form-group">
-        <label for="plan-portion-target">שיוך ל</label>
-        <select id="plan-portion-target">
-          <option value="product">מוצר</option>
-          <option value="category">קטגוריה</option>
-        </select>
-      </div>
-      <div class="form-group" id="plan-portion-product-wrap">
-        <label for="plan-portion-product">מוצר</label>
-        <select id="plan-portion-product">
-          <option value="">בחר מוצר...</option>
-          ${products.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group hidden" id="plan-portion-category-wrap">
-        <label for="plan-portion-category">קטגוריה</label>
-        <select id="plan-portion-category">
-          <option value="">בחר קטגוריה...</option>
-          ${categories.map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-      </div>
-      <button type="button" class="btn btn-primary btn-sm" id="add-plan-portion" style="width:100%">+ הוסף מנה לתוכנית</button>
-    </div>` : `
-    <div class="card">
-      <div class="card-title">🍽 מנות לייצור</div>
-      <p class="form-hint">אין מנות מוכנות — הגדר ב«תזרים» → «נהל תזרים» → «רשימת מנות מוכנות»</p>
-    </div>`}
-
-    <div class="card">
-      <div class="card-title">הוסף לתוכנית</div>
-      <div class="form-group">
-        <label>מוצר לייצור</label>
-        <div class="filter-row">
-          <select id="plan-product" style="flex:1">
-            <option value="">בחר מוצר...</option>
-            ${products.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-          </select>
-          <input type="number" id="plan-qty" min="1" placeholder="כמות" style="width:80px">
-          <button type="button" class="btn btn-primary btn-sm" id="add-plan-product">+</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>משימה / פעולה</label>
-        <div class="filter-row">
-          <input type="text" id="plan-text" placeholder="לדוגמה: הכנת קרם שמנת" style="flex:1">
-          <button type="button" class="btn btn-primary btn-sm" id="add-plan-text">+</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">פריטים בתוכנית (${items.length})</div>
-      <p class="form-hint" style="margin-bottom:10px">מסודר לפי קטגוריות · משימות מתזרימים מתעדכנות אוטומטית</p>
-      <button type="button" class="btn btn-secondary btn-sm" id="refresh-plan-from-flows" style="width:100%;margin-bottom:12px">🔄 רענן משימות מתזרימים</button>
-      ${renderGroupedPlanItemsHTML(items, layout, products)}
+    <div class="card manager-plan-list-card">
+      <div class="card-title">3 · רשימת היום</div>
+      ${renderProductCentricPlanHTML(items, products)}
     </div>`;
 
   bindManagerTabs(container);
   bindPlanItems(container, 'daily', date);
 
-  document.getElementById('plan-portion-target')?.addEventListener('change', (e) => {
-    const isProduct = e.target.value === 'product';
-    document.getElementById('plan-portion-product-wrap')?.classList.toggle('hidden', !isProduct);
-    document.getElementById('plan-portion-category-wrap')?.classList.toggle('hidden', isProduct);
-  });
-
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;
     renderManager(container);
-  });
-
-  document.getElementById('plan-flow-pick')?.addEventListener('change', (e) => {
-    container.dataset.planFlowId = e.target.value;
-    renderManager(container);
-  });
-
-  document.getElementById('refresh-plan-from-flows')?.addEventListener('click', async () => {
-    try {
-      const n = await syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date });
-      showToast(n ? `${n} משימות נוספו ✓` : 'הכל מעודכן');
-      renderManager(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
-  });
-
-  document.getElementById('add-plan-flow-steps')?.addEventListener('click', async () => {
-    const flowId = document.getElementById('plan-flow-pick')?.value;
-    const stepIds = [...document.querySelectorAll('.plan-flow-step-cb:checked:not(:disabled)')]
-      .map((cb) => Number(cb.value));
-    if (!flowId) return showToast('בחר תזרים');
-    if (!stepIds.length) return showToast('סמן לפחות משימה אחת');
-    try {
-      const n = await addManagerPlanFlowSteps({
-        planType: 'daily',
-        anchorDate: date,
-        flowId,
-        stepIds,
-      });
-      showToast(`${n} משימות נוספו ✓`);
-      renderManager(container);
-    } catch (err) {
-      showToast(err.message || 'שגיאה');
-    }
   });
 }
 
 async function renderWeeklyPlan(container) {
   const weekStart = weekStartISO(container.dataset.weekStart || todayISO());
   const dayLabels = weekDayLabels();
-  const [plan, items, products] = await Promise.all([
+  const selectedDay = container.dataset.planWeekDay != null
+    ? Number(container.dataset.planWeekDay)
+    : Math.min(6, Math.max(0, Math.floor((Date.parse(todayISO()) - Date.parse(weekStart)) / 86400000)));
+  const [plan, items, products, layout] = await Promise.all([
     getManagerPlan('weekly', weekStart),
     getManagerPlanItems('weekly', weekStart),
     getProducts(true),
+    getProductsCatalogLayout(),
   ]);
   const weekEnd = addDaysISO(weekStart, 6);
+  const dayItems = items.filter((i) => (i.dayOffset ?? 0) === selectedDay);
+  const done = dayItems.filter((i) => i.done).length;
+  const progressPct = dayItems.length ? Math.round((done / dayItems.length) * 100) : 0;
 
   container.innerHTML = `
     ${managerTabsHTML('weekly')}
-    <div class="card">
-      <div class="form-group">
+    <div class="card manager-plan-header-card">
+      <div class="form-group" style="margin-bottom:8px">
         <label for="week-start">שבוע (מתחיל ביום שני)</label>
         <input type="date" id="week-start" value="${weekStart}">
       </div>
@@ -666,57 +669,70 @@ async function renderWeeklyPlan(container) {
     </div>
 
     <div class="card">
-      <div class="card-title">מטרות השבוע</div>
-      <textarea id="plan-notes" rows="3" placeholder="יעדים, אירועים, הזמנות גדולות...">${escapeHtml(plan?.notes || '')}</textarea>
+      <div class="card-title">ימי השבוע</div>
+      <div class="manager-plan-week-tabs">
+        ${dayLabels.map((label, i) => {
+    const count = items.filter((it) => (it.dayOffset ?? 0) === i).length;
+    const dayDone = items.filter((it) => (it.dayOffset ?? 0) === i && it.done).length;
+    return `<button type="button" class="manager-plan-week-tab${i === selectedDay ? ' is-active' : ''}" data-day="${i}">
+      <span class="manager-plan-week-tab-label">${label}</span>
+      <span class="manager-plan-week-tab-meta">${count ? `${dayDone}/${count}` : '—'}</span>
+    </button>`;
+  }).join('')}
+      </div>
+    </div>
+
+    <details class="card manager-plan-notes-details"${plan?.notes ? ' open' : ''}>
+      <summary class="manager-plan-notes-summary">📝 מטרות השבוע</summary>
+      <textarea id="plan-notes" rows="2" placeholder="יעדים, אירועים, הזמנות גדולות...">${escapeHtml(plan?.notes || '')}</textarea>
       <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור</button>
+    </details>
+
+    ${renderPlanAddProductHTML(products, layout, { showDay: true })}
+
+    <div class="card manager-plan-list-card">
+      <div class="card-title">${dayLabels[selectedDay]} · ${formatDate(addDaysISO(weekStart, selectedDay))}</div>
+      ${dayItems.length ? `
+      <div class="manager-plan-progress">
+        <div class="manager-plan-progress-bar" style="width:${progressPct}%"></div>
+      </div>
+      <p class="form-hint manager-plan-progress-label">${done}/${dayItems.length} הושלמו</p>` : ''}
+      ${renderProductCentricPlanHTML(items, products, { dayOffset: selectedDay })}
     </div>
 
-    <div class="card">
-      <div class="card-title">הוסף לתוכנית שבועית</div>
-      <div class="form-group">
-        <label>יום</label>
-        <select id="plan-day">
-          ${dayLabels.map((label, i) => `<option value="${i}">${label}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group">
-        <label>מוצר</label>
-        <div class="filter-row">
-          <select id="plan-product" style="flex:1">
-            <option value="">בחר מוצר...</option>
-            ${products.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
-          </select>
-          <input type="number" id="plan-qty" min="1" placeholder="כמות" style="width:80px">
-          <button type="button" class="btn btn-primary btn-sm" id="add-plan-product">+</button>
-        </div>
-      </div>
-      <div class="form-group">
-        <label>משימה</label>
-        <div class="filter-row">
-          <input type="text" id="plan-text" placeholder="משימה ליום" style="flex:1">
-          <button type="button" class="btn btn-primary btn-sm" id="add-plan-text">+</button>
-        </div>
-      </div>
-    </div>
-
-    ${dayLabels.map((label, dayOffset) => {
-      const dayItems = items.filter((i) => i.dayOffset === dayOffset);
-      if (!dayItems.length) return '';
-      return `
-        <div class="card">
-          <div class="card-title">${label} · ${formatDate(addDaysISO(weekStart, dayOffset))}</div>
-          ${dayItems.map((item) => planItemRow(item)).join('')}
+    ${items.length ? `
+    <details class="card manager-plan-week-overview">
+      <summary class="manager-plan-notes-summary">סיכום כל השבוע (${items.length} פריטים)</summary>
+      ${dayLabels.map((label, dayOffset) => {
+    const dItems = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
+    if (!dItems.length) return '';
+    return `
+        <div class="manager-plan-week-day-block">
+          <div class="manager-plan-week-day-title">${label} · ${formatDate(addDaysISO(weekStart, dayOffset))}</div>
+          ${renderProductCentricPlanHTML(items, products, { dayOffset })}
         </div>`;
-    }).join('')}
-
-    ${items.length === 0 ? '<div class="card"><p class="form-hint">אין פריטים בשבוע זה</p></div>' : ''}`;
+  }).join('')}
+    </details>` : ''}`;
 
   bindManagerTabs(container);
   bindPlanItems(container, 'weekly', weekStart);
+
   document.getElementById('week-start')?.addEventListener('change', (e) => {
     container.dataset.weekStart = weekStartISO(e.target.value);
     renderManager(container);
   });
+
+  container.querySelectorAll('.manager-plan-week-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.planWeekDay = btn.dataset.day;
+      const daySel = document.getElementById('plan-day');
+      if (daySel) daySel.value = btn.dataset.day;
+      renderManager(container);
+    });
+  });
+
+  const daySel = document.getElementById('plan-day');
+  if (daySel) daySel.value = String(selectedDay);
 }
 
 function taskRow(task) {

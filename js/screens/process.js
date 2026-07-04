@@ -20,11 +20,11 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=221';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=221';
-import { openModal, closeModal } from '../modal.js?v=221';
-import { requestAutoBackupNow } from '../backup-service.js?v=221';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=221';
+} from '../db.js?v=222';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=222';
+import { openModal, closeModal } from '../modal.js?v=222';
+import { requestAutoBackupNow } from '../backup-service.js?v=222';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=222';
 
 function parseIdList(str) {
   try {
