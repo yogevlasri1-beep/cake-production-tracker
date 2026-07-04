@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=218';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=218';
-import { defaultColorForIndex } from './chart.js?v=218';
+} from './validators.js?v=219';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=219';
+import { defaultColorForIndex } from './chart.js?v=219';
 
 export { ValidationError };
 
@@ -1286,6 +1286,73 @@ db.version(39).stores({
   managerResponsibilityAreas: '++id, name, sortOrder',
   managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
   managerDepartments: '++id, deptKey, sortOrder, active',
+});
+
+db.version(40).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+}).upgrade(async (tx) => {
+  const runs = await tx.table('productionRuns').toArray();
+  const runById = new Map(runs.map((r) => [r.id, r]));
+  const steps = await tx.table('runStepStates').orderBy('runId').toArray();
+  const byRun = new Map();
+  for (const s of steps) {
+    if (!byRun.has(s.runId)) byRun.set(s.runId, []);
+    byRun.get(s.runId).push(s);
+  }
+  for (const [, runSteps] of byRun) {
+    runSteps.sort((a, b) => a.stepIndex - b.stepIndex);
+    const run = runById.get(runSteps[0]?.runId);
+    for (let i = 0; i < runSteps.length; i++) {
+      const step = runSteps[i];
+      if (step.startedAt) continue;
+      let startedAt = null;
+      if (i === 0) startedAt = run?.startedAt || null;
+      else if (runSteps[i - 1]?.completedAt) startedAt = runSteps[i - 1].completedAt;
+      else if (step.status === 'active') startedAt = run?.startedAt || null;
+      if (startedAt) await tx.table('runStepStates').update(step.id, { startedAt });
+    }
+  }
 });
 
 async function migrateFlowPreparationsToGroup(tx) {
@@ -3724,24 +3791,30 @@ function flowStepMetaFromTemplate(tpl) {
   };
 }
 
-function validateStepCompletedAtOrder(run, stepIndex, completedAtIso) {
-  if (!completedAtIso) return;
-  const t = Date.parse(completedAtIso);
-  if (!Number.isFinite(t)) throw new ValidationError('תאריך/שעה לא תקינים');
-  if (run.startedAt && t < Date.parse(run.startedAt)) {
-    throw new ValidationError('שעת השלמה לפני תחילת התהליך');
+function validateStepTimes(run, stepIndex, { startedAtIso, completedAtIso } = {}, step = {}) {
+  const started = startedAtIso || step.startedAt;
+  const completed = completedAtIso || step.completedAt;
+  if (started) {
+    const st = Date.parse(started);
+    if (!Number.isFinite(st)) throw new ValidationError('שעת התחלה לא תקינה');
+    if (run.startedAt && st < Date.parse(run.startedAt)) {
+      throw new ValidationError('שעת התחלה לפני תחילת התהליך');
+    }
   }
+  if (completed) {
+    const ct = Date.parse(completed);
+    if (!Number.isFinite(ct)) throw new ValidationError('שעת סיום לא תקינה');
+  }
+  if (started && completed && Date.parse(completed) < Date.parse(started)) {
+    throw new ValidationError('שעת סיום לפני שעת התחלה');
+  }
+}
+
+function defaultStepStartedAt(run, stepIndex, step) {
+  if (step?.startedAt) return step.startedAt;
+  if (stepIndex === 0) return run.startedAt || nowISO();
   const prev = run.steps[stepIndex - 1];
-  if (prev?.completedAt && t < Date.parse(prev.completedAt)) {
-    throw new ValidationError('שעת השלמה לפני השלב הקודם');
-  }
-  const next = run.steps[stepIndex + 1];
-  if (next?.completedAt && t > Date.parse(next.completedAt)) {
-    throw new ValidationError('שעת השלמה אחרי השלב הבא');
-  }
-  if (run.completedAt && t > Date.parse(run.completedAt)) {
-    throw new ValidationError('שעת השלמה אחרי סיום התהליך');
-  }
+  return prev?.completedAt || run.startedAt || nowISO();
 }
 
 export async function startProductionRun({
@@ -3855,6 +3928,7 @@ export async function startProductionRun({
         stepIndex: i,
         stepName: fs.name,
         status: i === 0 ? 'active' : 'pending',
+        startedAt: i === 0 ? startedAt : null,
         completedAt: null,
         notes: '',
         issues: '',
@@ -4215,7 +4289,7 @@ export async function deleteRunStepPortionBatch(runId, stepIndex, batchIndex) {
 
 export async function completeRunStep(runId, stepIndex, {
   notes, issues, improvements, portionUnit, portionSize, portionCount,
-  completedDate, completedTime,
+  startedDate, startedTime, completedDate, completedTime,
 } = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
@@ -4225,6 +4299,17 @@ export async function completeRunStep(runId, stepIndex, {
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
 
+  let startedAt = step.startedAt || null;
+  if (startedDate || startedTime) {
+    startedAt = mergeDateTimeIntoIso(
+      startedDate !== undefined && startedDate !== '' ? startedDate : isoDatePart(startedAt || nowISO()),
+      startedTime !== undefined && startedTime !== '' ? startedTime : undefined,
+      startedAt,
+    );
+  } else if (!startedAt) {
+    startedAt = defaultStepStartedAt(run, stepIndex, step);
+  }
+
   let completedAt = nowISO();
   if (completedDate || completedTime) {
     completedAt = mergeDateTimeIntoIso(
@@ -4232,12 +4317,13 @@ export async function completeRunStep(runId, stepIndex, {
       completedTime !== undefined && completedTime !== '' ? completedTime : undefined,
       completedAt,
     );
-    validateStepCompletedAtOrder(run, stepIndex, completedAt);
   }
+  validateStepTimes(run, stepIndex, { startedAtIso: startedAt, completedAtIso: completedAt }, step);
 
   return db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
     const stepPatch = {
       status: 'completed',
+      startedAt,
       completedAt,
       notes: String(notes ?? step.notes ?? '').trim().slice(0, 500),
       issues: String(issues ?? step.issues ?? '').trim().slice(0, 500),
@@ -4292,7 +4378,12 @@ export async function completeRunStep(runId, stepIndex, {
     } else {
       await db.productionRuns.update(runId, { currentStepIndex: nextIndex });
       const nextStep = run.steps[nextIndex];
-      if (nextStep) await db.runStepStates.update(nextStep.id, { status: 'active' });
+      if (nextStep) {
+        await db.runStepStates.update(nextStep.id, {
+          status: 'active',
+          startedAt: nextStep.startedAt || nowISO(),
+        });
+      }
     }
   });
 }
@@ -4315,6 +4406,7 @@ export async function reopenRunStep(runId, targetStepIndex) {
       await db.runStepStates.update(s.id, {
         status: i === idx ? 'active' : 'pending',
         completedAt: null,
+        startedAt: i === idx ? (s.startedAt || nowISO()) : s.startedAt,
       });
     }
     await db.productionRuns.update(runId, {
@@ -4327,7 +4419,8 @@ export async function reopenRunStep(runId, targetStepIndex) {
 
 export async function updateRunStepFields(runId, stepIndex, {
   notes, issues, improvements, portionUnit, portionSize, portionCount,
-  completedDate, completedTime, clearCompletedAt,
+  startedDate, startedTime, completedDate, completedTime,
+  clearCompletedAt, clearStartedAt,
 } = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
@@ -4355,20 +4448,30 @@ export async function updateRunStepFields(runId, stepIndex, {
       patch.portionCount = pCount;
     }
   }
+  if (clearStartedAt) {
+    patch.startedAt = null;
+  } else if (startedDate !== undefined || startedTime !== undefined) {
+    patch.startedAt = mergeDateTimeIntoIso(
+      startedDate !== undefined ? startedDate : isoDatePart(step.startedAt),
+      startedTime !== undefined ? startedTime : undefined,
+      step.startedAt,
+    );
+  }
   if (clearCompletedAt) {
     patch.completedAt = null;
   } else if (completedDate !== undefined || completedTime !== undefined) {
-    const nextIso = mergeDateTimeIntoIso(
+    patch.completedAt = mergeDateTimeIntoIso(
       completedDate !== undefined ? completedDate : isoDatePart(step.completedAt),
       completedTime !== undefined ? completedTime : undefined,
       step.completedAt,
     );
-    validateStepCompletedAtOrder(run, stepIndex, nextIso);
-    patch.completedAt = nextIso;
     if (step.status !== 'completed' && step.status !== 'active') {
       patch.status = 'completed';
     }
   }
+  const nextStarted = patch.startedAt !== undefined ? patch.startedAt : step.startedAt;
+  const nextCompleted = patch.completedAt !== undefined ? patch.completedAt : step.completedAt;
+  validateStepTimes(run, stepIndex, { startedAtIso: nextStarted, completedAtIso: nextCompleted }, step);
   if (!Object.keys(patch).length) return;
   return db.runStepStates.update(step.id, patch);
 }
@@ -4418,6 +4521,7 @@ export async function syncProductionRunWithFlow(runId) {
           stepIndex: i,
           stepName: meta.stepName,
           status: stepStatus,
+          startedAt: stepStatus === 'active' ? nowISO() : null,
           completedAt: stepStatus === 'completed'
             ? (run.completedAt || (i === run.currentStepIndex ? null : nowISO()))
             : null,

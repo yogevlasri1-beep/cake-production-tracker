@@ -1651,7 +1651,67 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+
+.flow-step-timing {
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--primary) 8%);
+}
+
+.flow-step-timing--readonly {
+  background: var(--surface);
+  font-size: 0.8rem;
+}
+
+.flow-step-timing-block + .flow-step-timing-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.flow-step-timing-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.flow-step-timing-heading .btn-sm {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+}
+
+.flow-step-timing-line {
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.flow-step-timing-label {
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.flow-step-timing-duration,
+.flow-step-timing-duration-live {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.flow-step-datetime-row input[type="date"],
+.flow-step-datetime-row input[type="time"] {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 0.82rem;
 }
 
 .flow-run-duration-value {

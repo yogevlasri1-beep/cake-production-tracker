@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=218';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=219';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -109,9 +109,14 @@ export function stepDurationMs(step, prevCompletedAt, runStartedAt) {
   if (!step?.completedAt) return null;
   const end = Date.parse(step.completedAt);
   if (!Number.isFinite(end)) return null;
-  const start = prevCompletedAt
-    ? Date.parse(prevCompletedAt)
-    : (runStartedAt ? Date.parse(runStartedAt) : NaN);
+  let start = NaN;
+  if (step.startedAt) {
+    start = Date.parse(step.startedAt);
+  } else if (prevCompletedAt) {
+    start = Date.parse(prevCompletedAt);
+  } else if (runStartedAt) {
+    start = Date.parse(runStartedAt);
+  }
   if (!Number.isFinite(start)) return null;
   return Math.max(0, end - start);
 }

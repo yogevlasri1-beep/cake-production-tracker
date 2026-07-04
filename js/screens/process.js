@@ -18,11 +18,11 @@ import {
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
-} from '../db.js?v=218';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=218';
-import { openModal, closeModal } from '../modal.js?v=218';
-import { requestAutoBackupNow } from '../backup-service.js?v=218';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=218';
+} from '../db.js?v=219';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=219';
+import { openModal, closeModal } from '../modal.js?v=219';
+import { requestAutoBackupNow } from '../backup-service.js?v=219';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=219';
 
 function parseIdList(str) {
   try {
@@ -596,35 +596,71 @@ function readStepInlineFields(stepIndex) {
     issues: document.getElementById(`step-${stepIndex}-issues`)?.value ?? '',
     improvements: document.getElementById(`step-${stepIndex}-improvements`)?.value ?? '',
     portionCount: document.getElementById(`step-${stepIndex}-portion-count`)?.value,
+    startedDate: document.getElementById(`step-${stepIndex}-started-date`)?.value,
+    startedTime: document.getElementById(`step-${stepIndex}-started-time`)?.value,
     completedDate: document.getElementById(`step-${stepIndex}-completed-date`)?.value,
     completedTime: document.getElementById(`step-${stepIndex}-completed-time`)?.value,
   };
 }
 
-function stepDatetimeFieldsHTML(step, stepIndex, { defaultNow = false } = {}) {
-  let dateVal = isoToDateInput(step.completedAt);
-  let timeVal = isoToTimeInput(step.completedAt);
-  if (!dateVal && defaultNow) {
-    dateVal = todayISO();
-    timeVal = isoToTimeInput(new Date().toISOString());
+function stepTimingFieldsHTML(step, stepIndex, { editable = true, defaultStartNow = false, defaultEndNow = false } = {}) {
+  let startDate = isoToDateInput(step.startedAt);
+  let startTime = isoToTimeInput(step.startedAt);
+  let endDate = isoToDateInput(step.completedAt);
+  let endTime = isoToTimeInput(step.completedAt);
+  if (editable && defaultStartNow && !startDate) {
+    startDate = todayISO();
+    startTime = isoToTimeInput(new Date().toISOString());
+  }
+  if (editable && defaultEndNow && !endDate) {
+    endDate = todayISO();
+    endTime = isoToTimeInput(new Date().toISOString());
+  }
+  const durMs = stepDurationMs(step, null, null);
+  const durLabel = durMs != null ? formatDuration(durMs) : '';
+  if (!editable) {
+    const startLabel = step.startedAt ? formatDateTime(step.startedAt) : '—';
+    const endLabel = step.completedAt ? formatDateTime(step.completedAt) : '—';
+    return `
+      <div class="flow-step-timing flow-step-timing--readonly">
+        <div class="flow-step-timing-line"><span class="flow-step-timing-label">התחלה</span> ${escapeHtml(startLabel)}</div>
+        <div class="flow-step-timing-line"><span class="flow-step-timing-label">סיום</span> ${escapeHtml(endLabel)}</div>
+        ${durLabel ? `<div class="flow-step-timing-line flow-step-timing-duration">⏱ ${escapeHtml(durLabel)}</div>` : ''}
+      </div>`;
   }
   return `
-    <div class="flow-step-datetime-row">
-      <div class="form-group">
-        <label for="step-${stepIndex}-completed-date">תאריך</label>
-        <input type="date" id="step-${stepIndex}-completed-date" value="${dateVal}">
+    <div class="flow-step-timing" data-step-timing="${stepIndex}">
+      <div class="flow-step-timing-block">
+        <div class="flow-step-timing-heading">
+          <span>התחלה</span>
+          <button type="button" class="btn btn-secondary btn-sm flow-step-time-now" data-step="${stepIndex}" data-kind="start">עכשיו</button>
+        </div>
+        <div class="flow-step-datetime-row">
+          <input type="date" id="step-${stepIndex}-started-date" value="${startDate}" aria-label="תאריך התחלה">
+          <input type="time" id="step-${stepIndex}-started-time" value="${startTime}" aria-label="שעת התחלה">
+        </div>
       </div>
-      <div class="form-group">
-        <label for="step-${stepIndex}-completed-time">שעה</label>
-        <input type="time" id="step-${stepIndex}-completed-time" value="${timeVal}">
+      <div class="flow-step-timing-block">
+        <div class="flow-step-timing-heading">
+          <span>סיום</span>
+          <button type="button" class="btn btn-secondary btn-sm flow-step-time-now" data-step="${stepIndex}" data-kind="end">עכשיו</button>
+        </div>
+        <div class="flow-step-datetime-row">
+          <input type="date" id="step-${stepIndex}-completed-date" value="${endDate}" aria-label="תאריך סיום">
+          <input type="time" id="step-${stepIndex}-completed-time" value="${endTime}" aria-label="שעת סיום">
+        </div>
       </div>
+      ${durLabel ? `<p class="flow-step-timing-duration-live">⏱ משך: ${escapeHtml(durLabel)}</p>` : ''}
     </div>`;
 }
 
-function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = false, defaultDatetimeNow = false } = {}) {
+function stepDatetimeFieldsHTML(step, stepIndex, { defaultNow = false } = {}) {
+  return stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow: defaultNow, defaultEndNow: defaultNow });
+}
+
+function stepNotesPanelHTML(step, stepIndex, { hidden = true } = {}) {
   return `
     <div class="flow-step-notes-panel${hidden ? ' hidden' : ''}" data-step-notes="${stepIndex}">
-      ${showDatetime ? stepDatetimeFieldsHTML(step, stepIndex, { defaultNow: defaultDatetimeNow }) : ''}
       <div class="form-group">
         <label for="step-${stepIndex}-notes">הערות</label>
         <textarea id="step-${stepIndex}-notes" rows="2" placeholder="הערות כלליות">${escapeHtml(step.notes || '')}</textarea>
@@ -641,8 +677,8 @@ function stepNotesPanelHTML(step, stepIndex, { hidden = true, showDatetime = fal
     </div>`;
 }
 
-function stepInlineEditHTML(step, stepIndex, { expanded = false, showDatetime = false } = {}) {
-  return stepNotesPanelHTML(step, stepIndex, { hidden: !expanded, showDatetime });
+function stepInlineEditHTML(step, stepIndex, { expanded = false } = {}) {
+  return stepNotesPanelHTML(step, stepIndex, { hidden: !expanded });
 }
 
 function resolveRunCategoryIds(run) {
@@ -825,12 +861,10 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const visual = stepVisualState(stepIndex, currentIndex, totalSteps, step.status);
   const hasNotes = step.notes || step.issues || step.improvements;
   const portionText = stepPortionLabel(step);
-  const timeLabel = step.completedAt
-    ? new Date(step.completedAt).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
-    : '';
   const prevStep = stepIndex > 0 ? run.steps[stepIndex - 1] : null;
   const stepDurMs = stepDurationMs(step, prevStep?.completedAt, run.startedAt);
   const stepDurationLabel = stepDurMs != null ? formatDuration(stepDurMs) : '';
+  const stepStartedLabel = step.startedAt ? formatDateTime(step.startedAt) : '';
   const stepCompletedLabel = step.completedAt ? formatDateTime(step.completedAt) : '';
   const isActive = visual === 'active';
   const isDone = visual === 'done';
@@ -840,8 +874,9 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
-  const showDatetimeInNotes = canEditFields;
-  const defaultDatetimeNow = isActive && !step.completedAt;
+  const showTimingFields = canEditFields;
+  const defaultStartNow = isActive && !step.startedAt;
+  const defaultEndNow = isActive && !step.completedAt;
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
@@ -872,22 +907,26 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
         <div class="flow-step-header">
           <span class="flow-step-num">${stepIndex + 1}</span>
           <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
-          ${stepCompletedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepCompletedLabel)}</span>` : (timeLabel ? `<span class="flow-step-time">${timeLabel}</span>` : '')}
-          ${stepDurationLabel ? `<span class="flow-step-duration">⏱ ${stepDurationLabel}</span>` : ''}
+          ${!showTimingFields && stepStartedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepStartedLabel)}</span>` : ''}
+          ${!showTimingFields && !stepStartedLabel && stepCompletedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepCompletedLabel)}</span>` : ''}
+          ${!showTimingFields && stepDurationLabel ? `<span class="flow-step-duration">⏱ ${stepDurationLabel}</span>` : ''}
           ${flowStepProductionSummary(step)}
           ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽</span>' : ''}
           <div class="flow-step-header-actions">
             ${canEditFields ? `
-              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="תאריך · שעה · הערות · תקלות · שיפור" aria-label="תאריך שעה הערות תקלות ושיפור">📝</button>` : ''}
+              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="הערות · תקלות · שיפור" aria-label="הערות תקלות ושיפור">📝</button>` : ''}
             ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
             ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
           </div>
         </div>
         ${prodPanel}
+        ${showTimingFields
+    ? stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow, defaultEndNow })
+    : (stepUnlocked ? stepTimingFieldsHTML(step, stepIndex, { editable: false }) : '')}
         ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${step.tracksPortions && portionEditable
     ? stepPortionBatchesHTML(step, stepIndex, { canAdd: portionEditable, canEdit: portionEditable, presets: portionPresets }) : ''}
-        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true, showDatetime: showDatetimeInNotes, defaultDatetimeNow }) : ''}
+        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true }) : ''}
         ${(canEditCompleted || (isDone && canEditFields)) ? `
         <div class="flow-step-actions">
           ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור</button>` : ''}
@@ -1540,6 +1579,27 @@ async function renderRunView(container, runId, ctx) {
       panel.classList.toggle('hidden');
       btn.classList.toggle('is-open', opening);
       if (opening) panel.querySelector('textarea')?.focus();
+    });
+  });
+
+  container.querySelectorAll('.flow-step-time-now').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const stepIndex = Number(btn.dataset.step);
+      const kind = btn.dataset.kind;
+      const now = new Date();
+      const dateVal = todayISO();
+      const timeVal = isoToTimeInput(now.toISOString());
+      if (kind === 'start') {
+        const d = document.getElementById(`step-${stepIndex}-started-date`);
+        const t = document.getElementById(`step-${stepIndex}-started-time`);
+        if (d) d.value = dateVal;
+        if (t) t.value = timeVal;
+      } else {
+        const d = document.getElementById(`step-${stepIndex}-completed-date`);
+        const t = document.getElementById(`step-${stepIndex}-completed-time`);
+        if (d) d.value = dateVal;
+        if (t) t.value = timeVal;
+      }
     });
   });
 
