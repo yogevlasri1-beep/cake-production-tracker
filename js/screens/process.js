@@ -20,11 +20,11 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=220';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=220';
-import { openModal, closeModal } from '../modal.js?v=220';
-import { requestAutoBackupNow } from '../backup-service.js?v=220';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=220';
+} from '../db.js?v=221';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=221';
+import { openModal, closeModal } from '../modal.js?v=221';
+import { requestAutoBackupNow } from '../backup-service.js?v=221';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=221';
 
 function parseIdList(str) {
   try {
@@ -321,7 +321,7 @@ function renderFlowPickListHTML(flows, selectedFlowId, layout, options = {}) {
   return `<div class="flow-pick-list flow-pick-list--grouped">${blocks.join('')}</div>`;
 }
 
-function renderFlowsOverviewGrouped(flowsOverview, layout) {
+function renderFlowsOverviewGrouped(flowsOverview, layout, { showHistoryButton = true } = {}) {
   if (!flowsOverview.length) return '';
   const { flowsByCategory, flowsByGroup, otherFlows } = bucketFlowsForCatalog(flowsOverview, layout);
 
@@ -335,7 +335,7 @@ function renderFlowsOverviewGrouped(flowsOverview, layout) {
         <strong>${escapeHtml(f.name)}</strong>${f.isDefault ? ' ★' : ''}
         <span class="flows-overview-open-meta"> · ${escapeHtml(f.targetLabel)} · ${f.stepCount} שלבים</span>
       </button>
-      <button type="button" class="btn btn-secondary btn-sm flows-overview-history" data-flow-id="${f.id}" title="היסטוריה">📋</button>
+      ${showHistoryButton ? `<button type="button" class="btn btn-secondary btn-sm flows-overview-history" data-flow-id="${f.id}" title="היסטוריה">📋</button>` : ''}
     </div>`;
 
   const sections = [];
@@ -1085,6 +1085,47 @@ function formatRunEntriesSummary(entries, productMap) {
       return `${escapeHtml(name)} · ${qtyText}`;
     })
     .join(' · ');
+}
+
+async function renderRunsHistoryView(container, ctx) {
+  const { layout, catMap, productMap, groupMap } = ctx;
+  const allRuns = await getAllProductionRuns();
+
+  container.innerHTML = `
+    <div class="card">
+      <button type="button" class="btn btn-secondary btn-sm" id="back-from-runs-history">← חזרה</button>
+      <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריית תזרימים</h2>
+      <p class="form-hint" style="margin-bottom:0">כל התהליכים לפי תאריך — מהחדש לישן</p>
+    </div>
+
+    <div class="card flow-all-runs-history">
+      <div class="card-title">תהליכים (${allRuns.length})</div>
+      ${renderAllRunsByDateHTML(allRuns, layout, catMap, productMap, groupMap)}
+    </div>`;
+
+  document.getElementById('back-from-runs-history')?.addEventListener('click', () => {
+    container.dataset.view = 'list';
+    renderProcess(container);
+  });
+
+  container.querySelectorAll('.open-run').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.date) container.dataset.selectedDate = btn.dataset.date;
+      container.dataset.view = 'run';
+      container.dataset.runId = btn.dataset.id;
+      renderProcess(container);
+    });
+  });
+
+  container.querySelectorAll('.delete-run').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו.')) return;
+      await deleteProductionRun(Number(btn.dataset.id));
+      requestAutoBackupNow().catch(() => {});
+      showToast('התהליך ורישומי הייצור נמחקו');
+      renderProcess(container);
+    });
+  });
 }
 
 async function renderFlowHistoryView(container, ctx) {
@@ -3199,12 +3240,14 @@ export async function renderProcess(container) {
   if (view === 'flow-history') {
     return renderFlowHistoryView(container, ctx);
   }
+  if (view === 'runs-history') {
+    return renderRunsHistoryView(container, ctx);
+  }
 
-  const [activeRuns, dateRuns, flowsOverview, allRuns, sheetsHTML] = await Promise.all([
+  const [activeRuns, dateRuns, flowsOverview, sheetsHTML] = await Promise.all([
     getActiveProductionRuns(),
     getProductionRunsForDate(date),
     getAllFlowsOverview(),
-    getAllProductionRuns(),
     renderSheetsStatusHTML(),
   ]);
   syncAllActiveProductionRuns().catch(() => {});
@@ -3229,6 +3272,13 @@ export async function renderProcess(container) {
       </div>
     </div>
 
+    ${flowsOverview.length ? `
+    <div class="card flows-overview">
+      <div class="card-title">תזרימים מוגדרים (${flowsOverview.length})</div>
+      <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לעריכה והגדרת שלבים</p>
+      ${renderFlowsOverviewGrouped(flowsOverview, layout, { showHistoryButton: false })}
+    </div>` : ''}
+
     ${activeRuns.length ? `
       <div class="card">
         <div class="card-title">פעילים (${activeRuns.length})</div>
@@ -3243,13 +3293,6 @@ export async function renderProcess(container) {
           ? '<p class="form-hint" style="text-align:center;padding:8px">אין תהליכים שהושלמו</p>'
           : doneRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate: date })).join('')}
     </div>
-
-    ${flowsOverview.length ? `
-    <div class="card flows-overview">
-      <div class="card-title">תזרימים מוגדרים (${flowsOverview.length})</div>
-      <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לצפייה בשלבים · 📋 להיסטוריה</p>
-      ${renderFlowsOverviewGrouped(flowsOverview, layout)}
-    </div>` : ''}
 
     <div class="card sheets-primary-card">
       <div class="card-title">📊 Google Sheets</div>
@@ -3271,10 +3314,8 @@ export async function renderProcess(container) {
       </button>
     </details>
 
-    <div class="card flow-all-runs-history">
-      <div class="card-title">כל התהליכים (${allRuns.length})</div>
-      <p class="form-hint" style="margin-bottom:10px">היסטוריה מלאה לפי תאריך — מהחדש לישן</p>
-      ${renderAllRunsByDateHTML(allRuns, layout, catMap, productMap, groupMap)}
+    <div class="card flow-runs-history-entry">
+      <button type="button" class="btn btn-secondary" id="open-runs-history" style="width:100%">📋 היסטוריית תזרימים</button>
     </div>`;
 
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
@@ -3305,6 +3346,11 @@ export async function renderProcess(container) {
     renderProcess(container);
   });
 
+  document.getElementById('open-runs-history')?.addEventListener('click', () => {
+    container.dataset.view = 'runs-history';
+    renderProcess(container);
+  });
+
   container.querySelectorAll('.flows-overview-open').forEach((btn) => {
     btn.addEventListener('click', () => {
       openFlowInManageView(container, {
@@ -3313,14 +3359,6 @@ export async function renderProcess(container) {
         groupId: btn.dataset.groupId,
         categoryId: btn.dataset.categoryId,
       });
-    });
-  });
-
-  container.querySelectorAll('.flows-overview-history').forEach((btn) => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      container.dataset.flowHistoryBack = 'list';
-      openFlowHistoryView(container, btn.dataset.flowId);
     });
   });
 

@@ -1373,6 +1373,15 @@ body {
   padding: 0 10px;
 }
 
+.flow-runs-history-entry {
+  margin-bottom: 16px;
+}
+
+.flow-runs-history-entry .btn {
+  font-weight: 700;
+  padding: 12px 16px;
+}
+
 .flow-history-run-item {
   flex-wrap: wrap;
 }
