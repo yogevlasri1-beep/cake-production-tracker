@@ -1,28 +1,28 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=244';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=246';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=244';
+} from '../js/validators.js?v=246';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=244';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=244';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=244';
+} from '../js/calc.js?v=246';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=246';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=246';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=244';
-import { isAutoBackupDue } from '../js/backup-service.js?v=244';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount } from '../js/kitchen-db.js?v=244';
+} from '../js/supabase-backup.js?v=246';
+import { isAutoBackupDue } from '../js/backup-service.js?v=246';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=246';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=244';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=244';
+} from '../js/supplier-import.js?v=246';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=246';
 
 export async function runAllTests() {
   /* validators */
@@ -55,6 +55,30 @@ export async function runAllTests() {
     assertOk(info.units);
     assertApprox(info.units.totalUnits, 100);
     assertApprox(info.units.unitsPerPortion, 100);
+    assertEqual(info.yieldP, 1);
+  });
+
+  test('getRecipeProductYieldInfo — 70kg recipe, 3kg subdivision', () => {
+    const recipe = { portionWeightGrams: gramsFromSubdivisionKg(3), yieldPortions: 5 };
+    const ingredients = [{ name: 'בצק', quantity: 70, unitKind: 'kg', unit: 'ק"ג' }];
+    const info = getRecipeProductYieldInfo(recipe, ingredients);
+    assertOk(info.units);
+    assertApprox(info.units.totalUnits, 70000 / 3000);
+    assertEqual(info.yieldP, 1);
+  });
+
+  test('formatSubdivisionWeight — kg and grams', () => {
+    assertEqual(formatSubdivisionWeight(3000), '3 ק"ג');
+    assertEqual(formatSubdivisionWeight(250), '250 גרם');
+  });
+
+  test('buildRecipePortionPresetFields — whole recipe as portion with subdivision', () => {
+    const recipe = { name: 'בצק', portionWeightGrams: 3000, yieldPortions: 4 };
+    const ingredients = [{ name: 'קמח', quantity: 70, unitKind: 'kg', unit: 'ק"ג' }];
+    const preset = buildRecipePortionPresetFields(recipe, ingredients);
+    assertOk(preset);
+    assertApprox(preset.weight, 70);
+    assertOk(preset.extra.includes('יחידות × 3 ק"ג'));
   });
 
   test('scaleRecipeIngredientsForProductCount — doubles qty for 2× products', () => {
@@ -63,6 +87,15 @@ export async function runAllTests() {
     const scaled = scaleRecipeIngredientsForProductCount(ingredients, recipe, 100);
     assertOk(scaled);
     assertApprox(scaled[0].scaledQuantity, 10);
+  });
+
+  test('buildRecipePortionPresetFields — מנה = משקל מתכון מלא', () => {
+    const recipe = { name: 'בצק', portionWeightGrams: 3000 };
+    const ingredients = [{ name: 'קמח', quantity: 70, unitKind: 'kg', unit: 'ק"ג' }];
+    const preset = buildRecipePortionPresetFields(recipe, ingredients);
+    assertOk(preset);
+    assertApprox(preset.weight, 70);
+    assertOk(preset.extra.includes('3 ק"ג'));
   });
 
   test('getMaterialEffectivePricePerKg — processed overrides purchase', () => {
@@ -597,7 +630,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=244');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=246');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

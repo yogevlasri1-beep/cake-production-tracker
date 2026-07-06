@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=244';
+import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=246';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=244';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=244';
+} from './validators.js?v=246';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=246';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -967,9 +967,6 @@ export async function addRecipe({
   if (!trimmed) throw new ValidationError('שם מתכון לא תקין');
   const inCat = await getRecipes(cid);
   const maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
-  const yp = yieldPortions != null && yieldPortions !== ''
-    ? sanitizeQuantity(yieldPortions, { allowZero: false })
-    : DEFAULT_RECIPE_YIELD;
   const portionG = portionWeightGrams != null && portionWeightGrams !== ''
     ? sanitizeQuantity(portionWeightGrams, { allowZero: false })
     : null;
@@ -982,9 +979,9 @@ export async function addRecipe({
     linkedProductId: null,
     linkedProductCategoryId: null,
     linkedProductGroupId: null,
-    yieldPortions: yp,
+    yieldPortions: DEFAULT_RECIPE_YIELD,
     portionWeightGrams: portionG,
-    showTotalAsPortions: !!showTotalAsPortions,
+    showTotalAsPortions: false,
     notes: String(notes || '').trim().slice(0, 2000),
     sortOrder: maxOrder + 1,
     ...baking,
@@ -1042,17 +1039,13 @@ export async function updateRecipe(id, patch) {
       ? sanitizeProductId(data.linkedProductGroupId)
       : null;
   }
-  if ('yieldPortions' in data) {
-    data.yieldPortions = sanitizeQuantity(data.yieldPortions, { allowZero: false });
-  }
   if ('portionWeightGrams' in data) {
     data.portionWeightGrams = data.portionWeightGrams != null && data.portionWeightGrams !== ''
       ? sanitizeQuantity(data.portionWeightGrams, { allowZero: false })
       : null;
   }
-  if ('showTotalAsPortions' in data) {
-    data.showTotalAsPortions = !!data.showTotalAsPortions;
-  }
+  data.yieldPortions = DEFAULT_RECIPE_YIELD;
+  data.showTotalAsPortions = false;
   if ('hasBaking' in data || 'bakingProfileId' in data) {
     Object.assign(data, normalizeRecipeBakingFields(data));
   }
@@ -1115,17 +1108,30 @@ export function formatKgWeight(kg) {
   return `${Math.round(kg * 1000)} גרם`;
 }
 
+/** תצוגת משקל יחידת חלוקה — ק"ג מעל 1 ק"ג, אחרת גרם */
+export function formatSubdivisionWeight(grams) {
+  const g = Number(grams) || 0;
+  if (g <= 0) return '';
+  if (g >= 1000) return `${roundQty(g / 1000)} ק"ג`;
+  return `${Math.round(g)} גרם`;
+}
+
+/** המרת משקל חלוקה מק"ג לשמירה בגרמים */
+export function gramsFromSubdivisionKg(kg) {
+  const n = Number(kg);
+  if (!n || n <= 0) return null;
+  return sanitizeQuantity(n * 1000, { allowZero: false });
+}
+
 /** סיכום משקל: כולל (יבשים+נוזלים כק"ג), פירוט יבש/נוזל */
 export function getRecipeWeightSummary(ingredients, options = {}) {
   const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, options);
   const totalRecipeKg = roundQty(totalKg + totalLiters);
   const recipe = options.recipe;
-  const yieldP = Number(recipe?.yieldPortions) || 0;
-  const showAsPortions = !!recipe?.showTotalAsPortions && yieldP > 0;
   const weightText = totalRecipeKg > 0 ? formatKgWeight(totalRecipeKg) : '';
-  const mainText = showAsPortions
-    ? `${formatRecipeQuantity(yieldP)} מנות${weightText ? ` (${weightText})` : ''}`
-    : weightText;
+  const mainText = weightText
+    ? (recipe ? `מנה אחת — ${weightText}` : weightText)
+    : '';
   const breakdownParts = [];
   if (totalKg > 0) breakdownParts.push(`יבשים: ${formatKgWeight(totalKg)}`);
   if (totalLiters > 0) breakdownParts.push(`נוזלים: ${roundQty(totalLiters)} ליטר`);
@@ -1136,11 +1142,10 @@ export function getRecipeWeightSummary(ingredients, options = {}) {
     totalRecipeKg,
     dryKg: totalKg,
     liquidLiters: totalLiters,
-    showAsPortions,
   };
 }
 
-/** כמה יחידות מוצר יוצאות מהמתכון — לפי משקל יחידה ומנות */
+/** כמה יחידות חלוקה יוצאות ממנה אחת — לפי משקל יחידה */
 export function computeRecipeProductUnits(totalRecipeKg, yieldPortions, unitWeightGrams) {
   const totalG = (Number(totalRecipeKg) || 0) * 1000;
   const unitG = Number(unitWeightGrams) || 0;
@@ -1153,11 +1158,11 @@ export function computeRecipeProductUnits(totalRecipeKg, yieldPortions, unitWeig
   };
 }
 
-/** תשואת מוצרים למתכון — משקל יחידה וכמות מוצרים */
+/** תשואת חלוקה למתכון — מנה אחת (משקל כולל) ויחידות לפי portionWeightGrams */
 export function getRecipeProductYieldInfo(recipe, ingredients) {
   const summary = getRecipeWeightSummary(ingredients, { recipe });
   const unitG = Number(recipe?.portionWeightGrams) || 0;
-  const yieldP = Number(recipe?.yieldPortions) || 1;
+  const yieldP = 1;
   const units = unitG > 0 && summary.totalRecipeKg > 0
     ? computeRecipeProductUnits(summary.totalRecipeKg, yieldP, unitG)
     : null;
@@ -1643,22 +1648,25 @@ export async function resolveCategoryGroupIdsForRecipe(recipe) {
   return [...groupIds];
 }
 
-/** בניית שדות מנה לתזרים ממתכון */
+/** בניית שדות מנה לתזרים ממתכון — המתכון כולו = מנה אחת */
 export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   if (!recipe) return null;
-  const yieldP = Number(recipe.yieldPortions) || 1;
-  let weightKg = null;
-  if (recipe.portionWeightGrams > 0) {
-    weightKg = sanitizePortionSize(Number(recipe.portionWeightGrams) / 1000);
-  } else if (ingredients.length && yieldP > 0) {
-    const totalG = recipeTotalWeightGrams(ingredients);
-    if (totalG > 0) weightKg = sanitizePortionSize((totalG / yieldP) / 1000);
+  const totalG = recipeTotalWeightGrams(ingredients);
+  if (totalG <= 0) return null;
+  const weightKg = sanitizePortionSize(totalG / 1000);
+  const unitG = Number(recipe.portionWeightGrams) || 0;
+  let extra = 'מנה אחת';
+  if (unitG > 0) {
+    const units = computeRecipeProductUnits(weightKg, 1, unitG);
+    const countStr = units
+      ? formatRecipeQuantity(units.totalUnits)
+      : formatRecipeQuantity(totalG / unitG);
+    extra = `${countStr} יחידות × ${formatSubdivisionWeight(unitG)}`;
   }
-  if (weightKg == null) return null;
   return {
     name: recipe.name,
     weight: weightKg,
-    extra: `${formatDecimal(yieldP)} מנות למתכון`,
+    extra,
   };
 }
 
@@ -2893,7 +2901,7 @@ export async function computeWeeklyMaterialNeeds(weekStart) {
     if (!item.plannedPortions || item.plannedPortions <= 0) continue;
     const recipe = await getRecipeForProduct(item.productId);
     if (!recipe?.ingredients?.length) continue;
-    const scale = Number(item.plannedPortions) / (Number(recipe.yieldPortions) || 1);
+    const scale = Number(item.plannedPortions);
 
     for (const ing of recipe.ingredients) {
       const key = ing.rawMaterialId || `name:${ing.name}`;

@@ -10,6 +10,7 @@ import {
   getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
   formatRecipeQuantity,
   getRecipeWeightSummary, formatKgWeight,
+  formatSubdivisionWeight, gramsFromSubdivisionKg,
   computeRecipeProductUnits,
   getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
@@ -25,15 +26,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=244';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=244';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=244';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=244';
-import { openModal, closeModal } from '../modal.js?v=244';
+} from '../kitchen-db.js?v=246';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=246';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=246';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=246';
+import { openModal, closeModal } from '../modal.js?v=246';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=244';
-import { defaultColorForIndex } from '../chart.js?v=244';
+} from '../product-drag.js?v=246';
+import { defaultColorForIndex } from '../chart.js?v=246';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -129,21 +130,26 @@ function updateRecipeSelectionBar(container) {
   if (label) label.textContent = `${count} נבחרו`;
 }
 
+function recipeListMetaText(r) {
+  let meta = 'מנה אחת';
+  if (r.portionWeightGrams) {
+    meta += ` · חלוקה: ${formatSubdivisionWeight(r.portionWeightGrams)}`;
+  }
+  return meta;
+}
+
 function renderRecipeItem(r, index, mode = 'edit') {
   if (mode === 'browse') {
     return `
     <div class="list-item recipe-list-item recipe-row-open recipe-row-browse" data-recipe-id="${r.id}" role="button" tabindex="0">
       <div class="list-item-info">
         <div class="list-item-name">${escapeHtml(r.name)}</div>
-        <div class="list-item-meta">${r.yieldPortions || 1} מנות</div>
+        <div class="list-item-meta">${recipeListMetaText(r)}</div>
       </div>
       <span class="recipe-browse-chevron" aria-hidden="true">‹</span>
     </div>`;
   }
   const checked = selectedRecipeIds.has(r.id) ? 'checked' : '';
-  const portionsMeta = r.showTotalAsPortions && r.yieldPortions
-    ? `סה״כ ${formatRecipeQuantity(r.yieldPortions)} מנות`
-    : `${r.yieldPortions || 1} מנות`;
   return `
     <div class="list-item recipe-list-item recipe-row-open" data-recipe-id="${r.id}" role="button" tabindex="0">
       <label class="recipe-select-wrap" title="בחר">
@@ -155,10 +161,9 @@ function renderRecipeItem(r, index, mode = 'edit') {
       </div>
       <div class="list-item-info">
         <div class="list-item-name">${escapeHtml(r.name)}</div>
-        <div class="list-item-meta">${portionsMeta}</div>
+        <div class="list-item-meta">${recipeListMetaText(r)}</div>
       </div>
       <div class="list-item-actions">
-        <button type="button" class="btn btn-secondary btn-sm recipe-portions-toggle${r.showTotalAsPortions ? ' active' : ''}" data-id="${r.id}" title="הצג סה״כ במנות">${r.showTotalAsPortions ? '🍽' : '⚖'}</button>
         <button type="button" class="btn btn-danger btn-sm delete-recipe" data-id="${r.id}">🗑</button>
       </div>
     </div>`;
@@ -321,7 +326,7 @@ function bindRecipeRowOpen(container, layout, productCatalog) {
   };
   container.querySelectorAll('.recipe-row-open').forEach((row) => {
     row.addEventListener('click', (e) => {
-      if (e.target.closest('.recipe-drag-handle, .delete-recipe, .recipe-select-wrap, .recipe-portions-toggle')) return;
+      if (e.target.closest('.recipe-drag-handle, .delete-recipe, .recipe-select-wrap')) return;
       openRecipeById(row.dataset.recipeId);
     });
     row.addEventListener('keydown', (e) => {
@@ -543,22 +548,6 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
         await deleteRecipe(Number(btn.dataset.id));
         selectedRecipeIds.delete(Number(btn.dataset.id));
         showToast('נמחק');
-        renderRecipes(container);
-      } catch (err) {
-        showToast(err.message || 'שגיאה');
-      }
-    });
-  });
-
-  container.querySelectorAll('.recipe-portions-toggle').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const id = Number(btn.dataset.id);
-      const recipe = await getRecipe(id);
-      if (!recipe) return;
-      try {
-        await updateRecipe(id, { showTotalAsPortions: !recipe.showTotalAsPortions });
-        showToast(recipe.showTotalAsPortions ? 'סה״כ במשקל' : 'סה״כ במנות ✓');
         renderRecipes(container);
       } catch (err) {
         showToast(err.message || 'שגיאה');
@@ -1744,20 +1733,20 @@ function openImportPreview(container, parsed, { groups, subs }) {
 }
 
 function renderRecipeProductYieldStatsHTML(recipe, ingredients) {
-  const { unitG, yieldP, units, summary } = getRecipeProductYieldInfo(recipe, ingredients);
+  const { unitG, units, summary } = getRecipeProductYieldInfo(recipe, ingredients);
   const yieldLines = [];
+  if (summary.totalRecipeKg > 0) {
+    yieldLines.push(`<div class="recipe-yield-stat"><span>מנה אחת</span><strong>${formatKgWeight(summary.totalRecipeKg)}</strong></div>`);
+  }
   if (unitG > 0) {
-    yieldLines.push(`<div class="recipe-yield-stat"><span>משקל מוצר</span><strong>${unitG} גרם</strong></div>`);
+    yieldLines.push(`<div class="recipe-yield-stat"><span>יחידת חלוקה</span><strong>${formatSubdivisionWeight(unitG)}</strong></div>`);
   }
   if (units) {
-    yieldLines.push(`<div class="recipe-yield-stat highlight"><span>יוצא מהמתכון</span><strong>${formatRecipeQuantity(units.totalUnits)} מוצרים</strong></div>`);
-    if (yieldP > 1) {
-      yieldLines.push(`<div class="recipe-yield-stat"><span>למנה (${formatRecipeQuantity(yieldP)})</span><strong>${formatRecipeQuantity(units.unitsPerPortion)} מוצרים</strong></div>`);
-    }
+    yieldLines.push(`<div class="recipe-yield-stat highlight"><span>יוצא מהמנה</span><strong>${formatRecipeQuantity(units.totalUnits)} יחידות</strong></div>`);
   } else if (summary.totalRecipeKg > 0) {
-    yieldLines.push(`<p class="form-hint">הזן משקל מוצר (גרם) בעריכה כדי לחשב כמה מוצרים יוצאים מהמתכון (${formatKgWeight(summary.totalRecipeKg)} סה״כ).</p>`);
+    yieldLines.push(`<p class="form-hint">הזן משקל יחידת חלוקה (ק"ג) כדי לחשב כמה יחידות יוצאות מהמנה (${formatKgWeight(summary.totalRecipeKg)}).</p>`);
   } else {
-    yieldLines.push('<p class="form-hint">הוסף חומרי גלם ומשקל מוצר כדי לחשב תשואה.</p>');
+    yieldLines.push('<p class="form-hint">הוסף חומרי גלם ומשקל יחידת חלוקה כדי לחשב תשואה.</p>');
   }
   return yieldLines.join('');
 }
@@ -1768,7 +1757,7 @@ function renderRecipeProductYieldBlockHTML(recipe, ingredients, { showCalculator
 
   const calcHtml = showCalculator && ingredients.length && unitG > 0 && units ? `
       <div class="recipe-production-calc">
-        <label class="recipe-production-calc-label" for="recipe-target-products">כמה מוצרים לייצר?</label>
+        <label class="recipe-production-calc-label" for="recipe-target-products">כמה יחידות לייצר?</label>
         <input type="number" id="recipe-target-products" class="recipe-target-products-input" min="0.1" step="0.1" placeholder="למשל: 24">
         <div id="recipe-scaled-ingredients-host" class="recipe-scaled-ingredients-host" hidden></div>
       </div>` : '';
@@ -1802,7 +1791,7 @@ function renderScaledIngredientsForProductionHTML(scaledIngredients, recipe, mat
 
   return `
     <div class="recipe-scaled-result">
-      <p class="recipe-scaled-intro">חומרי גלם ל-<strong>${escapeHtml(String(targetCount))}</strong> מוצרים${ratio ? ` (×${formatRatioFactor(ratio)} מהמתכון)` : ''}</p>
+      <p class="recipe-scaled-intro">חומרי גלם ל-<strong>${escapeHtml(String(targetCount))}</strong> יחידות${ratio ? ` (×${formatRatioFactor(ratio)} מהמתכון)` : ''}</p>
       <div class="recipe-sheet-table-wrap">
         <table class="recipe-sheet-table">
           <thead>
@@ -1847,7 +1836,7 @@ function bindRecipeProductionCalculator(recipe, ingredients, matCtx, { getRecipe
     const scaled = scaleRecipeIngredientsForProductCount(currentIngredients, currentRecipe, target);
     if (!scaled || !units) {
       host.hidden = false;
-      host.innerHTML = '<p class="form-hint">לא ניתן לחשב — ודא שמשקל מוצר וחומרי גלם מוגדרים.</p>';
+      host.innerHTML = '<p class="form-hint">לא ניתן לחשב — ודא שמשקל יחידת חלוקה וחומרי גלם מוגדרים.</p>';
       return;
     }
     const ratio = target / units.totalUnits;
@@ -1867,40 +1856,29 @@ function renderRecipeWeightSummaryHTML(ingredients, recipe, options) {
   if (!summary.mainText) return '';
 
   const unitGrams = recipe?.portionWeightGrams ? Number(recipe.portionWeightGrams) : null;
-  const yieldP = Number(recipe?.yieldPortions) || 1;
   const units = unitGrams && summary.totalRecipeKg > 0
-    ? computeRecipeProductUnits(summary.totalRecipeKg, yieldP, unitGrams)
+    ? computeRecipeProductUnits(summary.totalRecipeKg, 1, unitGrams)
     : null;
 
-  let estimateHtml = '';
-  if (!unitGrams && summary.totalRecipeKg > 0 && yieldP > 1) {
-    const gPerPortion = Math.round((summary.totalRecipeKg * 1000) / yieldP);
-    if (gPerPortion > 0) {
-      estimateHtml = `<p class="recipe-weight-estimate">משקל משוער למנה: ${gPerPortion} גרם (${yieldP} מנות)</p>`;
-    }
-  }
-
   const unitWeightHtml = unitGrams
-    ? `<div class="recipe-portion-weight-line"><span>משקל מוצר יחידה:</span> <strong>${unitGrams} גרם</strong></div>`
+    ? `<div class="recipe-portion-weight-line"><span>יחידת חלוקה:</span> <strong>${formatSubdivisionWeight(unitGrams)}</strong></div>`
     : '';
 
   const unitsHtml = units
     ? `<div class="recipe-unit-yield-line">
-        <span>ממנה אחת:</span> <strong>${formatRecipeQuantity(units.unitsPerPortion)} יחידות</strong>
-        <span class="recipe-unit-yield-total"> · סה״כ מהמתכון: ${formatRecipeQuantity(units.totalUnits)} יחידות</span>
+        <span>יוצא מהמנה:</span> <strong>${formatRecipeQuantity(units.totalUnits)} יחידות</strong>
       </div>`
     : '';
 
   return `
     <div class="recipe-weight-summary">
       <div class="recipe-weight-main">
-        <span class="recipe-weight-label">סה"כ משקל מתכון</span>
+        <span class="recipe-weight-label">משקל מנה</span>
         <strong class="recipe-weight-value">${escapeHtml(summary.mainText)}</strong>
       </div>
       ${summary.breakdownText ? `<div class="recipe-weight-breakdown">${escapeHtml(summary.breakdownText)}</div>` : ''}
       ${unitWeightHtml}
       ${unitsHtml}
-      ${estimateHtml}
     </div>`;
 }
 
@@ -1920,12 +1898,12 @@ function readIngredientsFromForm(baseIngredients) {
 }
 
 function getRecipeFormContext(baseRecipe) {
-  const portionRaw = document.getElementById('recipe-portion-weight')?.value;
+  const subdivisionKg = document.getElementById('recipe-subdivision-kg')?.value;
   return {
     ...(baseRecipe || {}),
-    yieldPortions: document.getElementById('recipe-yield')?.value,
-    portionWeightGrams: portionRaw ? Number(portionRaw) : null,
-    showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked || false,
+    yieldPortions: 1,
+    showTotalAsPortions: false,
+    portionWeightGrams: subdivisionKg ? gramsFromSubdivisionKg(subdivisionKg) : null,
   };
 }
 
@@ -1934,9 +1912,7 @@ function readRecipeFormDraft() {
   return {
     name: document.getElementById('recipe-name').value,
     categoryId: document.getElementById('recipe-category')?.value,
-    yieldPortions: document.getElementById('recipe-yield')?.value,
-    showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked,
-    portionWeightGrams: document.getElementById('recipe-portion-weight')?.value,
+    subdivisionKg: document.getElementById('recipe-subdivision-kg')?.value,
     notes: document.getElementById('recipe-notes')?.value,
   };
 }
@@ -1949,11 +1925,8 @@ function applyRecipeFormDraft(draft) {
   };
   setVal('recipe-name', draft.name);
   setVal('recipe-category', draft.categoryId);
-  setVal('recipe-yield', draft.yieldPortions);
-  setVal('recipe-portion-weight', draft.portionWeightGrams);
+  setVal('recipe-subdivision-kg', draft.subdivisionKg);
   setVal('recipe-notes', draft.notes);
-  const portionsEl = document.getElementById('recipe-show-portions');
-  if (portionsEl) portionsEl.checked = !!draft.showTotalAsPortions;
 }
 
 function buildRecipeMaterialContext(mats, suppliers) {
@@ -2262,7 +2235,7 @@ function bindRatioCalculator(recipe, hostEl) {
     const origTotalG = getOriginalTotalGrams();
     const cakeW = Number(state.cakeWeightGrams);
     const unitsInfo = cakeW && origTotalG
-      ? computeRecipeProductUnits(origTotalG / 1000, recipe.yieldPortions, cakeW)
+      ? computeRecipeProductUnits(origTotalG / 1000, 1, cakeW)
       : null;
 
     const scaledSummary = getRecipeWeightSummary(scaled, { useScaled: true });
@@ -3038,11 +3011,8 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
 function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap, matCtx }) {
   const ingredients = recipe.ingredients || [];
   const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
-  const { units } = getRecipeProductYieldInfo(recipe, ingredients);
+  const { units, summary } = getRecipeProductYieldInfo(recipe, ingredients);
   const yieldBlockHtml = renderRecipeProductYieldBlockHTML(recipe, ingredients, { showCalculator: true });
-  const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
-    ? `${recipe.yieldPortions} מנות`
-    : 'מתכון בסיס';
   let totalCost = 0;
   const ingredientRows = ingredients.map((ing, i) => {
     const { lineCost, mat } = matCtx ? resolveIngredientDisplay(ing, matCtx) : { lineCost: 0, mat: null };
@@ -3063,9 +3033,9 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         ${categoryPath ? `<p class="recipe-sheet-breadcrumb">${escapeHtml(categoryPath)}</p>` : ''}
         <h1 class="recipe-sheet-title">${escapeHtml(recipe.name)}</h1>
         <div class="recipe-sheet-meta">
-          <span class="recipe-meta-pill">${escapeHtml(yieldLabel)}</span>
-          ${units ? `<span class="recipe-meta-pill recipe-meta-yield">📦 ${formatRecipeQuantity(units.totalUnits)} מוצרים</span>` : ''}
-          ${recipe.portionWeightGrams ? `<span class="recipe-meta-pill">⚖️ ${recipe.portionWeightGrams} גרם למוצר</span>` : ''}
+          <span class="recipe-meta-pill">🍽 מנה אחת${summary.totalRecipeKg > 0 ? ` · ${formatKgWeight(summary.totalRecipeKg)}` : ''}</span>
+          ${recipe.portionWeightGrams ? `<span class="recipe-meta-pill">⚖️ יחידת חלוקה: ${formatSubdivisionWeight(recipe.portionWeightGrams)}</span>` : ''}
+          ${units ? `<span class="recipe-meta-pill recipe-meta-yield">📦 ${formatRecipeQuantity(units.totalUnits)} יחידות</span>` : ''}
           ${productCategoryName ? `<span class="recipe-meta-pill">🏷️ ${escapeHtml(productCategoryName)}</span>` : ''}
           ${linkedNames?.length ? `<span class="recipe-meta-pill recipe-meta-products">🔗 ${linkedNames.map((n) => escapeHtml(n)).join(' · ')}</span>` : ''}
         </div>
@@ -3263,24 +3233,16 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <select id="recipe-category">${categoryOptions}</select>
       </div>` : ''}
       <div class="form-group">
-        <label>מנות למתכון (בסיס)</label>
-        <input type="number" id="recipe-yield" min="0.1" step="0.1" value="${recipe?.yieldPortions ?? 1}">
-      </div>
-      <label class="group-category-option" style="margin-bottom:12px">
-        <input type="checkbox" id="recipe-show-portions" ${recipe?.showTotalAsPortions ? 'checked' : ''}>
-        <span>הצג סה״כ במנות</span>
-      </label>
-      <div class="form-group">
-        <label for="recipe-portion-weight">משקל מוצר יחידה (גרם)</label>
-        <input type="number" id="recipe-portion-weight" min="1" step="1" placeholder="למשל: 85 — משקל יחידת מוצר סופית" value="${recipe?.portionWeightGrams ?? ''}">
-        <p class="form-hint">הזן משקל יחידה — יוצג כמה מוצרים יוצאים ממנה אחת של המתכון</p>
+        <label for="recipe-subdivision-kg">משקל יחידת חלוקה (ק"ג)</label>
+        <input type="number" id="recipe-subdivision-kg" min="0.001" step="0.001" placeholder="למשל: 3 — משקל כל כדור/יחידה" value="${recipe?.portionWeightGrams ? formatRecipeQuantity(recipe.portionWeightGrams / 1000) : ''}">
+        <p class="form-hint">המתכון כולו = מנה אחת. הזן איך מחלקים אותה — למשל כדורי 3 ק"ג מתוך 70 ק"ג בצק</p>
       </div>
       ${isEdit ? `
       <section class="recipe-sheet-section recipe-product-yield-section recipe-yield-preview" aria-label="תשואת מוצרים">
         <h2 class="recipe-sheet-section-title">תשואת מוצרים</h2>
         <div id="recipe-yield-stats" class="recipe-yield-stats"></div>
         <div class="recipe-production-calc">
-          <label class="recipe-production-calc-label" for="recipe-target-products">כמה מוצרים לייצר?</label>
+          <label class="recipe-production-calc-label" for="recipe-target-products">כמה יחידות לייצר?</label>
           <input type="number" id="recipe-target-products" class="recipe-target-products-input" min="0.1" step="0.1" placeholder="למשל: 24">
           <div id="recipe-scaled-ingredients-host" class="recipe-scaled-ingredients-host" hidden></div>
         </div>
@@ -3364,13 +3326,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     });
   });
 
-  document.getElementById('recipe-yield')?.addEventListener('input', () => {
-    if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe, matCtx);
-  });
-  document.getElementById('recipe-portion-weight')?.addEventListener('input', () => {
-    if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe, matCtx);
-  });
-  document.getElementById('recipe-show-portions')?.addEventListener('change', () => {
+  document.getElementById('recipe-subdivision-kg')?.addEventListener('input', () => {
     if (isEdit) refreshRecipeTotalDisplay(ingredients, recipe, matCtx);
   });
 
@@ -3426,12 +3382,12 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
 
   document.getElementById('save-recipe')?.addEventListener('click', async () => {
     const recipeCategoryId = Number(document.getElementById('recipe-category')?.value) || categoryId;
-    const portionRaw = document.getElementById('recipe-portion-weight')?.value?.trim();
+    const subdivisionKg = document.getElementById('recipe-subdivision-kg')?.value?.trim();
     const data = {
       name: document.getElementById('recipe-name').value.trim(),
-      yieldPortions: document.getElementById('recipe-yield').value,
-      showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked || false,
-      portionWeightGrams: portionRaw || null,
+      yieldPortions: 1,
+      showTotalAsPortions: false,
+      portionWeightGrams: subdivisionKg ? gramsFromSubdivisionKg(subdivisionKg) : null,
       notes: document.getElementById('recipe-notes').value,
       ...readRecipeProductLinkFromForm(),
       ...readBakingFromForm(),
