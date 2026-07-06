@@ -10,15 +10,20 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=246';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=246';
-import { defaultColorForIndex } from './chart.js?v=246';
+} from './validators.js?v=247';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=247';
+import { defaultColorForIndex } from './chart.js?v=247';
 
 export { ValidationError };
 
 export const PRODUCTION_STEP_NAME = 'תיעוד ייצור';
 
 export const db = new Dexie('CakeProduction');
+
+/** רק טבלאות קיימות בסכמה — מונע NotFoundError בטרנזקציות */
+function pickDbTables(...names) {
+  return names.map((name) => db[name]).filter(Boolean);
+}
 
 db.version(1).stores({
   categories: '++id, name, sortOrder',
@@ -2056,6 +2061,60 @@ db.version(50).stores({
   for (const r of recipes) {
     await tx.table('recipes').update(r.id, { yieldPortions: 1, showTotalAsPortions: false });
   }
+});
+
+db.version(51).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+}).upgrade(async () => {
   const { syncAllRecipePortionPresets } = await import('./kitchen-db.js');
   await syncAllRecipePortionPresets();
 });
@@ -2816,55 +2875,20 @@ export async function importAllData(payload) {
 
   await db.transaction(
     'rw',
-    db.categories,
-    db.categoryGroups,
-    db.products,
-    db.productionEntries,
-    db.targets,
-    db.processLogs,
-    db.activityPresets,
-    db.flowSteps,
-    db.flows,
-    db.flowPortionPresets,
-    db.groupPortionPresets,
-    db.groupPreparations,
-    db.checklistTasks,
-    db.flowChecklistItems,
-    db.flowCleaningTasks,
-    db.productionRuns,
-    db.runStepStates,
-    db.productPreparations,
-    db.runPreparationChecks,
-    db.runCleaningChecks,
-    db.settings,
-    db.managerPlans,
-    db.managerPlanItems,
-    db.managerTasks,
-    db.managerIncidents,
-    db.managerShiftNotes,
-    db.managerResponsibilityAreas,
-    db.managerEmployees,
-    db.managerDepartments,
-    db.departmentCleaningLists,
-    db.departmentCleaningTasks,
-    db.recipeGroups,
-    db.recipeProductLinks,
-    db.recipeProductCategoryLinks,
-    db.recipeProductGroupLinks,
-    db.recipeCategories,
-    db.recipes,
-    db.recipeIngredients,
-    db.supplierCategories,
-    db.suppliers,
-    db.rawMaterials,
-    db.rawMaterialPriceHistory,
-    db.supplierShortages,
-    db.weeklyProductionPlans,
-    db.weeklyProductionPlanItems,
-    db.bakingProfiles,
-    db.bakingProfileProducts,
-    db.bakingProfileScopes,
-    db.productRecipeComponents,
+    ...pickDbTables(
+      'categories', 'categoryGroups', 'products', 'productionEntries', 'targets', 'processLogs',
+      'activityPresets', 'flowSteps', 'flows', 'flowPortionPresets', 'groupPortionPresets',
+      'groupPreparations', 'checklistTasks', 'flowChecklistItems', 'flowCleaningTasks',
+      'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks',
+      'runCleaningChecks', 'settings', 'managerPlans', 'managerPlanItems', 'managerTasks',
+      'managerIncidents', 'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
+      'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
+      'recipeGroups', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
+      'recipeCategories', 'recipes', 'recipeIngredients', 'supplierCategories', 'suppliers',
+      'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
+      'weeklyProductionPlanItems', 'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
+      'productRecipeComponents',
+    ),
     async (tx) => {
       await db.productionEntries.clear();
       await db.processLogs.clear();
@@ -4940,7 +4964,7 @@ export async function startProductionRun({
   const startedAt = mergeDateIntoIso(date, nowISO());
   const prepChecks = resolvedFlowId ? await getFlowPreparations(resolvedFlowId) : [];
 
-  return db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, db.runCleaningChecks, async () => {
+  const runId = await db.transaction('rw', db.productionRuns, db.runStepStates, db.settings, db.runPreparationChecks, db.runCleaningChecks, async () => {
     const runId = await db.productionRuns.add({
       date,
       batchNumber: batch,
@@ -5007,9 +5031,11 @@ export async function startProductionRun({
       const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
       await db.settings.put({ key: RUN_SETTINGS_KEY, value: { ...runSettings, nextBatchNumber: next } });
     }
-    syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date }).catch(() => {});
     return runId;
   });
+
+  syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date }).catch(() => {});
+  return runId;
 }
 
 async function normalizeRunProductionSteps(run) {

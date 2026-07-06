@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=246';
+import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=247';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=246';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=246';
+} from './validators.js?v=247';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=247';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3164,7 +3164,9 @@ export async function importKitchenTables(payload) {
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
   ];
-  await db.transaction('rw', ...tables.map((t) => db[t]), async () => {
+  const stores = tables.map((t) => db[t]).filter(Boolean);
+  if (!stores.length) return;
+  await db.transaction('rw', ...stores, async () => {
     for (const t of tables) {
       await db[t].clear();
       const rows = payload[t];
