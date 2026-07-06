@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=247';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=248';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=247';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=247';
+} from './validators.js?v=248';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=248';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -156,7 +156,7 @@ export async function updateBakingProfile(id, patch) {
 export async function deleteBakingProfile(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return;
-  await db.transaction('rw', db.bakingProfiles, db.bakingProfileProducts, db.bakingProfileScopes, db.recipes, async () => {
+  await db.transaction('rw', ...pickDbTables('bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes', 'recipes'), async () => {
     await db.bakingProfileProducts.where('bakingProfileId').equals(pid).delete();
     await db.bakingProfileScopes.where('bakingProfileId').equals(pid).delete();
     const recipes = await db.recipes.filter((r) => Number(r.bakingProfileId) === pid).toArray();
@@ -168,7 +168,7 @@ export async function deleteBakingProfile(id) {
 }
 
 export async function setBakingProfileOrder(orderedIds) {
-  await db.transaction('rw', db.bakingProfiles, async () => {
+  await db.transaction('rw', ...pickDbTables('bakingProfiles'), async () => {
     for (let i = 0; i < orderedIds.length; i++) {
       await db.bakingProfiles.update(Number(orderedIds[i]), { sortOrder: i + 1 });
     }
@@ -3229,13 +3229,16 @@ async function ensureRecipeHierarchyInTx(dbRef) {
 }
 
 export async function clearKitchenTables() {
-  await db.transaction('rw',
-    db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks,
-    db.productRecipeComponents,
-    db.bakingProfiles, db.bakingProfileProducts, db.bakingProfileScopes,
-    db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.supplierShortages,
-    db.weeklyProductionPlans, db.weeklyProductionPlanItems,
-    async () => {
+  const tableNames = [
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
+    'productRecipeComponents',
+    'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
+    'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
+    'weeklyProductionPlans', 'weeklyProductionPlanItems',
+  ];
+  const stores = tableNames.map((t) => db[t]).filter(Boolean);
+  if (!stores.length) return;
+  await db.transaction('rw', ...stores, async () => {
       await db.weeklyProductionPlanItems.clear();
       await db.weeklyProductionPlans.clear();
       await db.recipeIngredients.clear();
@@ -3246,7 +3249,7 @@ export async function clearKitchenTables() {
       await db.recipeGroups.clear();
       await db.bakingProfileProducts?.clear?.();
       await db.bakingProfileScopes?.clear?.();
-      await db.bakingProfiles.clear();
+      if (db.bakingProfiles) await db.bakingProfiles.clear();
       await db.rawMaterialPriceHistory.clear();
       await db.supplierShortages?.clear?.();
       await db.rawMaterials.clear();

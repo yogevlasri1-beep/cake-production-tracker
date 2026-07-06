@@ -22,12 +22,12 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=247';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=247';
-import { openModal, closeModal } from '../modal.js?v=247';
-import { requestAutoBackupNow } from '../backup-service.js?v=247';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=247';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=247';
+} from '../db.js?v=248';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=248';
+import { openModal, closeModal } from '../modal.js?v=248';
+import { requestAutoBackupNow } from '../backup-service.js?v=248';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=248';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=248';
 
 function parseIdList(str) {
   try {
@@ -3387,7 +3387,11 @@ async function renderStartView(container, ctx) {
       container.dataset.selectedDate = startDate;
       renderProcess(container);
     } catch (err) {
-      showToast(err.message || 'שגיאה');
+      const raw = err?.message || '';
+      const staleDb = err?.name === 'NotFoundError' || /object store was not found/i.test(raw);
+      showToast(staleDb
+        ? 'מסד נתונים לא מעודכן — לחץ על מספר הגרסה למעלה, או פתח עם ?force-update=1'
+        : (raw || 'שגיאה'));
     }
   });
 }
