@@ -21,11 +21,11 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=233';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=233';
-import { openModal, closeModal } from '../modal.js?v=233';
-import { requestAutoBackupNow } from '../backup-service.js?v=233';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=233';
+} from '../db.js?v=234';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=234';
+import { openModal, closeModal } from '../modal.js?v=234';
+import { requestAutoBackupNow } from '../backup-service.js?v=234';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=234';
 
 function parseIdList(str) {
   try {
@@ -268,6 +268,9 @@ function renderFlowPickListHTML(flows, selectedFlowId, layout, options = {}) {
 
   const selectable = requireSteps ? flows.filter((f) => f.stepCount > 0) : flows;
   if (!selectable.length) {
+    if (flows.length && requireSteps && flows.every((f) => f.stepCount <= 0)) {
+      return '<p class="form-hint">יש תזרימים אך אין בהם שלבים — הוסף שלבים ב«נהל תזרים»</p>';
+    }
     return `<p class="form-hint">${emptyMessage || 'אין תזרימים — הגדר ב«נהל תזרים»'}</p>`;
   }
 
@@ -304,6 +307,18 @@ function renderFlowPickListHTML(flows, selectedFlowId, layout, options = {}) {
             ${groupFlows.map((f) => renderFlowPickButtonHTML(f, selectedFlowId, { pickExtraClass, showTargetMeta })).join('')}
           </div>`);
       }
+    }
+  }
+
+  if (!scopeGroupId && !restrictCategoryId) {
+    for (const cat of (layout.ungrouped || []).slice().sort(compareProductCategories)) {
+      const catFlows = flowsByCategory.get(cat.id) || [];
+      if (!catFlows.length) continue;
+      blocks.push(`
+        <div class="flow-pick-category-block">
+          <div class="flow-pick-category-label">${escapeHtml(cat.name)}</div>
+          ${catFlows.map((f) => renderFlowPickButtonHTML(f, selectedFlowId, { pickExtraClass, showTargetMeta })).join('')}
+        </div>`);
     }
   }
 
@@ -366,6 +381,28 @@ function renderFlowsOverviewGrouped(flowsOverview, layout, { showHistoryButton =
             ${groupFlows.map(renderFlowRow).join('')}
           </div>` : ''}
         ${catSections.join('')}
+      </div>`);
+  }
+
+  const ungroupedSections = (layout.ungrouped || [])
+    .slice()
+    .sort(compareProductCategories)
+    .map((cat) => {
+      const catFlows = flowsByCategory.get(cat.id) || [];
+      if (!catFlows.length) return '';
+      return `
+          <div class="flows-overview-subsection">
+            <div class="flows-overview-subtitle">${escapeHtml(cat.name)}</div>
+            ${catFlows.map(renderFlowRow).join('')}
+          </div>`;
+    })
+    .filter(Boolean);
+
+  if (ungroupedSections.length) {
+    sections.push(`
+      <div class="flows-overview-section">
+        <div class="flows-overview-group-title">קטגוריות ללא קבוצה</div>
+        ${ungroupedSections.join('')}
       </div>`);
   }
 
@@ -2992,9 +3029,9 @@ async function renderStartView(container, ctx) {
       </div>
 
       <div class="form-group">
-        <label for="start-group">קטגוריה כללית *</label>
+        <label for="start-group">קטגוריה כללית${scopeType === 'product' ? '' : ' *'}</label>
         <select id="start-group">
-          <option value="">בחר קטגוריה כללית...</option>
+          <option value="">${scopeType === 'category' && selectedCategories.length && !groupId ? 'לא נדרש — נבחר מתזרים' : 'בחר קטגוריה כללית...'}</option>
           ${groups.map((g) => `<option value="${g.id}" ${String(g.id) === groupId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
@@ -3127,8 +3164,9 @@ async function renderStartView(container, ctx) {
     btn.addEventListener('click', () => {
       container.dataset.scopeType = btn.dataset.scope;
       container.dataset.selectedProduct = '';
-      container.dataset.selectedCategories = '[]';
-      container.dataset.selectedFlowId = '';
+      if (btn.dataset.scope === 'product') {
+        container.dataset.selectedCategories = '[]';
+      }
       renderProcess(container);
     });
   });

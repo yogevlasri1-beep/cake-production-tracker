@@ -14,18 +14,18 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask,
-} from '../db.js?v=233';
+} from '../db.js?v=234';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=233';
-import { openModal, closeModal } from '../modal.js?v=233';
-import { renderTargets } from './targets.js?v=233';
-import { forceAppUpdate } from '../sw-register.js?v=233';
+} from '../utils.js?v=234';
+import { openModal, closeModal } from '../modal.js?v=234';
+import { renderTargets } from './targets.js?v=234';
+import { forceAppUpdate } from '../sw-register.js?v=234';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=233';
+} from '../daily-plan-export.js?v=234';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
