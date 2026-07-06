@@ -13,19 +13,20 @@ import {
   getManagerEmployees, addManagerEmployee, updateManagerEmployee, deleteManagerEmployee,
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
-  addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask,
-} from '../db.js?v=234';
+  addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
+} from '../db.js?v=244';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
-import { renderTargets } from './targets.js?v=234';
-import { forceAppUpdate } from '../sw-register.js?v=234';
+} from '../utils.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
+import { renderTargets } from './targets.js?v=244';
+import { forceAppUpdate } from '../sw-register.js?v=244';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=244';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=234';
+} from '../daily-plan-export.js?v=244';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -1489,11 +1490,13 @@ async function renderDepartmentCleaning(container) {
       </div>
 
       <div class="card-title" style="font-size:0.9rem;margin:12px 0 8px">משימות ניקוי מוכנות</div>
+      <p class="form-hint" style="margin-bottom:8px">גרור ⠿ לשינוי סדר</p>
       ${tasks.length ? `
-        <ul class="manager-cleaning-task-list">
+        <ul class="manager-cleaning-task-list flow-checklist-sortable" data-checklist-kind="dept-clean">
           ${tasks.map((t, i) => `
-            <li class="manager-cleaning-task-item" data-id="${t.id}">
-              <span class="manager-cleaning-task-num">${i + 1}.</span>
+            <li class="manager-cleaning-task-item flow-checklist-item" data-dept-clean-id="${t.id}">
+              <span class="flow-checklist-drag-handle product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
+              <span class="manager-cleaning-task-num flow-checklist-order-num">${i + 1}.</span>
               <span class="manager-cleaning-task-name">${escapeHtml(t.name)}</span>
               <button type="button" class="btn btn-secondary btn-sm edit-cleaning-task"
                 data-id="${t.id}" data-name="${escapeHtml(t.name)}" title="ערוך">✏️</button>
@@ -1624,6 +1627,12 @@ async function renderDepartmentCleaning(container) {
       }
     });
   });
+
+  if (selectedList) {
+    bindFlowChecklistDragLists(container, {
+      onDeptCleanOrderSave: (ids) => setDepartmentCleaningTaskOrder(selectedList.id, ids),
+    });
+  }
 }
 
 export async function renderManager(container) {

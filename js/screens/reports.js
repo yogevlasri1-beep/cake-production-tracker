@@ -2,26 +2,27 @@ import {
   getCategories, getProducts, getEntriesForDate, getEntriesForMonth,
   getEntriesInRange, getProductionTotals, getProcessLogsInRange,
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
-  getCategoryGroups,
+  getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-} from '../db.js?v=234';
+  computeRunMetrics, aggregateRunsMetrics,
+} from '../db.js?v=244';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
-  showToast, escapeHtml, formatPortionCount, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime,
-} from '../utils.js?v=234';
+  showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
+} from '../utils.js?v=244';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
+} from '../export.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=234';
-import { isSheetsConfigured } from '../google-sheets.js?v=234';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=234';
-import { defaultColorForIndex } from '../chart.js?v=234';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=234';
+} from '../sheets-flow.js?v=244';
+import { isSheetsConfigured } from '../google-sheets.js?v=244';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=244';
+import { defaultColorForIndex } from '../chart.js?v=244';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=244';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -94,6 +95,12 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
     reportTitle = 'דוח לפי מוצר';
     filterLabel = mapGetById(productMap, selectedProductId)?.name || '';
+  } else if (reportType === 'flows') {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח תזרימים';
   }
 
   return {
@@ -290,11 +297,143 @@ function batchLineWeightKg(batch) {
   return w * c;
 }
 
-function formatPortionWeightKg(kg) {
-  if (kg == null || !Number.isFinite(kg)) return '—';
-  const rounded = Math.round(kg * 1000) / 1000;
-  const text = Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
-  return `${text} ק"ג`;
+function formatMetricsProductionLine(metrics, productMap) {
+  if (!metrics?.productionQty) return '—';
+  const lines = [...(metrics.productionByProduct || new Map()).entries()]
+    .filter(([, qty]) => qty > 0)
+    .map(([pid, qty]) => {
+      const p = mapGetById(productMap, pid);
+      return p ? `${escapeHtml(p.name)}: ${formatProductQuantity(p, qty)}` : `#${pid}: ${formatDecimal(qty)}`;
+    });
+  return lines.length ? lines.join(' · ') : formatDecimal(metrics.productionQty);
+}
+
+function renderMetricsSummaryGrid(metrics, productMap, { title = 'סיכום כולל' } = {}) {
+  return `
+    <div class="flow-metrics-card flow-metrics-card--report">
+      <div class="flow-metrics-title">${escapeHtml(title)}</div>
+      <div class="flow-metrics-grid">
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">📦</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${formatMetricsProductionLine(metrics, productMap)}</span>
+            <span class="flow-metrics-label">ייצור · ${metrics.runCount || 0} תהליכים</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">🍽</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</span>
+            <span class="flow-metrics-label">מנות (כמות)</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">⚖️</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—'}</span>
+            <span class="flow-metrics-label">מנות (משקל)</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">⏱</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—'}${metrics.activeCount ? ' (בתהליך)' : ''}</span>
+            <span class="flow-metrics-label">זמן כולל</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
+  if (!productionRuns.length) {
+    return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
+  }
+
+  const runsWithEntries = await Promise.all(productionRuns.map(async (run) => ({
+    run,
+    entries: await getRunProductionEntries(run.id),
+  })));
+
+  const byFlow = new Map();
+  const noFlowRuns = [];
+  for (const item of runsWithEntries) {
+    const fid = Number(item.run.flowId);
+    if (!fid) {
+      noFlowRuns.push(item);
+      continue;
+    }
+    if (!byFlow.has(fid)) byFlow.set(fid, []);
+    byFlow.get(fid).push(item);
+  }
+
+  const flowMap = new Map(flowsOverview.map((f) => [f.id, f]));
+  const flowRows = [...byFlow.entries()].map(([flowId, items]) => ({
+    flowId,
+    meta: flowMap.get(flowId),
+    metrics: aggregateRunsMetrics(items),
+    items,
+  })).sort((a, b) => (a.meta?.name || '').localeCompare(b.meta?.name || '', 'he'));
+
+  const grand = aggregateRunsMetrics(runsWithEntries);
+
+  const tableRows = flowRows.map(({ flowId, meta, metrics, items }) => {
+    const avgMs = metrics.durationMs != null && metrics.runCount
+      ? metrics.durationMs / metrics.runCount
+      : null;
+    const flowLabel = meta?.name || items[0]?.run?.flowName || `תזרים #${flowId}`;
+    return `
+      <tr>
+        <td class="report-cell-text"><strong>${escapeHtml(flowLabel)}</strong>
+          ${meta?.targetLabel ? `<div class="form-hint">${escapeHtml(meta.targetLabel)}</div>` : ''}
+        </td>
+        <td class="report-cell-num">${metrics.runCount}</td>
+        <td class="report-cell-num">${metrics.completedCount || 0}</td>
+        <td class="report-cell-text">${formatMetricsProductionLine(metrics, productMap)}</td>
+        <td class="report-cell-num">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</td>
+        <td class="report-cell-num">${metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—'}</td>
+        <td class="report-cell-num">${metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—'}</td>
+        <td class="report-cell-num">${avgMs != null ? formatDuration(avgMs) : '—'}</td>
+      </tr>`;
+  }).join('');
+
+  let noFlowSection = '';
+  if (noFlowRuns.length) {
+    const m = aggregateRunsMetrics(noFlowRuns);
+    noFlowSection = `
+      <h4 class="report-preview-heading">ללא תזרים מוגדר</h4>
+      <div class="report-table-wrap">
+        <table class="report-table">
+          <tbody><tr>
+            <td class="report-cell-text">תהליכים ללא flowId</td>
+            <td class="report-cell-num">${m.runCount}</td>
+            <td class="report-cell-num">${m.completedCount || 0}</td>
+            <td class="report-cell-text">${formatMetricsProductionLine(m, productMap)}</td>
+            <td class="report-cell-num">${m.portionCount != null ? formatPortionCount(m.portionCount) : '—'}</td>
+            <td class="report-cell-num">${m.portionWeightKg != null ? formatPortionWeightKg(m.portionWeightKg) : '—'}</td>
+            <td class="report-cell-num">${m.durationMs != null ? formatDuration(m.durationMs) : '—'}</td>
+            <td class="report-cell-num">—</td>
+          </tr></tbody>
+        </table>
+      </div>`;
+  }
+
+  return `
+    ${renderMetricsSummaryGrid(grand, productMap, { title: 'סיכום כולל לכל התזרימים' })}
+    <div class="report-table-wrap" style="margin-top:16px">
+      <table class="report-table report-flows-summary-table">
+        <thead><tr>
+          <th>תזרים</th><th>תהליכים</th><th>הושלמו</th><th>ייצור</th>
+          <th>מנות</th><th>משקל מנות</th><th>זמן כולל</th><th>ממוצע לתהליך</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+    ${noFlowSection}
+    <details class="report-flow-detail" style="margin-top:16px">
+      <summary class="report-flow-detail-summary">פירוט תהליכים (${productionRuns.length})</summary>
+      ${renderProductionRunsHTML(productionRuns, { from: '', to: '' }, new Map(), productMap, new Map())}
+    </details>`;
 }
 
 function aggregatePortionDocumentation(rows) {
@@ -1017,12 +1156,19 @@ export async function renderReports(container) {
 
   const needsCategory = ctx.reportType === 'category' && !ctx.selectedCategoryId;
   const needsProduct = ctx.reportType === 'product' && !ctx.selectedProductId;
-  const canExport = !needsCategory && !needsProduct;
+  const isFlowsReport = ctx.reportType === 'flows';
+  const canExport = isFlowsReport || (!needsCategory && !needsProduct);
   const sheetsHTML = await renderSheetsStatusHTML();
   const sheetsReady = await isSheetsConfigured();
-  const previewHtml = ctx.reportType === 'week'
-    ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
-    : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+  const flowsOverview = isFlowsReport ? await getAllFlowsOverview() : [];
+  const flowsReportHtml = isFlowsReport
+    ? await buildFlowsReportHTML(productionRuns, productMap, flowsOverview)
+    : '';
+  const previewHtml = isFlowsReport
+    ? flowsReportHtml
+    : ctx.reportType === 'week'
+      ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
+      : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
   const isPageView = container.dataset.reportView === 'page';
 
   const filtersCard = `
@@ -1035,6 +1181,7 @@ export async function renderReports(container) {
         <button type="button" class="tab ${ctx.reportType === 'range' ? 'active' : ''}" data-type="range">טווח תאריכים</button>
         <button type="button" class="tab ${ctx.reportType === 'category' ? 'active' : ''}" data-type="category">לפי קטגוריה</button>
         <button type="button" class="tab ${ctx.reportType === 'product' ? 'active' : ''}" data-type="product">לפי מוצר</button>
+        <button type="button" class="tab ${ctx.reportType === 'flows' ? 'active' : ''}" data-type="flows">תזרימים</button>
       </div>
       <div class="report-dynamic-filters">
         ${renderFiltersHTML({ ...ctx, defaultMonth: ctx.defaultMonth }, categories, products, today, ctx.defaultMonth)}
@@ -1121,7 +1268,11 @@ export async function renderReports(container) {
 
     <p class="stats-block-label">${fullTitle} · ${ctx.label}</p>
 
-    ${ctx.reportType === 'week' ? `
+    ${isFlowsReport ? `
+    <div class="card report-flows-summary-card">
+      ${flowsReportHtml}
+    </div>
+    ` : ctx.reportType === 'week' ? `
     <div class="card report-page-view" style="padding:16px">
       ${previewHtml}
     </div>

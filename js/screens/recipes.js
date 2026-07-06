@@ -11,6 +11,7 @@ import {
   formatRecipeQuantity,
   getRecipeWeightSummary, formatKgWeight,
   computeRecipeProductUnits,
+  getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
   RECIPE_OVEN_TYPES, normalizeRecipeBakingFields, resolveRecipeBaking,
   getRecipeOvenLabel, formatRecipeBakingParamsLine,
@@ -24,15 +25,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=234';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=234';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=234';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
+} from '../kitchen-db.js?v=244';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=244';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=244';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=234';
-import { defaultColorForIndex } from '../chart.js?v=234';
+} from '../product-drag.js?v=244';
+import { defaultColorForIndex } from '../chart.js?v=244';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1397,7 +1398,9 @@ async function renderRecipeBook(container, { groups, allSubs, productMap, produc
           .map((id) => productMap.get(id)?.name).filter(Boolean);
         const productLine = linkedLabel
           || (prodNames.length ? `מוצרים: ${prodNames.join(', ')}` : '');
-        const ingTotal = detail?.ingredients?.length ? renderRecipeTotalHTML(detail.ingredients) : '';
+        const ingTotal = detail?.ingredients?.length
+          ? renderRecipeWeightSummaryHTML(detail.ingredients, detail)
+          : '';
         return `
                 <article class="recipe-book-item">
                   <h4>${escapeHtml(r.name)}</h4>
@@ -1740,6 +1743,125 @@ function openImportPreview(container, parsed, { groups, subs }) {
   });
 }
 
+function renderRecipeProductYieldStatsHTML(recipe, ingredients) {
+  const { unitG, yieldP, units, summary } = getRecipeProductYieldInfo(recipe, ingredients);
+  const yieldLines = [];
+  if (unitG > 0) {
+    yieldLines.push(`<div class="recipe-yield-stat"><span>משקל מוצר</span><strong>${unitG} גרם</strong></div>`);
+  }
+  if (units) {
+    yieldLines.push(`<div class="recipe-yield-stat highlight"><span>יוצא מהמתכון</span><strong>${formatRecipeQuantity(units.totalUnits)} מוצרים</strong></div>`);
+    if (yieldP > 1) {
+      yieldLines.push(`<div class="recipe-yield-stat"><span>למנה (${formatRecipeQuantity(yieldP)})</span><strong>${formatRecipeQuantity(units.unitsPerPortion)} מוצרים</strong></div>`);
+    }
+  } else if (summary.totalRecipeKg > 0) {
+    yieldLines.push(`<p class="form-hint">הזן משקל מוצר (גרם) בעריכה כדי לחשב כמה מוצרים יוצאים מהמתכון (${formatKgWeight(summary.totalRecipeKg)} סה״כ).</p>`);
+  } else {
+    yieldLines.push('<p class="form-hint">הוסף חומרי גלם ומשקל מוצר כדי לחשב תשואה.</p>');
+  }
+  return yieldLines.join('');
+}
+
+function renderRecipeProductYieldBlockHTML(recipe, ingredients, { showCalculator = false } = {}) {
+  const statsHtml = renderRecipeProductYieldStatsHTML(recipe, ingredients);
+  const { unitG, units } = getRecipeProductYieldInfo(recipe, ingredients);
+
+  const calcHtml = showCalculator && ingredients.length && unitG > 0 && units ? `
+      <div class="recipe-production-calc">
+        <label class="recipe-production-calc-label" for="recipe-target-products">כמה מוצרים לייצר?</label>
+        <input type="number" id="recipe-target-products" class="recipe-target-products-input" min="0.1" step="0.1" placeholder="למשל: 24">
+        <div id="recipe-scaled-ingredients-host" class="recipe-scaled-ingredients-host" hidden></div>
+      </div>` : '';
+
+  if (!statsHtml && !calcHtml) return '';
+
+  return `
+    <section class="recipe-sheet-section recipe-product-yield-section" aria-label="תשואת מוצרים">
+      <h2 class="recipe-sheet-section-title">תשואת מוצרים</h2>
+      <div class="recipe-yield-stats">${statsHtml}</div>
+      ${calcHtml}
+    </section>`;
+}
+
+function renderScaledIngredientsForProductionHTML(scaledIngredients, recipe, matCtx, { targetCount, ratio } = {}) {
+  if (!scaledIngredients?.length) return '';
+  let totalCost = 0;
+  const rows = scaledIngredients.map((ing, i) => {
+    const scaledIng = { ...ing, quantity: ing.scaledQuantity ?? ing.quantity };
+    const { lineCost, mat } = matCtx ? resolveIngredientDisplay(scaledIng, matCtx) : { lineCost: 0, mat: null };
+    totalCost += lineCost;
+    return `
+      <tr>
+        <td class="col-num">${i + 1}</td>
+        <td class="col-name">${escapeHtml(ing.name)}</td>
+        <td class="col-qty"><span class="recipe-qty-value">${formatRecipeQuantity(scaledIng.quantity)}</span></td>
+        <td class="col-unit">${escapeHtml(ing.unit)}</td>
+        <td class="col-cost">${mat ? formatMoney(lineCost) : '—'}</td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="recipe-scaled-result">
+      <p class="recipe-scaled-intro">חומרי גלם ל-<strong>${escapeHtml(String(targetCount))}</strong> מוצרים${ratio ? ` (×${formatRatioFactor(ratio)} מהמתכון)` : ''}</p>
+      <div class="recipe-sheet-table-wrap">
+        <table class="recipe-sheet-table">
+          <thead>
+            <tr>
+              <th scope="col" class="col-num">#</th>
+              <th scope="col" class="col-name">חומר גלם</th>
+              <th scope="col" class="col-qty">כמות</th>
+              <th scope="col" class="col-unit">יחידה</th>
+              <th scope="col" class="col-cost">מחיר חומר גלם</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+            <tr class="recipe-cost-total-row">
+              <td colspan="4" class="recipe-cost-total-label">סה״כ חומרי גלם</td>
+              <td class="col-cost"><strong>${formatMoney(totalCost)}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+function bindRecipeProductionCalculator(recipe, ingredients, matCtx, { getRecipe, getIngredients } = {}) {
+  const input = document.getElementById('recipe-target-products');
+  const host = document.getElementById('recipe-scaled-ingredients-host');
+  if (!input || !host) return;
+
+  const resolveRecipe = () => (getRecipe ? getRecipe() : recipe);
+  const resolveIngredients = () => (getIngredients ? getIngredients() : ingredients);
+
+  const render = () => {
+    const currentRecipe = resolveRecipe();
+    const currentIngredients = resolveIngredients();
+    const target = Number(input.value);
+    if (!target || target <= 0) {
+      host.hidden = true;
+      host.innerHTML = '';
+      return;
+    }
+    const { units } = getRecipeProductYieldInfo(currentRecipe, currentIngredients);
+    const scaled = scaleRecipeIngredientsForProductCount(currentIngredients, currentRecipe, target);
+    if (!scaled || !units) {
+      host.hidden = false;
+      host.innerHTML = '<p class="form-hint">לא ניתן לחשב — ודא שמשקל מוצר וחומרי גלם מוגדרים.</p>';
+      return;
+    }
+    const ratio = target / units.totalUnits;
+    host.hidden = false;
+    host.innerHTML = renderScaledIngredientsForProductionHTML(scaled, currentRecipe, matCtx, {
+      targetCount: target,
+      ratio,
+    });
+  };
+
+  input.addEventListener('input', render);
+  input.addEventListener('change', render);
+}
+
 function renderRecipeWeightSummaryHTML(ingredients, recipe, options) {
   const summary = getRecipeWeightSummary(ingredients, { ...options, recipe });
   if (!summary.mainText) return '';
@@ -1807,6 +1929,33 @@ function getRecipeFormContext(baseRecipe) {
   };
 }
 
+function readRecipeFormDraft() {
+  if (!document.getElementById('recipe-name')) return null;
+  return {
+    name: document.getElementById('recipe-name').value,
+    categoryId: document.getElementById('recipe-category')?.value,
+    yieldPortions: document.getElementById('recipe-yield')?.value,
+    showTotalAsPortions: document.getElementById('recipe-show-portions')?.checked,
+    portionWeightGrams: document.getElementById('recipe-portion-weight')?.value,
+    notes: document.getElementById('recipe-notes')?.value,
+  };
+}
+
+function applyRecipeFormDraft(draft) {
+  if (!draft) return;
+  const setVal = (id, value) => {
+    const el = document.getElementById(id);
+    if (el && value != null) el.value = value;
+  };
+  setVal('recipe-name', draft.name);
+  setVal('recipe-category', draft.categoryId);
+  setVal('recipe-yield', draft.yieldPortions);
+  setVal('recipe-portion-weight', draft.portionWeightGrams);
+  setVal('recipe-notes', draft.notes);
+  const portionsEl = document.getElementById('recipe-show-portions');
+  if (portionsEl) portionsEl.checked = !!draft.showTotalAsPortions;
+}
+
 function buildRecipeMaterialContext(mats, suppliers) {
   return {
     matById: new Map(mats.map((m) => [m.id, m])),
@@ -1841,9 +1990,20 @@ function renderRecipeCostSummaryHTML(ingredients, ctx) {
     </div>`;
 }
 
-function renderRecipeCostAndWeightHTML(ingredients, recipe, ctx, options) {
-  return renderRecipeCostSummaryHTML(ingredients, ctx)
-    + renderRecipeWeightSummaryHTML(ingredients, recipe, options);
+function renderRecipeCostAndWeightHTML(ingredients, recipe, ctx, options, { showCosts = true } = {}) {
+  const costHtml = showCosts ? renderRecipeCostSummaryHTML(ingredients, ctx) : '';
+  return costHtml + renderRecipeWeightSummaryHTML(ingredients, recipe, options);
+}
+
+function renderRecipeIngredientsHeaderHTML() {
+  return `
+    <div class="recipe-ingredients-header" aria-hidden="true">
+      <span class="recipe-ing-col-name">חומר גלם</span>
+      <span class="recipe-ing-col-qty">כמות</span>
+      <span class="recipe-ing-col-unit">יחידה</span>
+      <span class="recipe-ing-col-cost">מחיר חומר גלם</span>
+      <span class="recipe-ing-col-actions"></span>
+    </div>`;
 }
 
 function renderRecipeIngredientRowHTML(ing, ctx) {
@@ -1851,38 +2011,58 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
   const { lineCost, badge, mat } = resolveIngredientDisplay(ing, ctx);
   return `
     <div class="filter-row recipe-ing-row" style="margin-bottom:6px;align-items:center" data-ing-id="${ing.id}">
-      <button type="button" class="recipe-ing-name pick-ing-supplier" data-ing-id="${ing.id}" title="לחץ לעריכת חומר גלם">
-        <span class="recipe-ing-name-text">${escapeHtml(ing.name)}</span>
-        <span class="recipe-ing-price-meta">${mat ? formatMoney(lineCost) : '—'} · ${escapeHtml(badge)}</span>
+      <button type="button" class="recipe-ing-name pick-ing-supplier" data-ing-id="${ing.id}" title="לחץ לעריכת חומר גלם ובחירה מספקים">
+        <span class="recipe-ing-name-text">✏️ ${escapeHtml(ing.name)}</span>
+        <span class="recipe-ing-price-meta">${escapeHtml(badge)} · לחץ לעריכה</span>
       </button>
       <input type="number" class="ing-qty" min="0.001" step="0.001" value="${formatRecipeQuantity(ing.quantity)}" style="width:80px">
       <select class="ing-unit" style="width:72px">
         ${RECIPE_WEIGHT_UNITS.map((u) => `
           <option value="${u.id}" ${kind === u.id ? 'selected' : ''}>${u.label}</option>`).join('')}
       </select>
+      <span class="recipe-ing-line-cost" title="מחיר לפי הכמות במתכון">${mat ? formatMoney(lineCost) : '—'}</span>
       <button type="button" class="btn btn-danger btn-sm del-ing" data-id="${ing.id}">🗑</button>
     </div>`;
 }
 
-async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, productCatalog, catalogLayout, returnToView) {
+async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, suppliers, productCatalog, catalogLayout, returnToView, formDraft) {
   const offers = await getMaterialsByIngredientName(ing.name);
   const currentSource = getIngredientPriceSource(ing);
   const maxMat = pickHighestPricedMaterial(offers);
+  const currentMat = Number(ing.rawMaterialId)
+    ? mats.find((m) => m.id === Number(ing.rawMaterialId))
+    : null;
+
+  const reopenRecipeEdit = async (toastMsg) => {
+    try { await syncProductCostFromRecipe(recipe.id); } catch { /* no products */ }
+    closeModal();
+    openRecipeForm(container, {
+      recipe: await getRecipe(recipe.id),
+      productCatalog,
+      layout: catalogLayout,
+      returnToView,
+      draft: formDraft,
+    });
+    if (toastMsg) showToast(toastMsg);
+  };
+
   openModal({
-    title: `עריכת חומר · ${escapeHtml(ing.name)}`,
+    title: `עריכת חומר גלם`,
+    modalClass: 'modal-ingredient-edit',
     bodyHTML: `
+      <p class="form-hint ingredient-edit-intro">חפש ובחר חומר גלם מרשימת הספקים, או בחר מחיר מההצעות למטה.</p>
       <div class="form-group" style="margin-top:0">
-        <label for="change-ing-mat-search">החלף חומר גלם</label>
+        <label for="change-ing-mat-search">חומר גלם מספקים</label>
         <div class="mat-search-wrap" style="position:relative">
-          <input type="text" id="change-ing-mat-search" value="${escapeHtml(ing.name)}" placeholder="חפש חומר גלם..." autocomplete="off">
-          <input type="hidden" id="change-ing-mat-id" value="">
+          <input type="text" id="change-ing-mat-search" value="${escapeHtml(currentMat?.name || ing.name)}" placeholder="חפש לפי שם חומר גלם..." autocomplete="off">
+          <input type="hidden" id="change-ing-mat-id" value="${currentMat?.id || ''}">
           <ul class="mat-search-list hidden" id="change-ing-mat-list"></ul>
         </div>
-        <p class="form-hint">בחר מהרשימה או הזן שם ידנית</p>
+        <p class="form-hint">הקלד לחיפוש — לחץ על תוצאה לבחירה מיידית</p>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">החלף חומר</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">החל לפי שם בשדה (ללא בחירה מהרשימה)</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">
-      <p class="form-hint" style="margin-top:0">תמחור — ברירת מחדל: המחיר הגבוה ביותר מבין הספקים</p>
+      <p class="form-hint" style="margin-top:0">תמחור ל<strong>${escapeHtml(ing.name)}</strong> — ברירת מחדל: המחיר הגבוה ביותר</p>
       <div class="ing-price-picker">
         <button type="button" class="ing-price-option${currentSource === 'max' ? ' active' : ''}" data-source="max">
           <span class="ing-price-option-name">מחיר גבוה ביותר (אוטומטי)</span>
@@ -1894,30 +2074,47 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, p
     const isActive = currentSource === 'supplier' && Number(ing.rawMaterialId) === m.id;
     return `
         <button type="button" class="ing-price-option${isActive ? ' active' : ''}" data-source="supplier" data-mid="${m.id}">
-          <span class="ing-price-option-name">${escapeHtml(sup)}</span>
+          <span class="ing-price-option-name">${escapeHtml(sup)} · ${escapeHtml(m.name)}</span>
           <span class="ing-price-option-meta">${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}</span>
         </button>`;
   }).join('')}
+        ${!offers.length ? '<p class="form-hint">אין התאמות מדויקות לשם — חפש ברשימת הספקים למעלה</p>' : ''}
       </div>`,
-    footerHTML: '<button class="btn btn-secondary modal-cancel">סגור</button>',
+    footerHTML: '<button class="btn btn-secondary modal-cancel">חזרה למתכון</button>',
   });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.querySelector('.modal-cancel')?.addEventListener('click', () => {
+    closeModal();
+    openRecipeForm(container, {
+      recipe,
+      productCatalog,
+      layout: catalogLayout,
+      returnToView,
+      draft: formDraft,
+    });
+  });
 
-  bindMaterialSearch(
+  const applyMaterialSelection = async (mat, toastMsg = 'חומר גלם עודכן ✓') => {
+    if (!mat) return;
+    try {
+      await updateRecipeIngredient(ing.id, {
+        name: mat.name,
+        priceSource: 'supplier',
+        rawMaterialId: mat.id,
+      });
+      await reopenRecipeEdit(toastMsg);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  };
+
+  bindMaterialSearchRich(
     mats,
+    suppliers,
     document.getElementById('change-ing-mat-search'),
     document.getElementById('change-ing-mat-id'),
     document.getElementById('change-ing-mat-list'),
+    { onPick: (mat) => { applyMaterialSelection(mat); } },
   );
-
-  const reloadAfterIngredientChange = async (toastMsg) => {
-    try { await syncProductCostFromRecipe(recipe.id); } catch { /* no products */ }
-    closeModal();
-    openRecipeForm(container, {
-      recipe: await getRecipe(recipe.id), productCatalog, layout: catalogLayout, returnToView,
-    });
-    showToast(toastMsg);
-  };
 
   document.getElementById('change-ing-mat-btn')?.addEventListener('click', async () => {
     const matId = Number(document.getElementById('change-ing-mat-id')?.value);
@@ -1929,14 +2126,18 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, p
     }
     const newName = mat?.name || searchName;
     if (!newName) return showToast('בחר או הזן שם חומר');
-    if (newName === ing.name) return showToast('אותו חומר');
+    if (newName === ing.name && !mat) return showToast('אותו חומר');
     try {
+      if (mat) {
+        await applyMaterialSelection(mat, 'חומר הוחלף ✓');
+        return;
+      }
       await updateRecipeIngredient(ing.id, {
         name: newName,
         priceSource: 'max',
         rawMaterialId: null,
       });
-      await reloadAfterIngredientChange('חומר הוחלף ✓');
+      await reopenRecipeEdit('חומר הוחלף ✓');
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
@@ -1950,7 +2151,7 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, p
           ? { priceSource: 'supplier', rawMaterialId: Number(btn.dataset.mid) }
           : { priceSource: 'max', rawMaterialId: null };
         await updateRecipeIngredient(ing.id, patch);
-        await reloadAfterIngredientChange('תמחור עודכן ✓');
+        await reopenRecipeEdit('תמחור עודכן ✓');
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
@@ -1963,7 +2164,27 @@ function materialComparisonPriceDisplay(mat) {
   return ppk != null ? ppk : (Number(mat?.unitPrice) || 0);
 }
 
+function refreshRecipeIngredientCosts(baseIngredients, ctx) {
+  const current = readIngredientsFromForm(baseIngredients);
+  document.querySelectorAll('.recipe-ing-row').forEach((row) => {
+    const ing = current.find((i) => i.id === Number(row.dataset.ingId));
+    if (!ing) return;
+    const { lineCost, mat } = resolveIngredientDisplay(ing, ctx);
+    const costEl = row.querySelector('.recipe-ing-line-cost');
+    if (costEl) costEl.textContent = mat ? formatMoney(lineCost) : '—';
+  });
+}
+
+function refreshRecipeYieldPreview(baseIngredients, baseRecipe) {
+  const statsEl = document.getElementById('recipe-yield-stats');
+  if (!statsEl) return;
+  const ingredients = readIngredientsFromForm(baseIngredients);
+  const recipe = getRecipeFormContext(baseRecipe);
+  statsEl.innerHTML = renderRecipeProductYieldStatsHTML(recipe, ingredients);
+}
+
 function refreshRecipeTotalDisplay(baseIngredients, baseRecipe, ctx) {
+  refreshRecipeIngredientCosts(baseIngredients, ctx);
   const el = document.getElementById('recipe-ing-total');
   if (!el) return;
   el.innerHTML = renderRecipeCostAndWeightHTML(
@@ -1971,6 +2192,7 @@ function refreshRecipeTotalDisplay(baseIngredients, baseRecipe, ctx) {
     getRecipeFormContext(baseRecipe),
     ctx,
   );
+  refreshRecipeYieldPreview(baseIngredients, baseRecipe);
 }
 
 function formatRatioFactor(r) {
@@ -2813,12 +3035,27 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
   });
 }
 
-function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap }) {
+function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap, matCtx }) {
   const ingredients = recipe.ingredients || [];
   const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
+  const { units } = getRecipeProductYieldInfo(recipe, ingredients);
+  const yieldBlockHtml = renderRecipeProductYieldBlockHTML(recipe, ingredients, { showCalculator: true });
   const yieldLabel = recipe.yieldPortions && recipe.yieldPortions !== 1
     ? `${recipe.yieldPortions} מנות`
     : 'מתכון בסיס';
+  let totalCost = 0;
+  const ingredientRows = ingredients.map((ing, i) => {
+    const { lineCost, mat } = matCtx ? resolveIngredientDisplay(ing, matCtx) : { lineCost: 0, mat: null };
+    totalCost += lineCost;
+    return `
+              <tr>
+                <td class="col-num">${i + 1}</td>
+                <td class="col-name">${escapeHtml(ing.name)}</td>
+                <td class="col-qty"><span class="recipe-qty-value">${formatRecipeQuantity(ing.quantity)}</span></td>
+                <td class="col-unit">${escapeHtml(ing.unit)}</td>
+                <td class="col-cost">${mat ? formatMoney(lineCost) : '—'}</td>
+              </tr>`;
+  }).join('');
 
   return `
     <article class="recipe-sheet">
@@ -2827,10 +3064,13 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         <h1 class="recipe-sheet-title">${escapeHtml(recipe.name)}</h1>
         <div class="recipe-sheet-meta">
           <span class="recipe-meta-pill">${escapeHtml(yieldLabel)}</span>
+          ${units ? `<span class="recipe-meta-pill recipe-meta-yield">📦 ${formatRecipeQuantity(units.totalUnits)} מוצרים</span>` : ''}
+          ${recipe.portionWeightGrams ? `<span class="recipe-meta-pill">⚖️ ${recipe.portionWeightGrams} גרם למוצר</span>` : ''}
           ${productCategoryName ? `<span class="recipe-meta-pill">🏷️ ${escapeHtml(productCategoryName)}</span>` : ''}
           ${linkedNames?.length ? `<span class="recipe-meta-pill recipe-meta-products">🔗 ${linkedNames.map((n) => escapeHtml(n)).join(' · ')}</span>` : ''}
         </div>
       </header>
+      ${yieldBlockHtml}
       <section class="recipe-sheet-section" aria-label="חומרי גלם">
         <h2 class="recipe-sheet-section-title">חומרי גלם</h2>
         ${ingredients.length ? `
@@ -2842,16 +3082,15 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
                 <th scope="col" class="col-name">חומר גלם</th>
                 <th scope="col" class="col-qty">כמות</th>
                 <th scope="col" class="col-unit">יחידה</th>
+                <th scope="col" class="col-cost">מחיר חומר גלם</th>
               </tr>
             </thead>
             <tbody>
-              ${ingredients.map((ing, i) => `
-              <tr>
-                <td class="col-num">${i + 1}</td>
-                <td class="col-name">${escapeHtml(ing.name)}</td>
-                <td class="col-qty"><span class="recipe-qty-value">${formatRecipeQuantity(ing.quantity)}</span></td>
-                <td class="col-unit">${escapeHtml(ing.unit)}</td>
-              </tr>`).join('')}
+              ${ingredientRows}
+              <tr class="recipe-cost-total-row">
+                <td colspan="4" class="recipe-cost-total-label">סה״כ חומרי גלם</td>
+                <td class="col-cost"><strong>${formatMoney(totalCost)}</strong></td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -2867,9 +3106,12 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
 }
 
 async function openRecipeView(container, recipe, { productCatalog, layout }) {
-  const [products, profiles] = await Promise.all([getProducts(true), getBakingProfiles()]);
+  const [products, profiles, mats, suppliers] = await Promise.all([
+    getProducts(true), getBakingProfiles(), getRawMaterials(), getSuppliers(),
+  ]);
   const productMap = new Map(products.map((p) => [p.id, p]));
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  const matCtx = buildRecipeMaterialContext(mats, suppliers);
   const linkedNames = sortProductIdsByCatalogOrder(recipe.linkedProductIds || [], productCatalog)
     .map((id) => productMap.get(id)?.name).filter(Boolean);
   const categoryPath = findRecipeCategoryPath(layout, recipe.categoryId);
@@ -2878,7 +3120,9 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   openModal({
     title: '',
     modalClass: 'modal-recipe-view',
-    bodyHTML: buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName: productLinkLabel, profileMap }),
+    bodyHTML: buildRecipeViewHTML(recipe, {
+      categoryPath, linkedNames, productCategoryName: productLinkLabel, profileMap, matCtx,
+    }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
@@ -2895,6 +3139,8 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
     closeModal();
     switchRecipeTab('ratio');
   });
+
+  bindRecipeProductionCalculator(recipe, ingredients, matCtx);
 }
 
 function openRatioCalculatorPicker(layout) {
@@ -2923,15 +3169,31 @@ function openRatioCalculatorPicker(layout) {
 }
 
 function bindMaterialSearch(mats, input, hidden, list) {
+  bindMaterialSearchRich(mats, [], input, hidden, list);
+}
+
+function bindMaterialSearchRich(mats, suppliers, input, hidden, list, { onPick } = {}) {
   if (!input || !hidden || !list) return;
+  const supMap = new Map((suppliers || []).map((s) => [s.id, s.name]));
 
   const renderList = (filter = '') => {
     const q = filter.trim().toLowerCase();
     const filtered = q
       ? mats.filter((m) => m.name.toLowerCase().includes(q))
       : mats.slice(0, 50);
-    list.innerHTML = filtered.map((m) => `
-      <li><button type="button" class="mat-search-option" data-id="${m.id}">${escapeHtml(m.name)}</button></li>`).join('');
+    list.innerHTML = filtered.map((m) => {
+      const sup = supMap.get(m.supplierId) || '';
+      const meta = sup
+        ? `${escapeHtml(sup)} · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit || '')}`
+        : formatMoney(m.unitPrice);
+      return `
+      <li>
+        <button type="button" class="mat-search-option mat-search-option-rich" data-id="${m.id}">
+          <span class="mat-search-option-name">${escapeHtml(m.name)}</span>
+          <span class="mat-search-option-meta">${meta}</span>
+        </button>
+      </li>`;
+    }).join('');
     list.classList.toggle('hidden', filtered.length === 0);
   };
 
@@ -2940,9 +3202,20 @@ function bindMaterialSearch(mats, input, hidden, list) {
     renderList(input.value);
   });
   input.addEventListener('focus', () => renderList(input.value));
-  list.addEventListener('click', (e) => {
+  list.addEventListener('mousedown', (e) => {
     const btn = e.target.closest('.mat-search-option');
     if (!btn) return;
+    e.preventDefault();
+    const mat = mats.find((m) => m.id === Number(btn.dataset.id));
+    if (!mat) return;
+    hidden.value = String(mat.id);
+    input.value = mat.name;
+    list.classList.add('hidden');
+    if (onPick) onPick(mat);
+  });
+  list.addEventListener('click', (e) => {
+    const btn = e.target.closest('.mat-search-option');
+    if (!btn || onPick) return;
     hidden.value = btn.dataset.id;
     input.value = mats.find((m) => m.id === Number(btn.dataset.id))?.name || '';
     list.classList.add('hidden');
@@ -2952,16 +3225,17 @@ function bindMaterialSearch(mats, input, hidden, list) {
   });
 }
 
-function bindMaterialSearchPicker(mats) {
-  bindMaterialSearch(
+function bindMaterialSearchPicker(mats, suppliers) {
+  bindMaterialSearchRich(
     mats,
+    suppliers || [],
     document.getElementById('new-ing-mat-search'),
     document.getElementById('new-ing-mat'),
     document.getElementById('new-ing-mat-list'),
   );
 }
 
-async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView }) {
+async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView, draft }) {
   const isEdit = !!recipe;
   const ingredients = recipe?.ingredients || [];
   const [mats, bakingProfiles, suppliers] = await Promise.all([
@@ -3001,6 +3275,16 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <input type="number" id="recipe-portion-weight" min="1" step="1" placeholder="למשל: 85 — משקל יחידת מוצר סופית" value="${recipe?.portionWeightGrams ?? ''}">
         <p class="form-hint">הזן משקל יחידה — יוצג כמה מוצרים יוצאים ממנה אחת של המתכון</p>
       </div>
+      ${isEdit ? `
+      <section class="recipe-sheet-section recipe-product-yield-section recipe-yield-preview" aria-label="תשואת מוצרים">
+        <h2 class="recipe-sheet-section-title">תשואת מוצרים</h2>
+        <div id="recipe-yield-stats" class="recipe-yield-stats"></div>
+        <div class="recipe-production-calc">
+          <label class="recipe-production-calc-label" for="recipe-target-products">כמה מוצרים לייצר?</label>
+          <input type="number" id="recipe-target-products" class="recipe-target-products-input" min="0.1" step="0.1" placeholder="למשל: 24">
+          <div id="recipe-scaled-ingredients-host" class="recipe-scaled-ingredients-host" hidden></div>
+        </div>
+      </section>` : ''}
       <div class="form-group recipe-product-link-block">
         ${buildOptionalProductLinkerHTML(catalog, recipe)}
       </div>
@@ -3012,7 +3296,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       ${isEdit ? `
       <div class="form-group">
         <label>חומרי גלם</label>
-        ${ingredients.length ? ingredients.map((ing) => renderRecipeIngredientRowHTML(ing, matCtx)).join('') : '<p class="form-hint">אין חומרים</p>'}
+        ${ingredients.length ? `${renderRecipeIngredientsHeaderHTML()}${ingredients.map((ing) => renderRecipeIngredientRowHTML(ing, matCtx)).join('')}` : '<p class="form-hint">אין חומרים</p>'}
         ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeCostAndWeightHTML(ingredients, recipe, matCtx)}</div>` : ''}
         <div class="filter-row" style="margin-top:8px">
           <div class="mat-search-wrap" style="flex:1;position:relative">
@@ -3042,7 +3326,17 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
 
   bindRecipeBakingFormToggle(bakingProfiles);
 
-  if (isEdit) bindMaterialSearchPicker(mats);
+  if (draft) applyRecipeFormDraft(draft);
+
+  if (isEdit) bindMaterialSearchPicker(mats, suppliers);
+
+  if (isEdit) {
+    refreshRecipeYieldPreview(ingredients, recipe);
+    bindRecipeProductionCalculator(recipe, ingredients, matCtx, {
+      getRecipe: () => getRecipeFormContext(recipe),
+      getIngredients: () => readIngredientsFromForm(ingredients),
+    });
+  }
 
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ingId = Number(row.dataset.ingId);
@@ -3063,7 +3357,9 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     btn.addEventListener('click', () => {
       const ing = ingredients.find((i) => i.id === Number(btn.dataset.ingId));
       if (ing) {
-        openIngredientSupplierPicker(container, recipe, ing, matCtx, mats, catalog, catalogLayout, returnToView);
+        openIngredientSupplierPicker(
+          container, recipe, ing, matCtx, mats, suppliers, catalog, catalogLayout, returnToView, readRecipeFormDraft(),
+        );
       }
     });
   });

@@ -1,9 +1,9 @@
-import { db, ValidationError } from './db.js?v=234';
+import { db, ValidationError, sanitizeRawMaterialsCostSource } from './db.js?v=244';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=234';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=234';
+} from './validators.js?v=244';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=244';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1153,6 +1153,30 @@ export function computeRecipeProductUnits(totalRecipeKg, yieldPortions, unitWeig
   };
 }
 
+/** תשואת מוצרים למתכון — משקל יחידה וכמות מוצרים */
+export function getRecipeProductYieldInfo(recipe, ingredients) {
+  const summary = getRecipeWeightSummary(ingredients, { recipe });
+  const unitG = Number(recipe?.portionWeightGrams) || 0;
+  const yieldP = Number(recipe?.yieldPortions) || 1;
+  const units = unitG > 0 && summary.totalRecipeKg > 0
+    ? computeRecipeProductUnits(summary.totalRecipeKg, yieldP, unitG)
+    : null;
+  return { summary, unitG, yieldP, units };
+}
+
+/** הקפצת כמויות חומרי גלם לפי מספר מוצרים רצוי */
+export function scaleRecipeIngredientsForProductCount(ingredients, recipe, targetProductCount) {
+  const { units } = getRecipeProductYieldInfo(recipe, ingredients);
+  const target = Number(targetProductCount);
+  if (!units || !Number.isFinite(target) || target <= 0) return null;
+  const ratio = target / units.totalUnits;
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  return (ingredients || []).map((ing) => ({
+    ...ing,
+    scaledQuantity: roundQty(Number(ing.quantity) * ratio),
+  }));
+}
+
 export function formatRecipeIngredientsTotal(ingredients, options) {
   const { mainText, breakdownText } = getRecipeWeightSummary(ingredients, options);
   if (!mainText) return '';
@@ -1439,10 +1463,27 @@ export function buildMaterialsByNameKey(materials) {
   return map;
 }
 
-function materialComparisonPrice(mat) {
+export function sanitizeProcessedPricePerKg(value) {
+  if (value == null || value === '') return null;
+  const n = sanitizeMoney(value);
+  return n > 0 ? n : null;
+}
+
+export function getMaterialPurchasePricePerKg(mat) {
   const ppk = computePricePerKg(mat?.unitPrice, mat?.packageWeightGrams);
   if (ppk != null) return ppk;
-  return Number(mat?.unitPrice) || 0;
+  const unitPrice = Number(mat?.unitPrice) || 0;
+  return unitPrice > 0 ? unitPrice : null;
+}
+
+export function getMaterialEffectivePricePerKg(mat) {
+  const processed = sanitizeProcessedPricePerKg(mat?.processedPricePerKg);
+  if (processed != null) return processed;
+  return getMaterialPurchasePricePerKg(mat);
+}
+
+function materialComparisonPrice(mat) {
+  return getMaterialEffectivePricePerKg(mat) ?? 0;
 }
 
 export function pickHighestPricedMaterial(offers) {
@@ -1470,14 +1511,14 @@ export function computeIngredientLineCost(ing, mat) {
   if (!mat || qty <= 0) return 0;
   const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
   const unitPrice = Number(mat.unitPrice) || 0;
-  const ppk = computePricePerKg(mat.unitPrice, mat.packageWeightGrams);
+  const perKg = getMaterialEffectivePricePerKg(mat);
   if (kind === 'g') {
-    const perKg = ppk ?? unitPrice;
-    return roundQty((qty / 1000) * perKg);
+    const rate = perKg ?? unitPrice;
+    return roundQty((qty / 1000) * rate);
   }
   if (kind === 'kg') {
-    const perKg = ppk ?? unitPrice;
-    return roundQty(qty * perKg);
+    const rate = perKg ?? unitPrice;
+    return roundQty(qty * rate);
   }
   return roundQty(qty * unitPrice);
 }
@@ -1518,6 +1559,18 @@ async function syncRecipesAffectedByMaterial(materialId) {
       await syncProductCostFromRecipe(rid);
     } catch {
       /* no linked products */
+    }
+  }
+  const affectedProductIds = new Set();
+  const components = await db.productRecipeComponents.toArray();
+  for (const comp of components) {
+    if (recipeIds.has(comp.recipeId)) affectedProductIds.add(comp.productId);
+  }
+  for (const pid of affectedProductIds) {
+    try {
+      await syncProductCostIfRecipesMode(pid);
+    } catch {
+      /* no product */
     }
   }
 }
@@ -1730,6 +1783,10 @@ export function inferRecipeProductLinkScope(recipe) {
   return '';
 }
 
+export function isProductRecipesCostSource(product) {
+  return sanitizeRawMaterialsCostSource(product?.rawMaterialsCostSource) === 'recipes';
+}
+
 /** סנכרון מחיר חומרי גלם במוצר מסכום המתכון */
 export async function syncProductCostFromRecipe(recipeId) {
   const recipe = await getRecipe(recipeId);
@@ -1737,6 +1794,8 @@ export async function syncProductCostFromRecipe(recipeId) {
   if (!productIds.length) throw new ValidationError('אין מוצרים מקושרים');
   const cost = await computeRecipeMaterialsCost(recipe.ingredients);
   for (const pid of productIds) {
+    const product = await db.products.get(pid);
+    if (!isProductRecipesCostSource(product)) continue;
     await db.products.update(pid, { rawMaterialsCost: cost });
   }
   return cost;
@@ -1939,7 +1998,11 @@ export async function getProductDetail(productId) {
     });
   }
 
-  const totalCost = (product.rawMaterialsCost || 0) + (product.packagingCost || 0) + (product.additionalCosts || 0);
+  const rawMaterialsCostSource = sanitizeRawMaterialsCostSource(product.rawMaterialsCostSource);
+  const effectiveRawCost = rawMaterialsCostSource === 'recipes'
+    ? roundQty(recommendedCost)
+    : (product.rawMaterialsCost || 0);
+  const totalCost = effectiveRawCost + (product.packagingCost || 0) + (product.additionalCosts || 0);
   const unitPrice = Number(product.unitPrice) || 0;
 
   return {
@@ -1953,7 +2016,8 @@ export async function getProductDetail(productId) {
     recommendedCost: roundQty(recommendedCost),
     fullCost: roundQty(fullCost),
     currentCosts: {
-      rawMaterialsCost: product.rawMaterialsCost || 0,
+      rawMaterialsCost: effectiveRawCost,
+      rawMaterialsCostSource,
       packagingCost: product.packagingCost || 0,
       additionalCosts: product.additionalCosts || 0,
       unitPrice,
@@ -1964,11 +2028,41 @@ export async function getProductDetail(productId) {
 }
 
 /** סנכרון עלות חומרי גלם במוצר מסכום הרכיבים (מחירי ספק) */
-export async function syncProductCostFromComposition(productId) {
-  const detail = await getProductDetail(productId);
-  const cost = detail.recommendedCost;
-  await db.products.update(detail.product.id, { rawMaterialsCost: cost });
+export async function syncProductCostFromComposition(productId, { setSource = false } = {}) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  const product = await db.products.get(pid);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+
+  let recommendedCost = 0;
+  const components = await getProductRecipeComponents(pid);
+  const materials = await getRawMaterials();
+  for (const comp of components) {
+    const recipe = await getRecipe(comp.recipeId);
+    if (!recipe) continue;
+    const recipeTotalG = recipeTotalWeightGrams(recipe.ingredients);
+    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
+    const scaledIngredients = targetG > 0 && recipeTotalG > 0
+      ? scaleIngredientsToTargetGrams(recipe.ingredients, targetG)
+      : recipe.ingredients;
+    recommendedCost += await computeRecipeMaterialsCostFiltered(
+      scaledIngredients, materials, { supplierOnly: true },
+    );
+  }
+  const cost = roundQty(recommendedCost);
+  const patch = { rawMaterialsCost: cost };
+  if (setSource) patch.rawMaterialsCostSource = 'recipes';
+  await db.products.update(pid, patch);
   return cost;
+}
+
+/** סנכרון עלות מרכיבים רק כשמקור העלות הוא מתכונים */
+export async function syncProductCostIfRecipesMode(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return null;
+  const product = await db.products.get(pid);
+  if (!isProductRecipesCostSource(product)) return null;
+  return syncProductCostFromComposition(pid);
 }
 
 /* ── קטגוריות ספקים / אריזות ── */
@@ -2174,6 +2268,7 @@ export function computePricePerKg(unitPrice, packageWeightGrams) {
 
 export async function addRawMaterial({
   supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
+  processedPricePerKg,
   packagingKind, packUnitsCount, packProductsPerUnit,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
@@ -2197,6 +2292,9 @@ export async function addRawMaterial({
     unitPrice: price,
     supplierId: sid,
     packageWeightGrams: isPackagingSupplierCategory(category) ? null : pkg,
+    processedPricePerKg: isPackagingSupplierCategory(category)
+      ? null
+      : sanitizeProcessedPricePerKg(processedPricePerKg),
     ...packaging,
     sortOrder: maxOrder + 1,
   });
@@ -2230,6 +2328,9 @@ export async function updateRawMaterial(id, patch) {
   if ('supplierId' in data) data.supplierId = data.supplierId ? sanitizeProductId(data.supplierId) : null;
   if ('unit' in data) data.unit = String(data.unit || '').trim().slice(0, 20);
   if ('packageWeightGrams' in data) data.packageWeightGrams = sanitizePackageWeightGrams(data.packageWeightGrams);
+  if ('processedPricePerKg' in data) {
+    data.processedPricePerKg = sanitizeProcessedPricePerKg(data.processedPricePerKg);
+  }
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data) {
     const current = await db.rawMaterials.get(mid);
     const category = current

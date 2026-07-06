@@ -1273,12 +1273,9 @@ body {
 }
 
 .flow-run-checklist-tools {
-  position: absolute;
-  top: 10px;
-  right: 10px;
   display: flex;
   gap: 6px;
-  z-index: 2;
+  flex-shrink: 0;
 }
 
 .flow-checklist-btn {
@@ -1580,6 +1577,27 @@ body {
   background: var(--surface-alt, #f1f5f9);
 }
 
+.mat-search-option-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.mat-search-option-name {
+  font-weight: 600;
+  color: var(--text, #0f172a);
+}
+
+.mat-search-option-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+}
+
+.ingredient-edit-intro {
+  margin-bottom: 12px;
+}
+
 .product-prep-list {
   list-style: none;
   margin: 0;
@@ -1616,6 +1634,22 @@ body {
 
 .flow-prep-manage-list .product-prep-item {
   align-items: center;
+}
+
+.flow-checklist-sortable .flow-checklist-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.flow-checklist-drag-handle {
+  flex-shrink: 0;
+  cursor: grab;
+}
+
+body.flow-checklist-drag-active {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .flow-prep-manage-num {
@@ -1925,17 +1959,31 @@ body {
 .flow-run-header-card {
   margin-bottom: 8px;
   position: relative;
-  padding-top: 40px;
+  padding-top: 12px;
   padding-inline: 12px;
 }
 
+.flow-run-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.flow-run-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-inline-start: auto;
+}
+
 .flow-run-corner-tools {
-  position: absolute;
-  top: 10px;
-  left: 10px;
   display: flex;
   gap: 6px;
-  z-index: 2;
+  flex-shrink: 0;
 }
 
 .flow-run-tool-btn {
@@ -1947,7 +1995,8 @@ body {
 }
 
 .flow-run-back-btn {
-  margin-bottom: 4px;
+  margin-bottom: 0;
+  flex-shrink: 0;
 }
 
 .flow-run-title {
@@ -3081,6 +3130,24 @@ textarea {
   font-size: 1.05rem;
 }
 
+.product-cost-source-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--surface-alt, #f3f4f6);
+}
+
+.product-raw-cost-preview {
+  margin: 4px 0 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
 .product-detail-margin {
   display: inline-block;
   margin-top: 10px;
@@ -3851,6 +3918,88 @@ table.report-table tfoot td {
   color: #15803d;
 }
 
+.recipe-meta-pill.recipe-meta-yield {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.recipe-product-yield-section {
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.recipe-yield-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.recipe-yield-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid var(--border, #e2e8f0);
+  min-width: 120px;
+}
+
+.recipe-yield-stat span {
+  font-size: 0.78rem;
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+
+.recipe-yield-stat strong {
+  font-size: 1.1rem;
+  color: var(--text, #0f172a);
+}
+
+.recipe-yield-stat.highlight {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.recipe-yield-stat.highlight strong {
+  color: #b45309;
+}
+
+.recipe-production-calc {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border, #e2e8f0);
+}
+
+.recipe-production-calc-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.recipe-target-products-input {
+  width: 100%;
+  max-width: 200px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  font-size: 1rem;
+}
+
+.recipe-scaled-ingredients-host {
+  margin-top: 16px;
+}
+
+.recipe-scaled-intro {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+}
+
 .recipe-sheet-section-title {
   margin: 0 0 12px;
   font-size: 0.78rem;
@@ -3927,6 +4076,61 @@ table.report-table tfoot td {
   text-align: left;
   color: var(--text-muted, #64748b);
   font-size: 0.92rem;
+}
+
+.recipe-sheet-table .col-cost {
+  width: 6.5rem;
+  text-align: left;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text, #0f172a);
+}
+
+.recipe-sheet-table .recipe-cost-total-row td {
+  border-top: 2px solid var(--border, #e2e8f0);
+  background: #f8fafc;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.recipe-sheet-table .recipe-cost-total-label {
+  text-align: left;
+  font-weight: 700;
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+}
+
+.recipe-ingredients-header {
+  display: grid;
+  grid-template-columns: 1fr 80px 72px 6.5rem 2.5rem;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 0 2px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted, #64748b);
+}
+
+.recipe-ing-row {
+  display: grid !important;
+  grid-template-columns: 1fr 80px 72px 6.5rem 2.5rem;
+  gap: 8px;
+  align-items: center;
+}
+
+.recipe-ing-row .recipe-ing-name {
+  min-width: 0;
+  text-align: right;
+}
+
+.recipe-ing-line-cost {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text, #0f172a);
+  white-space: nowrap;
 }
 
 .recipe-qty-value {
@@ -4586,6 +4790,87 @@ table.report-table tfoot td {
 .report-flow-step-row--active td:nth-child(3) {
   color: var(--primary);
   font-weight: 600;
+}
+
+.flow-metrics-card {
+  padding: 4px 0 0;
+}
+
+.flow-metrics-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+.flow-metrics-meta {
+  font-weight: 500;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-right: 6px;
+}
+
+.flow-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.flow-metrics-card--compact .flow-metrics-grid {
+  gap: 8px;
+}
+
+.flow-metrics-stat {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.flow-metrics-icon {
+  font-size: 1.1rem;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.flow-metrics-body {
+  min-width: 0;
+}
+
+.flow-metrics-value {
+  display: block;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.flow-metrics-label {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.flow-metrics-card--report {
+  margin-bottom: 4px;
+}
+
+.report-flows-summary-card .flow-metrics-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.report-flows-summary-table td,
+.report-flows-summary-table th {
+  vertical-align: top;
+}
+
+.flow-history-run-metrics {
+  margin-top: 4px;
 }
 
 .report-week-day {
@@ -6465,12 +6750,21 @@ body.supplier-drag-active {
 .recipe-ing-name {
   flex: 1;
   min-width: 0;
-  border: none;
-  background: none;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--surface-alt, #f8fafc);
   text-align: right;
-  padding: 4px 0;
+  padding: 6px 8px;
   cursor: pointer;
   font: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.recipe-ing-name:hover,
+.recipe-ing-name:focus-visible {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+  outline: none;
 }
 
 .recipe-ing-name-text {
@@ -6651,6 +6945,12 @@ body.supplier-drag-active {
 .ratio-cakes-result strong,
 .ratio-yield-result strong {
   color: #5b21b6;
+}
+
+.recipe-book-view .recipe-cost-summary,
+.recipe-book-view .recipe-ing-line-cost,
+.recipe-book-view .col-cost {
+  display: none !important;
 }
 
 .recipe-book-view .recipe-ingredients-total {
@@ -7094,6 +7394,27 @@ body.supplier-drag-active {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
+  margin-bottom: 16px;
+}
+
+.material-pricing-grid-4 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.material-pricing-cell.is-processed {
+  border-color: #c4b5fd;
+  background: #f5f3ff;
+}
+
+.material-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.material-effective-hint {
+  margin-top: -8px;
   margin-bottom: 16px;
 }
 

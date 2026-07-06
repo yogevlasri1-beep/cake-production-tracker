@@ -464,3 +464,36 @@ export function bindCategoryGroupDragList(container, saveOrder) {
   const list = container.querySelector('.category-group-list');
   if (list) bindCategoryGroupList(list, saveOrder);
 }
+
+export function bindFlowChecklistDragLists(container, { onPrepOrderSave, onCleanOrderSave, onDeptCleanOrderSave } = {}) {
+  container.querySelectorAll('.flow-checklist-sortable[data-checklist-kind="prep"]').forEach((list) => {
+    bindGenericDragList(list, {
+      itemSelector: '.flow-checklist-item',
+      handleSelector: '.flow-checklist-drag-handle',
+      idAttr: 'prepId',
+      orderNumSelector: '.flow-checklist-order-num',
+      bodyClass: 'flow-checklist-drag-active',
+      saveOrder: onPrepOrderSave,
+    });
+  });
+  container.querySelectorAll('.flow-checklist-sortable[data-checklist-kind="clean"]').forEach((list) => {
+    bindGenericDragList(list, {
+      itemSelector: '.flow-checklist-item',
+      handleSelector: '.flow-checklist-drag-handle',
+      idAttr: 'cleanId',
+      orderNumSelector: '.flow-checklist-order-num',
+      bodyClass: 'flow-checklist-drag-active',
+      saveOrder: onCleanOrderSave,
+    });
+  });
+  container.querySelectorAll('.flow-checklist-sortable[data-checklist-kind="dept-clean"]').forEach((list) => {
+    bindGenericDragList(list, {
+      itemSelector: '.flow-checklist-item',
+      handleSelector: '.flow-checklist-drag-handle',
+      idAttr: 'deptCleanId',
+      orderNumSelector: '.flow-checklist-order-num',
+      bodyClass: 'flow-checklist-drag-active',
+      saveOrder: onDeptCleanOrderSave,
+    });
+  });
+}

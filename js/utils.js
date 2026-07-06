@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=234';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=244';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -38,6 +38,13 @@ export function formatDecimal(n) {
 
 export function formatPortionCount(n) {
   return formatDecimal(n);
+}
+
+export function formatPortionWeightKg(kg) {
+  if (kg == null || !Number.isFinite(kg)) return '—';
+  const rounded = Math.round(kg * 1000) / 1000;
+  const text = Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+  return `${text} ק"ג`;
 }
 
 export function productUnitsFromKg(kgQty, product) {

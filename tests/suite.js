@@ -1,28 +1,28 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=234';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=244';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=234';
+} from '../js/validators.js?v=244';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=234';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=234';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=234';
+} from '../js/calc.js?v=244';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=244';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=244';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=234';
-import { isAutoBackupDue } from '../js/backup-service.js?v=234';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource } from '../js/kitchen-db.js?v=234';
+} from '../js/supabase-backup.js?v=244';
+import { isAutoBackupDue } from '../js/backup-service.js?v=244';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount } from '../js/kitchen-db.js?v=244';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=234';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=234';
+} from '../js/supplier-import.js?v=244';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=244';
 
 export async function runAllTests() {
   /* validators */
@@ -37,9 +37,39 @@ export async function runAllTests() {
   test('sanitizeName — ריק', () => assertEqual(sanitizeName('   '), null));
   test('sanitizeName — תקין', () => assertEqual(sanitizeName('  שטרודל  '), 'שטרודל'));
 
+  test('isProductRecipesCostSource — manual/recipes', () => {
+    assertOk(!isProductRecipesCostSource({}));
+    assertOk(!isProductRecipesCostSource({ rawMaterialsCostSource: 'manual' }));
+    assertOk(isProductRecipesCostSource({ rawMaterialsCostSource: 'recipes' }));
+    assertOk(!isProductRecipesCostSource({ rawMaterialsCostSource: 'invalid' }));
+  });
+
   test('computePricePerKg — 1kg package', () => assertApprox(computePricePerKg(25, 1000), 25));
   test('computePricePerKg — 500g package', () => assertApprox(computePricePerKg(10, 500), 20));
   test('computePricePerKg — missing weight', () => assertEqual(computePricePerKg(10, null), null));
+
+  test('getRecipeProductYieldInfo — 10kg recipe, 100g unit → 100 products', () => {
+    const recipe = { portionWeightGrams: 100, yieldPortions: 1 };
+    const ingredients = [{ name: 'קמח', quantity: 10, unitKind: 'kg', unit: 'ק"ג' }];
+    const info = getRecipeProductYieldInfo(recipe, ingredients);
+    assertOk(info.units);
+    assertApprox(info.units.totalUnits, 100);
+    assertApprox(info.units.unitsPerPortion, 100);
+  });
+
+  test('scaleRecipeIngredientsForProductCount — doubles qty for 2× products', () => {
+    const recipe = { portionWeightGrams: 100, yieldPortions: 1 };
+    const ingredients = [{ name: 'קמח', quantity: 5, unitKind: 'kg', unit: 'ק"ג' }];
+    const scaled = scaleRecipeIngredientsForProductCount(ingredients, recipe, 100);
+    assertOk(scaled);
+    assertApprox(scaled[0].scaledQuantity, 10);
+  });
+
+  test('getMaterialEffectivePricePerKg — processed overrides purchase', () => {
+    const mat = { unitPrice: 50, packageWeightGrams: 1000, processedPricePerKg: 60 };
+    assertApprox(getMaterialPurchasePricePerKg(mat), 50);
+    assertApprox(getMaterialEffectivePricePerKg(mat), 60);
+  });
 
   test('normalizeMaterialKey — dedupe logic', () => {
     const mats = [
@@ -431,6 +461,7 @@ export async function runAllTests() {
         name: 'פרג 30',
         unitPrice: 12.5,
         rawMaterialsCost: 3,
+        rawMaterialsCostSource: 'manual',
         packagingCost: 1,
         sortOrder: 1,
       }],
@@ -441,6 +472,7 @@ export async function runAllTests() {
     });
     assertEqual(enriched.categories[0].color.startsWith('#'), true);
     assertEqual(enriched.products[0].unitPrice, 12.5);
+    assertEqual(enriched.products[0].rawMaterialsCostSource, 'manual');
     assertEqual(enriched.products[0].sortOrder, 1);
     assertEqual(enriched.products[0].categoryName, 'שטרודל');
     assertEqual(enriched.products[0].productionQty, 4);
@@ -565,7 +597,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=234');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=244');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

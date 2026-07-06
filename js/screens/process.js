@@ -6,9 +6,9 @@ import {
   addFlowStepToFlow, updateFlowStep, deleteFlowStep,
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
-  getFlowPreparations, addFlowPreparation, deleteFlowPreparation, importFlowPreparationsFromActivityPresets,
+  getFlowPreparations, addFlowPreparation, deleteFlowPreparation, setFlowPreparationOrder, importFlowPreparationsFromActivityPresets,
   getAvailableChecklistTasksForFlow, linkChecklistTaskToFlow,
-  getFlowCleaningTasks, addFlowCleaningTask, deleteFlowCleaningTask,
+  getFlowCleaningTasks, addFlowCleaningTask, deleteFlowCleaningTask, setFlowCleaningTaskOrder,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   getAllProductionRuns,
   getProductionRunsForFlow, getFlowProductsHistory, getFlow,
@@ -16,16 +16,18 @@ import {
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
+  computeRunMetrics, aggregateRunsMetrics,
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=234';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
-import { requestAutoBackupNow } from '../backup-service.js?v=234';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=234';
+} from '../db.js?v=244';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
+import { requestAutoBackupNow } from '../backup-service.js?v=244';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=244';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=244';
 
 function parseIdList(str) {
   try {
@@ -1147,6 +1149,65 @@ function formatRunEntriesSummary(entries, productMap) {
     .join(' · ');
 }
 
+function formatMetricsProductionLine(metrics, productMap) {
+  if (!metrics?.productionQty) return '—';
+  const lines = [...(metrics.productionByProduct || new Map()).entries()]
+    .filter(([, qty]) => qty > 0)
+    .map(([pid, qty]) => {
+      const p = productMap.get(pid);
+      return p ? `${escapeHtml(p.name)}: ${formatProductQuantity(p, qty)}` : `#${pid}: ${formatDecimal(qty)}`;
+    });
+  return lines.length ? lines.join(' · ') : formatDecimal(metrics.productionQty);
+}
+
+function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', compact = false } = {}) {
+  if (!metrics) return '';
+  const productionLine = formatMetricsProductionLine(metrics, productMap);
+  const portionsLine = metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—';
+  const weightLine = metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—';
+  const timeLine = metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—';
+  const metaParts = [];
+  if (metrics.runCount > 1) metaParts.push(`${metrics.runCount} תהליכים`);
+  if (metrics.activeCount) metaParts.push(`${metrics.activeCount} פעילים`);
+  if (metrics.completedCount && metrics.runCount > 1) metaParts.push(`${metrics.completedCount} הושלמו`);
+  const meta = metaParts.length ? ` · ${metaParts.join(' · ')}` : '';
+
+  return `
+    <div class="flow-metrics-card${compact ? ' flow-metrics-card--compact' : ''}">
+      <div class="flow-metrics-title">${escapeHtml(title)}${meta ? `<span class="flow-metrics-meta">${escapeHtml(meta)}</span>` : ''}</div>
+      <div class="flow-metrics-grid">
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">📦</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${productionLine}</span>
+            <span class="flow-metrics-label">ייצור</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">🍽</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${portionsLine}</span>
+            <span class="flow-metrics-label">מנות (כמות)</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">⚖️</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${weightLine}</span>
+            <span class="flow-metrics-label">מנות (משקל)</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat">
+          <span class="flow-metrics-icon">⏱</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${timeLine}${metrics.activeCount ? ' (בתהליך)' : ''}</span>
+            <span class="flow-metrics-label">זמן כולל</span>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 async function renderRunsHistoryView(container, ctx) {
   const { layout, catMap, productMap, groupMap } = ctx;
   const allRuns = await getAllProductionRuns();
@@ -1227,12 +1288,17 @@ async function renderFlowHistoryView(container, ctx) {
 
   const flowName = flowMeta?.name || flow.name || 'תזרים';
   const targetLabel = flowMeta?.targetLabel || '';
+  const flowAggregate = aggregateRunsMetrics(runsWithEntries);
 
   container.innerHTML = `
     <div class="card">
       <button type="button" class="btn btn-secondary btn-sm" id="back-from-flow-history">← חזרה</button>
       <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריה · ${escapeHtml(flowName)}</h2>
       ${targetLabel ? `<p class="form-hint" style="margin-bottom:0">${escapeHtml(targetLabel)}</p>` : ''}
+    </div>
+
+    <div class="card">
+      ${renderFlowMetricsCard(flowAggregate, productMap, { title: 'סיכום כולל לתזרים' })}
     </div>
 
     <div class="card">
@@ -1268,6 +1334,7 @@ async function renderFlowHistoryView(container, ctx) {
       const statusLabel = run.status === 'active' ? 'פעיל' : 'הושלם';
       const duration = runDurationMs(run);
       const productsLine = formatRunEntriesSummary(entries, productMap);
+      const runMetrics = computeRunMetrics(run, entries);
       return `
           <div class="list-item flow-history-run-item ${run.status === 'active' ? 'flow-run-active' : 'flow-run-done'}">
             <div class="list-item-info">
@@ -1280,6 +1347,10 @@ async function renderFlowHistoryView(container, ctx) {
                 ${duration != null ? ` · ${formatDuration(duration)}` : ''}
               </div>
               ${entries.length ? `<div class="flow-history-run-products form-hint">📦 ${productsLine}</div>` : ''}
+              <div class="flow-history-run-metrics form-hint">
+                🍽 ${runMetrics.portionCount != null ? formatPortionCount(runMetrics.portionCount) : '—'}
+                · ⚖️ ${runMetrics.portionWeightKg != null ? formatPortionWeightKg(runMetrics.portionWeightKg) : '—'}
+              </div>
             </div>
             <div class="list-item-actions">
               <button type="button" class="btn btn-primary btn-sm open-run" data-id="${run.id}" data-date="${run.date}">פתח</button>
@@ -1556,19 +1627,24 @@ async function renderRunView(container, runId, ctx) {
   const runDurationLabel = runDurMs != null
     ? `${formatDuration(runDurMs)}${run.status === 'active' ? ' (בתהליך)' : ''}`
     : '—';
+  const runMetrics = computeRunMetrics(run, runEntries);
 
   container.innerHTML = `
     <div class="card flow-run-header-card">
-      <div class="flow-run-corner-tools">
-        <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn${editAllMode ? ' is-active' : ''}" id="toggle-edit-all" title="עריכת שלבים" aria-label="עריכת שלבים">✏️</button>
-        <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn" id="sync-run-flow" title="רענן תהליך" aria-label="רענן תהליך">🔄</button>
+      <div class="flow-run-header-top">
+        <button type="button" class="btn btn-secondary btn-sm flow-run-back-btn" id="back-to-list">← חזרה</button>
+        <div class="flow-run-header-actions">
+          ${prepFlowLabel ? `
+          <div class="flow-run-checklist-tools">
+            ${prepButtonHTML}
+            ${cleanButtonHTML}
+          </div>` : ''}
+          <div class="flow-run-corner-tools">
+            <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn${editAllMode ? ' is-active' : ''}" id="toggle-edit-all" title="עריכת שלבים" aria-label="עריכת שלבים">✏️</button>
+            <button type="button" class="btn btn-secondary btn-sm btn-icon flow-run-tool-btn" id="sync-run-flow" title="רענן תהליך" aria-label="רענן תהליך">🔄</button>
+          </div>
+        </div>
       </div>
-      ${prepFlowLabel ? `
-      <div class="flow-run-checklist-tools">
-        ${prepButtonHTML}
-        ${cleanButtonHTML}
-      </div>` : ''}
-      <button type="button" class="btn btn-secondary btn-sm flow-run-back-btn" id="back-to-list">← חזרה</button>
       <div class="flow-run-header-info">
         <h2 class="flow-run-title">${run.batchNumber ? `אצווה ${escapeHtml(run.batchNumber)}` : runTitle(run, catMap, productMap, groupMap)}</h2>
         <p class="flow-run-subtitle">${runTitle(run, catMap, productMap, groupMap)}</p>
@@ -1595,6 +1671,10 @@ async function renderRunView(container, runId, ctx) {
         <span class="flow-legend-item flow-legend-item--next">○ הבא</span>
         ${hasProductionSteps ? '<span class="flow-legend-item flow-legend-item--production">📦 ייצור</span>' : ''}
       </div>
+    </div>
+
+    <div class="card">
+      ${renderFlowMetricsCard(runMetrics, productionCtx.productMap, { title: 'סיכום תהליך' })}
     </div>
 
     ${showTopProduction ? `
@@ -2286,12 +2366,13 @@ async function renderManageView(container, ctx) {
         ${activeFlow ? `
         <div class="flow-prep-manage-card">
           <div class="card-title" style="margin-bottom:6px">✅ צ׳קליסט משימות · ${escapeHtml(activeFlow.name)}</div>
-          <p class="form-hint" style="margin-bottom:10px">רשימה ייחודית לתזרim זה — מחיקה מסירה מהתזרim בלבד</p>
+          <p class="form-hint" style="margin-bottom:10px">רשימה ייחודית לתזרim זה — גרור ⠿ לשינוי סדר · מחיקה מסירה מהתזרim בלבד</p>
           ${flowPreps.length ? `
-            <ul class="product-prep-list flow-prep-manage-list">
+            <ul class="product-prep-list flow-prep-manage-list flow-checklist-sortable" data-checklist-kind="prep">
               ${flowPreps.map((p, i) => `
-                <li class="product-prep-item" data-prep-id="${p.id}">
-                  <span class="flow-prep-manage-num">${i + 1}.</span>
+                <li class="product-prep-item flow-checklist-item" data-prep-id="${p.id}">
+                  <span class="flow-checklist-drag-handle product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
+                  <span class="flow-prep-manage-num flow-checklist-order-num">${i + 1}.</span>
                   <span style="flex:1">${escapeHtml(p.name)}</span>
                   <button type="button" class="btn btn-danger btn-sm delete-flow-prep" data-id="${p.id}" title="הסר מהתזרim">🗑</button>
                 </li>`).join('')}
@@ -2308,12 +2389,13 @@ async function renderManageView(container, ctx) {
 
         <div class="flow-prep-manage-card flow-clean-manage-card">
           <div class="card-title" style="margin-bottom:6px">🧹 צ׳קליסט ניקיון</div>
-          <p class="form-hint" style="margin-bottom:10px">רשימה קבועה לתזרים «${escapeHtml(activeFlow.name)}» — נשמרת לתמיד · מופיעה בכל תהליך של תזרים זה</p>
+          <p class="form-hint" style="margin-bottom:10px">רשימה קבועה לתזרים «${escapeHtml(activeFlow.name)}» — גרור ⠿ לשינוי סדר</p>
           ${flowCleaningTasks.length ? `
-            <ul class="product-prep-list flow-prep-manage-list">
+            <ul class="product-prep-list flow-prep-manage-list flow-checklist-sortable" data-checklist-kind="clean">
               ${flowCleaningTasks.map((t, i) => `
-                <li class="product-prep-item" data-clean-id="${t.id}">
-                  <span class="flow-prep-manage-num">${i + 1}.</span>
+                <li class="product-prep-item flow-checklist-item" data-clean-id="${t.id}">
+                  <span class="flow-checklist-drag-handle product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
+                  <span class="flow-prep-manage-num flow-checklist-order-num">${i + 1}.</span>
                   <span style="flex:1">${escapeHtml(t.name)}</span>
                   <button type="button" class="btn btn-danger btn-sm delete-flow-clean" data-id="${t.id}">🗑</button>
                 </li>`).join('')}
@@ -2555,6 +2637,19 @@ async function renderManageView(container, ctx) {
       }
     });
   });
+
+  if (activeFlow) {
+    bindFlowChecklistDragLists(container, {
+      onPrepOrderSave: async (ids) => {
+        await setFlowPreparationOrder(activeFlow.id, ids);
+        requestAutoBackupNow().catch(() => {});
+      },
+      onCleanOrderSave: async (ids) => {
+        await setFlowCleaningTaskOrder(activeFlow.id, ids);
+        requestAutoBackupNow().catch(() => {});
+      },
+    });
+  }
 
   document.getElementById('new-flow-btn')?.addEventListener('click', () => {
     openModal({

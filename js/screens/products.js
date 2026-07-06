@@ -5,21 +5,22 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=234';
+} from '../db.js?v=244';
 import {
   getProductDetail,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
   getRecipesCatalogLayout, getBakingProfiles, getProductBakingProfileLink,
   linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
+  syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=234';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=234';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=234';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=234';
+} from '../kitchen-db.js?v=244';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=244';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=244';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=244';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -355,7 +356,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=234');
+    const { navigate } = await import('../app.js?v=244');
     navigate('backup');
   });
 
@@ -656,6 +657,12 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
     ? `<span class="product-detail-margin ${detail.margin >= 0 ? 'positive' : 'negative'}">רווח: ${formatMoney(detail.margin)}</span>`
     : '';
 
+  const rawSource = detail.currentCosts.rawMaterialsCostSource || 'manual';
+  const rawSourceLabel = rawSource === 'recipes' ? 'מהמתכונים' : 'ידני';
+  const rawCostActions = rawSource === 'recipes'
+    ? `<button type="button" class="btn btn-secondary btn-sm" id="product-switch-manual-cost" style="margin-top:10px">עבור להזנה ידנית</button>`
+    : `<button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">החל עלות מהמתכונים</button>`;
+
   return `
     <article class="product-detail-sheet">
       <header class="recipe-sheet-header">
@@ -705,7 +712,7 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
             <span>${formatMoney(detail.fullCost)}</span>
           </div>
           <div class="product-pricing-row">
-            <span>חומרי גלם (נוכחי)</span>
+            <span>חומרי גלם (נוכחי) <span class="product-cost-source-badge">${rawSourceLabel}</span></span>
             <span>${formatMoney(detail.currentCosts.rawMaterialsCost)}</span>
           </div>
           <div class="product-pricing-row">
@@ -727,9 +734,7 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
           </div>` : ''}
         </div>
         ${marginHtml}
-        <button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">
-          החל עלות מומלצת
-        </button>
+        ${rawCostActions}
       </section>
     </article>`;
 }
@@ -787,13 +792,19 @@ async function openProductDetailModal(container, productId) {
 }
 
 function bindProductDetailModalEvents(container, productId, refreshModal) {
+  async function afterCompositionChange() {
+    await syncProductCostIfRecipesMode(productId);
+    await refreshModal();
+    renderProducts(container);
+  }
+
   document.querySelectorAll('.product-comp-weight-input').forEach((input) => {
     input.addEventListener('change', async () => {
       const id = Number(input.dataset.id);
       const grams = parseCompositionKgInput(input.value);
       try {
         await updateProductRecipeComponent(id, { weightGrams: grams });
-        await refreshModal();
+        await afterCompositionChange();
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
@@ -805,7 +816,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
       try {
         await deleteProductRecipeComponent(Number(btn.dataset.id));
         showToast('הוסר');
-        await refreshModal();
+        await afterCompositionChange();
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
@@ -821,7 +832,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
           weightGrams: btn.dataset.weight || null,
         });
         showToast('נוסף');
-        await refreshModal();
+        await afterCompositionChange();
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
@@ -835,7 +846,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     try {
       await addProductRecipeComponent({ productId, recipeId });
       showToast('נוסף');
-      await refreshModal();
+      await afterCompositionChange();
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
@@ -861,8 +872,19 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-apply-recommended-cost')?.addEventListener('click', async () => {
     try {
-      const cost = await syncProductCostFromComposition(productId);
-      showToast(`עלות חומרי גלם עודכנה ל-${formatMoney(cost)}`);
+      const cost = await syncProductCostFromComposition(productId, { setSource: true });
+      showToast(`עלות חומרי גלם עודכנה ל-${formatMoney(cost)} (מהמתכונים)`);
+      await refreshModal();
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('product-switch-manual-cost')?.addEventListener('click', async () => {
+    try {
+      await updateProduct(productId, { rawMaterialsCostSource: 'manual' });
+      showToast('מקור העלות: הזנה ידנית');
       await refreshModal();
       renderProducts(container);
     } catch (err) {
@@ -1428,15 +1450,84 @@ function bindProductPriceUnitFields() {
   sync();
 }
 
-function optionalPriceInput(id, label, value) {
-  return `
-    <div class="form-group">
+function optionalPriceInput(id, label, value, { nested = false } = {}) {
+  const inner = `
       <label for="${id}">${label} <span style="font-weight:400;color:var(--text-muted)">(רשות)</span></label>
-      <input type="number" id="${id}" min="0" step="0.5" value="${value != null && value !== '' ? value : ''}" placeholder="—">
+      <input type="number" id="${id}" min="0" step="0.5" value="${value != null && value !== '' ? value : ''}" placeholder="—">`;
+  return nested ? inner : `<div class="form-group">${inner}
     </div>`;
 }
 
+function rawMaterialsCostSourceFieldsHTML(opts = {}) {
+  const source = opts.rawMaterialsCostSource || 'manual';
+  const isManual = source !== 'recipes';
+  const previewText = opts.rawMaterialsCostPreview != null ? formatMoney(opts.rawMaterialsCostPreview) : '—';
+  return `
+      <div class="form-group">
+        <label>מחיר חומרי גלם</label>
+        <div class="price-unit-options" data-cost-source-group role="radiogroup" aria-label="מקור מחיר חומרי גלם">
+          <label class="price-unit-option${isManual ? ' is-selected' : ''}">
+            <input type="radio" name="prod-raw-source" value="manual" ${isManual ? 'checked' : ''}>
+            <span class="price-unit-option-title">ידני</span>
+            <span class="price-unit-option-sub">הזנה ידנית של עלות</span>
+          </label>
+          <label class="price-unit-option${!isManual ? ' is-selected' : ''}">
+            <input type="radio" name="prod-raw-source" value="recipes" ${!isManual ? 'checked' : ''}>
+            <span class="price-unit-option-title">מהמתכונים</span>
+            <span class="price-unit-option-sub">חישוב מהרכב המוצר</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-group${isManual ? '' : ' hidden'}" id="prod-raw-manual-group">
+        ${optionalPriceInput('prod-raw', 'סכום (₪)', opts.rawMaterialsCost, { nested: true })}
+      </div>
+      <div class="form-group${isManual ? ' hidden' : ''}" id="prod-raw-recipes-preview">
+        <label>עלות מחושבת (מחירי ספק)</label>
+        <p class="product-raw-cost-preview" id="prod-raw-preview-value">${previewText}</p>
+        <p class="form-hint">מתעדכן אוטומטית מהרכב המוצר במסך פרטי מוצר</p>
+      </div>`;
+}
+
+function bindRawMaterialsCostSourceFields({ productId } = {}) {
+  const root = document.querySelector('[data-cost-source-group]');
+  if (!root) return;
+
+  const manualGroup = document.getElementById('prod-raw-manual-group');
+  const recipesGroup = document.getElementById('prod-raw-recipes-preview');
+  const previewEl = document.getElementById('prod-raw-preview-value');
+
+  const sync = async () => {
+    const isManual = root.querySelector('input[name="prod-raw-source"]:checked')?.value !== 'recipes';
+    manualGroup?.classList.toggle('hidden', !isManual);
+    recipesGroup?.classList.toggle('hidden', isManual);
+    root.querySelectorAll('.price-unit-option').forEach((opt) => {
+      opt.classList.toggle('is-selected', opt.querySelector('input')?.checked);
+    });
+    if (!isManual && productId && previewEl) {
+      try {
+        const detail = await getProductDetail(productId);
+        previewEl.textContent = formatMoney(detail.recommendedCost);
+      } catch {
+        previewEl.textContent = '—';
+      }
+    }
+  };
+
+  root.querySelectorAll('input[name="prod-raw-source"]').forEach((radio) => {
+    radio.addEventListener('change', sync);
+  });
+  sync();
+}
+
 async function showProductForm(container, opts) {
+  let rawMaterialsCostPreview = null;
+  if (opts.id && (opts.rawMaterialsCostSource === 'recipes' || isProductRecipesCostSource(opts))) {
+    try {
+      const detail = await getProductDetail(opts.id);
+      rawMaterialsCostPreview = detail.recommendedCost;
+    } catch { /* preview unavailable */ }
+  }
+
   const layout = await getProductsCatalogLayout();
   const categories = layout.allCategories.map((c) => ({ id: c.id, name: c.name }));
 
@@ -1454,7 +1545,7 @@ async function showProductForm(container, opts) {
         </select>
       </div>
       ${productPriceUnitFieldsHTML(opts)}
-      ${optionalPriceInput('prod-raw', 'מחיר חומרי גלם (₪)', opts.rawMaterialsCost)}
+      ${rawMaterialsCostSourceFieldsHTML({ ...opts, rawMaterialsCostPreview })}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
     footerHTML: `
@@ -1463,21 +1554,37 @@ async function showProductForm(container, opts) {
   });
 
   bindProductPriceUnitFields();
+  bindRawMaterialsCostSourceFields({ productId: opts.id });
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('save-prod').addEventListener('click', async () => {
     const name = document.getElementById('prod-name').value.trim();
     if (!name) return showToast('יש להזין שם מוצר');
 
+    const rawMaterialsCostSource = document.querySelector('input[name="prod-raw-source"]:checked')?.value || 'manual';
     const data = {
       name,
       categoryId: Number(document.getElementById('prod-cat').value),
       unitPrice: document.getElementById('prod-price').value,
       priceUnit: document.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit',
       unitWeightKg: document.getElementById('prod-unit-weight')?.value ?? '',
-      rawMaterialsCost: document.getElementById('prod-raw').value,
+      rawMaterialsCostSource,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,
     };
+    if (rawMaterialsCostSource === 'recipes') {
+      if (opts.id) {
+        try {
+          const detail = await getProductDetail(opts.id);
+          data.rawMaterialsCost = detail.recommendedCost;
+        } catch {
+          data.rawMaterialsCost = opts.rawMaterialsCost ?? 0;
+        }
+      } else {
+        data.rawMaterialsCost = 0;
+      }
+    } else {
+      data.rawMaterialsCost = document.getElementById('prod-raw').value;
+    }
     if (data.priceUnit === 'kg_with_units' && !Number(data.unitWeightKg)) {
       return showToast('הזן משקל ממוצע ליחידה');
     }

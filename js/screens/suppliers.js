@@ -9,17 +9,18 @@ import {
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
   getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, computePricePerKg,
+  getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, sanitizeProcessedPricePerKg,
   getSupplierShortagesGrouped, addSupplierShortage, updateSupplierShortage, deleteSupplierShortage,
   clearDoneSupplierShortages, formatSupplierShortagesText,
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
-} from '../kitchen-db.js?v=234';
-import { getProducts } from '../db.js?v=234';
-import { parseSupplierFile } from '../supplier-import.js?v=234';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=234';
-import { openModal, closeModal } from '../modal.js?v=234';
-import { requestAutoBackupNow } from '../backup-service.js?v=234';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=234';
+} from '../kitchen-db.js?v=244';
+import { getProducts } from '../db.js?v=244';
+import { parseSupplierFile } from '../supplier-import.js?v=244';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=244';
+import { openModal, closeModal } from '../modal.js?v=244';
+import { requestAutoBackupNow } from '../backup-service.js?v=244';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=244';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -256,32 +257,64 @@ function formatWeightGrams(grams) {
   return `${grams} גרם`;
 }
 
+function renderMaterialPricingDetailsHTML(mat) {
+  const purchasePerKg = getMaterialPurchasePricePerKg(mat);
+  const processedPerKg = sanitizeProcessedPricePerKg(mat?.processedPricePerKg);
+  const effectivePerKg = getMaterialEffectivePricePerKg(mat);
+  return `
+    <div class="material-pricing-grid material-pricing-grid-4">
+      <div class="material-pricing-cell">
+        <span class="material-pricing-label">מחיר לאריזה</span>
+        <strong>${formatMoney(mat.unitPrice || 0)}</strong>
+      </div>
+      <div class="material-pricing-cell">
+        <span class="material-pricing-label">כמות באריזה</span>
+        <strong>${formatWeightGrams(mat.packageWeightGrams)}</strong>
+      </div>
+      <div class="material-pricing-cell">
+        <span class="material-pricing-label">מחיר לקילו</span>
+        <strong>${purchasePerKg != null ? `${formatMoney(purchasePerKg)}/ק"ג` : '—'}</strong>
+      </div>
+      <div class="material-pricing-cell${processedPerKg ? ' is-processed' : ''}">
+        <span class="material-pricing-label">מחיר לאחר עיבוד</span>
+        <strong>${processedPerKg != null ? `${formatMoney(processedPerKg)}/ק"ג` : '—'}</strong>
+      </div>
+    </div>
+    ${processedPerKg && effectivePerKg != null
+    ? `<p class="form-hint material-effective-hint">לחישוב במתכונים: <strong>${formatMoney(effectivePerKg)}/ק"ג</strong></p>`
+    : ''}`;
+}
+
+function updateMaterialPricePreview() {
+  const preview = document.getElementById('mat-price-per-kg-preview');
+  if (!preview) return;
+  const mat = {
+    unitPrice: document.getElementById('mat-price')?.value,
+    packageWeightGrams: document.getElementById('mat-weight')?.value,
+  };
+  const perKg = getMaterialPurchasePricePerKg(mat);
+  preview.textContent = perKg != null ? `מחיר לקילו מחושב: ${formatMoney(perKg)}/ק"ג` : '';
+}
+
+function bindMaterialPricePreviewFields() {
+  ['mat-price', 'mat-weight'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', updateMaterialPricePreview);
+  });
+  updateMaterialPricePreview();
+}
+
 async function openCatalogMaterialDetailModal(container, catalogItem, categories, supMap) {
   const [history, suppliers] = await Promise.all([
     getCombinedPriceHistory(catalogItem.primaryId),
     getSuppliers(),
   ]);
   const selectedOffer = pickBestOffer(catalogItem.offers);
-  const pricePerKg = computePricePerKg(selectedOffer.unitPrice, selectedOffer.packageWeightGrams);
 
   openModal({
     title: escapeHtml(catalogItem.name),
     modalClass: 'modal-catalog-material',
     bodyHTML: `
-      <div class="material-pricing-grid">
-        <div class="material-pricing-cell">
-          <span class="material-pricing-label">מחיר למוצר</span>
-          <strong>${formatMoney(selectedOffer.unitPrice)}</strong>
-        </div>
-        <div class="material-pricing-cell">
-          <span class="material-pricing-label">משקל מוצר</span>
-          <strong>${formatWeightGrams(selectedOffer.packageWeightGrams)}</strong>
-        </div>
-        <div class="material-pricing-cell">
-          <span class="material-pricing-label">מחיר לקילו</span>
-          <strong>${pricePerKg != null ? `${formatMoney(pricePerKg)}/ק"ג` : '—'}</strong>
-        </div>
-      </div>
+      ${renderMaterialPricingDetailsHTML(selectedOffer)}
       <div class="catalog-offers-section">
         <div class="filter-row" style="margin-bottom:8px">
           <h4 class="material-detail-subtitle" style="margin:0;flex:1">הצעות מספקים</h4>
@@ -289,16 +322,18 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         </div>
         ${catalogItem.offers.length
     ? `<table class="catalog-offers-table">
-          <thead><tr><th>ספק</th><th>מחיר</th><th>משקל</th><th>מחיר/ק"ג</th><th></th></tr></thead>
+          <thead><tr><th>ספק</th><th>מחיר לאריזה</th><th>כמות באריזה</th><th>מחיר/ק"ג</th><th>לאחר עיבוד</th><th></th></tr></thead>
           <tbody>
             ${catalogItem.offers.map((o) => {
-    const ppk = computePricePerKg(o.unitPrice, o.packageWeightGrams);
+    const ppk = getMaterialPurchasePricePerKg(o);
+    const processed = sanitizeProcessedPricePerKg(o.processedPricePerKg);
     return `
             <tr data-offer-id="${o.id}">
               <td>${escapeHtml(o.supplierId ? supMap.get(o.supplierId) || '—' : 'ללא ספק')}</td>
-              <td>${formatMoney(o.unitPrice)}/${escapeHtml(o.unit)}</td>
+              <td>${formatMoney(o.unitPrice)}</td>
               <td>${formatWeightGrams(o.packageWeightGrams)}</td>
               <td>${ppk != null ? formatMoney(ppk) : '—'}</td>
+              <td>${processed != null ? formatMoney(processed) : '—'}</td>
               <td><button type="button" class="btn btn-secondary btn-sm edit-catalog-offer" data-id="${o.id}">✏️</button></td>
             </tr>`;
   }).join('')}
@@ -708,13 +743,10 @@ async function openMaterialDetailModal(container, materialId) {
     title: escapeHtml(mat.name),
     modalClass: 'modal-material-detail',
     bodyHTML: `
-      <div class="material-detail-current">
-        <span class="material-detail-label">מחיר נוכחי</span>
-        <strong class="material-detail-price">${formatMoney(mat.unitPrice)}/${escapeHtml(mat.unit)}</strong>
-        ${mat.packageWeightGrams ? `<span class="form-hint">משקל: ${formatWeightGrams(mat.packageWeightGrams)}</span>` : ''}
-        ${computePricePerKg(mat.unitPrice, mat.packageWeightGrams) != null
-    ? `<span class="form-hint">מחיר/ק"ג: ${formatMoney(computePricePerKg(mat.unitPrice, mat.packageWeightGrams))}</span>` : ''}
+      ${renderMaterialPricingDetailsHTML(mat)}
+      <div class="material-detail-meta">
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
+        ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
         ${mat.packagingKind ? `<span class="form-hint">${escapeHtml(getPackagingKindLabel(mat.packagingKind))}${mat.packUnitsCount > 1 ? ` · ${mat.packUnitsCount} בחבילה` : ''}${mat.packagingKind === PACKAGING_KIND_CARTON && mat.packProductsPerUnit ? ` · ${mat.packProductsPerUnit} מוצרים/קרטון` : ''}</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
       </div>
@@ -1177,10 +1209,9 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
   const packKind = mat?.packagingKind || PACKAGING_KIND_CARTON;
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
-    <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
-    <div class="form-group"><label>מחיר ${isPackaging ? 'לחבילה' : 'נוכחי'} (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
-    ${isPackaging ? '' : `<div class="form-group"><label>משקל מוצר (גרם)</label><input type="number" id="mat-weight" min="0" step="1" value="${mat?.packageWeightGrams ?? ''}" placeholder="לחישוב מחיר/ק&quot;ג"></div>`}
     ${isPackaging ? `
+    <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
+    <div class="form-group"><label>מחיר לחבילה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
     <div class="form-group">
       <label>סוג אריזה</label>
       <div class="packaging-kind-row" role="radiogroup">
@@ -1196,7 +1227,14 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
       <label>מוצרים בקרטון</label>
       <input type="number" id="mat-pack-products" min="1" step="1" value="${mat?.packProductsPerUnit ?? 1}" placeholder="כמה מוצרים נכנסים בקרטון">
     </div>
-    <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>` : ''}
+    <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>` : `
+    <div class="form-group"><label>מחיר לאריזה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
+    <div class="form-group"><label>כמות באריזה (גרם)</label><input type="number" id="mat-weight" min="0" step="1" value="${mat?.packageWeightGrams ?? ''}" placeholder="למשל: 1000 = קילו"></div>
+    <p class="form-hint" id="mat-price-per-kg-preview"></p>
+    <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
+      <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
+    </div>
+    <div class="form-group"><label>יחידת רכישה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>`}
     <div class="form-group"><label>ספק</label>
       <select id="mat-supplier"><option value="">—</option>
         ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
@@ -1207,6 +1245,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
 function bindMaterialForm(container, categoryId, materialId, { isPackaging = false } = {}) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   if (isPackaging) bindPackagingFormFields();
+  else bindMaterialPricePreviewFields();
   document.getElementById('save-mat')?.addEventListener('click', async () => {
     try {
       const payload = {
@@ -1214,6 +1253,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         unit: document.getElementById('mat-unit')?.value,
         supplierId: document.getElementById('mat-supplier')?.value || null,
         packageWeightGrams: isPackaging ? null : document.getElementById('mat-weight')?.value,
+        processedPricePerKg: isPackaging ? null : document.getElementById('mat-processed-price')?.value,
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       if (materialId) {
@@ -1271,6 +1311,8 @@ function openDuplicateMaterialModal(container, mat, categoryId) {
           unit: mat.unit,
           unitPrice: 0,
           supplierId: sid,
+          packageWeightGrams: mat.packageWeightGrams,
+          processedPricePerKg: mat.processedPricePerKg,
           packagingKind: mat.packagingKind,
           packUnitsCount: mat.packUnitsCount,
           packProductsPerUnit: mat.packProductsPerUnit,
