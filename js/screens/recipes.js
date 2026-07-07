@@ -13,6 +13,7 @@ import {
   formatSubdivisionWeight, gramsFromSubdivisionKg,
   computeRecipeProductUnits,
   getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount,
+  scaleIngredientsToTargetGrams, recipeTotalWeightGrams,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
   RECIPE_OVEN_TYPES, normalizeRecipeBakingFields, resolveRecipeBaking,
   getRecipeOvenLabel, formatRecipeBakingParamsLine,
@@ -26,15 +27,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=248';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=248';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=248';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=248';
-import { openModal, closeModal } from '../modal.js?v=248';
+} from '../kitchen-db.js?v=249';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=249';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=249';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=249';
+import { openModal, closeModal } from '../modal.js?v=249';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=248';
-import { defaultColorForIndex } from '../chart.js?v=248';
+} from '../product-drag.js?v=249';
+import { defaultColorForIndex } from '../chart.js?v=249';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2185,27 +2186,24 @@ function bindRatioCalculator(recipe, hostEl) {
   const state = {
     anchorId: ingredients[0].id,
     targetQty: Number(ingredients[0].quantity),
-    cakeWeightGrams: recipe.portionWeightGrams ? String(recipe.portionWeightGrams) : '',
+    cakeWeightKg: recipe.portionWeightGrams
+      ? formatRecipeQuantity(recipe.portionWeightGrams / 1000)
+      : '',
     cakeCount: '',
     scaleFromCakes: false,
   };
 
   const getAnchor = () => ingredients.find((i) => i.id === Number(state.anchorId));
 
-  const getOriginalTotalGrams = () => {
-    const { totalRecipeKg } = getRecipeWeightSummary(ingredients);
-    return totalRecipeKg > 0 ? totalRecipeKg * 1000 : 0;
-  };
+  const getCakeWeightGrams = () => gramsFromSubdivisionKg(state.cakeWeightKg);
+
+  const getOriginalTotalGrams = () => recipeTotalWeightGrams(ingredients);
 
   const applyScaleFromCakes = () => {
-    const cakeW = Number(state.cakeWeightGrams);
+    const cakeWG = getCakeWeightGrams();
     const count = Number(state.cakeCount);
     const origG = getOriginalTotalGrams();
-    const anchor = getAnchor();
-    if (!cakeW || !count || !origG || !anchor) return false;
-    const targetTotalG = count * cakeW;
-    const ratio = targetTotalG / origG;
-    state.targetQty = Math.round(Number(anchor.quantity) * ratio * 1000) / 1000;
+    if (!cakeWG || !count || !origG) return false;
     state.scaleFromCakes = true;
     return true;
   };
@@ -2218,29 +2216,39 @@ function bindRatioCalculator(recipe, hostEl) {
     const targetQty = Number(state.targetQty);
     let scaled;
     let ratio = 1;
-    try {
-      scaled = scaleRecipeIngredients(ingredients, state.anchorId, targetQty);
-      ratio = targetQty / baseQty;
-    } catch (err) {
-      hostEl.querySelector('#ratio-tbody')?.replaceChildren();
-      hostEl.querySelector('#ratio-change-banner')?.replaceChildren();
-      const errEl = hostEl.querySelector('#ratio-error');
-      if (errEl) errEl.textContent = err.message || 'שגיאה';
-      return;
+    const cakeWG = getCakeWeightGrams();
+    const cakeCountNum = Number(state.cakeCount);
+
+    if (state.scaleFromCakes && cakeCountNum > 0 && cakeWG) {
+      const targetTotalG = cakeCountNum * cakeWG;
+      const origG = getOriginalTotalGrams();
+      scaled = scaleIngredientsToTargetGrams(ingredients, targetTotalG);
+      ratio = origG > 0 ? targetTotalG / origG : 1;
+      const anchorScaled = scaled.find((i) => i.id === Number(state.anchorId));
+      if (anchorScaled?.scaledQuantity != null) state.targetQty = anchorScaled.scaledQuantity;
+    } else {
+      try {
+        scaled = scaleRecipeIngredients(ingredients, state.anchorId, targetQty);
+        ratio = targetQty / baseQty;
+      } catch (err) {
+        hostEl.querySelector('#ratio-tbody')?.replaceChildren();
+        hostEl.querySelector('#ratio-change-banner')?.replaceChildren();
+        const errEl = hostEl.querySelector('#ratio-error');
+        if (errEl) errEl.textContent = err.message || 'שגיאה';
+        return;
+      }
     }
 
     const errEl = hostEl.querySelector('#ratio-error');
     if (errEl) errEl.textContent = '';
 
     const origTotalG = getOriginalTotalGrams();
-    const cakeW = Number(state.cakeWeightGrams);
-    const unitsInfo = cakeW && origTotalG
-      ? computeRecipeProductUnits(origTotalG / 1000, 1, cakeW)
+    const unitsInfo = cakeWG && origTotalG
+      ? computeRecipeProductUnits(origTotalG / 1000, 1, cakeWG)
       : null;
 
-    const scaledSummary = getRecipeWeightSummary(scaled, { useScaled: true });
-    const scaledTotalG = scaledSummary.totalRecipeKg * 1000;
-    const cakeCountNum = Number(state.cakeCount);
+    const scaledTotalG = recipeTotalWeightGrams(scaled, { useScaled: true });
+    const displayTargetQty = Number(state.targetQty);
 
     const bannerEl = hostEl.querySelector('#ratio-change-banner');
     if (bannerEl) {
@@ -2248,8 +2256,8 @@ function bindRatioCalculator(recipe, hostEl) {
         <div class="ratio-change-banner-inner">
           <span class="ratio-change-label">שינוי יחס — ${escapeHtml(anchor.name)}</span>
           <span class="ratio-change-values">
-            מ-<strong>${baseQty}</strong> ${escapeHtml(anchor.unit)}
-            ל-<strong>${targetQty}</strong> ${escapeHtml(anchor.unit)}
+            מ-<strong>${formatRecipeQuantity(baseQty)}</strong> ${escapeHtml(anchor.unit)}
+            ל-<strong>${formatRecipeQuantity(displayTargetQty)}</strong> ${escapeHtml(anchor.unit)}
           </span>
           <span class="ratio-factor-badge">×${formatRatioFactor(ratio)}</span>
         </div>`;
@@ -2280,7 +2288,7 @@ function bindRatioCalculator(recipe, hostEl) {
     const yieldEl = hostEl.querySelector('#ratio-yield-result');
     if (yieldEl) {
       if (unitsInfo) {
-        yieldEl.innerHTML = `ממנה אחת: <strong>${formatRecipeQuantity(unitsInfo.unitsPerPortion)}</strong> יחידות · סה״כ מתכון: <strong>${formatRecipeQuantity(unitsInfo.totalUnits)}</strong> (${cakeW} גרם ליחידה)`;
+        yieldEl.innerHTML = `יוצא מהמנה: <strong>${formatRecipeQuantity(unitsInfo.totalUnits)}</strong> יחידות × ${formatSubdivisionWeight(cakeWG)}`;
         yieldEl.hidden = false;
       } else {
         yieldEl.hidden = true;
@@ -2290,11 +2298,11 @@ function bindRatioCalculator(recipe, hostEl) {
 
     const cakesResultEl = hostEl.querySelector('#ratio-cakes-result');
     if (cakesResultEl) {
-      if (state.scaleFromCakes && cakeCountNum > 0 && cakeW > 0) {
+      if (state.scaleFromCakes && cakeCountNum > 0 && cakeWG) {
         cakesResultEl.innerHTML = `
-          המתכון מותאם ל-<strong>${cakeCountNum}</strong> יחידות × ${cakeW} גרם
-          = <strong>${Math.round(cakeCountNum * cakeW)}</strong> גרם
-          (סה"כ מחושב: ${Math.round(scaledTotalG)} גרם)`;
+          המתכון מותאם ל-<strong>${formatRecipeQuantity(cakeCountNum)}</strong> יחידות × ${formatSubdivisionWeight(cakeWG)}
+          = <strong>${formatKgWeight((cakeCountNum * cakeWG) / 1000)}</strong>
+          (סה"כ מחושב: ${formatKgWeight(scaledTotalG / 1000)})`;
         cakesResultEl.hidden = false;
       } else {
         cakesResultEl.hidden = true;
@@ -2354,8 +2362,8 @@ function bindRatioCalculator(recipe, hostEl) {
       <h3 class="ratio-cake-tools-title">חישוב לפי יחידות</h3>
       <div class="ratio-cake-grid">
         <div class="form-group">
-          <label>משקל מוצר יחידה (גרם)</label>
-          <input type="number" id="ratio-cake-weight" min="1" step="1" placeholder="למשל: 85" value="${escapeHtml(state.cakeWeightGrams)}">
+          <label>משקל יחידת חלוקה (ק"ג)</label>
+          <input type="number" id="ratio-cake-weight" min="0.001" step="0.001" placeholder="למשל: 3" value="${escapeHtml(state.cakeWeightKg)}">
         </div>
         <div class="form-group">
           <label>כמה יחידות רוצה?</label>
@@ -2376,17 +2384,18 @@ function bindRatioCalculator(recipe, hostEl) {
   });
 
   hostEl.querySelector('#ratio-cake-weight')?.addEventListener('input', (e) => {
-    state.cakeWeightGrams = e.target.value;
+    state.cakeWeightKg = e.target.value;
     if (state.cakeCount) applyScaleFromCakes();
+    else state.scaleFromCakes = false;
     render();
   });
 
   hostEl.querySelector('#ratio-cake-count')?.addEventListener('input', (e) => {
     state.cakeCount = e.target.value;
-    if (state.cakeCount && state.cakeWeightGrams) {
+    if (state.cakeCount && state.cakeWeightKg) {
       applyScaleFromCakes();
       const targetInput = hostEl.querySelector('#ratio-target');
-      if (targetInput) targetInput.value = state.targetQty;
+      if (targetInput) targetInput.value = formatRecipeQuantity(state.targetQty);
     } else {
       state.scaleFromCakes = false;
     }

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=248';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=249';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=248';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=248';
+} from './validators.js?v=249';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=249';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1169,13 +1169,22 @@ export function getRecipeProductYieldInfo(recipe, ingredients) {
   return { summary, unitG, yieldP, units };
 }
 
+/** יחס הקפצה לפי מספר יחידות חלוקה רצוי (בלי עיגול ביניים של totalUnits) */
+export function recipeScaleRatioForProductCount(recipe, ingredients, targetProductCount) {
+  const unitG = Number(recipe?.portionWeightGrams) || 0;
+  const target = Number(targetProductCount);
+  const totalG = recipeTotalWeightGrams(ingredients);
+  if (!unitG || !Number.isFinite(target) || target <= 0 || totalG <= 0) return null;
+  const exactTotalUnits = totalG / unitG;
+  if (!Number.isFinite(exactTotalUnits) || exactTotalUnits <= 0) return null;
+  const ratio = target / exactTotalUnits;
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : null;
+}
+
 /** הקפצת כמויות חומרי גלם לפי מספר מוצרים רצוי */
 export function scaleRecipeIngredientsForProductCount(ingredients, recipe, targetProductCount) {
-  const { units } = getRecipeProductYieldInfo(recipe, ingredients);
-  const target = Number(targetProductCount);
-  if (!units || !Number.isFinite(target) || target <= 0) return null;
-  const ratio = target / units.totalUnits;
-  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  const ratio = recipeScaleRatioForProductCount(recipe, ingredients, targetProductCount);
+  if (ratio == null) return null;
   return (ingredients || []).map((ing) => ({
     ...ing,
     scaledQuantity: roundQty(Number(ing.quantity) * ratio),
@@ -1810,8 +1819,8 @@ export async function syncProductCostFromRecipe(recipeId) {
 }
 
 /** משקל כולל של מתכון בגרמים (יבשים + נוזלים כק"ג) */
-export function recipeTotalWeightGrams(ingredients) {
-  const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients);
+export function recipeTotalWeightGrams(ingredients, { useScaled = false } = {}) {
+  const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, { useScaled });
   return Math.round((totalKg + totalLiters) * 1000);
 }
 
