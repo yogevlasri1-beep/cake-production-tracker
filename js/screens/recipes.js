@@ -27,15 +27,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=262';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=262';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=262';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=262';
-import { openModal, closeModal } from '../modal.js?v=262';
+} from '../kitchen-db.js?v=263';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=263';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=263';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=263';
+import { openModal, closeModal } from '../modal.js?v=263';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=262';
-import { defaultColorForIndex } from '../chart.js?v=262';
+} from '../product-drag.js?v=263';
+import { defaultColorForIndex } from '../chart.js?v=263';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';

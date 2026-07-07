@@ -5,7 +5,7 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=262';
+} from '../db.js?v=263';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -15,12 +15,12 @@ import {
   syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=262';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=262';
-import { openModal, closeModal } from '../modal.js?v=262';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=262';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=262';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=262';
+} from '../kitchen-db.js?v=263';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=263';
+import { openModal, closeModal } from '../modal.js?v=263';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=263';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=263';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=263';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -288,23 +288,51 @@ function renderCatalogHTML(layout) {
   return parts.join('');
 }
 
+function bindProductsOptionsMenu(container) {
+  const btn = container.querySelector('#products-options-btn');
+  const menu = container.querySelector('#products-options-menu');
+  if (!btn || !menu) return;
+
+  const closeMenu = () => {
+    menu.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = menu.classList.contains('hidden');
+    if (opening) {
+      menu.classList.remove('hidden');
+      btn.setAttribute('aria-expanded', 'true');
+      setTimeout(() => {
+        document.addEventListener('click', closeMenu, { once: true });
+      }, 0);
+    } else {
+      closeMenu();
+    }
+  });
+
+  menu.addEventListener('click', (e) => e.stopPropagation());
+  container._productsOptionsClose = closeMenu;
+}
+
 export async function renderProducts(container) {
   const sheetsHTML = await renderSheetsStatusHTML();
   const layout = await getProductsCatalogLayout();
 
   container.innerHTML = `
-    <div class="card sheets-primary-card">
-      <div class="card-title">📊 Google Sheets</div>
-      <div id="sheets-status">${sheetsHTML}</div>
-    </div>
-
     <div class="section-header products-toolbar">
       <h2>קטגוריות ומוצרים</h2>
       <div class="products-toolbar-actions">
-        <button class="btn btn-secondary btn-sm" id="manual-merge-btn">🔗 איחוד מוצרים נבחרים</button>
-        <button class="btn btn-secondary btn-sm" id="merge-duplicates-btn">🔗 איחוד כפילויות</button>
-        <button class="btn btn-secondary btn-sm" id="add-group-btn">+ קטגוריה כללית</button>
         <button class="btn btn-primary btn-sm" id="add-category-btn">+ קטגוריה</button>
+        <button class="btn btn-secondary btn-sm" id="add-group-btn">+ קטגוריה כללית</button>
+        <div class="products-options-wrap">
+          <button type="button" class="btn btn-secondary btn-sm" id="products-options-btn" aria-expanded="false" aria-haspopup="true">⚙️ אופציות</button>
+          <div class="products-options-menu hidden" id="products-options-menu" role="menu">
+            <button type="button" class="products-options-item" id="manual-merge-btn" role="menuitem">🔗 איחוד מוצרים נבחרים</button>
+            <button type="button" class="products-options-item" id="merge-duplicates-btn" role="menuitem">🔗 איחוד כפילויות</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -319,7 +347,7 @@ export async function renderProducts(container) {
     <details class="card" style="margin-top:8px">
       <summary style="cursor:pointer;font-weight:600;font-size:0.9rem;color:var(--text-muted)">ייבוא מקובץ Excel (גיבוי)</summary>
       <p style="font-size:0.85rem;color:var(--text-muted);margin:12px 0;line-height:1.5">
-        מומלץ לייבא מ-<strong>Google Sheets</strong> (למעלה) · או מקובץ Excel ישירות.
+        מומלץ לייבא מ-<strong>Google Sheets</strong> (למטה) · או מקובץ Excel ישירות.
       </p>
       <input type="file" id="csv-import" accept=".csv,.xlsx,.xls,.txt" hidden>
       <button class="btn btn-secondary btn-sm" id="import-btn" style="width:100%;margin-bottom:8px">📥 בחר קובץ</button>
@@ -334,13 +362,25 @@ export async function renderProducts(container) {
       </button>
     </details>
 
+    <div class="card sheets-footer-card">
+      <div class="card-title">📊 ייבוא מ-Google Sheets</div>
+      <div id="sheets-status">${sheetsHTML}</div>
+    </div>
+
     <button class="btn btn-danger btn-sm" id="reset-all" style="width:100%;margin-top:12px">🔄 איפוס — התחלה מאפס</button>`;
 
+  bindProductsOptionsMenu(container);
   container.querySelector('#add-category-btn')?.addEventListener('click', () => showCategoryForm(container));
   container.querySelector('#add-category-empty')?.addEventListener('click', () => showCategoryForm(container));
   container.querySelector('#add-group-btn')?.addEventListener('click', () => showGroupForm(container));
-  container.querySelector('#merge-duplicates-btn')?.addEventListener('click', () => showMergeDuplicatesModal(container));
-  container.querySelector('#manual-merge-btn')?.addEventListener('click', () => showManualMergeModal(container));
+  container.querySelector('#merge-duplicates-btn')?.addEventListener('click', () => {
+    container._productsOptionsClose?.();
+    showMergeDuplicatesModal(container);
+  });
+  container.querySelector('#manual-merge-btn')?.addEventListener('click', () => {
+    container._productsOptionsClose?.();
+    showManualMergeModal(container);
+  });
 
   bindSheetsStatusEvents(container, {
     onRefresh: () => renderProducts(container),
@@ -356,7 +396,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=262');
+    const { navigate } = await import('../app.js?v=263');
     navigate('backup');
   });
 
