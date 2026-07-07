@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=260';
-import { describeDownloadMethod } from '../download.js?v=260';
-import { showToast, escapeHtml } from '../utils.js?v=260';
-import { openModal, closeModal } from '../modal.js?v=260';
-import { APP_VERSION } from '../version.js?v=260';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=260';
+} from '../backup-service.js?v=261';
+import { describeDownloadMethod } from '../download.js?v=261';
+import { showToast, escapeHtml } from '../utils.js?v=261';
+import { openModal, closeModal } from '../modal.js?v=261';
+import { APP_VERSION } from '../version.js?v=261';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=261';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -115,7 +115,7 @@ export async function renderBackup(container, { navigate } = {}) {
       </div>
       <p class="form-hint" style="margin-top:8px">אם לא רואה «מנהל» בתפריט — לחץ «נקה מטמון ועדכן» (פעם אחת עם Wi‑Fi)</p>`;
 
-  const heroBody = iosPwa ? `
+  const heroBody = (iosPwa ? `
         <div class="backup-ios-notice">
           <p><strong>איפה הגיבוי נשמר באייפון?</strong></p>
           <p class="form-hint" style="margin-bottom:8px">הגיבוי כולל את כל האפליקציה — מוצרים, מתכונים, ספקים, תזרימי יצור והגדרות.</p>
