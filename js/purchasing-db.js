@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=261';
-import { sanitizeName, sanitizeMoney, sanitizeQuantity } from './validators.js?v=261';
+import { db, ValidationError } from './db.js?v=262';
+import { sanitizeName, sanitizeMoney, sanitizeQuantity } from './validators.js?v=262';
 
 export const PURCHASE_CATEGORY_KEYS = {
   accessories: 'accessories',
