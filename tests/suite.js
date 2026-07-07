@@ -1,28 +1,29 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=254';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=255';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=254';
+} from '../js/validators.js?v=255';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=254';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=254';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=254';
+} from '../js/calc.js?v=255';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=255';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=255';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=254';
-import { isAutoBackupDue } from '../js/backup-service.js?v=254';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=254';
+} from '../js/supabase-backup.js?v=255';
+import { isAutoBackupDue } from '../js/backup-service.js?v=255';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=255';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=254';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=254';
+} from '../js/supplier-import.js?v=255';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=255';
+import { isFlowsReportType, normalizeReportType, groupRunsByFlow } from '../js/screens/reports.js?v=255';
 
 export async function runAllTests() {
   /* validators */
@@ -674,7 +675,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=254');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=255');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });
@@ -852,6 +853,33 @@ export async function runAllTests() {
     assertEqual(recipes.length, 2);
     assertEqual(recipes[0].title, 'עוגת שוקולד');
     assertEqual(recipes[1].title, 'עוגת וניל');
+  });
+
+  test('reports flows — normalizeReportType ממפה flows ישן לסיכום', () => {
+    assertEqual(normalizeReportType('flows'), 'flows-summary');
+    assertEqual(normalizeReportType('flows-detail'), 'flows-detail');
+    assertEqual(normalizeReportType(undefined), 'day');
+  });
+
+  test('reports flows — isFlowsReportType מזהה שני סוגי דוח', () => {
+    assertOk(isFlowsReportType('flows-detail'));
+    assertOk(isFlowsReportType('flows-summary'));
+    assertOk(isFlowsReportType('flows'));
+    assertOk(!isFlowsReportType('day'));
+  });
+
+  test('reports flows — groupRunsByFlow מקבץ לפי flowId', () => {
+    const runs = [
+      { id: 1, flowId: 10 },
+      { id: 2, flowId: 10 },
+      { id: 3, flowId: 20 },
+      { id: 4 },
+    ];
+    const { byFlow, noFlowRuns } = groupRunsByFlow(runs);
+    assertEqual(byFlow.get(10).length, 2);
+    assertEqual(byFlow.get(20).length, 1);
+    assertEqual(noFlowRuns.length, 1);
+    assertEqual(noFlowRuns[0].id, 4);
   });
 
   await flushTests();

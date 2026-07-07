@@ -4683,6 +4683,23 @@ table.report-table tfoot td {
   margin-bottom: 14px;
 }
 
+.report-flows-filters-card .report-type-tabs {
+  margin-bottom: 14px;
+}
+
+.report-flows-detail-section {
+  margin-bottom: 20px;
+}
+
+.report-flows-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.report-flows-detail-card .report-flows-detail-section + .report-flows-detail-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 .report-actions-card .btn[disabled] {
   opacity: 0.5;
 }

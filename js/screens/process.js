@@ -22,12 +22,12 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=254';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=254';
-import { openModal, closeModal } from '../modal.js?v=254';
-import { requestAutoBackupNow } from '../backup-service.js?v=254';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=254';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=254';
+} from '../db.js?v=255';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=255';
+import { openModal, closeModal } from '../modal.js?v=255';
+import { requestAutoBackupNow } from '../backup-service.js?v=255';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=255';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=255';
 
 function parseIdList(str) {
   try {
