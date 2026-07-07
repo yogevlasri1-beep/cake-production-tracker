@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=259';
-import { describeDownloadMethod } from '../download.js?v=259';
-import { showToast, escapeHtml } from '../utils.js?v=259';
-import { openModal, closeModal } from '../modal.js?v=259';
-import { APP_VERSION } from '../version.js?v=259';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=259';
+} from '../backup-service.js?v=260';
+import { describeDownloadMethod } from '../download.js?v=260';
+import { showToast, escapeHtml } from '../utils.js?v=260';
+import { openModal, closeModal } from '../modal.js?v=260';
+import { APP_VERSION } from '../version.js?v=260';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=260';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -32,6 +32,53 @@ function formatWhen(iso) {
 
 function kindLabel(kind) {
   return kind === 'auto' ? 'אוטומטי' : 'ידני';
+}
+
+const BACKUP_SECTIONS_KEY = 'backup-sections-open';
+
+function getBackupOpenSections() {
+  try {
+    const raw = sessionStorage.getItem(BACKUP_SECTIONS_KEY);
+    if (raw == null) return new Set(['hero']);
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set(['hero']);
+  }
+}
+
+function setBackupSectionOpen(id, open) {
+  const set = getBackupOpenSections();
+  if (open) set.add(id);
+  else set.delete(id);
+  sessionStorage.setItem(BACKUP_SECTIONS_KEY, JSON.stringify([...set]));
+}
+
+function backupSectionHTML(id, title, bodyHTML, { extraClass = '' } = {}) {
+  const open = getBackupOpenSections().has(id);
+  return `
+    <section class="card backup-section${open ? '' : ' is-collapsed'}${extraClass ? ` ${extraClass}` : ''}" data-backup-section="${id}">
+      <button type="button" class="backup-section-header" aria-expanded="${open}">
+        <span class="backup-section-title">${title}</span>
+      </button>
+      <div class="backup-section-body">
+        ${bodyHTML}
+      </div>
+    </section>`;
+}
+
+function bindBackupSectionToggles(container) {
+  container.querySelectorAll('.backup-section-header').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const section = btn.closest('.backup-section');
+      const id = section?.dataset.backupSection;
+      if (!id) return;
+      const opening = section.classList.contains('is-collapsed');
+      section.classList.toggle('is-collapsed', !opening);
+      btn.setAttribute('aria-expanded', String(opening));
+      setBackupSectionOpen(id, opening);
+    });
+  });
 }
 
 function unsupportedFolderMessage(status) {
@@ -52,11 +99,7 @@ export async function renderBackup(container, { navigate } = {}) {
   } = status;
   const iosPwa = isIOS && !isNativeApp;
 
-  container.innerHTML = `
-    <button type="button" class="btn btn-secondary btn-sm backup-back-btn" id="backup-back">← חזרה</button>
-
-    <div class="card">
-      <div class="card-title">🔄 עדכון אפליקציה</div>
+  const appUpdateBody = `
       <p class="form-hint">גרסה מותקנת: <strong>${APP_VERSION}</strong>${isStandaloneApp() ? ' · מהאייקון במסך הבית' : ''}</p>
       <p class="form-hint" id="backup-remote-version" style="margin-top:4px"></p>
       <p class="form-hint" style="margin-top:6px;color:var(--danger)">
@@ -70,12 +113,9 @@ export async function renderBackup(container, { navigate } = {}) {
         <button type="button" class="btn btn-primary btn-sm" id="check-app-update">בדוק עדכון</button>
         <button type="button" class="btn btn-secondary btn-sm" id="force-app-update">נקה מטמון ועדכן</button>
       </div>
-      <p class="form-hint" style="margin-top:8px">אם לא רואה «מנהל» בתפריט — לחץ «נקה מטמון ועדכן» (פעם אחת עם Wi‑Fi)</p>
-    </div>
+      <p class="form-hint" style="margin-top:8px">אם לא רואה «מנהל» בתפריט — לחץ «נקה מטמון ועדכן» (פעם אחת עם Wi‑Fi)</p>`;
 
-    <div class="card backup-hero-card">
-      <div class="card-title">💾 גיבוי ושחזור</div>
-      ${iosPwa ? `
+  const heroBody = iosPwa ? `
         <div class="backup-ios-notice">
           <p><strong>איפה הגיבוי נשמר באייפון?</strong></p>
           <p class="form-hint" style="margin-bottom:8px">הגיבוי כולל את כל האפליקציה — מוצרים, מתכונים, ספקים, תזרימי יצור והגדרות.</p>
@@ -106,15 +146,12 @@ export async function renderBackup(container, { navigate } = {}) {
         </button>
         <button type="button" class="btn btn-secondary" id="backup-share-btn" style="width:100%;margin-bottom:8px">
           📤 שמור קובץ גיבוי (Share / הורדה)
-        </button>
-      `}
+        </button>`) + `
       <button type="button" class="btn btn-secondary" id="backup-history-btn" style="width:100%">
         📜 היסטוריית גיבויים
-      </button>
-    </div>
+      </button>`;
 
-    <div class="card backup-supabase-card">
-      <div class="card-title">☁️ גיבוי בענן — Supabase</div>
+  const supabaseBody = `
       <p class="form-hint" style="margin-bottom:10px">
         כל הגיבויים (ידני + אוטומטי) נשמרים בענן — גם אחרי מחיקת האפליקציה אפשר לשחזר.
         מזהה גיבוי: <code style="font-size:0.78rem">${escapeHtml(backupScopeId || 'yitzur')}</code>
@@ -164,11 +201,9 @@ export async function renderBackup(container, { navigate } = {}) {
           ${supabaseBackups.length ? `${supabaseBackups.length} גיבויים בענן · ` : ''}
           <button type="button" class="btn btn-secondary btn-sm" id="supabase-open-history">צפה בהיסטוריה</button>
         </p>
-      ` : ''}
-    </div>
+      ` : ''}`;
 
-    <div class="card">
-      <div class="card-title">גיבוי אוטומטי</div>
+  const autoBody = `
       <label class="backup-toggle-row">
         <span>הפעל גיבוי אוטומטי</span>
         <input type="checkbox" id="backup-auto-enabled" ${settings.autoEnabled ? 'checked' : ''}>
@@ -188,11 +223,9 @@ export async function renderBackup(container, { navigate } = {}) {
       </p>
       <p class="form-hint">${iosPwa
         ? 'באייפון: גיבוי אוטומטי פעם ביום — פנימי + Supabase (אם מוגדר). לקובץ ב«קבצים» — לחץ «גיבוי — שמור קובץ».'
-        : 'גיבוי אוטומטי פעם ביום — על המכשיר, ל-Supabase (אם מוגדר), ולתיקיית ברירת המחדל (אם נבחרה). קובץ JSON כולל מטא-דאטה של Supabase.'}</p>
-    </div>
+        : 'גיבוי אוטומטי פעם ביום — על המכשיר, ל-Supabase (אם מוגדר), ולתיקיית ברירת המחדל (אם נבחרה). קובץ JSON כולל מטא-דאטה של Supabase.'}</p>`;
 
-    <div class="card backup-folder-card">
-      <div class="card-title">📁 תיקיית ברירת מחדל לגיבויים</div>
+  const folderBody = `
       <p class="form-hint" style="margin-bottom:10px">
         ${hasDefaultFolder
           ? `תיקייה: <strong>${escapeHtml(settings.externalLocationLabel || 'נבחרה')}</strong>`
@@ -213,11 +246,9 @@ export async function renderBackup(container, { navigate } = {}) {
       ${!supportsLocationPicker ? `
         <p class="form-hint" style="margin-top:8px">${escapeHtml(unsupportedFolderMessage(status))}</p>
       ` : ''}
-      ${isNativeApp ? `<p class="form-hint" style="margin-top:8px">אפליקציה מותקנת — בחירת תיקייה דרך «קבצים»</p>` : ''}
-    </div>
+      ${isNativeApp ? `<p class="form-hint" style="margin-top:8px">אפליקציה מותקנת — בחירת תיקייה דרך «קבצים»</p>` : ''}`;
 
-    <div class="card">
-      <div class="card-title">גיבוי מקומי על המכשיר</div>
+  const localBody = `
       <p class="form-hint">נשמר <strong>גיבוי אחד בלבד</strong> — כל גיבוי חדש מחליף את הקודם</p>
       ${snapshots.length === 0
         ? '<p class="report-empty">אין עדיין גיבוי מקומי</p>'
@@ -232,16 +263,25 @@ export async function renderBackup(container, { navigate } = {}) {
         </div>`}
       <button type="button" class="btn btn-secondary btn-sm" id="prune-old-backups" style="width:100%;margin-top:10px">
         🗑 מחק גיבויים ישנים — השאר רק האחרון
-      </button>
-    </div>
+      </button>`;
 
-    <div class="card">
-      <div class="card-title">ייבוא מקובץ (אחרי מחיקה / מכשיר אחר)</div>
+  const importBody = `
       <label class="btn btn-primary btn-sm backup-file-label" for="backup-restore-file" style="width:100%">
         📂 ייבא גיבוי מקובץ JSON
         <input type="file" id="backup-restore-file" accept=".json,application/json">
-      </label>
-    </div>`;
+      </label>`;
+
+  container.innerHTML = `
+    <button type="button" class="btn btn-secondary btn-sm backup-back-btn" id="backup-back">← חזרה</button>
+    ${backupSectionHTML('app-update', '🔄 עדכון אפליקציה', appUpdateBody)}
+    ${backupSectionHTML('hero', '💾 גיבוי ושחזור', heroBody, { extraClass: 'backup-hero-card' })}
+    ${backupSectionHTML('supabase', '☁️ גיבוי בענן — Supabase', supabaseBody, { extraClass: 'backup-supabase-card' })}
+    ${backupSectionHTML('auto', '⏱ גיבוי אוטומטי', autoBody)}
+    ${backupSectionHTML('folder', '📁 תיקיית ברירת מחדל לגיבויים', folderBody, { extraClass: 'backup-folder-card' })}
+    ${backupSectionHTML('local', '📱 גיבוי מקומי על המכשיר', localBody)}
+    ${backupSectionHTML('import', '📂 ייבוא מקובץ', importBody)}`;
+
+  bindBackupSectionToggles(container);
 
   document.getElementById('backup-back')?.addEventListener('click', () => navigate?.('home'));
 

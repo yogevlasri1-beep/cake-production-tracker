@@ -5324,6 +5324,60 @@ table.report-cat-summary-table td:not(:first-child) {
   margin-bottom: 10px;
 }
 
+.backup-section {
+  padding: 0;
+  overflow: hidden;
+}
+
+.backup-section-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 16px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: start;
+  touch-action: manipulation;
+  font: inherit;
+  color: inherit;
+}
+
+.backup-section-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  flex: 1;
+  text-align: start;
+}
+
+.backup-section-header::after {
+  content: '▾';
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.backup-section.is-collapsed .backup-section-header::after {
+  content: '▸';
+}
+
+.backup-section-body {
+  padding: 0 16px 16px;
+}
+
+.backup-section.is-collapsed .backup-section-body {
+  display: none;
+}
+
+.backup-section:not(.is-collapsed) .backup-section-header {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
 .backup-file-label {
   position: relative;
   display: inline-flex;
