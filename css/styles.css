@@ -4796,6 +4796,82 @@ table.report-table tfoot td {
   padding: 4px 0 0;
 }
 
+.flow-metrics-products {
+  margin-bottom: 12px;
+}
+
+.flow-metrics-products-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.flow-metrics-products-empty {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  text-align: center;
+}
+
+.flow-metrics-product-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flow-metrics-product-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+}
+
+.flow-metrics-product-rows--compact .flow-metrics-product-row {
+  padding: 6px 10px;
+}
+
+.flow-metrics-product-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.35;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.flow-metrics-product-qty {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.flow-metrics-grid--secondary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 520px) {
+  .flow-metrics-grid--secondary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.flow-history-run-products {
+  margin-top: 6px;
+}
+
+.flow-history-run-products .flow-metrics-product-rows {
+  margin-top: 4px;
+}
+
 .flow-metrics-title {
   font-size: 0.92rem;
   font-weight: 700;

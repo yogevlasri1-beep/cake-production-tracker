@@ -5,24 +5,24 @@ import {
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
   computeRunMetrics, aggregateRunsMetrics,
-} from '../db.js?v=249';
+} from '../db.js?v=250';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
-} from '../utils.js?v=249';
+} from '../utils.js?v=250';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=249';
-import { openModal, closeModal } from '../modal.js?v=249';
+} from '../export.js?v=250';
+import { openModal, closeModal } from '../modal.js?v=250';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=249';
-import { isSheetsConfigured } from '../google-sheets.js?v=249';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=249';
-import { defaultColorForIndex } from '../chart.js?v=249';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=249';
+} from '../sheets-flow.js?v=250';
+import { isSheetsConfigured } from '../google-sheets.js?v=250';
+import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=250';
+import { defaultColorForIndex } from '../chart.js?v=250';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=250';
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
   if (value && /^\d{4}-\d{2}$/.test(value)) {
@@ -297,29 +297,54 @@ function batchLineWeightKg(batch) {
   return w * c;
 }
 
-function formatMetricsProductionLine(metrics, productMap) {
-  if (!metrics?.productionQty) return '—';
-  const lines = [...(metrics.productionByProduct || new Map()).entries()]
+function metricsProductionRows(metrics, productMap) {
+  return [...(metrics?.productionByProduct || new Map()).entries()]
     .filter(([, qty]) => qty > 0)
-    .map(([pid, qty]) => {
-      const p = mapGetById(productMap, pid);
-      return p ? `${escapeHtml(p.name)}: ${formatProductQuantity(p, qty)}` : `#${pid}: ${formatDecimal(qty)}`;
-    });
-  return lines.length ? lines.join(' · ') : formatDecimal(metrics.productionQty);
+    .map(([pid, qty]) => ({
+      productId: Number(pid),
+      product: mapGetById(productMap, pid),
+      qty,
+    }))
+    .sort((a, b) => (a.product?.name || '').localeCompare(b.product?.name || '', 'he')
+      || a.productId - b.productId);
+}
+
+function renderMetricsProductionRowsHTML(metrics, productMap, { compact = false } = {}) {
+  const rows = metricsProductionRows(metrics, productMap);
+  if (!rows.length) {
+    if (metrics?.productionQty > 0) {
+      return `<div class="flow-metrics-product-rows${compact ? ' flow-metrics-product-rows--compact' : ''}">
+        <div class="flow-metrics-product-row">
+          <span class="flow-metrics-product-name">סה״כ</span>
+          <span class="flow-metrics-product-qty">${formatDecimal(metrics.productionQty)}</span>
+        </div>
+      </div>`;
+    }
+    return '—';
+  }
+  return `
+    <div class="flow-metrics-product-rows${compact ? ' flow-metrics-product-rows--compact' : ''}">
+      ${rows.map(({ product, productId, qty }) => `
+        <div class="flow-metrics-product-row">
+          <span class="flow-metrics-product-name">${escapeHtml(product?.name || `#${productId}`)}</span>
+          <span class="flow-metrics-product-qty">${product ? formatProductQuantity(product, qty) : formatDecimal(qty)}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+function formatMetricsProductionLine(metrics, productMap) {
+  return renderMetricsProductionRowsHTML(metrics, productMap, { compact: true });
 }
 
 function renderMetricsSummaryGrid(metrics, productMap, { title = 'סיכום כולל' } = {}) {
   return `
     <div class="flow-metrics-card flow-metrics-card--report">
       <div class="flow-metrics-title">${escapeHtml(title)}</div>
-      <div class="flow-metrics-grid">
-        <div class="flow-metrics-stat">
-          <span class="flow-metrics-icon">📦</span>
-          <div class="flow-metrics-body">
-            <span class="flow-metrics-value">${formatMetricsProductionLine(metrics, productMap)}</span>
-            <span class="flow-metrics-label">ייצור · ${metrics.runCount || 0} תהליכים</span>
-          </div>
-        </div>
+      <div class="flow-metrics-products">
+        <div class="flow-metrics-products-label">ייצור · ${metrics.runCount || 0} תהליכים</div>
+        ${renderMetricsProductionRowsHTML(metrics, productMap)}
+      </div>
+      <div class="flow-metrics-grid flow-metrics-grid--secondary">
         <div class="flow-metrics-stat">
           <span class="flow-metrics-icon">🍽</span>
           <div class="flow-metrics-body">

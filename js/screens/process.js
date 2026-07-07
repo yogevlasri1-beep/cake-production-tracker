@@ -22,12 +22,12 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=249';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=249';
-import { openModal, closeModal } from '../modal.js?v=249';
-import { requestAutoBackupNow } from '../backup-service.js?v=249';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=249';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=249';
+} from '../db.js?v=250';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=250';
+import { openModal, closeModal } from '../modal.js?v=250';
+import { requestAutoBackupNow } from '../backup-service.js?v=250';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=250';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=250';
 
 function parseIdList(str) {
   try {
@@ -1132,6 +1132,41 @@ function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
     </div>`).join('');
 }
 
+function metricsProductionRows(metrics, productMap) {
+  return [...(metrics?.productionByProduct || new Map()).entries()]
+    .filter(([, qty]) => qty > 0)
+    .map(([pid, qty]) => ({
+      productId: Number(pid),
+      product: productMap.get(Number(pid)),
+      qty,
+    }))
+    .sort((a, b) => (a.product?.name || '').localeCompare(b.product?.name || '', 'he')
+      || a.productId - b.productId);
+}
+
+function renderMetricsProductionRowsHTML(metrics, productMap, { compact = false } = {}) {
+  const rows = metricsProductionRows(metrics, productMap);
+  if (!rows.length) {
+    if (metrics?.productionQty > 0) {
+      return `<div class="flow-metrics-product-rows${compact ? ' flow-metrics-product-rows--compact' : ''}">
+        <div class="flow-metrics-product-row">
+          <span class="flow-metrics-product-name">סה״כ</span>
+          <span class="flow-metrics-product-qty">${formatDecimal(metrics.productionQty)}</span>
+        </div>
+      </div>`;
+    }
+    return '<p class="flow-metrics-products-empty form-hint">עדיין לא תועד ייצור</p>';
+  }
+  return `
+    <div class="flow-metrics-product-rows${compact ? ' flow-metrics-product-rows--compact' : ''}">
+      ${rows.map(({ product, productId, qty }) => `
+        <div class="flow-metrics-product-row">
+          <span class="flow-metrics-product-name">${escapeHtml(product?.name || `#${productId}`)}</span>
+          <span class="flow-metrics-product-qty">${product ? formatProductQuantity(product, qty) : formatDecimal(qty)}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
 function formatRunEntriesSummary(entries, productMap) {
   if (!entries?.length) return '';
   const byProduct = new Map();
@@ -1139,30 +1174,24 @@ function formatRunEntriesSummary(entries, productMap) {
     const pid = e.productId;
     byProduct.set(pid, (byProduct.get(pid) || 0) + (Number(e.quantity) || 0));
   }
-  return [...byProduct.entries()]
-    .map(([pid, qty]) => {
-      const p = productMap.get(pid);
-      const name = p?.name || `#${pid}`;
-      const qtyText = p ? formatProductQuantity(p, qty) : formatDecimal(qty);
-      return `${escapeHtml(name)} · ${qtyText}`;
-    })
-    .join(' · ');
+  return renderMetricsProductionRowsHTML(
+    { productionByProduct: byProduct, productionQty: [...byProduct.values()].reduce((a, b) => a + b, 0) },
+    productMap,
+    { compact: true },
+  );
 }
 
 function formatMetricsProductionLine(metrics, productMap) {
-  if (!metrics?.productionQty) return '—';
-  const lines = [...(metrics.productionByProduct || new Map()).entries()]
-    .filter(([, qty]) => qty > 0)
-    .map(([pid, qty]) => {
-      const p = productMap.get(pid);
-      return p ? `${escapeHtml(p.name)}: ${formatProductQuantity(p, qty)}` : `#${pid}: ${formatDecimal(qty)}`;
-    });
-  return lines.length ? lines.join(' · ') : formatDecimal(metrics.productionQty);
+  const rows = metricsProductionRows(metrics, productMap);
+  if (!rows.length) return metrics?.productionQty ? formatDecimal(metrics.productionQty) : '—';
+  return rows.map(({ product, productId, qty }) => {
+    const label = product ? formatProductQuantity(product, qty) : formatDecimal(qty);
+    return `${escapeHtml(product?.name || `#${productId}`)}: ${label}`;
+  }).join(' · ');
 }
 
 function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', compact = false } = {}) {
   if (!metrics) return '';
-  const productionLine = formatMetricsProductionLine(metrics, productMap);
   const portionsLine = metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—';
   const weightLine = metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—';
   const timeLine = metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—';
@@ -1175,14 +1204,11 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
   return `
     <div class="flow-metrics-card${compact ? ' flow-metrics-card--compact' : ''}">
       <div class="flow-metrics-title">${escapeHtml(title)}${meta ? `<span class="flow-metrics-meta">${escapeHtml(meta)}</span>` : ''}</div>
-      <div class="flow-metrics-grid">
-        <div class="flow-metrics-stat">
-          <span class="flow-metrics-icon">📦</span>
-          <div class="flow-metrics-body">
-            <span class="flow-metrics-value">${productionLine}</span>
-            <span class="flow-metrics-label">ייצור</span>
-          </div>
-        </div>
+      <div class="flow-metrics-products">
+        <div class="flow-metrics-products-label">ייצור</div>
+        ${renderMetricsProductionRowsHTML(metrics, productMap, { compact })}
+      </div>
+      <div class="flow-metrics-grid flow-metrics-grid--secondary">
         <div class="flow-metrics-stat">
           <span class="flow-metrics-icon">🍽</span>
           <div class="flow-metrics-body">
@@ -1346,7 +1372,7 @@ async function renderFlowHistoryView(container, ctx) {
                 · ${runDatesLabel(run)}
                 ${duration != null ? ` · ${formatDuration(duration)}` : ''}
               </div>
-              ${entries.length ? `<div class="flow-history-run-products form-hint">📦 ${productsLine}</div>` : ''}
+              ${entries.length ? `<div class="flow-history-run-products">📦 ${productsLine}</div>` : ''}
               <div class="flow-history-run-metrics form-hint">
                 🍽 ${runMetrics.portionCount != null ? formatPortionCount(runMetrics.portionCount) : '—'}
                 · ⚖️ ${runMetrics.portionWeightKg != null ? formatPortionWeightKg(runMetrics.portionWeightKg) : '—'}
