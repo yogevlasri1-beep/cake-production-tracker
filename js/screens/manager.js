@@ -6,7 +6,7 @@ import {
   updateManagerPlanItem, deleteManagerPlanItem, resolveDefaultFlowForProduct,
   getPortionPresetsForProduct,
   collectPlanProductFlowsForExport,
-  getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask,
+  getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask, setImprovementOrder,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
   getManagerDashboardStats,
@@ -15,19 +15,19 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=251';
+} from '../db.js?v=252';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=251';
-import { openModal, closeModal } from '../modal.js?v=251';
-import { renderTargets } from './targets.js?v=251';
-import { forceAppUpdate } from '../sw-register.js?v=251';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=251';
+} from '../utils.js?v=252';
+import { openModal, closeModal } from '../modal.js?v=252';
+import { renderTargets } from './targets.js?v=252';
+import { forceAppUpdate } from '../sw-register.js?v=252';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=252';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=251';
+} from '../daily-plan-export.js?v=252';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -48,7 +48,7 @@ const TABS = [
   { id: 'team', label: 'צוות', icon: '👥' },
   { id: 'cleaning', label: 'ניקוי מחלקות', icon: '🧹' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
-  { id: 'improvements', label: 'שיפורים', icon: '💡' },
+  { id: 'improvements', label: 'שיפור העסק', icon: '💡' },
   { id: 'incidents', label: 'תקלות', icon: '⚠️' },
   { id: 'notes', label: 'משמרות', icon: '📝' },
   { id: 'targets', label: 'יעדים', icon: '🎯' },
@@ -218,7 +218,10 @@ async function renderOverview(container) {
   });
   container.querySelector('[data-quick="task"]')?.addEventListener('click', () => openTaskModal(container, 'task'));
   container.querySelector('[data-quick="incident"]')?.addEventListener('click', () => openIncidentModal(container));
-  container.querySelector('[data-quick="improvement"]')?.addEventListener('click', () => openTaskModal(container, 'improvement'));
+  container.querySelector('[data-quick="improvement"]')?.addEventListener('click', () => {
+    container.dataset.managerTab = 'improvements';
+    openImprovementModal(container);
+  });
   document.getElementById('manager-force-update')?.addEventListener('click', async () => {
     const btn = document.getElementById('manager-force-update');
     if (btn) {
@@ -1064,6 +1067,183 @@ async function renderTaskList(container, kind) {
   document.getElementById('add-task-btn')?.addEventListener('click', () => openTaskModal(container, kind));
 }
 
+const IMPROVEMENT_URGENCY = {
+  red: { label: 'דחוף', hint: 'אדום' },
+  yellow: { label: 'בינוני', hint: 'צהוב' },
+  green: { label: 'נמוך', hint: 'ירוק' },
+};
+
+function improvementUrgencyColor(item) {
+  if (item?.urgencyColor && IMPROVEMENT_URGENCY[item.urgencyColor]) return item.urgencyColor;
+  if (item?.priority === 'high') return 'red';
+  if (item?.priority === 'low') return 'green';
+  return 'yellow';
+}
+
+function improvementRow(item) {
+  const color = improvementUrgencyColor(item);
+  const urgency = IMPROVEMENT_URGENCY[color];
+  return `
+    <div class="improvement-item improvement-urgency-${color}${item.status === 'done' ? ' improvement-item--done' : ''}" data-idea-id="${item.id}">
+      <span class="improvement-drag-handle product-drag-handle" role="button" tabindex="0" aria-label="גרור לשינוי סדר">⠿</span>
+      <span class="improvement-order-num" aria-label="מיקום">1</span>
+      <span class="improvement-urgency-strip" title="${urgency.label} · ${urgency.hint}"></span>
+      <div class="improvement-body">
+        <div class="improvement-title">${escapeHtml(item.title)}</div>
+        ${item.body ? `<div class="improvement-desc">${escapeHtml(item.body)}</div>` : ''}
+        <span class="improvement-urgency-label">${urgency.hint} · ${urgency.label}</span>
+      </div>
+      <div class="improvement-actions">
+        <button type="button" class="btn btn-secondary btn-sm" data-action="edit" title="עריכה">✏️</button>
+        <button type="button" class="btn btn-danger btn-sm" data-action="delete" title="מחק">🗑</button>
+      </div>
+    </div>`;
+}
+
+function urgencyColorPickerHTML(selected = 'yellow') {
+  return `
+    <div class="form-group">
+      <label>דחיפות (צבע)</label>
+      <div class="improvement-urgency-picker">
+        ${Object.entries(IMPROVEMENT_URGENCY).map(([id, meta]) => `
+          <label class="improvement-urgency-option improvement-urgency-option--${id}${selected === id ? ' is-selected' : ''}">
+            <input type="radio" name="improvement-urgency" value="${id}" ${selected === id ? 'checked' : ''}>
+            <span class="improvement-urgency-swatch"></span>
+            <span>${meta.hint} ${meta.label}</span>
+          </label>`).join('')}
+      </div>
+    </div>`;
+}
+
+function openImprovementModal(container, { taskId = null, defaultDepartment = 'production' } = {}) {
+  openModal({
+    title: taskId ? 'עריכת רעיון' : 'רעיון לשיפור',
+    bodyHTML: `<div id="improvement-modal-loading">טוען...</div>`,
+    footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-improvement">שמור</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  (async () => {
+    let task = null;
+    if (taskId) {
+      const all = await getManagerTasks({ kind: 'improvement' });
+      task = all.find((t) => t.id === taskId);
+    }
+    const urgency = improvementUrgencyColor(task);
+    document.getElementById('improvement-modal-loading').outerHTML = `
+      <div class="form-group"><label>רעיון</label><input type="text" id="improvement-title" value="${escapeHtml(task?.title || '')}" maxlength="120"></div>
+      <div class="form-group"><label>פירוט</label><textarea id="improvement-body" rows="3" maxlength="1000">${escapeHtml(task?.body || '')}</textarea></div>
+      <div class="form-group"><label>מחלקה</label><select id="improvement-dept">${deptOptions(task?.department || defaultDepartment)}</select></div>
+      ${urgencyColorPickerHTML(urgency)}`;
+
+    document.getElementById('save-improvement')?.addEventListener('click', async () => {
+      const urgencyEl = document.querySelector('input[name="improvement-urgency"]:checked');
+      const payload = {
+        title: document.getElementById('improvement-title').value,
+        body: document.getElementById('improvement-body').value,
+        department: document.getElementById('improvement-dept').value,
+        urgencyColor: urgencyEl?.value || 'yellow',
+      };
+      try {
+        if (taskId) {
+          await updateManagerTask(taskId, payload);
+        } else {
+          await addManagerTask({ ...payload, kind: 'improvement' });
+        }
+        closeModal();
+        showToast('נשמר ✓');
+        container.dataset.managerTab = 'improvements';
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+
+    document.querySelectorAll('.improvement-urgency-option input').forEach((input) => {
+      input.addEventListener('change', () => {
+        document.querySelectorAll('.improvement-urgency-option').forEach((el) => {
+          el.classList.toggle('is-selected', el.querySelector('input')?.checked);
+        });
+      });
+    });
+  })();
+}
+
+function bindImprovementBoard(container) {
+  container.querySelectorAll('.improvement-item [data-action="edit"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.improvement-item');
+      openImprovementModal(container, { taskId: Number(row?.dataset.ideaId) });
+    });
+  });
+  container.querySelectorAll('.improvement-item [data-action="delete"]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const row = btn.closest('.improvement-item');
+      if (!confirm('למחוק את הרעיון?')) return;
+      await deleteManagerTask(Number(row?.dataset.ideaId));
+      showToast('נמחק');
+      renderManager(container);
+    });
+  });
+  container.querySelectorAll('[data-add-improvement-dept]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openImprovementModal(container, { defaultDepartment: btn.dataset.addImprovementDept });
+    });
+  });
+  bindImprovementDragLists(container, async (department, ids) => {
+    try {
+      await setImprovementOrder(department, ids);
+      showToast('סדר עודכן ✓');
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      renderManager(container);
+    }
+  });
+}
+
+async function renderImprovementsBoard(container) {
+  const [ideas, departments] = await Promise.all([
+    getManagerTasks({ kind: 'improvement' }),
+    getManagerDepartments(),
+  ]);
+  const byDept = new Map();
+  for (const dept of departments) byDept.set(dept.deptKey, []);
+  for (const idea of ideas) {
+    const key = idea.department || 'general';
+    if (!byDept.has(key)) byDept.set(key, []);
+    byDept.get(key).push(idea);
+  }
+
+  const sections = departments.map((dept) => {
+    const items = byDept.get(dept.deptKey) || [];
+    return `
+      <div class="card improvement-dept-card">
+        <div class="improvement-dept-header">
+          <h3 class="improvement-dept-title">${dept.icon} ${escapeHtml(dept.label)}</h3>
+          <span class="improvement-dept-count">${items.length} רעיונות</span>
+          <button type="button" class="btn btn-secondary btn-sm" data-add-improvement-dept="${escapeHtml(dept.deptKey)}">+ רעיון</button>
+        </div>
+        ${items.length
+    ? `<p class="product-drag-hint">גרור ⠿ לשינוי סדר בתוך המחלקה</p>
+           <div class="improvement-sortable" data-department="${escapeHtml(dept.deptKey)}">
+             ${items.map((item) => improvementRow(item)).join('')}
+           </div>`
+    : '<p class="form-hint improvement-dept-empty">אין רעיונות במחלקה זו — לחץ + רעיון</p>'}
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    ${managerTabsHTML('improvements', { improvements: ideas.filter((i) => i.status !== 'done').length || null })}
+    <div class="card">
+      <div class="card-title">💡 רעיונות לשיפור העסק</div>
+      <p class="form-hint" style="margin-bottom:0">מחולק לפי מחלקות · בחר צבע לפי דחיפות: אדום / צהוב / ירוק</p>
+    </div>
+    ${sections || '<div class="card"><p class="form-hint">הגדר מחלקות בלשונית צוות</p></div>'}`;
+
+  bindManagerTabs(container);
+  bindImprovementBoard(container);
+}
+
 function incidentRow(inc) {
   return `
     <div class="manager-incident-item manager-incident-${inc.severity}" data-id="${inc.id}">
@@ -1682,7 +1862,7 @@ export async function renderManager(container) {
     case 'team': return renderTeam(container);
     case 'cleaning': return renderDepartmentCleaning(container);
     case 'tasks': return renderTaskList(container, 'task');
-    case 'improvements': return renderTaskList(container, 'improvement');
+    case 'improvements': return renderImprovementsBoard(container);
     case 'incidents': return renderIncidents(container);
     case 'notes': return renderNotes(container);
     default: return renderOverview(container);

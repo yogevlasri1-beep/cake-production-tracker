@@ -497,3 +497,17 @@ export function bindFlowChecklistDragLists(container, { onPrepOrderSave, onClean
     });
   });
 }
+
+export function bindImprovementDragLists(container, onOrderSave) {
+  container.querySelectorAll('.improvement-sortable').forEach((list) => {
+    const department = list.dataset.department;
+    bindGenericDragList(list, {
+      itemSelector: '.improvement-item',
+      handleSelector: '.improvement-drag-handle',
+      idAttr: 'ideaId',
+      orderNumSelector: '.improvement-order-num',
+      bodyClass: 'improvement-drag-active',
+      saveOrder: (ids) => onOrderSave(department, ids),
+    });
+  });
+}

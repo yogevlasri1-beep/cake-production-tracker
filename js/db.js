@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=251';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=251';
-import { defaultColorForIndex } from './chart.js?v=251';
+} from './validators.js?v=252';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=252';
+import { defaultColorForIndex } from './chart.js?v=252';
 
 export { ValidationError };
 
@@ -2253,6 +2253,82 @@ db.version(53).stores({
       { catKey: 'accessories', name: 'אביזרים', sortOrder: 1 },
       { catKey: 'machines', name: 'מכונות', sortOrder: 2 },
     ]);
+  }
+});
+
+db.version(54).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+}).upgrade(async (tx) => {
+  const improvements = (await tx.table('managerTasks').toArray()).filter((r) => r.kind === 'improvement');
+  const byDept = new Map();
+  for (const row of improvements) {
+    const d = row.department || 'general';
+    if (!byDept.has(d)) byDept.set(d, []);
+    byDept.get(d).push(row);
+  }
+  for (const list of byDept.values()) {
+    list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+      || (b.createdAt || '').localeCompare(a.createdAt || '')
+      || b.id - a.id);
+    for (let i = 0; i < list.length; i++) {
+      const row = list[i];
+      const patch = { sortOrder: i + 1 };
+      if (!row.urgencyColor) {
+        patch.urgencyColor = row.priority === 'high' ? 'red' : row.priority === 'low' ? 'green' : 'yellow';
+      }
+      await tx.table('managerTasks').update(row.id, patch);
+    }
   }
 });
 
@@ -6742,28 +6818,69 @@ export async function deleteManagerPlanItem(id) {
 }
 
 export async function getManagerTasks({ department, kind, status } = {}) {
-  let rows = await db.managerTasks.orderBy('createdAt').reverse().toArray();
+  let rows = await db.managerTasks.toArray();
   if (department) rows = rows.filter((r) => r.department === department);
   if (kind) rows = rows.filter((r) => r.kind === kind);
   if (status) rows = rows.filter((r) => r.status === status);
-  return rows;
+  if (kind === 'improvement') {
+    return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+      || (b.createdAt || '').localeCompare(a.createdAt || '')
+      || a.id - b.id);
+  }
+  return rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '') || b.id - a.id);
+}
+
+const IMPROVEMENT_URGENCY_COLORS = new Set(['red', 'yellow', 'green']);
+
+function sanitizeImprovementUrgency(color) {
+  const c = String(color || '').trim();
+  return IMPROVEMENT_URGENCY_COLORS.has(c) ? c : 'yellow';
+}
+
+function priorityFromUrgency(color) {
+  if (color === 'red') return 'high';
+  if (color === 'green') return 'low';
+  return 'medium';
+}
+
+export async function setImprovementOrder(department, orderedIds) {
+  const dept = await validateManagerDepartment(department);
+  if (!Array.isArray(orderedIds)) return;
+  for (let i = 0; i < orderedIds.length; i++) {
+    const id = Number(orderedIds[i]);
+    if (!id) continue;
+    const row = await db.managerTasks.get(id);
+    if (!row || row.kind !== 'improvement' || row.department !== dept) continue;
+    await db.managerTasks.update(id, { sortOrder: i + 1 });
+  }
 }
 
 export async function addManagerTask({
   department, kind = 'task', title, body = '',
-  priority = 'medium', dueDate = null,
-}) {
+  priority = 'medium', dueDate = null, urgencyColor = null,
+} = {}) {
   const t = sanitizeName(title, 120);
   if (!t) throw new ValidationError('הזן כותרת');
   const validKind = ['task', 'improvement', 'checklist'].includes(kind) ? kind : 'task';
-  const validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
+  const dept = await validateManagerDepartment(department);
+  let validPriority = ['low', 'medium', 'high'].includes(priority) ? priority : 'medium';
+  let urgency = null;
+  let sortOrder = null;
+  if (validKind === 'improvement') {
+    urgency = sanitizeImprovementUrgency(urgencyColor || (validPriority === 'high' ? 'red' : validPriority === 'low' ? 'green' : 'yellow'));
+    validPriority = priorityFromUrgency(urgency);
+    const siblings = await db.managerTasks.where('kind').equals('improvement').filter((r) => r.department === dept).toArray();
+    sortOrder = siblings.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0) + 1;
+  }
   return db.managerTasks.add({
-    department: await validateManagerDepartment(department),
+    department: dept,
     kind: validKind,
     title: t,
     body: String(body || '').trim().slice(0, 1000),
     status: 'open',
     priority: validPriority,
+    urgencyColor: urgency,
+    sortOrder,
     dueDate: dueDate && isValidISODate(dueDate) ? dueDate : null,
     createdAt: managerNowISO(),
     completedAt: null,
@@ -6776,6 +6893,7 @@ export async function updateManagerTask(id, patch) {
   const next = {};
   if (patch.title !== undefined) next.title = sanitizeName(patch.title, 120);
   if (patch.body !== undefined) next.body = String(patch.body || '').trim().slice(0, 1000);
+  if (patch.department !== undefined) next.department = await validateManagerDepartment(patch.department);
   if (patch.status !== undefined) {
     const st = ['open', 'progress', 'done'].includes(patch.status) ? patch.status : row.status;
     next.status = st;
@@ -6784,6 +6902,11 @@ export async function updateManagerTask(id, patch) {
   if (patch.priority !== undefined && ['low', 'medium', 'high'].includes(patch.priority)) {
     next.priority = patch.priority;
   }
+  if (patch.urgencyColor !== undefined) {
+    next.urgencyColor = sanitizeImprovementUrgency(patch.urgencyColor);
+    next.priority = priorityFromUrgency(next.urgencyColor);
+  }
+  if (patch.sortOrder !== undefined) next.sortOrder = Number(patch.sortOrder) || 0;
   if (patch.dueDate !== undefined) {
     next.dueDate = patch.dueDate && isValidISODate(patch.dueDate) ? patch.dueDate : null;
   }
