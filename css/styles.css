@@ -986,12 +986,21 @@ body {
 }
 
 .flow-step--compact .flow-step-name {
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.flow-step--compact .flow-step-title-row {
+  gap: 6px;
 }
 
 .flow-step--compact .flow-step-num {
   font-size: 0.68rem;
+}
+
+.flow-step--compact .flow-step-meta {
+  font-size: 0.68rem;
+  margin-top: 2px;
 }
 
 .flow-step--compact .flow-step-duration,
@@ -1008,7 +1017,45 @@ body {
 
 .flow-step--compact .flow-step-portion-preview {
   font-size: 0.75rem;
-  margin: 2px 0 4px;
+  margin: 0 0 6px;
+}
+
+.flow-step-title-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.flow-step-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.flow-step-title-row .flow-step-name {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.flow-step-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.flow-step-meta-sep {
+  opacity: 0.55;
+}
+
+.flow-step-meta .flow-step-production-badge {
+  font-size: inherit;
+  padding: 1px 6px;
 }
 
 .flow-step-header-actions {
@@ -1019,20 +1066,41 @@ body {
   flex-shrink: 0;
 }
 
+.flow-step-timing-btn,
+.flow-step-portions-btn,
 .flow-step-notes-btn {
-  min-width: 28px;
-  min-height: 28px;
-  padding: 2px 6px;
-  font-size: 0.85rem;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 6px;
+  font-size: 0.9rem;
   line-height: 1;
 }
 
+.flow-step-timing-btn.has-content,
+.flow-step-portions-btn.has-content,
 .flow-step-notes-btn.has-content {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--primary) 35%, transparent);
 }
 
+.flow-step-timing-btn.is-open,
+.flow-step-portions-btn.is-open,
 .flow-step-notes-btn.is-open {
   background: color-mix(in srgb, var(--primary) 12%, white);
+}
+
+.flow-step-timing-panel,
+.flow-step-portions-panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.flow-step-timing-panel .flow-step-timing {
+  margin: 0;
+}
+
+.flow-step-portions-panel .flow-portion-batches {
+  margin-top: 0;
 }
 
 .flow-step-notes-panel {
@@ -1802,10 +1870,10 @@ body.flow-checklist-drag-active {
 
 .flow-step-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 6px;
+  flex-wrap: nowrap;
+  margin-bottom: 4px;
 }
 
 .flow-step-num {
@@ -1907,13 +1975,6 @@ body.flow-checklist-drag-active {
 .flow-run-duration-value {
   font-weight: 700;
   color: var(--primary-dark);
-}
-
-.flow-step-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 8px;
 }
 
 .flow-step-notes-preview {

@@ -22,12 +22,12 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=256';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=256';
-import { openModal, closeModal } from '../modal.js?v=256';
-import { requestAutoBackupNow } from '../backup-service.js?v=256';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=256';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=256';
+} from '../db.js?v=257';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=257';
+import { openModal, closeModal } from '../modal.js?v=257';
+import { requestAutoBackupNow } from '../backup-service.js?v=257';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=257';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=257';
 
 function parseIdList(str) {
   try {
@@ -964,19 +964,49 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
     }
   }
 
+  const portionBatches = getStepPortionBatches(step);
+  const hasTimingData = !!(step.startedAt || step.completedAt);
+  const showTimingBtn = stepUnlocked && (showTimingFields || hasTimingData);
+  const showPortionsBtn = step.tracksPortions && stepUnlocked;
+  const hasPortionsData = !!(portionText || portionBatches.length);
+  const timingPanelHTML = showTimingFields
+    ? stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow, defaultEndNow })
+    : (stepUnlocked ? stepTimingFieldsHTML(step, stepIndex, { editable: false }) : '');
+  const portionsPanelHTML = step.tracksPortions && stepUnlocked
+    ? `${portionText ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
+        ${portionEditable || portionBatches.length
+    ? stepPortionBatchesHTML(step, stepIndex, {
+      canAdd: portionEditable,
+      canEdit: portionEditable,
+      presets: portionPresets,
+    }) : '<p class="form-hint">אין מנות מתועדות עדיין</p>'}`
+    : '';
+  const metaParts = [];
+  if (stepDurationLabel) metaParts.push(`<span class="flow-step-meta-item">⏱ ${escapeHtml(stepDurationLabel)}</span>`);
+  if (stepStartedLabel) metaParts.push(`<span class="flow-step-meta-item">${escapeHtml(stepStartedLabel)}</span>`);
+  else if (stepCompletedLabel) metaParts.push(`<span class="flow-step-meta-item">${escapeHtml(stepCompletedLabel)}</span>`);
+  if (portionText) metaParts.push(`<span class="flow-step-meta-item">🍽 ${escapeHtml(portionText)}</span>`);
+  const productionSummary = flowStepProductionSummary(step).trim();
+  const metaInner = [productionSummary, ...metaParts].filter(Boolean).join('<span class="flow-step-meta-sep" aria-hidden="true">·</span>');
+  const metaHTML = metaInner ? `<div class="flow-step-meta">${metaInner}</div>` : '';
+
   return `
     <div class="flow-step flow-step--compact flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
       <div class="flow-step-marker" aria-hidden="true"></div>
       <div class="flow-step-body">
         <div class="flow-step-header">
-          <span class="flow-step-num">${stepIndex + 1}</span>
-          <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
-          ${!showTimingFields && stepStartedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepStartedLabel)}</span>` : ''}
-          ${!showTimingFields && !stepStartedLabel && stepCompletedLabel ? `<span class="flow-step-datetime">${escapeHtml(stepCompletedLabel)}</span>` : ''}
-          ${!showTimingFields && stepDurationLabel ? `<span class="flow-step-duration">⏱ ${stepDurationLabel}</span>` : ''}
-          ${flowStepProductionSummary(step)}
-          ${step.tracksPortions && !portionText ? '<span class="flow-step-portion-badge">🍽</span>' : ''}
+          <div class="flow-step-title-block">
+            <div class="flow-step-title-row">
+              <span class="flow-step-num">${stepIndex + 1}</span>
+              <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
+            </div>
+            ${metaHTML}
+          </div>
           <div class="flow-step-header-actions">
+            ${showTimingBtn ? `
+              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-timing-btn${hasTimingData ? ' has-content' : ''}" data-step="${stepIndex}" title="עריכת זמנים" aria-label="עריכת זמנים">🕐</button>` : ''}
+            ${showPortionsBtn ? `
+              <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-portions-btn${hasPortionsData ? ' has-content' : ''}" data-step="${stepIndex}" title="תיעוד מנות" aria-label="תיעוד מנות">🍽</button>` : ''}
             ${canEditFields ? `
               <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="הערות · תקלות · שיפור" aria-label="הערות תקלות ושיפור">📝</button>` : ''}
             ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
@@ -984,12 +1014,8 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
           </div>
         </div>
         ${prodPanel}
-        ${showTimingFields
-    ? stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow, defaultEndNow })
-    : (stepUnlocked ? stepTimingFieldsHTML(step, stepIndex, { editable: false }) : '')}
-        ${portionText && !isActive && !editAllMode ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
-        ${step.tracksPortions && portionEditable
-    ? stepPortionBatchesHTML(step, stepIndex, { canAdd: portionEditable, canEdit: portionEditable, presets: portionPresets }) : ''}
+        ${timingPanelHTML ? `<div class="flow-step-timing-panel hidden" data-step-timing-panel="${stepIndex}">${timingPanelHTML}</div>` : ''}
+        ${portionsPanelHTML ? `<div class="flow-step-portions-panel hidden" data-step-portions-panel="${stepIndex}">${portionsPanelHTML}</div>` : ''}
         ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true }) : ''}
         ${(canEditCompleted || (isDone && canEditFields)) ? `
         <div class="flow-step-actions">
@@ -1925,15 +1951,31 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
-  container.querySelectorAll('.flow-step-notes-btn').forEach((btn) => {
+  function bindFlowStepPanelToggle(btn, panelSelector, { onOpen } = {}) {
     btn.addEventListener('click', () => {
       const stepIndex = Number(btn.dataset.step);
-      const panel = container.querySelector(`[data-step-notes="${stepIndex}"]`);
+      const panel = container.querySelector(`${panelSelector}="${stepIndex}"]`);
       if (!panel) return;
       const opening = panel.classList.contains('hidden');
       panel.classList.toggle('hidden');
       btn.classList.toggle('is-open', opening);
-      if (opening) panel.querySelector('textarea')?.focus();
+      if (opening) onOpen?.(panel);
+    });
+  }
+
+  container.querySelectorAll('.flow-step-timing-btn').forEach((btn) => {
+    bindFlowStepPanelToggle(btn, '[data-step-timing-panel');
+  });
+
+  container.querySelectorAll('.flow-step-portions-btn').forEach((btn) => {
+    bindFlowStepPanelToggle(btn, '[data-step-portions-panel', {
+      onOpen: (panel) => panel.querySelector('.flow-portion-add-count')?.focus(),
+    });
+  });
+
+  container.querySelectorAll('.flow-step-notes-btn').forEach((btn) => {
+    bindFlowStepPanelToggle(btn, '[data-step-notes', {
+      onOpen: (panel) => panel.querySelector('textarea')?.focus(),
     });
   });
 
