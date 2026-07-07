@@ -1,11 +1,11 @@
 import {
-  getPurchaseCategories, getPurchaseCategoryByKey, getPurchaseItems,
+  getPurchaseCategoryByKey, getPurchaseItems,
   addPurchaseItem, updatePurchaseItem, deletePurchaseItem,
   PURCHASE_CATEGORY_KEYS, PURCHASE_STATUS, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=252';
-import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=252';
-import { openModal, closeModal } from '../modal.js?v=252';
-import { requestAutoBackupNow } from '../backup-service.js?v=252';
+} from '../purchasing-db.js?v=253';
+import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=253';
+import { openModal, closeModal } from '../modal.js?v=253';
+import { requestAutoBackupNow } from '../backup-service.js?v=253';
 
 const PURCHASING_TAB_KEY = 'yitzurPurchasingTab';
 
@@ -31,39 +31,14 @@ function getPurchasingTab(container) {
   return PURCHASING_TABS[tab] ? tab : 'accessories';
 }
 
-export function syncPurchasingSubNav(activeTab) {
-  document.querySelectorAll('.purchasing-nav-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.purchasingTab === activeTab);
-  });
-}
-
-export function updatePurchasingHeader() {
-  const tab = sessionStorage.getItem(PURCHASING_TAB_KEY) || 'accessories';
-  const meta = PURCHASING_TABS[tab];
-  const el = document.getElementById('page-subtitle');
-  if (el && meta) el.textContent = meta.subtitle;
-}
-
-export function switchPurchasingTab(tab) {
-  if (!PURCHASING_TABS[tab]) return;
-  const main = document.getElementById('main-content');
-  main.dataset.purchasingTab = tab;
-  sessionStorage.setItem(PURCHASING_TAB_KEY, tab);
-  syncPurchasingSubNav(tab);
-  updatePurchasingHeader();
-  renderPurchasing(main);
-}
-
-export function initPurchasingSubNav() {
-  document.querySelectorAll('.purchasing-nav-btn').forEach((btn) => {
-    btn.addEventListener('click', () => switchPurchasingTab(btn.dataset.purchasingTab));
-  });
-}
-
-export function purchasingMeta() {
-  const tab = sessionStorage.getItem(PURCHASING_TAB_KEY) || 'accessories';
-  const meta = PURCHASING_TABS[tab];
-  return { title: 'מנהל קניות', subtitle: meta?.subtitle || '' };
+function purchasingCategoryChipsHTML(activeTab) {
+  return `
+    <div class="workspace-chip-row purchasing-cat-chips" style="margin-bottom:12px">
+      ${Object.values(PURCHASING_TABS).map((t) => `
+        <button type="button" class="workspace-chip${activeTab === t.id ? ' active' : ''}" data-purchasing-cat="${t.id}">
+          ${t.icon} ${escapeHtml(t.label)}
+        </button>`).join('')}
+    </div>`;
 }
 
 function statusBadge(status) {
@@ -166,7 +141,7 @@ function openPurchaseItemModal({ categoryId, item = null, onSave }) {
   });
 }
 
-async function renderCategoryTab(body, container, tabMeta) {
+async function renderCategoryTab(body, rootContainer, tabMeta, refresh) {
   const category = await getPurchaseCategoryByKey(tabMeta.catKey);
   if (!category) {
     body.innerHTML = '<p class="form-hint">קטגוריה לא נמצאה</p>';
@@ -197,7 +172,7 @@ async function renderCategoryTab(body, container, tabMeta) {
         await addPurchaseItem(payload);
         requestAutoBackupNow().catch(() => {});
         showToast('נוסף ✓');
-        renderPurchasing(container);
+        await refresh();
       },
     });
   });
@@ -213,7 +188,7 @@ async function renderCategoryTab(body, container, tabMeta) {
           await updatePurchaseItem(id, payload);
           requestAutoBackupNow().catch(() => {});
           showToast('נשמר ✓');
-          renderPurchasing(container);
+          await refresh();
         },
       });
     });
@@ -225,19 +200,40 @@ async function renderCategoryTab(body, container, tabMeta) {
       await deletePurchaseItem(btn.dataset.id);
       requestAutoBackupNow().catch(() => {});
       showToast('נמחק');
-      renderPurchasing(container);
+      await refresh();
     });
   });
 }
 
-export async function renderPurchasing(container) {
-  const tab = getPurchasingTab(container);
-  container.dataset.purchasingTab = tab;
-  syncPurchasingSubNav(tab);
-  updatePurchasingHeader();
-
+export async function renderPurchasingInManager(embedContainer, { rootContainer, refresh } = {}) {
+  const root = rootContainer || embedContainer.closest('#main-content') || embedContainer.parentElement;
+  const tab = getPurchasingTab(root);
+  root.dataset.purchasingTab = tab;
+  sessionStorage.setItem(PURCHASING_TAB_KEY, tab);
   const tabMeta = PURCHASING_TABS[tab];
-  container.innerHTML = '<div id="purchasing-tab-body"><p style="text-align:center;padding:24px;color:var(--text-muted)">טוען...</p></div>';
-  const body = document.getElementById('purchasing-tab-body');
-  await renderCategoryTab(body, container, tabMeta);
+
+  const doRefresh = refresh || (() => renderPurchasingInManager(embedContainer, { rootContainer: root, refresh }));
+
+  embedContainer.innerHTML = `
+    ${purchasingCategoryChipsHTML(tab)}
+    <div id="purchasing-tab-body"><p style="text-align:center;padding:24px;color:var(--text-muted)">טוען...</p></div>`;
+
+  embedContainer.querySelectorAll('[data-purchasing-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const nextTab = btn.dataset.purchasingCat;
+      if (!PURCHASING_TABS[nextTab] || nextTab === tab) return;
+      root.dataset.purchasingTab = nextTab;
+      sessionStorage.setItem(PURCHASING_TAB_KEY, nextTab);
+      doRefresh();
+    });
+  });
+
+  const body = embedContainer.querySelector('#purchasing-tab-body');
+  await renderCategoryTab(body, root, tabMeta, doRefresh);
+}
+
+export function purchasingMeta() {
+  const tab = sessionStorage.getItem(PURCHASING_TAB_KEY) || 'accessories';
+  const meta = PURCHASING_TABS[tab];
+  return { title: 'רכישות לשיפור העסק', subtitle: meta?.subtitle || '' };
 }

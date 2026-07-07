@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '252';</script>
+  <script>window.__APP_BUILD__ = '253';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=252">
+  <link rel="stylesheet" href="css/styles.css?v=253">
   <script type="importmap">
   {
     "imports": {
@@ -83,9 +83,9 @@
             <span class="workspace-menu-icon">📒</span>
             <span class="workspace-menu-label">מתכונים</span>
           </button>
-          <button type="button" class="workspace-menu-item" data-workspace="purchasing">
-            <span class="workspace-menu-icon">🛒</span>
-            <span class="workspace-menu-label">מנהל קניות</span>
+          <button type="button" class="workspace-menu-item" data-workspace="manager">
+            <span class="workspace-menu-icon">👔</span>
+            <span class="workspace-menu-label">מנהל</span>
           </button>
           <div class="workspace-drawer-divider" role="separator"></div>
           <div class="workspace-drawer-title">גיבוי</div>
@@ -116,10 +116,6 @@
       <button class="nav-btn" data-screen="products" aria-label="מוצרים">
         <span class="nav-icon">📦</span>
         <span class="nav-label">מוצרים</span>
-      </button>
-      <button class="nav-btn" data-screen="manager" aria-label="ניהול מנהל">
-        <span class="nav-icon">👔</span>
-        <span class="nav-label">מנהל</span>
       </button>
       <button class="nav-btn" data-screen="reports" aria-label="דוחות">
         <span class="nav-icon">📊</span>
@@ -166,17 +162,6 @@
       <button type="button" class="suppliers-nav-btn" data-supplier-tab="shortages" aria-label="רשימת חוסרים">
         <span class="suppliers-nav-icon">📋</span>
         <span class="suppliers-nav-label">חוסרים</span>
-      </button>
-    </nav>
-
-    <nav id="purchasing-sub-nav" class="purchasing-sub-nav hidden" aria-label="ניווט מנהל קניות">
-      <button type="button" class="purchasing-nav-btn active" data-purchasing-tab="accessories" aria-label="אביזרים">
-        <span class="purchasing-nav-icon">🔧</span>
-        <span class="purchasing-nav-label">אביזרים</span>
-      </button>
-      <button type="button" class="purchasing-nav-btn" data-purchasing-tab="machines" aria-label="מכונות">
-        <span class="purchasing-nav-icon">⚙️</span>
-        <span class="purchasing-nav-label">מכונות</span>
       </button>
     </nav>
   </div>
@@ -325,7 +310,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=252"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=252"></script>
+  <script src="js/vendor/dexie.min.js?v=253"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=253"></script>
 </body>
 </html>

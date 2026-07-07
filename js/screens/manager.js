@@ -15,19 +15,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=252';
+} from '../db.js?v=253';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=252';
-import { openModal, closeModal } from '../modal.js?v=252';
-import { renderTargets } from './targets.js?v=252';
-import { forceAppUpdate } from '../sw-register.js?v=252';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=252';
+} from '../utils.js?v=253';
+import { openModal, closeModal } from '../modal.js?v=253';
+import { renderTargets } from './targets.js?v=253';
+import { renderPurchasingInManager } from './purchasing.js?v=253';
+import { forceAppUpdate } from '../sw-register.js?v=253';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=253';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=252';
+} from '../daily-plan-export.js?v=253';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -49,6 +50,7 @@ const TABS = [
   { id: 'cleaning', label: 'ניקוי מחלקות', icon: '🧹' },
   { id: 'tasks', label: 'משימות', icon: '✅' },
   { id: 'improvements', label: 'שיפור העסק', icon: '💡' },
+  { id: 'purchasing', label: 'רכישות לשיפור העסק', icon: '🛒' },
   { id: 'incidents', label: 'תקלות', icon: '⚠️' },
   { id: 'notes', label: 'משמרות', icon: '📝' },
   { id: 'targets', label: 'יעדים', icon: '🎯' },
@@ -1863,6 +1865,18 @@ export async function renderManager(container) {
     case 'cleaning': return renderDepartmentCleaning(container);
     case 'tasks': return renderTaskList(container, 'task');
     case 'improvements': return renderImprovementsBoard(container);
+    case 'purchasing': {
+      container.innerHTML = managerTabsHTML('purchasing');
+      bindManagerTabs(container);
+      const inner = document.createElement('div');
+      inner.className = 'manager-purchasing-embed';
+      container.appendChild(inner);
+      await renderPurchasingInManager(inner, {
+        rootContainer: container,
+        refresh: () => renderManager(container),
+      });
+      return;
+    }
     case 'incidents': return renderIncidents(container);
     case 'notes': return renderNotes(container);
     default: return renderOverview(container);

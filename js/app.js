@@ -1,26 +1,24 @@
-import { initDB } from './db.js?v=252';
-import { renderHome, homeMeta } from './screens/home.js?v=252';
-import { renderProducts, productsMeta } from './screens/products.js?v=252';
-import { renderManager, managerMeta } from './screens/manager.js?v=252';
-import { renderProcess, processMeta } from './screens/process.js?v=252';
-import { renderReports, reportsMeta } from './screens/reports.js?v=252';
-import { renderBackup, backupMeta } from './screens/backup.js?v=252';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=252';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=252';
-import { renderPurchasing, purchasingMeta, initPurchasingSubNav } from './screens/purchasing.js?v=252';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES } from './workspaces.js?v=252';
-import { initIOSInstallPrompt } from './ios-install.js?v=252';
-import { initNetworkCheck } from './network.js?v=252';
-import { registerServiceWorker } from './sw-register.js?v=252';
-import { APP_VERSION } from './version.js?v=252';
-import { showToast } from './utils.js?v=252';
-import './modal.js?v=252';
+import { initDB } from './db.js?v=253';
+import { renderHome, homeMeta } from './screens/home.js?v=253';
+import { renderProducts, productsMeta } from './screens/products.js?v=253';
+import { renderManager, managerMeta } from './screens/manager.js?v=253';
+import { renderProcess, processMeta } from './screens/process.js?v=253';
+import { renderReports, reportsMeta } from './screens/reports.js?v=253';
+import { renderBackup, backupMeta } from './screens/backup.js?v=253';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=253';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=253';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=253';
+import { initIOSInstallPrompt } from './ios-install.js?v=253';
+import { initNetworkCheck } from './network.js?v=253';
+import { registerServiceWorker } from './sw-register.js?v=253';
+import { APP_VERSION } from './version.js?v=253';
+import { showToast } from './utils.js?v=253';
+import './modal.js?v=253';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
   process: { render: renderProcess, meta: processMeta },
   products: { render: renderProducts, meta: productsMeta },
-  manager: { render: renderManager, meta: managerMeta },
   reports: { render: renderReports, meta: reportsMeta },
   backup: {
     render: (container) => renderBackup(container, { navigate }),
@@ -36,8 +34,8 @@ const WORKSPACE_SCREENS = {
   recipes: {
     recipes: { render: renderRecipes, meta: recipesMeta },
   },
-  purchasing: {
-    purchasing: { render: renderPurchasing, meta: purchasingMeta },
+  manager: {
+    manager: { render: renderManager, meta: managerMeta },
   },
 };
 
@@ -59,10 +57,6 @@ function updateWorkspaceChrome() {
   const suppliersNav = document.getElementById('suppliers-sub-nav');
   suppliersNav?.classList.toggle('hidden', currentWorkspace !== 'suppliers');
   document.getElementById('app')?.classList.toggle('has-suppliers-sub-nav', currentWorkspace === 'suppliers');
-
-  const purchasingNav = document.getElementById('purchasing-sub-nav');
-  purchasingNav?.classList.toggle('hidden', currentWorkspace !== 'purchasing');
-  document.getElementById('app')?.classList.toggle('has-purchasing-sub-nav', currentWorkspace === 'purchasing');
 
   document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.workspace === currentWorkspace);
@@ -188,11 +182,11 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=252');
+        const { forceAppUpdate } = await import('./sw-register.js?v=253');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=252').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=253').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -205,14 +199,20 @@ async function boot() {
     initWorkspaceMenu();
     initRecipesSubNav();
     initSuppliersSubNav();
-    initPurchasingSubNav();
     updateWorkspaceChrome();
 
     await initDB();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=252');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=253');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
+
+    const main = document.getElementById('main-content');
+    const savedManagerTab = sessionStorage.getItem(MANAGER_TAB_KEY);
+    if (savedManagerTab) {
+      main.dataset.managerTab = savedManagerTab;
+      sessionStorage.removeItem(MANAGER_TAB_KEY);
+    }
 
     const ws = WORKSPACES[currentWorkspace] || WORKSPACES.production;
     await navigate(ws.defaultScreen);
