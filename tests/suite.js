@@ -1,29 +1,31 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=255';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=256';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=255';
+} from '../js/validators.js?v=256';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=255';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=255';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=255';
+} from '../js/calc.js?v=256';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=256';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=256';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=255';
-import { isAutoBackupDue } from '../js/backup-service.js?v=255';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=255';
+  isPrimaryBackupDevice,
+  canUploadToSupabase,
+} from '../js/supabase-backup.js?v=256';
+import { isAutoBackupDue } from '../js/backup-service.js?v=256';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=256';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=255';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=255';
-import { isFlowsReportType, normalizeReportType, groupRunsByFlow } from '../js/screens/reports.js?v=255';
+} from '../js/supplier-import.js?v=256';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=256';
+import { isFlowsReportType, normalizeReportType, groupRunsByFlow } from '../js/screens/reports.js?v=256';
 
 export async function runAllTests() {
   /* validators */
@@ -675,9 +677,22 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=255');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=256');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
+  });
+
+  test('isPrimaryBackupDevice — ברירת מחדל ומכשיר משני', () => {
+    assertOk(isPrimaryBackupDevice({}));
+    assertOk(isPrimaryBackupDevice({ primaryDevice: true }));
+    assertOk(!isPrimaryBackupDevice({ primaryDevice: false }));
+  });
+
+  test('canUploadToSupabase — רק מכשיר ראשי מעלה', () => {
+    const base = { enabled: true, supabaseUrl: 'https://x.supabase.co', anonKey: 'k' };
+    assertOk(canUploadToSupabase(base));
+    assertOk(!canUploadToSupabase({ ...base, primaryDevice: false }));
+    assertOk(!canUploadToSupabase({ ...base, enabled: false }));
   });
 
   test('sortProductsForReport — סדר קטגוריה ומוצר', () => {

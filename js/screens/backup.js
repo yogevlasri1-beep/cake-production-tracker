@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=255';
-import { describeDownloadMethod } from '../download.js?v=255';
-import { showToast, escapeHtml } from '../utils.js?v=255';
-import { openModal, closeModal } from '../modal.js?v=255';
-import { APP_VERSION } from '../version.js?v=255';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=255';
+} from '../backup-service.js?v=256';
+import { describeDownloadMethod } from '../download.js?v=256';
+import { showToast, escapeHtml } from '../utils.js?v=256';
+import { openModal, closeModal } from '../modal.js?v=256';
+import { APP_VERSION } from '../version.js?v=256';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=256';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -48,7 +48,7 @@ export async function renderBackup(container, { navigate } = {}) {
     settings, snapshots, hasDefaultFolder, canWriteToFolder,
     supportsLocationPicker, isNativeApp, isIOS,
     supabaseConfig, supabaseConfigured, supabaseBackups, deviceId,
-    backupScopeId,
+    backupScopeId, isPrimaryDevice,
   } = status;
   const iosPwa = isIOS && !isNativeApp;
 
@@ -120,6 +120,16 @@ export async function renderBackup(container, { navigate } = {}) {
         מזהה גיבוי: <code style="font-size:0.78rem">${escapeHtml(backupScopeId || 'yitzur')}</code>
         · מכשיר: <code style="font-size:0.78rem">${escapeHtml(deviceId || '—')}</code>
       </p>
+      <label class="backup-toggle-row" style="margin-bottom:6px">
+        <span>מכשיר ראשי — גיבוי לענן</span>
+        <input type="checkbox" id="supabase-primary-device" ${isPrimaryDevice ? 'checked' : ''}>
+      </label>
+      <p class="form-hint" style="margin-bottom:10px">
+        ${isPrimaryDevice
+          ? '<strong>מכשיר ראשי:</strong> מעלה גיבויים ל-Supabase (ידני ואוטומטי).'
+          : '<strong>מכשיר משני:</strong> רק מקבל ומשחזר מענן — לא מעלה גיבויים.'}
+        בכל מכשיר נוסף — כבה את המתג.
+      </p>
       <div class="form-group">
         <label for="supabase-url">כתובת Supabase (Project URL)</label>
         <input type="url" id="supabase-url" placeholder="https://xxxx.supabase.co"
@@ -137,7 +147,7 @@ export async function renderBackup(container, { navigate } = {}) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
         <button type="button" class="btn btn-secondary btn-sm" id="supabase-save-config">שמור הגדרות</button>
         <button type="button" class="btn btn-secondary btn-sm" id="supabase-test">בדוק חיבור</button>
-        <button type="button" class="btn btn-primary btn-sm" id="supabase-sync-now" ${supabaseConfigured ? '' : 'disabled'}>
+        <button type="button" class="btn btn-primary btn-sm" id="supabase-sync-now" ${supabaseConfigured && isPrimaryDevice ? '' : 'disabled'}>
           ☁️ גיבוי לענן עכשיו
         </button>
       </div>
@@ -145,7 +155,9 @@ export async function renderBackup(container, { navigate } = {}) {
         גיבוי אחרון לענן: ${formatWhen(supabaseConfig.lastSyncAt)}${supabaseConfig.lastSyncKind ? ` (${kindLabel(supabaseConfig.lastSyncKind)})` : ''}<br>
         ${supabaseConfig.lastSyncError
           ? `<span style="color:var(--danger)">שגיאה אחרונה: ${escapeHtml(supabaseConfig.lastSyncError)}</span>`
-          : supabaseConfigured ? '✓ מחובר — גיבויים נשמרים אוטומטית פעם ביום' : 'הזן כתובת ומפתח ולחץ «בדוק חיבור»'}
+          : !isPrimaryDevice && supabaseConfigured
+            ? '✓ מחובר — מכשיר משני: שחזור מענן בלבד, ללא העלאה'
+            : supabaseConfigured ? '✓ מחובר — מכשיר ראשי: גיבויים נשמרים אוטומטית פעם ביום' : 'הזן כתובת ומפתח ולחץ «בדוק חיבור»'}
       </p>
       ${supabaseConfigured ? `
         <p class="form-hint" style="margin-top:8px">
@@ -295,6 +307,14 @@ export async function renderBackup(container, { navigate } = {}) {
     showToast(e.target.checked ? 'גיבוי ענן הופעל ✓' : 'גיבוי ענן כובה');
   });
 
+  document.getElementById('supabase-primary-device')?.addEventListener('change', async (e) => {
+    await saveSupabaseBackupConfig({ primaryDevice: e.target.checked });
+    showToast(e.target.checked
+      ? 'מכשיר ראשי — גיבויים יועלו לענן ✓'
+      : 'מכשיר משני — רק קבלה ושחזור מענן');
+    renderBackup(container, { navigate });
+  });
+
   document.getElementById('supabase-test')?.addEventListener('click', async () => {
     const btn = document.getElementById('supabase-test');
     const label = btn?.textContent;
@@ -318,8 +338,10 @@ export async function renderBackup(container, { navigate } = {}) {
       const result = await runBackup({ kind: 'manual', shareToFiles: false });
       if (result.supabase) {
         showToast(`גיבוי בענן הושלם ✓ · ${formatBackupSummary(result.payload.counts)}`);
-      } else {
+      } else if (result.supabaseError) {
         showToast(result.supabaseError || 'לא נשמר בענן — בדוק הגדרות');
+      } else {
+        showToast('לא נשמר בענן — מכשיר משני או Supabase לא מוגדר');
       }
       renderBackup(container, { navigate });
     } catch (err) {
@@ -343,6 +365,7 @@ export async function renderBackup(container, { navigate } = {}) {
       if (result.external) parts.push('נשמר בתיקייה');
       if (result.supabase) parts.push('נשמר בענן');
       else if (result.supabaseError) parts.push('ענן — שגיאה');
+      else if (!isPrimaryDevice) parts.push('ענן — מכשיר משני (ללא העלאה)');
       if (result.shared) parts.push('קובץ — Share');
       else if (result.downloaded) parts.push('קובץ הורד');
       else if (result.fileExport === false && iosPwa) {

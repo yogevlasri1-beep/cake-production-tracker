@@ -1,6 +1,6 @@
-import { getSetting, setSetting } from './db.js?v=255';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=255';
-import { ValidationError } from './validators.js?v=255';
+import { getSetting, setSetting } from './db.js?v=256';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=256';
+import { ValidationError } from './validators.js?v=256';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -19,6 +19,8 @@ const DEFAULT_CONFIG = {
   supabaseUrl: BUILTIN_DEFAULTS.supabaseUrl,
   anonKey: BUILTIN_DEFAULTS.anonKey,
   enabled: true,
+  /** מכשיר ראשי — רק הוא מעלה גיבויים ל-Supabase; מכשירים משניים רק מקבלים */
+  primaryDevice: true,
   lastSyncAt: null,
   lastSyncError: null,
   lastSyncKind: null,
@@ -81,6 +83,20 @@ export async function saveSupabaseBackupConfig(patch) {
 export async function isSupabaseBackupConfigured() {
   const cfg = await getSupabaseBackupConfig();
   return !!(cfg.enabled && cfg.supabaseUrl && cfg.anonKey);
+}
+
+/** מכשיר ראשי מעלה לענן; ברירת מחדל true לתאימות לאחור */
+export function isPrimaryBackupDevice(cfg) {
+  return cfg?.primaryDevice !== false;
+}
+
+export async function isThisPrimaryBackupDevice() {
+  const cfg = await getSupabaseBackupConfig();
+  return isPrimaryBackupDevice(cfg);
+}
+
+export function canUploadToSupabase(cfg) {
+  return !!(cfg?.enabled && cfg?.supabaseUrl && cfg?.anonKey && isPrimaryBackupDevice(cfg));
 }
 
 export async function getOrCreateDeviceId() {
@@ -152,6 +168,9 @@ export async function uploadBackupToSupabase(payload, kind = 'manual') {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.enabled || !cfg.supabaseUrl || !cfg.anonKey) {
     return { uploaded: false, reason: 'not_configured' };
+  }
+  if (!isPrimaryBackupDevice(cfg)) {
+    return { uploaded: false, reason: 'not_primary' };
   }
 
   const deviceId = await getOrCreateDeviceId();
