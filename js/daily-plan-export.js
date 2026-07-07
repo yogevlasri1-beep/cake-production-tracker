@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=250';
+import { escapeHtml } from './utils.js?v=251';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -264,10 +264,18 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
 
   return {
     highlights: (plan?.notes || '').trim(),
-    products: productsInPlan.map((item) => ({
-      label: item.label,
-      quantity: item.quantity,
-    })),
+    products: productsInPlan.map((item) => {
+      const portionPart = item.portionName
+        ? ` · ${item.portionName}${item.portionWeight != null ? ` (${item.portionWeight} ק"ג)` : ''}`
+        : '';
+      const qtyPart = item.quantity
+        ? (item.portionPresetId ? ` × ${item.quantity} מנות` : ` × ${item.quantity}`)
+        : '';
+      return {
+        label: `${item.label}${portionPart}${qtyPart}`,
+        quantity: null,
+      };
+    }),
     taskGroups: [
       ...prepGrouped.groups,
       ...(prepGrouped.orphans.length ? [{ title: 'הכנות', items: prepGrouped.orphans.map((i) => i.label) }] : []),

@@ -6226,6 +6226,21 @@ body {
   margin-bottom: 8px;
 }
 
+.manager-plan-add-card .filter-row {
+  margin-top: 4px;
+}
+
+.manager-plan-item--product .manager-plan-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.manager-plan-item--product .manager-plan-portion-detail {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
 .manager-plan-notes-summary {
   cursor: pointer;
   font-weight: 700;

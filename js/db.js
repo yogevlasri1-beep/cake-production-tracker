@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=250';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=250';
-import { defaultColorForIndex } from './chart.js?v=250';
+} from './validators.js?v=251';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=251';
+import { defaultColorForIndex } from './chart.js?v=251';
 
 export { ValidationError };
 
@@ -4700,6 +4700,40 @@ export async function getGroupPortionPresets(categoryGroupId) {
   return rows;
 }
 
+/** מנות ממתכונים הרלוונטיות למוצר (לפי שיוך מתכון או רכיבי מוצר) */
+export async function getPortionPresetsForProduct(productId) {
+  const pid = Number(productId);
+  if (!pid) return [];
+  const prod = await db.products.get(pid);
+  if (!prod?.categoryId) return [];
+  const cat = await db.categories.get(prod.categoryId);
+  const gid = cat?.groupId;
+  if (!gid) return [];
+
+  const presets = (await getGroupPortionPresets(gid)).filter((p) => p.sourceRecipeId);
+  if (!presets.length) return [];
+
+  const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
+  const componentRecipeIds = new Set(
+    (await getProductRecipeComponents(pid)).map((c) => c.recipeId),
+  );
+  const relevant = [];
+  const seen = new Set();
+
+  for (const preset of presets) {
+    const recipe = await db.recipes.get(preset.sourceRecipeId);
+    if (!recipe) continue;
+    const linkedIds = await resolveRecipeLinkedProductIds(recipe);
+    const matches = linkedIds.includes(pid) || componentRecipeIds.has(preset.sourceRecipeId);
+    if (!matches) continue;
+    if (seen.has(preset.id)) continue;
+    seen.add(preset.id);
+    relevant.push(preset);
+  }
+
+  return relevant.length ? relevant : presets;
+}
+
 export async function getFlowPortionPresets(flowId) {
   const gid = await resolveCategoryGroupIdForFlow(flowId);
   if (!gid) return [];
@@ -6165,7 +6199,7 @@ export async function getAllFlowPortionPresetsWithContext() {
 export async function addManagerPlanItem({
   planType, anchorDate, dayOffset = 0, itemKind = 'text',
   productId = null, categoryId = null, label = '', quantity = null,
-  portionPresetId = null,
+  portionPresetId = null, portionName = null, portionWeight = null, portionExtra = null,
 }) {
   const items = await getManagerPlanItems(planType, anchorDate);
   const sortOrder = items.length ? Math.max(...items.map((i) => i.sortOrder ?? 0)) + 1 : 1;
@@ -6219,6 +6253,24 @@ export async function addManagerPlanItem({
   if (itemKind === 'product' && productId) {
     const prod = await db.products.get(Number(productId));
     if (!prod) throw new ValidationError('מוצר לא נמצא');
+    let portionMeta = {};
+    if (portionPresetId) {
+      const preset = await db.groupPortionPresets.get(Number(portionPresetId));
+      if (!preset) throw new ValidationError('מנה לא נמצאה');
+      portionMeta = {
+        portionPresetId: preset.id,
+        portionName: preset.name,
+        portionWeight: preset.weight,
+        portionExtra: preset.extra || '',
+      };
+    } else if (portionName) {
+      portionMeta = {
+        portionPresetId: portionPresetId ? Number(portionPresetId) : null,
+        portionName: String(portionName || '').slice(0, 80),
+        portionWeight: portionWeight != null ? Number(portionWeight) : null,
+        portionExtra: String(portionExtra || '').slice(0, 120),
+      };
+    }
     return db.managerPlanItems.add({
       planType,
       anchorDate,
@@ -6230,6 +6282,7 @@ export async function addManagerPlanItem({
       quantity: quantity != null ? sanitizeQuantity(quantity, { allowZero: false }) : null,
       done: false,
       sortOrder,
+      ...portionMeta,
     });
   }
   if (!text) throw new ValidationError('הזן תיאור');
@@ -6288,7 +6341,7 @@ export async function resolveDefaultFlowForProduct(productId) {
 
 /** הוספת מוצר לתוכנית + משימות צ׳קליסט (הכנות + ניקיון) מהתזרim */
 export async function addManagerPlanProductWithChecklists({
-  planType, anchorDate, dayOffset = 0, productId, quantity = null,
+  planType, anchorDate, dayOffset = 0, productId, quantity = null, portionPresetId = null,
 } = {}) {
   const pid = Number(productId);
   if (!pid) throw new ValidationError('בחר מוצר');
@@ -6296,14 +6349,35 @@ export async function addManagerPlanProductWithChecklists({
   if (!prod) throw new ValidationError('מוצר לא נמצא');
   const offset = Number(dayOffset) || 0;
 
+  const presets = await getPortionPresetsForProduct(pid);
+  let portionMeta = {};
+  if (presets.length) {
+    const ppid = Number(portionPresetId);
+    if (!ppid) throw new ValidationError('בחר מנה מהמתכון');
+    const preset = presets.find((p) => p.id === ppid) || await db.groupPortionPresets.get(ppid);
+    if (!preset) throw new ValidationError('מנה לא נמצאה');
+    const qty = sanitizeQuantity(quantity, { allowZero: false });
+    if (qty == null) throw new ValidationError('הזן כמות מנות');
+    portionMeta = {
+      portionPresetId: preset.id,
+      portionName: preset.name,
+      portionWeight: preset.weight,
+      portionExtra: preset.extra || '',
+      quantity: qty,
+    };
+  } else if (quantity != null && quantity !== '') {
+    portionMeta.quantity = sanitizeQuantity(quantity, { allowZero: false });
+  }
+
   const existing = await getManagerPlanItems(planType, anchorDate);
   const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === offset);
   let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
 
   const existingProduct = sameDay.find((i) => i.itemKind === 'product' && i.productId === pid);
   if (existingProduct) {
-    if (quantity != null && quantity !== '') {
-      await updateManagerPlanItem(existingProduct.id, { quantity });
+    const patch = { ...portionMeta };
+    if (Object.keys(patch).length) {
+      await db.managerPlanItems.update(existingProduct.id, patch);
     }
   } else {
     await addManagerPlanItem({
@@ -6312,7 +6386,11 @@ export async function addManagerPlanProductWithChecklists({
       dayOffset: offset,
       itemKind: 'product',
       productId: pid,
-      quantity,
+      quantity: portionMeta.quantity ?? null,
+      portionPresetId: portionMeta.portionPresetId ?? null,
+      portionName: portionMeta.portionName ?? null,
+      portionWeight: portionMeta.portionWeight ?? null,
+      portionExtra: portionMeta.portionExtra ?? null,
     });
   }
 
