@@ -9,18 +9,19 @@ import {
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
   getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, computePricePerKg,
+  computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg,
   getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, sanitizeProcessedPricePerKg,
   getSupplierShortagesGrouped, addSupplierShortage, updateSupplierShortage, deleteSupplierShortage,
   clearDoneSupplierShortages, formatSupplierShortagesText,
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
-} from '../kitchen-db.js?v=253';
-import { getProducts } from '../db.js?v=253';
-import { parseSupplierFile } from '../supplier-import.js?v=253';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=253';
-import { openModal, closeModal } from '../modal.js?v=253';
-import { requestAutoBackupNow } from '../backup-service.js?v=253';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=253';
+} from '../kitchen-db.js?v=254';
+import { getProducts } from '../db.js?v=254';
+import { parseSupplierFile } from '../supplier-import.js?v=254';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=254';
+import { openModal, closeModal } from '../modal.js?v=254';
+import { requestAutoBackupNow } from '../backup-service.js?v=254';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=254';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -131,15 +132,15 @@ function renderCatalogResultsHTML(items) {
   return `<div class="catalog-material-list">
     ${items.map((item) => {
     const best = pickBestOffer(item.offers);
-    const ppk = computePricePerKg(best.unitPrice, best.packageWeightGrams);
+    const ppk = getMaterialPurchasePricePerKg(best);
     const packMeta = renderPackagingMetaLine(best);
     return `
       <button type="button" class="catalog-material-row" data-primary-id="${item.primaryId}">
         <span class="catalog-mat-name">${escapeHtml(item.name)}</span>
         <span class="catalog-mat-meta">
           ${item.supplierCount ? `${item.supplierCount} ספקים` : 'ללא ספק'}
-          ${best.unitPrice > 0 ? ` · ${formatMoney(best.unitPrice)}` : ''}
           ${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}
+          ${best.unitPrice > 0 && best.packageWeightGrams ? ` · אריזה ${formatMoney(best.unitPrice)}` : ''}
           ${packMeta}
         </span>
       </button>`;
@@ -257,6 +258,25 @@ function formatWeightGrams(grams) {
   return `${grams} גרם`;
 }
 
+function formatMaterialPriceMeta(m) {
+  const ppk = getMaterialPurchasePricePerKg(m);
+  const parts = [];
+  if (ppk != null) parts.push(`${formatMoney(ppk)}/ק"ג`);
+  if ((m.unitPrice || 0) > 0 && m.packageWeightGrams) {
+    parts.push(`אריזה ${formatMoney(m.unitPrice)} (${formatWeightGrams(m.packageWeightGrams)})`);
+  } else if ((m.unitPrice || 0) > 0) {
+    parts.push(formatMoney(m.unitPrice));
+  }
+  return parts.join(' · ') || '—';
+}
+
+function readMaterialPricingFromForm() {
+  return rawMaterialPricingFromPerKg({
+    pricePerKg: document.getElementById('mat-price-per-kg')?.value,
+    packageWeightKg: document.getElementById('mat-package-qty')?.value,
+  });
+}
+
 function renderMaterialPricingDetailsHTML(mat) {
   const purchasePerKg = getMaterialPurchasePricePerKg(mat);
   const processedPerKg = sanitizeProcessedPricePerKg(mat?.processedPricePerKg);
@@ -264,16 +284,16 @@ function renderMaterialPricingDetailsHTML(mat) {
   return `
     <div class="material-pricing-grid material-pricing-grid-4">
       <div class="material-pricing-cell">
-        <span class="material-pricing-label">מחיר לאריזה</span>
-        <strong>${formatMoney(mat.unitPrice || 0)}</strong>
+        <span class="material-pricing-label">מחיר לקילו</span>
+        <strong>${purchasePerKg != null ? `${formatMoney(purchasePerKg)}/ק"ג` : '—'}</strong>
       </div>
       <div class="material-pricing-cell">
         <span class="material-pricing-label">כמות באריזה</span>
         <strong>${formatWeightGrams(mat.packageWeightGrams)}</strong>
       </div>
       <div class="material-pricing-cell">
-        <span class="material-pricing-label">מחיר לקילו</span>
-        <strong>${purchasePerKg != null ? `${formatMoney(purchasePerKg)}/ק"ג` : '—'}</strong>
+        <span class="material-pricing-label">מחיר לאריזה</span>
+        <strong>${formatMoney(mat.unitPrice || 0)}</strong>
       </div>
       <div class="material-pricing-cell${processedPerKg ? ' is-processed' : ''}">
         <span class="material-pricing-label">מחיר לאחר עיבוד</span>
@@ -286,18 +306,22 @@ function renderMaterialPricingDetailsHTML(mat) {
 }
 
 function updateMaterialPricePreview() {
-  const preview = document.getElementById('mat-price-per-kg-preview');
+  const preview = document.getElementById('mat-package-price-preview');
   if (!preview) return;
-  const mat = {
-    unitPrice: document.getElementById('mat-price')?.value,
-    packageWeightGrams: document.getElementById('mat-weight')?.value,
-  };
-  const perKg = getMaterialPurchasePricePerKg(mat);
-  preview.textContent = perKg != null ? `מחיר לקילו מחושב: ${formatMoney(perKg)}/ק"ג` : '';
+  const { unitPrice, packageWeightGrams } = readMaterialPricingFromForm();
+  const perKg = getMaterialPurchasePricePerKg({ unitPrice, packageWeightGrams });
+  const parts = [];
+  if (unitPrice > 0 && packageWeightGrams) {
+    parts.push(`מחיר לאריזה: ${formatMoney(unitPrice)}`);
+  }
+  if (perKg != null && packageWeightGrams) {
+    parts.push(`${formatMoney(perKg)}/ק"ג`);
+  }
+  preview.textContent = parts.join(' · ');
 }
 
 function bindMaterialPricePreviewFields() {
-  ['mat-price', 'mat-weight'].forEach((id) => {
+  ['mat-price-per-kg', 'mat-package-qty'].forEach((id) => {
     document.getElementById(id)?.addEventListener('input', updateMaterialPricePreview);
   });
   updateMaterialPricePreview();
@@ -322,7 +346,7 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         </div>
         ${catalogItem.offers.length
     ? `<table class="catalog-offers-table">
-          <thead><tr><th>ספק</th><th>מחיר לאריזה</th><th>כמות באריזה</th><th>מחיר/ק"ג</th><th>לאחר עיבוד</th><th></th></tr></thead>
+          <thead><tr><th>ספק</th><th>מחיר/ק"ג</th><th>כמות באריזה</th><th>מחיר לאריזה</th><th>לאחר עיבוד</th><th></th></tr></thead>
           <tbody>
             ${catalogItem.offers.map((o) => {
     const ppk = getMaterialPurchasePricePerKg(o);
@@ -330,9 +354,9 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
     return `
             <tr data-offer-id="${o.id}">
               <td>${escapeHtml(o.supplierId ? supMap.get(o.supplierId) || '—' : 'ללא ספק')}</td>
-              <td>${formatMoney(o.unitPrice)}</td>
-              <td>${formatWeightGrams(o.packageWeightGrams)}</td>
               <td>${ppk != null ? formatMoney(ppk) : '—'}</td>
+              <td>${formatWeightGrams(o.packageWeightGrams)}</td>
+              <td>${formatMoney(o.unitPrice)}</td>
               <td>${processed != null ? formatMoney(processed) : '—'}</td>
               <td><button type="button" class="btn btn-secondary btn-sm edit-catalog-offer" data-id="${o.id}">✏️</button></td>
             </tr>`;
@@ -394,8 +418,9 @@ function openAssignMaterialModal(container, catalogItem, categories, suppliers) 
           ${suppliers.map((s) => `<option value="${s.id}" data-cat="${s.categoryId}">${escapeHtml(s.name)}</option>`).join('')}
         </select>
       </div>
-      <div class="form-group"><label>מחיר (₪)</label><input type="number" id="assign-price" min="0" step="0.01"></div>
-      <div class="form-group"><label>משקל מוצר (גרם)</label><input type="number" id="assign-weight" min="0" step="1" placeholder="למשל 1000"></div>
+      <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="assign-price-per-kg" min="0" step="0.01"></div>
+      <div class="form-group"><label>כמות באריזה (ק&quot;ג)</label><input type="number" id="assign-package-qty" min="0" step="0.001" placeholder="למשל 1"></div>
+      <p class="form-hint" id="assign-package-price-preview"></p>
       <div class="form-group"><label>יחידה</label><input type="text" id="assign-unit" value="ק&quot;ג"></div>`,
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-assign">שמור</button>`,
   });
@@ -411,17 +436,36 @@ function openAssignMaterialModal(container, catalogItem, categories, suppliers) 
   catSelect?.addEventListener('change', filterSuppliers);
   filterSuppliers();
 
+  const updateAssignPricePreview = () => {
+    const preview = document.getElementById('assign-package-price-preview');
+    if (!preview) return;
+    const { unitPrice, packageWeightGrams } = rawMaterialPricingFromPerKg({
+      pricePerKg: document.getElementById('assign-price-per-kg')?.value,
+      packageWeightKg: document.getElementById('assign-package-qty')?.value,
+    });
+    preview.textContent = unitPrice > 0 && packageWeightGrams
+      ? `מחיר לאריזה: ${formatMoney(unitPrice)}`
+      : '';
+  };
+  ['assign-price-per-kg', 'assign-package-qty'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', updateAssignPricePreview);
+  });
+
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('save-assign')?.addEventListener('click', async () => {
     try {
       const supplierId = Number(document.getElementById('assign-supplier')?.value);
       if (!supplierId) throw new Error('בחר ספק');
+      const pricing = rawMaterialPricingFromPerKg({
+        pricePerKg: document.getElementById('assign-price-per-kg')?.value,
+        packageWeightKg: document.getElementById('assign-package-qty')?.value,
+      });
       await assignMaterialToSupplier({
         name: catalogItem.name,
         supplierCategoryId: Number(document.getElementById('assign-cat')?.value),
         supplierId,
-        unitPrice: document.getElementById('assign-price')?.value,
-        packageWeightGrams: document.getElementById('assign-weight')?.value,
+        unitPrice: pricing.unitPrice,
+        packageWeightGrams: pricing.packageWeightGrams,
         unit: document.getElementById('assign-unit')?.value,
       });
       closeModal();
@@ -443,7 +487,7 @@ function renderMergeDupGroupsHTML(groups, supMap) {
         <label class="merge-dup-option">
           <input type="checkbox" class="merge-keep-cb" data-group="${gi}" value="${m.id}" checked>
           <span>${escapeHtml(m.supplierId ? supMap.get(m.supplierId) || 'ללא ספק' : 'ללא ספק')}
-            · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}</span>
+            · ${formatMaterialPriceMeta(m)}</span>
         </label>`).join('')}
       <button type="button" class="btn btn-primary btn-sm merge-group-btn" data-group="${gi}">אחד קבוצה זו</button>
     </div>`).join('');
@@ -720,7 +764,7 @@ function renderBrowseSupplierBlock(supplier, { search, expandedIds } = {}) {
         ${supplier.materials.map((m) => `
         <button type="button" class="browse-material-row" data-material-id="${m.id}">
           <span class="browse-mat-name">${escapeHtml(m.name)}</span>
-          <span class="browse-mat-price">${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}${renderPackagingMetaLine(m)}</span>
+          <span class="browse-mat-price">${formatMaterialPriceMeta(m)}${renderPackagingMetaLine(m)}</span>
         </button>`).join('')}
       </div>`
     : '<p class="form-hint supplier-browse-empty">אין חומרי גלם</p>'}
@@ -757,7 +801,7 @@ async function openMaterialDetailModal(container, materialId) {
           ${others.map((m) => `
           <li>
             <button type="button" class="link-btn browse-other-sup" data-id="${m.id}">
-              ${escapeHtml(supMap.get(m.supplierId) || 'ללא ספק')} — ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}
+              ${escapeHtml(supMap.get(m.supplierId) || 'ללא ספק')} — ${formatMaterialPriceMeta(m)}
             </button>
           </li>`).join('')}
         </ul>
@@ -901,7 +945,7 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
           <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
             <div class="list-item-name">${escapeHtml(m.name)}</div>
             <div class="list-item-meta">
-              ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}
+              ${formatMaterialPriceMeta(m)}
               ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
               ${renderPackagingMetaLine(m)}
             </div>
@@ -1177,13 +1221,22 @@ function openEditMaterialModal(container, mat) {
     openModal({
       title: `עריכה · ${escapeHtml(mat.name)}`,
       bodyHTML: `${materialFormHTML(mat, suppliers, { isPackaging })}
+        ${isPackaging ? `
         <div class="form-group" style="margin-top:12px">
           <label>עדכון מחיר (שומר היסטוריה)</label>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <input type="number" id="mat-new-price" min="0" step="0.01" placeholder="מחיר חדש" style="flex:1">
             <input type="date" id="mat-price-date" value="${todayISO()}" style="flex:1">
           </div>
-        </div>
+        </div>` : `
+        <div class="form-group" style="margin-top:12px">
+          <label>עדכון מחיר (שומר היסטוריה)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input type="number" id="mat-new-price-per-kg" min="0" step="0.01" placeholder="מחיר לקילו חדש" style="flex:1">
+            <input type="date" id="mat-price-date" value="${todayISO()}" style="flex:1">
+          </div>
+          <p class="form-hint">מחושב למחיר אריזה לפי כמות באריזה בטופס</p>
+        </div>`}
         <div id="mat-history-host"></div>`,
       footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
     });
@@ -1207,6 +1260,8 @@ async function loadMaterialHistory(materialId) {
 function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
   const defaultUnit = isPackaging ? 'חבילה' : 'ק&quot;ג';
   const packKind = mat?.packagingKind || PACKAGING_KIND_CARTON;
+  const pricePerKg = mat ? (getMaterialPurchasePricePerKg(mat) ?? '') : '';
+  const packageWeightKg = mat ? (packageWeightKgFromGrams(mat.packageWeightGrams) ?? '') : '';
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
     ${isPackaging ? `
@@ -1228,9 +1283,9 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
       <input type="number" id="mat-pack-products" min="1" step="1" value="${mat?.packProductsPerUnit ?? 1}" placeholder="כמה מוצרים נכנסים בקרטון">
     </div>
     <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>` : `
-    <div class="form-group"><label>מחיר לאריזה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
-    <div class="form-group"><label>כמות באריזה (גרם)</label><input type="number" id="mat-weight" min="0" step="1" value="${mat?.packageWeightGrams ?? ''}" placeholder="למשל: 1000 = קילו"></div>
-    <p class="form-hint" id="mat-price-per-kg-preview"></p>
+    <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}"></div>
+    <div class="form-group"><label>כמות באריזה (ק&quot;ג)</label><input type="number" id="mat-package-qty" min="0" step="0.001" value="${packageWeightKg !== '' ? packageWeightKg : ''}" placeholder="למשל: 1"></div>
+    <p class="form-hint" id="mat-package-price-preview"></p>
     <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
       <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
     </div>
@@ -1248,33 +1303,47 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
   else bindMaterialPricePreviewFields();
   document.getElementById('save-mat')?.addEventListener('click', async () => {
     try {
+      const pricing = isPackaging
+        ? { unitPrice: document.getElementById('mat-price')?.value, packageWeightGrams: null }
+        : readMaterialPricingFromForm();
       const payload = {
         name: document.getElementById('mat-name')?.value,
         unit: document.getElementById('mat-unit')?.value,
         supplierId: document.getElementById('mat-supplier')?.value || null,
-        packageWeightGrams: isPackaging ? null : document.getElementById('mat-weight')?.value,
+        packageWeightGrams: isPackaging ? null : pricing.packageWeightGrams,
         processedPricePerKg: isPackaging ? null : document.getElementById('mat-processed-price')?.value,
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       if (materialId) {
         await updateRawMaterial(materialId, payload);
-        const newPrice = document.getElementById('mat-new-price')?.value;
+        const newPricePerKg = document.getElementById('mat-new-price-per-kg')?.value;
         const priceDate = document.getElementById('mat-price-date')?.value;
-        if (newPrice !== '' && newPrice != null) {
-          await setRawMaterialPrice(materialId, newPrice, priceDate || todayISO());
-        } else {
-          const basePrice = document.getElementById('mat-price')?.value;
+        if (!isPackaging && newPricePerKg !== '' && newPricePerKg != null) {
+          const historyPricing = rawMaterialPricingFromPerKg({
+            pricePerKg: newPricePerKg,
+            packageWeightKg: document.getElementById('mat-package-qty')?.value,
+          });
+          await setRawMaterialPrice(materialId, historyPricing.unitPrice, priceDate || todayISO());
+        } else if (!isPackaging) {
           const current = await getRawMaterials();
           const m = current.find((x) => x.id === materialId);
-          if (m && basePrice !== '' && Number(basePrice) !== Number(m.unitPrice)) {
-            await setRawMaterialPrice(materialId, basePrice, todayISO());
+          if (m && pricing.unitPrice !== '' && Number(pricing.unitPrice) !== Number(m.unitPrice)) {
+            await setRawMaterialPrice(materialId, pricing.unitPrice, todayISO());
+          }
+        } else {
+          const newPrice = document.getElementById('mat-price')?.value;
+          const priceDate = document.getElementById('mat-price-date')?.value;
+          if (newPrice !== '' && newPrice != null) {
+            await setRawMaterialPrice(materialId, newPrice, priceDate || todayISO());
           }
         }
       } else {
         await addRawMaterial({
           supplierCategoryId: categoryId,
           ...payload,
-          unitPrice: document.getElementById('mat-price')?.value,
+          unitPrice: isPackaging
+            ? document.getElementById('mat-price')?.value
+            : pricing.unitPrice,
         });
       }
       closeModal();
@@ -1297,7 +1366,7 @@ function openDuplicateMaterialModal(container, mat, categoryId) {
         <div class="form-group"><label>ספק</label>
           <select id="dup-supplier">${others.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}</select>
         </div>
-        <div class="form-group"><label>מחיר (₪)</label><input type="number" id="dup-price" min="0" step="0.01" value="${mat.unitPrice || ''}"></div>
+        <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="dup-price-per-kg" min="0" step="0.01" value="${getMaterialPurchasePricePerKg(mat) ?? ''}"></div>
         <div class="form-group"><label>תאריך מחיר</label><input type="date" id="dup-date" value="${todayISO()}"></div>`,
       footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-dup">שמור</button>`,
     });
@@ -1317,9 +1386,13 @@ function openDuplicateMaterialModal(container, mat, categoryId) {
           packUnitsCount: mat.packUnitsCount,
           packProductsPerUnit: mat.packProductsPerUnit,
         });
-        const price = document.getElementById('dup-price')?.value;
-        if (price !== '') {
-          await setRawMaterialPrice(mid, price, document.getElementById('dup-date')?.value || todayISO());
+        const pricePerKg = document.getElementById('dup-price-per-kg')?.value;
+        if (pricePerKg !== '') {
+          const pricing = rawMaterialPricingFromPerKg({
+            pricePerKg,
+            packageWeightKg: packageWeightKgFromGrams(mat.packageWeightGrams),
+          });
+          await setRawMaterialPrice(mid, pricing.unitPrice, document.getElementById('dup-date')?.value || todayISO());
         }
         closeModal();
         showToast('נוסף אצל ספק נוסף ✓');

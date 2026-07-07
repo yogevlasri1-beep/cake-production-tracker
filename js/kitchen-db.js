@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=253';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=254';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=253';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=253';
+} from './validators.js?v=254';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=254';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2281,6 +2281,35 @@ export function computePricePerKg(unitPrice, packageWeightGrams) {
   const grams = sanitizePackageWeightGrams(packageWeightGrams);
   if (!grams || price <= 0) return null;
   return Math.round((price / (grams / 1000)) * 100) / 100;
+}
+
+export function packageWeightKgFromGrams(packageWeightGrams) {
+  const grams = sanitizePackageWeightGrams(packageWeightGrams);
+  if (!grams) return null;
+  return Math.round((grams / 1000) * 1000) / 1000;
+}
+
+export function packageWeightGramsFromKg(packageWeightKg) {
+  if (packageWeightKg == null || packageWeightKg === '') return null;
+  const kg = Number(packageWeightKg);
+  if (!Number.isFinite(kg) || kg <= 0) return null;
+  return sanitizePackageWeightGrams(kg * 1000);
+}
+
+export function computePackagePrice(pricePerKg, packageWeightKg) {
+  const perKg = sanitizeMoney(pricePerKg);
+  const kg = Number(packageWeightKg);
+  if (!Number.isFinite(kg) || kg <= 0 || perKg <= 0) return null;
+  return Math.round(perKg * kg * 100) / 100;
+}
+
+export function rawMaterialPricingFromPerKg({ pricePerKg, packageWeightKg } = {}) {
+  const perKg = sanitizeMoney(pricePerKg);
+  const grams = packageWeightGramsFromKg(packageWeightKg);
+  const unitPrice = grams != null
+    ? (computePackagePrice(perKg, packageWeightKg) ?? 0)
+    : perKg;
+  return { unitPrice, packageWeightGrams: grams };
 }
 
 export async function addRawMaterial({

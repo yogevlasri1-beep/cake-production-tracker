@@ -1,28 +1,28 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=253';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=254';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=253';
+} from '../js/validators.js?v=254';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=253';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=253';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=253';
+} from '../js/calc.js?v=254';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=254';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=254';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
   parseSupabaseBackupRow,
   normalizeSupabaseUrl,
-} from '../js/supabase-backup.js?v=253';
-import { isAutoBackupDue } from '../js/backup-service.js?v=253';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=253';
+} from '../js/supabase-backup.js?v=254';
+import { isAutoBackupDue } from '../js/backup-service.js?v=254';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg } from '../js/kitchen-db.js?v=254';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=253';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=253';
+} from '../js/supplier-import.js?v=254';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=254';
 
 export async function runAllTests() {
   /* validators */
@@ -47,6 +47,19 @@ export async function runAllTests() {
   test('computePricePerKg — 1kg package', () => assertApprox(computePricePerKg(25, 1000), 25));
   test('computePricePerKg — 500g package', () => assertApprox(computePricePerKg(10, 500), 20));
   test('computePricePerKg — missing weight', () => assertEqual(computePricePerKg(10, null), null));
+
+  test('computePackagePrice — 25/kg × 1kg', () => assertApprox(computePackagePrice(25, 1), 25));
+  test('computePackagePrice — 20/kg × 0.5kg', () => assertApprox(computePackagePrice(20, 0.5), 10));
+  test('computePackagePrice — missing qty', () => assertEqual(computePackagePrice(20, null), null));
+
+  test('packageWeightKgFromGrams — 1000g', () => assertApprox(packageWeightKgFromGrams(1000), 1));
+  test('packageWeightGramsFromKg — 2.5kg', () => assertApprox(packageWeightGramsFromKg(2.5), 2500));
+
+  test('rawMaterialPricingFromPerKg — converts to storage fields', () => {
+    const pricing = rawMaterialPricingFromPerKg({ pricePerKg: 30, packageWeightKg: 2 });
+    assertApprox(pricing.unitPrice, 60);
+    assertApprox(pricing.packageWeightGrams, 2000);
+  });
 
   test('getRecipeProductYieldInfo — 10kg recipe, 100g unit → 100 products', () => {
     const recipe = { portionWeightGrams: 100, yieldPortions: 1 };
@@ -661,7 +674,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=253');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=254');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });
