@@ -4,25 +4,28 @@ import {
   getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
-  computeRunMetrics, aggregateRunsMetrics,
-} from '../db.js?v=258';
+  computeRunMetrics, aggregateRunsMetrics, getProductsCatalogLayout,
+} from '../db.js?v=259';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
-} from '../utils.js?v=258';
+} from '../utils.js?v=259';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=258';
-import { openModal, closeModal } from '../modal.js?v=258';
+} from '../export.js?v=259';
+import { openModal, closeModal } from '../modal.js?v=259';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=258';
-import { isSheetsConfigured } from '../google-sheets.js?v=258';
-import { buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost, mapGetById, sortProductsForReport } from '../calc.js?v=258';
-import { defaultColorForIndex } from '../chart.js?v=258';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=258';
+} from '../sheets-flow.js?v=259';
+import { isSheetsConfigured } from '../google-sheets.js?v=259';
+import {
+  buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
+  mapGetById, sortProductsForReport, compareReportProducts,
+} from '../calc.js?v=259';
+import { defaultColorForIndex } from '../chart.js?v=259';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=259';
 
 export function isFlowsReportType(type) {
   return type === 'flows-detail' || type === 'flows-summary' || type === 'flows';
@@ -31,6 +34,47 @@ export function isFlowsReportType(type) {
 export function normalizeReportType(type) {
   if (type === 'flows') return 'flows-summary';
   return type || 'day';
+}
+
+export const PRODUCTION_HISTORY_SCOPES = ['product', 'category', 'group'];
+
+export function productIdsForHistoryScope(scopeType, scopeId, products, categories) {
+  const id = Number(scopeId);
+  if (!id) return null;
+  if (scopeType === 'product') return new Set([id]);
+  if (scopeType === 'category') {
+    return new Set(products.filter((p) => Number(p.categoryId) === id).map((p) => p.id));
+  }
+  if (scopeType === 'group') {
+    const catIds = new Set(
+      categories.filter((c) => Number(c.groupId) === id).map((c) => c.id),
+    );
+    return new Set(products.filter((p) => catIds.has(p.categoryId)).map((p) => p.id));
+  }
+  return null;
+}
+
+export function filterProductionHistoryEntries(entries, {
+  scopeType, scopeId, products, categories, from, to, allTime,
+}) {
+  const productIds = productIdsForHistoryScope(scopeType, scopeId, products, categories);
+  if (!productIds || productIds.size === 0) return [];
+  let filtered = (entries || []).filter((e) => productIds.has(e.productId));
+  if (!allTime && from && to) {
+    if (from > to) [from, to] = [to, from];
+    filtered = filtered.filter((e) => e.date >= from && e.date <= to);
+  }
+  return filtered;
+}
+
+export function sortProductionHistoryEntries(entries, productMap, categories) {
+  return (entries || []).slice().sort((a, b) => {
+    const dateCmp = b.date.localeCompare(a.date);
+    if (dateCmp !== 0) return dateCmp;
+    const pa = mapGetById(productMap, a.productId);
+    const pb = mapGetById(productMap, b.productId);
+    return compareReportProducts(pa || {}, pb || {}, categories);
+  });
 }
 
 export function groupRunsByFlow(productionRuns) {
@@ -131,6 +175,22 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     if (from > to) [from, to] = [to, from];
     label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
     reportTitle = 'סיכום תזרימים';
+  } else if (reportType === 'production-history') {
+    const allTime = container.dataset.historyAllTime !== '0';
+    from = container.dataset.historyFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.historyTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = allTime ? 'כל התקופות' : (from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`);
+    reportTitle = 'היסטוריית ייצור';
+    const scopeType = container.dataset.historyScope || 'product';
+    const scopeId = container.dataset.historyScopeId || '';
+    if (scopeType === 'product' && scopeId) {
+      filterLabel = mapGetById(productMap, scopeId)?.name || '';
+    } else if (scopeType === 'category' && scopeId) {
+      filterLabel = catMap.get(Number(scopeId)) || '';
+    } else if (scopeType === 'group' && scopeId) {
+      filterLabel = container.dataset.historyGroupName || '';
+    }
   }
 
   return {
@@ -145,12 +205,21 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     defaultMonth,
     weekDates,
     weekAnchor,
+    historyScope: container.dataset.historyScope || 'product',
+    historyScopeId: container.dataset.historyScopeId || '',
+    historyAllTime: container.dataset.historyAllTime !== '0',
   };
 }
 
 async function fetchReportData(ctx) {
   let entries;
   let processLogs;
+
+  if (ctx.reportType === 'production-history') {
+    entries = await getEntriesInRange('1970-01-01', todayISO());
+    processLogs = [];
+    return { entries, processLogs, productionRuns: [] };
+  }
 
   if (ctx.reportType === 'day') {
     entries = await getEntriesForDate(ctx.from);
@@ -801,6 +870,133 @@ function productCostTotals(rows) {
   }), { raw: 0, pack: 0, extra: 0, total: 0 });
 }
 
+function compareCatalogCategories(a, b) {
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+}
+
+function buildHistoryScopeSelectHTML(scopeType, catalog, selectedId) {
+  const sel = String(selectedId || '');
+  if (scopeType === 'group') {
+    const groups = catalog.groups || [];
+    if (!groups.length) return '<p class="form-hint">אין קטגוריות כלליות</p>';
+    return `
+      <select id="report-history-scope-id" style="width:100%">
+        <option value="">בחר קטגוריה כללית...</option>
+        ${groups.map((g) => `<option value="${g.id}" ${String(g.id) === sel ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+      </select>`;
+  }
+  if (scopeType === 'category') {
+    const parts = ['<option value="">בחר קטגוריה...</option>'];
+    const addCat = (cat, groupName) => {
+      const prefix = groupName ? `${groupName} › ` : '';
+      parts.push(`<option value="${cat.id}" ${String(cat.id) === sel ? 'selected' : ''}>${escapeHtml(prefix)}${escapeHtml(cat.name)}</option>`);
+    };
+    for (const group of catalog.groups || []) {
+      for (const cat of group.categories.slice().sort(compareCatalogCategories)) addCat(cat, group.name);
+    }
+    for (const cat of (catalog.ungrouped || []).slice().sort(compareCatalogCategories)) addCat(cat, '');
+    return `<select id="report-history-scope-id" style="width:100%">${parts.join('')}</select>`;
+  }
+  const parts = ['<option value="">בחר מוצר...</option>'];
+  const addProduct = (p, catName, groupName) => {
+    const prefix = groupName ? `${groupName} › ` : '';
+    const label = catName ? `${prefix}${catName} › ${p.name}` : p.name;
+    parts.push(`<option value="${p.id}" ${String(p.id) === sel ? 'selected' : ''}>${escapeHtml(label)}</option>`);
+  };
+  for (const group of catalog.groups || []) {
+    for (const cat of group.categories.slice().sort(compareCatalogCategories)) {
+      for (const p of sortProductsForReport(cat.products || [], [])) addProduct(p, cat.name, group.name);
+    }
+  }
+  for (const cat of (catalog.ungrouped || []).slice().sort(compareCatalogCategories)) {
+    for (const p of sortProductsForReport(cat.products || [], [])) addProduct(p, cat.name, '');
+  }
+  return `<select id="report-history-scope-id" style="width:100%">${parts.join('')}</select>`;
+}
+
+function renderProductionHistoryFiltersHTML(ctx, catalog) {
+  const scopeType = ctx.historyScope || 'product';
+  const scopeLabels = { product: 'מוצר', category: 'קטגוריה', group: 'קטגוריה כללית' };
+  return `
+    <div class="baking-scope-type-row" role="radiogroup" aria-label="סוג סינון היסטוריה" style="margin-bottom:10px">
+      ${PRODUCTION_HISTORY_SCOPES.map((scope) => `
+        <label class="baking-scope-type-option">
+          <input type="radio" name="report-history-scope" value="${scope}"${scopeType === scope ? ' checked' : ''}>
+          ${scopeLabels[scope]}
+        </label>`).join('')}
+    </div>
+    <div class="form-group">
+      <label for="report-history-scope-id">${escapeHtml(scopeLabels[scopeType] || 'בחירה')}</label>
+      ${buildHistoryScopeSelectHTML(scopeType, catalog, ctx.historyScopeId)}
+    </div>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="report-history-all-time" ${ctx.historyAllTime ? 'checked' : ''}>
+        כל התקופות
+      </label>
+    </div>
+    <div class="report-filter-grid${ctx.historyAllTime ? ' report-filter-grid--disabled' : ''}" id="report-history-date-grid">
+      <div class="form-group">
+        <label for="report-history-from">מתאריך</label>
+        <input type="date" id="report-history-from" value="${ctx.from}" ${ctx.historyAllTime ? 'disabled' : ''}>
+      </div>
+      <div class="form-group">
+        <label for="report-history-to">עד תאריך</label>
+        <input type="date" id="report-history-to" value="${ctx.to}" ${ctx.historyAllTime ? 'disabled' : ''}>
+      </div>
+    </div>`;
+}
+
+function renderProductionHistoryTableHTML(entries, productMap, categories, catMap, scopeType) {
+  const sorted = sortProductionHistoryEntries(entries, productMap, categories);
+  if (!sorted.length) {
+    return '<p class="report-empty">אין רישומי ייצור לבחירה זו</p>';
+  }
+  const showProduct = scopeType !== 'product';
+  const showCategory = scopeType === 'group';
+  const totalQty = sorted.reduce((s, e) => s + (Number(e.quantity) || 0), 0);
+
+  return `
+    <p class="history-summary">
+      סה"כ ${sorted.length} רישומים · ${formatDecimal(totalQty)} יח'
+    </p>
+    <div class="report-table-wrap">
+      <table class="report-table report-history-table">
+        <thead><tr>
+          <th>תאריך</th>
+          ${showProduct ? '<th>מוצר</th>' : ''}
+          ${showCategory ? '<th>קטגוריה</th>' : ''}
+          <th>כמות</th>
+        </tr></thead>
+        <tbody>
+          ${sorted.map((entry) => {
+            const product = mapGetById(productMap, entry.productId);
+            const qty = Number(entry.quantity) || 0;
+            return `<tr>
+              <td class="report-cell-num">${formatDate(entry.date)}</td>
+              ${showProduct ? `<td class="report-cell-text">${escapeHtml(product?.name || 'מוצר לא ידוע')}</td>` : ''}
+              ${showCategory ? `<td class="report-cell-text">${escapeHtml(catMap.get(product?.categoryId) || '')}</td>` : ''}
+              <td class="report-cell-num">${product ? formatProductQuantity(product, qty) : formatDecimal(qty)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td colspan="${1 + (showProduct ? 1 : 0) + (showCategory ? 1 : 0)}">סה"כ</td>
+          <td class="report-cell-num"><strong>${formatDecimal(totalQty)}</strong></td>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
+function buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap) {
+  const subtitle = reportSubtitle(ctx);
+  return `
+    <div class="report-preview">
+      <p class="report-preview-meta">${escapeHtml(subtitle)}</p>
+      ${renderProductionHistoryTableHTML(entries, productMap, categories, catMap, ctx.historyScope)}
+    </div>`;
+}
+
 function renderFiltersHTML(ctx, categories, products, today, defaultMonth) {
   const { reportType } = ctx;
 
@@ -1150,10 +1346,12 @@ function renderFlowsFiltersHTML(ctx, today, defaultMonth) {
     </div>`;
 }
 
-function renderReportFiltersCards(ctx, categories, products, today, defaultMonth) {
+function renderReportFiltersCards(ctx, categories, products, today, defaultMonth, catalog) {
   const isFlows = isFlowsReportType(ctx.reportType);
-  const productionFilters = isFlows ? '' : renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth);
+  const isHistory = ctx.reportType === 'production-history';
+  const productionFilters = isFlows || isHistory ? '' : renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth);
   const flowsFilters = isFlows ? renderFlowsFiltersHTML(ctx, today, defaultMonth) : '';
+  const historyFilters = isHistory ? renderProductionHistoryFiltersHTML(ctx, catalog) : '';
 
   return `
     <div class="card report-filters-card">
@@ -1165,8 +1363,10 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
         <button type="button" class="tab ${ctx.reportType === 'range' ? 'active' : ''}" data-type="range">טווח תאריכים</button>
         <button type="button" class="tab ${ctx.reportType === 'category' ? 'active' : ''}" data-type="category">לפי קטגוריה</button>
         <button type="button" class="tab ${ctx.reportType === 'product' ? 'active' : ''}" data-type="product">לפי מוצר</button>
+        <button type="button" class="tab ${ctx.reportType === 'production-history' ? 'active' : ''}" data-type="production-history">היסטוריית ייצור</button>
       </div>
       ${productionFilters ? `<div class="report-dynamic-filters">${productionFilters}</div>` : ''}
+      ${historyFilters ? `<div class="report-dynamic-filters report-history-dynamic-filters">${historyFilters}</div>` : ''}
     </div>
 
     <div class="card report-flows-filters-card">
@@ -1229,6 +1429,38 @@ function bindFilterEvents(container) {
     container.dataset.selectedProduct = e.target.value;
     renderReports(container);
   });
+
+  container.querySelectorAll('input[name="report-history-scope"]').forEach((radio) => {
+    radio.addEventListener('change', (e) => {
+      container.dataset.historyScope = e.target.value;
+      delete container.dataset.historyScopeId;
+      renderReports(container);
+    });
+  });
+
+  document.getElementById('report-history-scope-id')?.addEventListener('change', (e) => {
+    container.dataset.historyScopeId = e.target.value;
+    if (container.dataset.historyScope === 'group') {
+      const opt = e.target.selectedOptions?.[0];
+      container.dataset.historyGroupName = opt?.textContent?.trim() || '';
+    }
+    renderReports(container);
+  });
+
+  document.getElementById('report-history-all-time')?.addEventListener('change', (e) => {
+    container.dataset.historyAllTime = e.target.checked ? '1' : '0';
+    renderReports(container);
+  });
+
+  document.getElementById('report-history-from')?.addEventListener('change', (e) => {
+    container.dataset.historyFrom = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-history-to')?.addEventListener('change', (e) => {
+    container.dataset.historyTo = e.target.value;
+    renderReports(container);
+  });
 }
 
 export async function renderReports(container) {
@@ -1237,8 +1469,8 @@ export async function renderReports(container) {
   const { year: curYear, month: curMonth } = currentMonth();
   const defaultMonth = container.dataset.selectedMonth || `${curYear}-${String(curMonth).padStart(2, '0')}`;
 
-  const [categories, products, groups] = await Promise.all([
-    getCategories(), getProducts(true), getCategoryGroups(),
+  const [categories, products, groups, catalog] = await Promise.all([
+    getCategories(), getProducts(true), getCategoryGroups(), getProductsCatalogLayout(),
   ]);
   const productMap = buildProductMap(products);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -1247,6 +1479,16 @@ export async function renderReports(container) {
   const ctx = resolveReportContext(container, today, curYear, curMonth, catMap, productMap);
   ctx.productMap = productMap;
   ctx.defaultMonth = container.dataset.selectedMonth || defaultMonth;
+
+  if (ctx.reportType === 'production-history' && ctx.historyScopeId) {
+    if (ctx.historyScope === 'group') {
+      ctx.filterLabel = groupMap.get(Number(ctx.historyScopeId)) || ctx.filterLabel;
+    } else if (ctx.historyScope === 'category') {
+      ctx.filterLabel = catMap.get(Number(ctx.historyScopeId)) || ctx.filterLabel;
+    } else if (ctx.historyScope === 'product') {
+      ctx.filterLabel = mapGetById(productMap, ctx.historyScopeId)?.name || ctx.filterLabel;
+    }
+  }
 
   if (ctx.reportType === 'month') {
     const selectedMonth = parseMonthValue(container.dataset.selectedMonth, curYear, curMonth);
@@ -1259,8 +1501,21 @@ export async function renderReports(container) {
     ctx.monthIso = defaultMonth;
   }
 
-  const { entries, processLogs, productionRuns: rawProductionRuns } = await fetchReportData(ctx);
+  const { entries: rawEntries, processLogs, productionRuns: rawProductionRuns } = await fetchReportData(ctx);
   const productionRuns = filterProductionRuns(rawProductionRuns, ctx, categories);
+
+  let entries = rawEntries;
+  if (ctx.reportType === 'production-history') {
+    entries = filterProductionHistoryEntries(rawEntries, {
+      scopeType: ctx.historyScope,
+      scopeId: ctx.historyScopeId,
+      products,
+      categories,
+      from: ctx.from,
+      to: ctx.to,
+      allTime: ctx.historyAllTime,
+    });
+  }
 
   const totals = await getProductionTotals(entries, productMap);
   const processSummary = summarizeProcessLogs(processLogs, catMap);
@@ -1271,6 +1526,9 @@ export async function renderReports(container) {
     relevantProducts = products.filter((p) => String(p.categoryId) === ctx.selectedCategoryId);
   } else if (ctx.reportType === 'product' && ctx.selectedProductId) {
     relevantProducts = products.filter((p) => String(p.id) === ctx.selectedProductId);
+  } else if (ctx.reportType === 'production-history' && ctx.historyScopeId) {
+    const ids = productIdsForHistoryScope(ctx.historyScope, ctx.historyScopeId, products, categories);
+    relevantProducts = ids ? products.filter((p) => ids.has(p.id)) : [];
   }
 
   const rows = buildProductRows(relevantProducts, totals, categories, ctx.reportType);
@@ -1290,10 +1548,14 @@ export async function renderReports(container) {
 
   const needsCategory = ctx.reportType === 'category' && !ctx.selectedCategoryId;
   const needsProduct = ctx.reportType === 'product' && !ctx.selectedProductId;
+  const needsHistoryScope = ctx.reportType === 'production-history' && !ctx.historyScopeId;
   const isFlowsReport = isFlowsReportType(ctx.reportType);
+  const isHistoryReport = ctx.reportType === 'production-history';
   const isFlowsSummary = ctx.reportType === 'flows-summary';
   const isFlowsDetail = ctx.reportType === 'flows-detail';
-  const canExport = isFlowsReport || (!needsCategory && !needsProduct);
+  const canExport = isFlowsReport || isHistoryReport
+    ? !needsHistoryScope
+    : (!needsCategory && !needsProduct);
   const sheetsHTML = await renderSheetsStatusHTML();
   const sheetsReady = await isSheetsConfigured();
   const flowsOverview = isFlowsReport ? await getAllFlowsOverview() : [];
@@ -1304,12 +1566,14 @@ export async function renderReports(container) {
       : '';
   const previewHtml = isFlowsReport
     ? flowsReportHtml
-    : ctx.reportType === 'week'
-      ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
-      : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+    : isHistoryReport
+      ? buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap)
+      : ctx.reportType === 'week'
+        ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
+        : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
   const isPageView = container.dataset.reportView === 'page';
 
-  const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth);
+  const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth, catalog);
 
   if (isPageView) {
     container.innerHTML = `
@@ -1344,6 +1608,7 @@ export async function renderReports(container) {
       <div class="card-title">הפקת דוח</div>
       ${needsCategory ? '<p class="report-hint">בחר קטגוריה לצפייה ולייצוא</p>' : ''}
       ${needsProduct ? '<p class="report-hint">בחר מוצר לצפייה ולייצוא</p>' : ''}
+      ${needsHistoryScope ? '<p class="report-hint">בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולייצוא</p>' : ''}
       <button type="button" class="btn btn-primary" id="open-report-page" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
         📄 דוח מעוצב — כמו באפליקציה
       </button>
@@ -1395,6 +1660,12 @@ export async function renderReports(container) {
     <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : 'report-flows-detail-card'}">
       <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
       ${flowsReportHtml}
+    </div>
+    ` : isHistoryReport ? `
+    <div class="card report-history-card">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      <p class="form-hint" style="margin-bottom:10px">היסטוריית ייצור — כמויות בלבד, ללא תזרימים</p>
+      ${renderProductionHistoryTableHTML(entries, productMap, categories, catMap, ctx.historyScope)}
     </div>
     ` : ctx.reportType === 'week' ? `
     <div class="card report-page-view" style="padding:16px">
