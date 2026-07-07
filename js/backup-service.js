@@ -370,7 +370,8 @@ function installDbChangeHooks() {
     'departmentCleaningLists', 'departmentCleaningTasks',
     'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'groupPreparations', 'checklistTasks', 'flowChecklistItems', 'flowCleaningTasks', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks', 'runCleaningChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',     'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'purchaseCategories', 'purchaseItems',
     'settings',
   ];
   for (const name of tables) {

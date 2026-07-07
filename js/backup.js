@@ -212,6 +212,8 @@ export function enrichBackupData(raw) {
     managerDepartments: raw.managerDepartments || [],
     departmentCleaningLists: raw.departmentCleaningLists || [],
     departmentCleaningTasks: raw.departmentCleaningTasks || [],
+    purchaseCategories: raw.purchaseCategories || [],
+    purchaseItems: raw.purchaseItems || [],
     settings: raw.settings || [],
   };
 }
@@ -262,6 +264,8 @@ export function summarizeBackupData(data) {
     rawMaterials: data.rawMaterials?.length || 0,
     supplierShortages: data.supplierShortages?.length || 0,
     rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
+    purchaseCategories: data.purchaseCategories?.length || 0,
+    purchaseItems: data.purchaseItems?.length || 0,
   };
 }
 
@@ -303,6 +307,7 @@ export function formatBackupSummary(counts) {
   if (counts.productRecipeComponents) parts.push(`${counts.productRecipeComponents} רכיבי מוצר`);
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
+  if (counts.purchaseItems) parts.push(`${counts.purchaseItems} פריטי קניות`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
@@ -379,6 +384,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.managerDepartments)) data.managerDepartments = [];
   if (!Array.isArray(data.departmentCleaningLists)) data.departmentCleaningLists = [];
   if (!Array.isArray(data.departmentCleaningTasks)) data.departmentCleaningTasks = [];
+  if (!Array.isArray(data.purchaseCategories)) data.purchaseCategories = [];
+  if (!Array.isArray(data.purchaseItems)) data.purchaseItems = [];
   return enrichBackupData(data);
 }
 

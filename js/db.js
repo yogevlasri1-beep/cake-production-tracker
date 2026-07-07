@@ -2193,6 +2193,69 @@ db.version(52).stores({
   departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
 });
 
+db.version(53).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+}).upgrade(async (tx) => {
+  const count = await tx.table('purchaseCategories').count();
+  if (!count) {
+    await tx.table('purchaseCategories').bulkAdd([
+      { catKey: 'accessories', name: 'אביזרים', sortOrder: 1 },
+      { catKey: 'machines', name: 'מכונות', sortOrder: 2 },
+    ]);
+  }
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -2399,6 +2462,12 @@ function compareProducts(a, b) {
 export async function initDB() {
   await db.open();
   await assertProductionDbReady();
+  try {
+    const { ensurePurchaseCategories } = await import('./purchasing-db.js');
+    await ensurePurchaseCategories();
+  } catch (err) {
+    console.warn('purchase categories', err);
+  }
   try {
     const synced = await getSetting('recipePortionPresetsSynced');
     if (!synced) {
@@ -2775,6 +2844,8 @@ export async function exportAllData() {
     bakingProfileProducts,
     bakingProfileScopes,
     productRecipeComponents,
+    purchaseCategories,
+    purchaseItems,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -2825,6 +2896,8 @@ export async function exportAllData() {
     db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfileScopes?.toArray?.() ?? Promise.resolve([]),
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
+    db.purchaseCategories?.toArray?.() ?? Promise.resolve([]),
+    db.purchaseItems?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -2875,6 +2948,8 @@ export async function exportAllData() {
     bakingProfileProducts,
     bakingProfileScopes,
     productRecipeComponents,
+    purchaseCategories,
+    purchaseItems,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -2928,6 +3003,8 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
   if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
   if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
+  if (!Array.isArray(payload.purchaseCategories)) payload.purchaseCategories = [];
+  if (!Array.isArray(payload.purchaseItems)) payload.purchaseItems = [];
   if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
   if (!Array.isArray(payload.managerIncidents)) payload.managerIncidents = [];
   if (!Array.isArray(payload.managerShiftNotes)) payload.managerShiftNotes = [];
@@ -2973,6 +3050,7 @@ export async function importAllData(payload) {
       'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
       'weeklyProductionPlanItems', 'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
       'productRecipeComponents',
+      'purchaseCategories', 'purchaseItems',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -2980,6 +3058,8 @@ export async function importAllData(payload) {
       await db.weeklyProductionPlanItems.clear();
       await db.weeklyProductionPlans.clear();
       await db.productRecipeComponents.clear();
+      await db.purchaseItems?.clear?.();
+      await db.purchaseCategories?.clear?.();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
       await db.recipeProductCategoryLinks.clear();
@@ -3078,6 +3158,15 @@ export async function importAllData(payload) {
       if (payload.productRecipeComponents?.length) {
         await db.productRecipeComponents.bulkPut(payload.productRecipeComponents);
       }
+      if (payload.purchaseCategories?.length) {
+        await db.purchaseCategories.bulkPut(payload.purchaseCategories);
+      } else {
+        await db.purchaseCategories.bulkAdd([
+          { catKey: 'accessories', name: 'אביזרים', sortOrder: 1 },
+          { catKey: 'machines', name: 'מכונות', sortOrder: 2 },
+        ]);
+      }
+      if (payload.purchaseItems?.length) await db.purchaseItems.bulkPut(payload.purchaseItems);
       await migrateLegacyRecipeCategoriesIfNeeded(tx);
       if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
       if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);

@@ -17,6 +17,12 @@ export const WORKSPACES = {
     icon: '📒',
     defaultScreen: 'recipes',
   },
+  purchasing: {
+    id: 'purchasing',
+    label: 'מנהל קניות',
+    icon: '🛒',
+    defaultScreen: 'purchasing',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';

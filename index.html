@@ -83,6 +83,10 @@
             <span class="workspace-menu-icon">📒</span>
             <span class="workspace-menu-label">מתכונים</span>
           </button>
+          <button type="button" class="workspace-menu-item" data-workspace="purchasing">
+            <span class="workspace-menu-icon">🛒</span>
+            <span class="workspace-menu-label">מנהל קניות</span>
+          </button>
           <div class="workspace-drawer-divider" role="separator"></div>
           <div class="workspace-drawer-title">גיבוי</div>
           <button type="button" class="workspace-menu-item" id="workspace-menu-backup">
@@ -162,6 +166,17 @@
       <button type="button" class="suppliers-nav-btn" data-supplier-tab="shortages" aria-label="רשימת חוסרים">
         <span class="suppliers-nav-icon">📋</span>
         <span class="suppliers-nav-label">חוסרים</span>
+      </button>
+    </nav>
+
+    <nav id="purchasing-sub-nav" class="purchasing-sub-nav hidden" aria-label="ניווט מנהל קניות">
+      <button type="button" class="purchasing-nav-btn active" data-purchasing-tab="accessories" aria-label="אביזרים">
+        <span class="purchasing-nav-icon">🔧</span>
+        <span class="purchasing-nav-label">אביזרים</span>
+      </button>
+      <button type="button" class="purchasing-nav-btn" data-purchasing-tab="machines" aria-label="מכונות">
+        <span class="purchasing-nav-icon">⚙️</span>
+        <span class="purchasing-nav-label">מכונות</span>
       </button>
     </nav>
   </div>

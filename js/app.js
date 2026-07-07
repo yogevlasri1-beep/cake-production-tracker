@@ -7,6 +7,7 @@ import { renderReports, reportsMeta } from './screens/reports.js?v=251';
 import { renderBackup, backupMeta } from './screens/backup.js?v=251';
 import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=251';
 import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=251';
+import { renderPurchasing, purchasingMeta, initPurchasingSubNav } from './screens/purchasing.js?v=251';
 import { getSavedWorkspace, saveWorkspace, WORKSPACES } from './workspaces.js?v=251';
 import { initIOSInstallPrompt } from './ios-install.js?v=251';
 import { initNetworkCheck } from './network.js?v=251';
@@ -35,6 +36,9 @@ const WORKSPACE_SCREENS = {
   recipes: {
     recipes: { render: renderRecipes, meta: recipesMeta },
   },
+  purchasing: {
+    purchasing: { render: renderPurchasing, meta: purchasingMeta },
+  },
 };
 
 let currentWorkspace = getSavedWorkspace();
@@ -55,6 +59,10 @@ function updateWorkspaceChrome() {
   const suppliersNav = document.getElementById('suppliers-sub-nav');
   suppliersNav?.classList.toggle('hidden', currentWorkspace !== 'suppliers');
   document.getElementById('app')?.classList.toggle('has-suppliers-sub-nav', currentWorkspace === 'suppliers');
+
+  const purchasingNav = document.getElementById('purchasing-sub-nav');
+  purchasingNav?.classList.toggle('hidden', currentWorkspace !== 'purchasing');
+  document.getElementById('app')?.classList.toggle('has-purchasing-sub-nav', currentWorkspace === 'purchasing');
 
   document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.workspace === currentWorkspace);
@@ -197,6 +205,7 @@ async function boot() {
     initWorkspaceMenu();
     initRecipesSubNav();
     initSuppliersSubNav();
+    initPurchasingSubNav();
     updateWorkspaceChrome();
 
     await initDB();
