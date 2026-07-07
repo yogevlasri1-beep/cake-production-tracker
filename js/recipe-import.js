@@ -1,5 +1,10 @@
-import { loadFFlate } from './docx-loader.js?v=264';
-import { formatRecipeIngredientsTotal, formatRecipeQuantity } from './kitchen-db.js?v=264';
+import { loadFFlate } from './docx-loader.js?v=269';
+import {
+  formatRecipeIngredientsTotal, formatRecipeQuantity,
+  getRecipeProductYieldInfo,
+  formatSubdivisionWeight,
+  resolveRecipeBaking, formatRecipeBakingParamsLine, getRecipeOvenLabel,
+} from './kitchen-db.js?v=269';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
@@ -683,7 +688,217 @@ export async function parseRecipesFromDocxFile(file) {
   return recipes;
 }
 
-export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDetails }) {
+function findProductGroupName(productCatalog, groupId) {
+  const group = productCatalog?.groups?.find((g) => Number(g.id) === Number(groupId));
+  return group?.name || '';
+}
+
+function findProductCategoryName(productCatalog, categoryId) {
+  if (!categoryId || !productCatalog) return '';
+  for (const group of productCatalog.groups || []) {
+    for (const cat of group.categories || []) {
+      if (Number(cat.id) === Number(categoryId)) {
+        return group.name ? `${group.name} › ${cat.name}` : cat.name;
+      }
+    }
+  }
+  for (const cat of productCatalog.ungrouped || []) {
+    if (Number(cat.id) === Number(categoryId)) return cat.name;
+  }
+  return '';
+}
+
+function sortProductIdsByCatalogOrder(productIds, productCatalog) {
+  const orderMap = new Map();
+  let idx = 0;
+  for (const group of productCatalog?.groups || []) {
+    for (const cat of group.categories || []) {
+      for (const p of cat.products || []) orderMap.set(p.id, idx++);
+    }
+  }
+  for (const cat of productCatalog?.ungrouped || []) {
+    for (const p of cat.products || []) orderMap.set(p.id, idx++);
+  }
+  return [...productIds].sort((a, b) => (orderMap.get(a) ?? 999999) - (orderMap.get(b) ?? 999999));
+}
+
+function formatRecipeBookProductLinks(recipe, { productCatalog, productMap } = {}) {
+  if (!recipe) return '';
+  const groupIds = recipe.linkedProductGroupIds?.length
+    ? recipe.linkedProductGroupIds
+    : (recipe.linkedProductGroupId ? [recipe.linkedProductGroupId] : []);
+  if (groupIds.length && productCatalog) {
+    const names = groupIds.map((id) => findProductGroupName(productCatalog, id)).filter(Boolean);
+    return names.length ? `קבוצות: ${names.join(', ')}` : 'קבוצות';
+  }
+  const catIds = recipe.linkedProductCategoryIds?.length
+    ? recipe.linkedProductCategoryIds
+    : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : []);
+  if (catIds.length && productCatalog) {
+    const names = catIds.map((id) => findProductCategoryName(productCatalog, id)).filter(Boolean);
+    return names.length ? `קטגוריות: ${names.join(', ')}` : 'קטגוריות';
+  }
+  const linked = recipe.linkedProductIds || [];
+  if (linked.length && productMap) {
+    const prodNames = (productCatalog
+      ? sortProductIdsByCatalogOrder(linked, productCatalog)
+      : linked
+    ).map((id) => productMap.get(id)?.name).filter(Boolean);
+    return prodNames.length ? `מוצרים: ${prodNames.join(', ')}` : '';
+  }
+  return '';
+}
+
+function renderRecipeBookWeightSummaryHTML(ingredients, recipe) {
+  const { summary, unitG, units } = getRecipeProductYieldInfo(recipe, ingredients);
+  if (!summary.mainText && !unitG && !units) return '';
+
+  const unitWeightHtml = unitG
+    ? `<div class="recipe-book-appendix-row"><span>יחידת חלוקה:</span> <strong>${formatSubdivisionWeight(unitG)}</strong></div>`
+    : '';
+
+  const unitsHtml = units
+    ? `<div class="recipe-book-appendix-row"><span>יוצא מהמנה:</span> <strong>${formatRecipeQuantity(units.totalUnits)} יחידות</strong></div>`
+    : '';
+
+  return `
+    <div class="recipe-book-appendix-block recipe-book-weight-summary">
+      ${summary.mainText ? `
+      <div class="recipe-book-appendix-row recipe-book-weight-main">
+        <span>משקל מנה</span>
+        <strong>${escapeHtml(summary.mainText)}</strong>
+      </div>` : ''}
+      ${summary.breakdownText ? `<div class="recipe-book-appendix-row recipe-book-weight-breakdown">${escapeHtml(summary.breakdownText)}</div>` : ''}
+      ${unitWeightHtml}
+      ${unitsHtml}
+    </div>`;
+}
+
+function renderRecipeBookBakingHTML(recipe, profileMap) {
+  const baking = resolveRecipeBaking(recipe, profileMap);
+  if (!baking.hasBaking) return '';
+  const rows = [];
+  if (baking.profileName) rows.push({ label: 'פרופיל אפייה', value: baking.profileName });
+  if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
+  const paramsLine = formatRecipeBakingParamsLine(recipe, profileMap);
+  if (paramsLine) rows.push({ label: 'פרמטרים', value: paramsLine });
+  if (!rows.length) {
+    return '<div class="recipe-book-appendix-block recipe-book-baking"><p class="recipe-book-appendix-line">כולל אפייה</p></div>';
+  }
+  return `
+    <div class="recipe-book-appendix-block recipe-book-baking">
+      ${rows.map((r) => `
+      <div class="recipe-book-appendix-row">
+        <span>${escapeHtml(r.label)}:</span> <strong>${escapeHtml(r.value)}</strong>
+      </div>`).join('')}
+    </div>`;
+}
+
+export function renderRecipeBookItemHTML(recipe, detail, options = {}) {
+  const {
+    productCatalog,
+    productMap,
+    profileMap,
+    formatProductLinks,
+    itemClass = 'recipe-book-item',
+    titleTag = 'h4',
+    tableClass = 'recipe-book-table',
+    appendixClass = 'recipe-book-appendix',
+  } = options;
+
+  const r = detail || recipe;
+  const ingredients = r?.ingredients || [];
+
+  const productLine = formatProductLinks
+    ? formatProductLinks(r)
+    : formatRecipeBookProductLinks(r, { productCatalog, productMap });
+
+  let tableHtml = '';
+  if (ingredients.length) {
+    const totalText = formatRecipeIngredientsTotal(ingredients, { recipe: r });
+    tableHtml = `
+      <table class="${tableClass}">
+        <thead>
+          <tr>
+            <th class="recipe-book-col-num">#</th>
+            <th class="recipe-book-col-name">חומר גלם</th>
+            <th class="recipe-book-col-qty">כמות</th>
+            <th class="recipe-book-col-unit">יחידה</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ingredients.map((ing, i) => `
+          <tr>
+            <td class="recipe-book-col-num">${i + 1}</td>
+            <td class="recipe-book-col-name">${escapeHtml(ing.name)}</td>
+            <td class="recipe-book-col-qty"><strong>${formatRecipeQuantity(ing.quantity)}</strong></td>
+            <td class="recipe-book-col-unit">${escapeHtml(ing.unit)}</td>
+          </tr>`).join('')}
+        </tbody>
+        ${totalText ? `
+        <tfoot>
+          <tr>
+            <td colspan="4" class="recipe-book-table-total"><strong>סה"כ:</strong> ${escapeHtml(totalText)}</td>
+          </tr>
+        </tfoot>` : ''}
+      </table>`;
+  }
+
+  const appendixParts = [];
+  if (productLine) {
+    appendixParts.push(`<p class="recipe-book-appendix-line recipe-book-product-links">${escapeHtml(productLine)}</p>`);
+  }
+  if (r?.notes) {
+    appendixParts.push(`<p class="recipe-book-appendix-line recipe-book-notes">${escapeHtml(r.notes)}</p>`);
+  }
+  if (ingredients.length) {
+    const weightHtml = renderRecipeBookWeightSummaryHTML(ingredients, r);
+    if (weightHtml) appendixParts.push(weightHtml);
+  }
+  if (profileMap) {
+    const bakingHtml = renderRecipeBookBakingHTML(r, profileMap);
+    if (bakingHtml) appendixParts.push(bakingHtml);
+  }
+
+  const appendixHtml = appendixParts.length
+    ? `<div class="${appendixClass}">${appendixParts.join('')}</div>`
+    : '';
+
+  return `
+    <article class="${itemClass}">
+      <${titleTag} class="recipe-book-item-title">${escapeHtml(recipe.name)}</${titleTag}>
+      ${tableHtml}
+      ${appendixHtml}
+    </article>`;
+}
+
+const RECIPE_BOOK_EXPORT_STYLES = `
+    body { font-family: "Rubik", "Arial", sans-serif; max-width: 800px; margin: 0 auto; padding: 24px; color: #1e293b; line-height: 1.55; font-size: 1.2rem; }
+    .recipe-book-group-title { text-align: center; font-weight: 700; font-size: 2rem; color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 8px; margin: 48px 0 16px; }
+    .recipe-book-group-title:first-of-type { margin-top: 0; }
+    .recipe-book-sub-title { text-align: center; font-weight: 700; font-size: 1.55rem; color: #475569; margin: 32px 0 12px; }
+    .recipe-book-item, .book-recipe { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+    .recipe-book-item-title { margin: 0 0 10px; color: #0f172a; font-size: 1.35rem; font-weight: 700; }
+    .recipe-book-table { width: auto; max-width: 100%; border-collapse: collapse; font-size: 1.15rem; margin-bottom: 10px; }
+    .recipe-book-table th, .recipe-book-table td { padding: 6px 0; border-bottom: 1px solid #e2e8f0; text-align: right; vertical-align: top; }
+    .recipe-book-table th { background: #f8fafc; font-weight: 700; font-size: 1.05rem; }
+    .recipe-book-col-num { width: 1.4em; padding-left: 0; padding-right: 8px; text-align: center; color: #64748b; }
+    .recipe-book-col-name { padding-right: 6px; padding-left: 0; }
+    .recipe-book-col-qty { width: 1%; white-space: nowrap; padding-right: 0; padding-left: 10px; }
+    .recipe-book-col-unit { width: 1%; white-space: nowrap; padding-right: 0; padding-left: 2px; }
+    .recipe-book-table-total { font-weight: 600; border-top: 2px solid #2563eb; padding-top: 8px; }
+    .recipe-book-appendix { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 1.1rem; color: #475569; }
+    .recipe-book-appendix-line { margin: 0 0 6px; }
+    .recipe-book-notes { font-style: italic; color: #64748b; }
+    .recipe-book-appendix-block { margin-bottom: 8px; }
+    .recipe-book-appendix-row { margin-bottom: 4px; }
+    @media print { body { padding: 12px; } .recipe-book-group-title { page-break-before: always; } .recipe-book-group-title:first-of-type { page-break-before: avoid; } }
+`;
+
+export function buildRecipeBookHtml({
+  groups, subCategories, recipes, recipeDetails,
+  productCatalog, productMap, profileMap,
+}) {
   const subByGroup = new Map();
   for (const sub of subCategories) {
     if (!subByGroup.has(sub.groupId)) subByGroup.set(sub.groupId, []);
@@ -700,26 +915,21 @@ export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDeta
 
   let body = '';
   for (const group of groups) {
-    body += `<section class="book-group"><h1>${escapeHtml(group.name)}</h1>`;
+    body += `<section class="book-group"><h1 class="recipe-book-group-title">${escapeHtml(group.name)}</h1>`;
     const subs = (subByGroup.get(group.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     for (const sub of subs) {
       const subRecipes = (recipesBySub.get(sub.id) || []).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
       if (!subRecipes.length) continue;
-      body += `<section class="book-sub"><h2>${escapeHtml(sub.name)}</h2>`;
+      body += `<section class="book-sub"><h2 class="recipe-book-sub-title">${escapeHtml(sub.name)}</h2>`;
       for (const recipe of subRecipes) {
         const detail = detailMap.get(recipe.id);
-        body += `<article class="book-recipe"><h3>${escapeHtml(recipe.name)}</h3>`;
-        if (detail?.notes) body += `<p class="book-notes">${escapeHtml(detail.notes)}</p>`;
-        if (detail?.ingredients?.length) {
-          body += '<ul class="book-ingredients">';
-          for (const ing of detail.ingredients) {
-            body += `<li><span class="ing-name">${escapeHtml(ing.name)}</span> — <strong>${formatRecipeQuantity(ing.quantity)}</strong> ${escapeHtml(ing.unit)}</li>`;
-          }
-          body += '</ul>';
-          const totalText = formatRecipeIngredientsTotal(detail.ingredients);
-          if (totalText) body += `<p class="book-recipe-total"><strong>סה"כ:</strong> ${escapeHtml(totalText)}</p>`;
-        }
-        body += '</article>';
+        body += renderRecipeBookItemHTML(recipe, detail, {
+          productCatalog,
+          productMap,
+          profileMap,
+          itemClass: 'book-recipe',
+          titleTag: 'h3',
+        });
       }
       body += '</section>';
     }
@@ -731,22 +941,10 @@ export function buildRecipeBookHtml({ groups, subCategories, recipes, recipeDeta
 <head>
   <meta charset="UTF-8">
   <title>ספר מתכונים</title>
-  <style>
-    body { font-family: "Rubik", "Arial", sans-serif; max-width: 800px; margin: 0 auto; padding: 24px; color: #1e293b; line-height: 1.6; }
-    h1 { color: #2563eb; border-bottom: 2px solid #2563eb; padding-bottom: 8px; margin-top: 48px; }
-    h1:first-child { margin-top: 0; }
-    h2 { color: #475569; margin-top: 32px; }
-    h3 { margin-top: 24px; color: #0f172a; }
-    .book-notes { color: #64748b; font-style: italic; }
-    .book-ingredients { list-style: none; padding: 0; }
-    .book-ingredients li { padding: 4px 0; border-bottom: 1px solid #e2e8f0; }
-    .book-recipe-total { margin-top: 8px; padding-top: 8px; border-top: 2px solid #2563eb; font-weight: 600; }
-    .ing-name { font-weight: 500; }
-    @media print { body { padding: 12px; } h1 { page-break-before: always; } h1:first-child { page-break-before: avoid; } }
-  </style>
+  <style>${RECIPE_BOOK_EXPORT_STYLES}</style>
 </head>
 <body>
-  <header><h1 style="border:none">📒 ספר מתכונים</h1><p>נוצר מאפליקציית מעקב יצור</p></header>
+  <header><h1 style="border:none;text-align:center">📒 ספר מתכונים</h1><p style="text-align:center;color:#64748b">נוצר מאפליקציית מעקב יצור</p></header>
   ${body}
 </body>
 </html>`;

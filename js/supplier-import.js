@@ -1,5 +1,5 @@
-import { loadXLSX } from './xlsx-loader.js?v=264';
-import { todayISO } from './utils.js?v=264';
+import { loadXLSX } from './xlsx-loader.js?v=269';
+import { todayISO } from './utils.js?v=269';
 
 const MATERIAL_ALIASES = ['חומר גלם', 'חומר', 'מוצר', 'material', 'שם', 'פריט', 'תיאור'];
 const SUPPLIER_ALIASES = ['ספק', 'supplier', 'שם ספק'];

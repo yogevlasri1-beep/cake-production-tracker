@@ -27,15 +27,15 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=264';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=264';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml } from '../recipe-import.js?v=264';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=264';
-import { openModal, closeModal } from '../modal.js?v=264';
+} from '../kitchen-db.js?v=269';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=269';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=269';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=269';
+import { openModal, closeModal } from '../modal.js?v=269';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=264';
-import { defaultColorForIndex } from '../chart.js?v=264';
+} from '../product-drag.js?v=269';
+import { defaultColorForIndex } from '../chart.js?v=269';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1354,7 +1354,11 @@ function formatRecipeProductLinkLabel(recipe, productCatalog) {
 }
 
 async function renderRecipeBook(container, { groups, allSubs, productMap, productCatalog }) {
-  const allRecipes = await getRecipes(null);
+  const [allRecipes, bakingProfiles] = await Promise.all([
+    getRecipes(null),
+    getBakingProfiles(),
+  ]);
+  const profileMap = new Map(bakingProfiles.map((p) => [p.id, p]));
   const details = await Promise.all(allRecipes.map((r) => getRecipe(r.id)));
 
   container.innerHTML = `
@@ -1382,27 +1386,11 @@ async function renderRecipeBook(container, { groups, allSubs, productMap, produc
               <h3 class="recipe-book-sub-title">${escapeHtml(sub.name)}</h3>
               ${subRecipes.map((r) => {
         const detail = details.find((d) => d.id === r.id);
-        const linkedLabel = formatRecipeProductLinkLabel(detail, productCatalog);
-        const linked = detail?.linkedProductIds || [];
-        const prodNames = sortProductIdsByCatalogOrder(linked, productCatalog)
-          .map((id) => productMap.get(id)?.name).filter(Boolean);
-        const productLine = linkedLabel
-          || (prodNames.length ? `מוצרים: ${prodNames.join(', ')}` : '');
-        const ingTotal = detail?.ingredients?.length
-          ? renderRecipeWeightSummaryHTML(detail.ingredients, detail)
-          : '';
-        return `
-                <article class="recipe-book-item">
-                  <h4>${escapeHtml(r.name)}</h4>
-                  ${productLine ? `<p class="form-hint">${escapeHtml(productLine)}</p>` : ''}
-                  ${detail?.notes ? `<p class="recipe-book-notes">${escapeHtml(detail.notes)}</p>` : ''}
-                  ${detail?.ingredients?.length ? `
-                  <ul class="recipe-book-ingredients">
-                    ${detail.ingredients.map((ing) => `
-                      <li>${escapeHtml(ing.name)} — <strong>${formatRecipeQuantity(ing.quantity)}</strong> ${escapeHtml(ing.unit)}</li>`).join('')}
-                  </ul>
-                  ${ingTotal ? `<p class="recipe-ingredients-total">${ingTotal}</p>` : ''}` : ''}
-                </article>`;
+        return renderRecipeBookItemHTML(r, detail, {
+          productCatalog,
+          productMap,
+          profileMap,
+        });
       }).join('')}
             </section>`;
     }).join('')}
@@ -1421,6 +1409,9 @@ async function renderRecipeBook(container, { groups, allSubs, productMap, produc
       subCategories: allSubs,
       recipes: allRecipes,
       recipeDetails: details,
+      productCatalog,
+      productMap,
+      profileMap,
     });
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);

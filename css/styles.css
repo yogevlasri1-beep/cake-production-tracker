@@ -7469,38 +7469,121 @@ body.supplier-drag-active {
   margin-bottom: 0;
 }
 
+.recipe-book-view {
+  font-size: 1.2rem;
+  line-height: 1.55;
+}
+
 .recipe-book-group-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 2rem;
   color: var(--primary);
-  margin: 24px 0 12px;
-  font-size: 1.25rem;
+  margin: 24px 0 16px;
 }
 
 .recipe-book-sub-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.55rem;
   color: var(--text-muted);
-  margin: 16px 0 8px;
-  font-size: 1.05rem;
+  margin: 16px 0 10px;
 }
 
 .recipe-book-item {
-  margin-bottom: 20px;
+  margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid var(--border);
 }
 
+.recipe-book-item-title,
 .recipe-book-item h4 {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
+  font-size: 1.35rem;
+  font-weight: 700;
 }
 
-.recipe-book-ingredients {
-  margin: 0;
-  padding-right: 20px;
-  font-size: 0.92rem;
+.recipe-book-table {
+  width: auto;
+  max-width: 100%;
+  border-collapse: collapse;
+  font-size: 1.15rem;
+  margin-bottom: 10px;
+}
+
+.recipe-book-table th,
+.recipe-book-table td {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  vertical-align: top;
+}
+
+.recipe-book-table th {
+  background: var(--bg-muted, #f8fafc);
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.recipe-book-col-num {
+  width: 1.4em;
+  padding-left: 0;
+  padding-right: 8px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.recipe-book-col-name {
+  padding-right: 6px;
+  padding-left: 0;
+}
+
+.recipe-book-col-qty {
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 0;
+  padding-left: 10px;
+}
+
+.recipe-book-col-unit {
+  width: 1%;
+  white-space: nowrap;
+  padding-right: 0;
+  padding-left: 2px;
+}
+
+.recipe-book-table-total {
+  font-weight: 600;
+  border-top: 2px solid var(--primary);
+  padding-top: 8px;
+}
+
+.recipe-book-appendix {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  font-size: 1.1rem;
+  color: var(--text-muted);
+}
+
+.recipe-book-appendix-line {
+  margin: 0 0 6px;
+}
+
+.recipe-book-appendix-block {
+  margin-bottom: 8px;
+}
+
+.recipe-book-appendix-row {
+  margin-bottom: 4px;
 }
 
 .recipe-book-notes {
-  color: var(--text-muted);
   font-style: italic;
-  margin: 0 0 8px;
+}
+
+.recipe-book-ingredients {
+  display: none;
 }
 
 .ratio-table {
