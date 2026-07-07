@@ -4780,6 +4780,41 @@ table.report-table tfoot td {
   margin-bottom: 14px;
 }
 
+.report-manager-filters-card .report-type-tabs {
+  margin-bottom: 14px;
+}
+
+.report-manager-section {
+  margin-bottom: 18px;
+}
+
+.report-manager-section:last-child {
+  margin-bottom: 0;
+}
+
+.report-manager-intro {
+  margin-bottom: 14px;
+}
+
+.report-manager-cleaning-block,
+.report-manager-purchase-block {
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.report-manager-cleaning-block:last-child,
+.report-manager-purchase-block:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.report-manager-list {
+  margin: 8px 0 0;
+  padding-inline-start: 20px;
+}
+
 .report-flows-detail-section {
   margin-bottom: 20px;
 }

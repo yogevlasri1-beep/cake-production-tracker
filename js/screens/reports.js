@@ -5,30 +5,48 @@ import {
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
   computeRunMetrics, aggregateRunsMetrics, getProductsCatalogLayout,
-} from '../db.js?v=263';
+  getManagerDepartments, getManagerTasks, getManagerIncidents,
+  getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
+  getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
+} from '../db.js?v=264';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
-} from '../utils.js?v=263';
+  addDaysISO,
+} from '../utils.js?v=264';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=263';
-import { openModal, closeModal } from '../modal.js?v=263';
+} from '../export.js?v=264';
+import { openModal, closeModal } from '../modal.js?v=264';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=263';
-import { isSheetsConfigured } from '../google-sheets.js?v=263';
+} from '../sheets-flow.js?v=264';
+import { isSheetsConfigured } from '../google-sheets.js?v=264';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=263';
-import { defaultColorForIndex } from '../chart.js?v=263';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=263';
+} from '../calc.js?v=264';
+import { defaultColorForIndex } from '../chart.js?v=264';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=264';
+import {
+  getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
+} from '../purchasing-db.js?v=264';
+
+const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
+const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
+const MANAGER_INCIDENT_SEVERITY = { minor: 'קל', major: 'חמור', critical: 'קריטי' };
+const MANAGER_INCIDENT_STATUS = { open: 'פתוח', investigating: 'בבדיקה', resolved: 'טופל' };
+const MANAGER_URGENCY_LABELS = { red: 'דחוף', yellow: 'בינוני', green: 'נמוך' };
+const MANAGER_NOTE_KIND_LABELS = { shift: 'משמרת', briefing: 'תדרוך', checklist: 'צ׳קליסט' };
 
 export function isFlowsReportType(type) {
   return type === 'flows-detail' || type === 'flows-summary' || type === 'flows';
+}
+
+export function isManagerReportType(type) {
+  return type === 'manager';
 }
 
 export function normalizeReportType(type) {
@@ -90,6 +108,212 @@ export function groupRunsByFlow(productionRuns) {
     byFlow.get(fid).push(run);
   }
   return { byFlow, noFlowRuns };
+}
+
+export function managerRecordInDateRange(isoOrDate, from, to) {
+  if (!isoOrDate || !from || !to) return false;
+  const d = String(isoOrDate).slice(0, 10);
+  return d >= from && d <= to;
+}
+
+export function filterManagerTasksByRange(tasks, from, to) {
+  return (tasks || []).filter((t) =>
+    managerRecordInDateRange(t.createdAt, from, to)
+    || managerRecordInDateRange(t.dueDate, from, to)
+    || managerRecordInDateRange(t.completedAt, from, to));
+}
+
+async function collectShiftNotesInRange(from, to) {
+  const notes = [];
+  let cursor = from;
+  while (cursor <= to) {
+    const dayNotes = await getManagerShiftNotes(cursor);
+    notes.push(...dayNotes);
+    cursor = addDaysISO(cursor, 1);
+  }
+  return notes.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
+}
+
+async function fetchManagerReportData(from, to, { categories, productMap } = {}) {
+  const [
+    departments, allTasks, incidents, employees, areas,
+    cleaningLists, targets, purchaseCategories,
+  ] = await Promise.all([
+    getManagerDepartments(),
+    getManagerTasks(),
+    getManagerIncidents(),
+    getManagerEmployees(),
+    getManagerResponsibilityAreas(),
+    getDepartmentCleaningLists(),
+    getTargets(),
+    getPurchaseCategories(),
+  ]);
+
+  const deptMap = new Map(departments.map((d) => [d.deptKey, d]));
+  const areaMap = new Map(areas.map((a) => [a.id, a.name]));
+  const catMap = new Map((categories || []).map((c) => [c.id, c.name]));
+
+  const tasks = filterManagerTasksByRange(allTasks.filter((t) => t.kind === 'task'), from, to);
+  const improvements = filterManagerTasksByRange(allTasks.filter((t) => t.kind === 'improvement'), from, to);
+  const filteredIncidents = incidents.filter((i) => managerRecordInDateRange(i.occurredAt, from, to));
+  const shiftNotes = await collectShiftNotesInRange(from, to);
+
+  const cleaning = await Promise.all(cleaningLists.map(async (list) => ({
+    list,
+    tasks: await getDepartmentCleaningTasks(list.id),
+  })));
+
+  const purchases = await Promise.all(purchaseCategories.map(async (cat) => ({
+    category: cat,
+    items: await getPurchaseItems(cat.id),
+  })));
+
+  const targetRows = (targets || []).map((t) => {
+    let label = '';
+    if (t.scope === 'total') label = 'יעד כולל';
+    else if (t.scope === 'money') label = 'יעד כסף';
+    else if (t.scope === 'category') label = catMap.get(Number(t.scopeId)) || `קטגוריה #${t.scopeId}`;
+    else if (t.scope === 'product') label = mapGetById(productMap, t.scopeId)?.name || `מוצר #${t.scopeId}`;
+    return { ...t, label };
+  });
+
+  return {
+    departments, deptMap, areaMap, tasks, improvements, incidents: filteredIncidents,
+    shiftNotes, employees, areas, cleaning, targets: targetRows, purchases,
+  };
+}
+
+function managerDeptLabel(deptMap, key) {
+  const d = deptMap.get(key);
+  return d ? `${d.icon || ''} ${d.label}`.trim() : key;
+}
+
+function renderManagerReportSection(title, bodyHtml, emptyHint = 'אין נתונים') {
+  const inner = bodyHtml || `<p class="report-empty">${emptyHint}</p>`;
+  return `
+    <section class="report-manager-section">
+      <h4 class="report-preview-heading">${escapeHtml(title)}</h4>
+      ${inner}
+    </section>`;
+}
+
+function renderManagerTable(headers, rows) {
+  if (!rows.length) return '';
+  return `
+    <div class="report-table-wrap">
+      <table class="report-table report-manager-table">
+        <thead><tr>${headers.map((h) => `<th scope="col">${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function buildManagerReportHTML(data, ctx) {
+  const { deptMap, areaMap } = data;
+
+  const tasksHtml = renderManagerTable(
+    ['משימה', 'מחלקה', 'סטטוס', 'דחיפות', 'יעד', 'נוצר'],
+    data.tasks.map((t) => `<tr>
+      <td class="report-cell-text">${escapeHtml(t.title)}${t.body ? `<div class="form-hint">${escapeHtml(t.body)}</div>` : ''}</td>
+      <td>${escapeHtml(managerDeptLabel(deptMap, t.department))}</td>
+      <td>${MANAGER_TASK_STATUS[t.status] || t.status}</td>
+      <td>${MANAGER_PRIORITY_LABELS[t.priority] || t.priority}</td>
+      <td>${t.dueDate ? formatDate(t.dueDate) : '—'}</td>
+      <td>${t.createdAt ? formatDate(String(t.createdAt).slice(0, 10)) : '—'}</td>
+    </tr>`),
+  );
+
+  const improvementsHtml = renderManagerTable(
+    ['רעיון', 'מחלקה', 'דחיפות', 'סטטוס', 'נוצר'],
+    data.improvements.map((t) => `<tr>
+      <td class="report-cell-text">${escapeHtml(t.title)}${t.body ? `<div class="form-hint">${escapeHtml(t.body)}</div>` : ''}</td>
+      <td>${escapeHtml(managerDeptLabel(deptMap, t.department))}</td>
+      <td>${MANAGER_URGENCY_LABELS[t.urgencyColor] || MANAGER_PRIORITY_LABELS[t.priority] || '—'}</td>
+      <td>${MANAGER_TASK_STATUS[t.status] || t.status}</td>
+      <td>${t.createdAt ? formatDate(String(t.createdAt).slice(0, 10)) : '—'}</td>
+    </tr>`),
+  );
+
+  const incidentsHtml = renderManagerTable(
+    ['תקלה', 'מחלקה', 'חומרה', 'סטטוס', 'תאריך'],
+    data.incidents.map((i) => `<tr>
+      <td class="report-cell-text">${escapeHtml(i.title)}${i.description ? `<div class="form-hint">${escapeHtml(i.description)}</div>` : ''}</td>
+      <td>${escapeHtml(managerDeptLabel(deptMap, i.department))}</td>
+      <td>${MANAGER_INCIDENT_SEVERITY[i.severity] || i.severity}</td>
+      <td>${MANAGER_INCIDENT_STATUS[i.status] || i.status}</td>
+      <td>${i.occurredAt ? formatDate(i.occurredAt) : '—'}</td>
+    </tr>`),
+  );
+
+  const notesHtml = renderManagerTable(
+    ['תאריך', 'מחלקה', 'סוג', 'תוכן'],
+    data.shiftNotes.map((n) => `<tr>
+      <td>${formatDate(n.date)}</td>
+      <td>${escapeHtml(managerDeptLabel(deptMap, n.department))}</td>
+      <td>${MANAGER_NOTE_KIND_LABELS[n.kind] || n.kind}</td>
+      <td class="report-cell-text">${escapeHtml(n.content)}</td>
+    </tr>`),
+  );
+
+  const teamHtml = `
+    ${data.departments.length ? `<p class="form-hint"><strong>מחלקות:</strong> ${data.departments.map((d) => `${d.icon || ''} ${escapeHtml(d.label)}`).join(' · ')}</p>` : ''}
+    ${renderManagerTable(
+    ['עובד', 'תחום אחריות', 'סטטוס'],
+    data.employees.map((e) => `<tr>
+      <td>${escapeHtml(e.name)}</td>
+      <td>${escapeHtml(areaMap.get(e.responsibilityAreaId) || '—')}</td>
+      <td>${e.active === false ? 'לא פעיל' : 'פעיל'}</td>
+    </tr>`),
+  )}
+    ${data.areas.length ? `<p class="form-hint" style="margin-top:8px"><strong>תחומי אחריות:</strong> ${data.areas.map((a) => escapeHtml(a.name)).join(' · ')}</p>` : ''}`;
+
+  const cleaningHtml = data.cleaning.length
+    ? data.cleaning.map(({ list, tasks }) => `
+      <div class="report-manager-cleaning-block">
+        <strong>${escapeHtml(list.name)}</strong>
+        ${list.notes ? `<p class="form-hint">${escapeHtml(list.notes)}</p>` : ''}
+        ${tasks.length
+    ? `<ul class="report-manager-list">${tasks.map((t) => `<li>${escapeHtml(t.name)}</li>`).join('')}</ul>`
+    : '<p class="form-hint">אין משימות ברשימה</p>'}
+      </div>`).join('')
+    : '';
+
+  const targetsHtml = renderManagerTable(
+    ['יעד', 'תקופה', 'כמות'],
+    data.targets.map((t) => `<tr>
+      <td>${escapeHtml(t.label)}</td>
+      <td>${t.period === 'monthly' ? 'חודשי' : 'יומי'}</td>
+      <td class="report-cell-num">${t.scope === 'money' ? formatMoney(t.quantity) : formatDecimal(t.quantity)}</td>
+    </tr>`),
+  );
+
+  const purchasesHtml = data.purchases.some((p) => p.items.length)
+    ? data.purchases.map(({ category, items }) => items.length ? `
+      <div class="report-manager-purchase-block">
+        <strong>${escapeHtml(category.name)}</strong>
+        ${renderManagerTable(
+    ['פריט', 'ספק', 'כמות', 'מחיר', 'סטטוס'],
+    items.map((item) => `<tr>
+      <td>${escapeHtml(item.name)}</td>
+      <td>${escapeHtml(item.supplier || '—')}</td>
+      <td class="report-cell-num">${item.quantity != null ? `${formatDecimal(item.quantity)}${item.unit ? ` ${escapeHtml(item.unit)}` : ''}` : '—'}</td>
+      <td class="report-cell-num">${item.unitPrice != null ? formatMoney(item.unitPrice) : '—'}</td>
+      <td>${PURCHASE_STATUS_LABELS[item.status] || item.status}</td>
+    </tr>`),
+  )}
+      </div>` : '').join('')
+    : '';
+
+  return `
+    <p class="form-hint report-manager-intro">דוח עמדת מנהל · ${escapeHtml(ctx.label)} · ללא תוכנית יומית ושבועית</p>
+    ${renderManagerReportSection('✅ משימות', tasksHtml, 'אין משימות בתקופה')}
+    ${renderManagerReportSection('💡 שיפור העסק', improvementsHtml, 'אין נקודות שיפור בתקופה')}
+    ${renderManagerReportSection('⚠️ תקלות', incidentsHtml, 'אין תקלות בתקופה')}
+    ${renderManagerReportSection('📝 הערות משמרת', notesHtml, 'אין הערות משמרת בתקופה')}
+    ${renderManagerReportSection('👥 צוות ומחלקות', teamHtml, 'אין נתוני צוות')}
+    ${renderManagerReportSection('🧹 ניקוי מחלקות', cleaningHtml, 'אין רשימות ניקוי')}
+    ${renderManagerReportSection('🎯 יעדים', targetsHtml, 'לא הוגדרו יעדים')}
+    ${renderManagerReportSection('🛒 רכישות לשיפור העסק', purchasesHtml, 'אין פריטי רכישה')}`;
 }
 
 function parseMonthValue(value, fallbackYear, fallbackMonth) {
@@ -191,6 +415,12 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     } else if (scopeType === 'group' && scopeId) {
       filterLabel = container.dataset.historyGroupName || '';
     }
+  } else if (reportType === 'manager') {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    reportTitle = 'דוח עמדת מנהל';
   }
 
   return {
@@ -215,8 +445,10 @@ async function fetchReportData(ctx) {
   let entries;
   let processLogs;
 
-  if (ctx.reportType === 'production-history') {
-    entries = await getEntriesInRange('1970-01-01', todayISO());
+  if (ctx.reportType === 'production-history' || ctx.reportType === 'manager') {
+    entries = ctx.reportType === 'production-history'
+      ? await getEntriesInRange('1970-01-01', todayISO())
+      : [];
     processLogs = [];
     return { entries, processLogs, productionRuns: [] };
   }
@@ -1346,12 +1578,29 @@ function renderFlowsFiltersHTML(ctx, today, defaultMonth) {
     </div>`;
 }
 
+function renderManagerFiltersHTML(ctx) {
+  return `
+    <div class="report-filter-grid">
+      <div class="form-group">
+        <label for="report-from">מתאריך</label>
+        <input type="date" id="report-from" value="${ctx.from}">
+      </div>
+      <div class="form-group">
+        <label for="report-to">עד תאריך</label>
+        <input type="date" id="report-to" value="${ctx.to}">
+      </div>
+    </div>
+    <p class="form-hint">משימות, שיפורים, תקלות ומשמרות לפי תאריך · צוות, ניקוי, יעדים ורכישות — מצב נוכחי</p>`;
+}
+
 function renderReportFiltersCards(ctx, categories, products, today, defaultMonth, catalog) {
   const isFlows = isFlowsReportType(ctx.reportType);
   const isHistory = ctx.reportType === 'production-history';
-  const productionFilters = isFlows || isHistory ? '' : renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth);
+  const isManager = isManagerReportType(ctx.reportType);
+  const productionFilters = isFlows || isHistory || isManager ? '' : renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth);
   const flowsFilters = isFlows ? renderFlowsFiltersHTML(ctx, today, defaultMonth) : '';
   const historyFilters = isHistory ? renderProductionHistoryFiltersHTML(ctx, catalog) : '';
+  const managerFilters = isManager ? renderManagerFiltersHTML(ctx) : '';
 
   return `
     <div class="card report-filters-card">
@@ -1376,6 +1625,14 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
         <button type="button" class="tab ${ctx.reportType === 'flows-summary' ? 'active' : ''}" data-type="flows-summary">סיכום תזרימים</button>
       </div>
       ${flowsFilters ? `<div class="report-dynamic-filters report-flows-dynamic-filters">${flowsFilters}</div>` : ''}
+    </div>
+
+    <div class="card report-manager-filters-card">
+      <div class="card-title">דוחות מנהל</div>
+      <div class="tabs tabs-wrap report-type-tabs report-manager-tabs">
+        <button type="button" class="tab ${ctx.reportType === 'manager' ? 'active' : ''}" data-type="manager">דוח עמדת מנהל</button>
+      </div>
+      ${managerFilters ? `<div class="report-dynamic-filters report-manager-dynamic-filters">${managerFilters}</div>` : ''}
     </div>`;
 }
 
@@ -1388,6 +1645,13 @@ function bindFilterEvents(container) {
   });
 
   container.querySelectorAll('.report-flows-tabs .tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      container.dataset.reportType = tab.dataset.type;
+      renderReports(container);
+    });
+  });
+
+  container.querySelectorAll('.report-manager-tabs .tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       container.dataset.reportType = tab.dataset.type;
       renderReports(container);
@@ -1551,9 +1815,10 @@ export async function renderReports(container) {
   const needsHistoryScope = ctx.reportType === 'production-history' && !ctx.historyScopeId;
   const isFlowsReport = isFlowsReportType(ctx.reportType);
   const isHistoryReport = ctx.reportType === 'production-history';
+  const isManagerReport = isManagerReportType(ctx.reportType);
   const isFlowsSummary = ctx.reportType === 'flows-summary';
   const isFlowsDetail = ctx.reportType === 'flows-detail';
-  const canExport = isFlowsReport || isHistoryReport
+  const canExport = isManagerReport || isFlowsReport || isHistoryReport
     ? !needsHistoryScope
     : (!needsCategory && !needsProduct);
   const sheetsHTML = await renderSheetsStatusHTML();
@@ -1564,13 +1829,19 @@ export async function renderReports(container) {
     : isFlowsDetail
       ? buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview)
       : '';
-  const previewHtml = isFlowsReport
-    ? flowsReportHtml
-    : isHistoryReport
-      ? buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap)
-      : ctx.reportType === 'week'
-        ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
-        : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+  const managerData = isManagerReport
+    ? await fetchManagerReportData(ctx.from, ctx.to, { categories, productMap })
+    : null;
+  const managerReportHtml = managerData ? buildManagerReportHTML(managerData, ctx) : '';
+  const previewHtml = isManagerReport
+    ? managerReportHtml
+    : isFlowsReport
+      ? flowsReportHtml
+      : isHistoryReport
+        ? buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap)
+        : ctx.reportType === 'week'
+          ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
+          : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
   const isPageView = container.dataset.reportView === 'page';
 
   const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth, catalog);
@@ -1660,6 +1931,11 @@ export async function renderReports(container) {
     <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : 'report-flows-detail-card'}">
       <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
       ${flowsReportHtml}
+    </div>
+    ` : isManagerReport ? `
+    <div class="card report-manager-card">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${managerReportHtml}
     </div>
     ` : isHistoryReport ? `
     <div class="card report-history-card">
