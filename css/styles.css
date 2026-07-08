@@ -6332,6 +6332,47 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.manager-active-runs-card {
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+}
+
+.manager-active-run {
+  padding: 10px 0;
+  border-top: 1px solid #fde3c7;
+}
+
+.manager-active-run:first-of-type {
+  border-top: none;
+}
+
+.manager-active-run-title {
+  font-weight: 700;
+  color: #9a3412;
+  margin-bottom: 6px;
+}
+
+.manager-active-run-group {
+  margin: 6px 0 6px 0;
+}
+
+.manager-active-run-heading {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.manager-active-run-item {
+  padding: 3px 0 3px 12px;
+  color: var(--text);
+}
+
+.manager-active-run-item.is-active {
+  font-weight: 600;
+  color: #b45309;
+}
+
 .manager-plan-item.is-done {
   opacity: 0.55;
 }

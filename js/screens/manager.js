@@ -6,6 +6,7 @@ import {
   updateManagerPlanItem, deleteManagerPlanItem, resolveDefaultFlowForProduct,
   getPortionPresetsForProduct,
   collectPlanProductFlowsForExport,
+  getActiveProductionRuns, ensureRunPreparationChecks, ensureRunCleaningChecks,
   getManagerTasks, addManagerTask, updateManagerTask, deleteManagerTask, setImprovementOrder,
   getManagerIncidents, addManagerIncident, updateManagerIncident, deleteManagerIncident,
   getManagerShiftNotes, addManagerShiftNote, deleteManagerShiftNote,
@@ -15,20 +16,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=271';
+} from '../db.js?v=272';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=271';
-import { openModal, closeModal } from '../modal.js?v=271';
-import { renderTargets } from './targets.js?v=271';
-import { renderPurchasingInManager } from './purchasing.js?v=271';
-import { forceAppUpdate } from '../sw-register.js?v=271';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=271';
+} from '../utils.js?v=272';
+import { openModal, closeModal } from '../modal.js?v=272';
+import { renderTargets } from './targets.js?v=272';
+import { renderPurchasingInManager } from './purchasing.js?v=272';
+import { forceAppUpdate } from '../sw-register.js?v=272';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=272';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=271';
+} from '../daily-plan-export.js?v=272';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -510,6 +511,114 @@ function renderProductCentricPlanHTML(items, products, {
   return html;
 }
 
+async function loadActiveRunsForPlan() {
+  const runs = await getActiveProductionRuns();
+  return Promise.all(runs.map(async (run) => {
+    let prep = [];
+    let clean = [];
+    if (run.flowId) {
+      try {
+        prep = await ensureRunPreparationChecks(run.id);
+        clean = await ensureRunCleaningChecks(run.id);
+      } catch {
+        prep = [];
+        clean = [];
+      }
+    }
+    return { run, prep, clean };
+  }));
+}
+
+function activeRunTitle(run, productMap) {
+  const prod = run.productId ? productMap.get(run.productId)?.name : '';
+  const main = prod || run.flowName || 'תהליך פעיל';
+  const extra = [];
+  if (prod && run.flowName) extra.push(run.flowName);
+  if (run.batchNumber) extra.push(`אצווה ${run.batchNumber}`);
+  return extra.length ? `${main} · ${extra.join(' · ')}` : main;
+}
+
+function renderActiveRunsSectionHTML(runData, productMap) {
+  const cards = runData.map(({ run, prep, clean }) => {
+    const remainingSteps = (run.steps || []).filter((s) => s.status !== 'completed');
+    const remainingPrep = prep.filter((c) => !c.checked);
+    const remainingClean = clean.filter((c) => !c.checked);
+    const title = activeRunTitle(run, productMap);
+    const nothing = !remainingSteps.length && !remainingPrep.length && !remainingClean.length;
+    const stepItem = (s) => `<div class="manager-active-run-item${s.status === 'active' ? ' is-active' : ''}">${s.status === 'active' ? '● ' : '○ '}${escapeHtml(s.stepName || 'שלב')}</div>`;
+    const checkItem = (c) => `<div class="manager-active-run-item">○ ${escapeHtml(c.name)}</div>`;
+    return `
+      <div class="manager-active-run">
+        <div class="manager-active-run-title">🔥 ${escapeHtml(title)}</div>
+        ${nothing ? '<p class="form-hint" style="margin:0">כל השלבים והמשימות בוצעו — ממתין לסגירת התהליך</p>' : `
+          ${remainingSteps.length ? `
+          <div class="manager-active-run-group">
+            <div class="manager-active-run-heading">📋 שלבים בתזרים</div>
+            ${remainingSteps.map(stepItem).join('')}
+          </div>` : ''}
+          ${remainingPrep.length ? `
+          <div class="manager-active-run-group">
+            <div class="manager-active-run-heading">✅ הכנות</div>
+            ${remainingPrep.map(checkItem).join('')}
+          </div>` : ''}
+          ${remainingClean.length ? `
+          <div class="manager-active-run-group">
+            <div class="manager-active-run-heading">🧹 ניקיון</div>
+            ${remainingClean.map(checkItem).join('')}
+          </div>` : ''}
+        `}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="card manager-active-runs-card">
+      <div class="card-title">🔥 תזרימים פעילים — מה שנותר לבצע</div>
+      ${runData.length
+    ? '<p class="form-hint" style="margin-bottom:10px">מתעדכן אוטומטית מעמדת התהליך · מוצג רק מה שטרם בוצע (בתזרים ובצ׳קליסט)</p>'
+    : '<p class="form-hint" style="margin:0">אין תזרימים פעילים כרגע. התחל תהליך בעמדת התהליך והוא יופיע כאן.</p>'}
+      ${cards}
+    </div>`;
+}
+
+function openEditPlanItemModal(container, { id, kind, label, qty }) {
+  const isFlowTask = kind === 'flow_step' || kind === 'flow_preparation' || kind === 'flow_cleaning';
+  const canEditLabel = kind === 'text' || isFlowTask;
+  const canEditQty = kind === 'text' || kind === 'product' || kind === 'portion';
+  openModal({
+    title: 'עריכת פריט',
+    bodyHTML: `
+      ${canEditLabel ? `
+      <div class="form-group">
+        <label for="edit-item-label">תיאור</label>
+        <input type="text" id="edit-item-label" value="${escapeHtml(label)}" maxlength="120">
+      </div>` : `<p class="form-hint" style="margin-bottom:12px">${escapeHtml(label)}</p>`}
+      ${canEditQty ? `
+      <div class="form-group">
+        <label for="edit-item-qty">כמות${kind === 'portion' ? ' מנות' : ''}</label>
+        <input type="number" id="edit-item-qty" min="0" step="1" inputmode="numeric" value="${qty}">
+      </div>` : ''}`,
+    footerHTML: `
+      <button class="btn btn-secondary modal-cancel">ביטול</button>
+      <button class="btn btn-primary" id="save-edit-item">שמור</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('save-edit-item')?.addEventListener('click', async () => {
+    const patch = {};
+    const labelEl = document.getElementById('edit-item-label');
+    if (labelEl) patch.label = labelEl.value.trim();
+    const qtyEl = document.getElementById('edit-item-qty');
+    if (qtyEl) patch.quantity = qtyEl.value;
+    try {
+      await updateManagerPlanItem(id, patch);
+      closeModal();
+      showToast('עודכן ✓');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
 function planPortionPresetLabel(p) {
   const extra = p.extra ? ` · ${p.extra}` : '';
   return `${p.name} (${p.weight} ק"ג${extra})`;
@@ -609,13 +718,14 @@ function planItemRow(item, { showDay = false } = {}) {
         ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   }
   return `
-    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}${item.itemKind === 'flow_cleaning' ? ' manager-plan-item--flow-clean' : ''}${item.itemKind === 'product' ? ' manager-plan-item--product' : ''}" data-id="${item.id}">
+    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}${item.itemKind === 'flow_cleaning' ? ' manager-plan-item--flow-clean' : ''}${item.itemKind === 'product' ? ' manager-plan-item--product' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}">
       <label class="manager-plan-check">
         <input type="checkbox" class="plan-item-done" ${item.done ? 'checked' : ''}>
       </label>
       <div class="manager-plan-body">${bodyInner}
         ${showDay ? `<span class="manager-plan-day">${dayLabels[item.dayOffset] || ''}</span>` : ''}
       </div>
+      <button type="button" class="btn btn-secondary btn-sm plan-item-edit" title="ערוך">✏️</button>
       <button type="button" class="btn btn-danger btn-sm plan-item-del" title="הסר">🗑</button>
     </div>`;
 }
@@ -639,6 +749,18 @@ function bindPlanItems(container, planType, anchorDate) {
       await deleteManagerPlanItem(row.dataset.id);
       showToast('נמחק');
       renderManager(container);
+    });
+  });
+
+  container.querySelectorAll('.plan-item-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = btn.closest('.manager-plan-item');
+      openEditPlanItemModal(container, {
+        id: row.dataset.id,
+        kind: row.dataset.kind || 'text',
+        label: row.dataset.label || '',
+        qty: row.dataset.qty || '',
+      });
     });
   });
 
@@ -763,13 +885,15 @@ async function buildPlanFlowContext(items, { dayOffset = null } = {}) {
 async function renderDailyPlan(container) {
   syncManagerPlanNavigation(container);
   const date = container.dataset.planDate || todayISO();
-  const [plan, items, products, layout] = await Promise.all([
+  const [plan, items, products, layout, activeRunData] = await Promise.all([
     getManagerPlan('daily', date),
     getManagerPlanItems('daily', date),
     getProducts(true),
     getProductsCatalogLayout(),
+    loadActiveRunsForPlan(),
   ]);
   const { productFlowMap, flowNames } = await buildPlanFlowContext(items);
+  const activeRunsProductMap = new Map(products.map((p) => [p.id, p]));
   const done = items.filter((i) => i.done).length;
   const progressPct = items.length ? Math.round((done / items.length) * 100) : 0;
 
@@ -794,6 +918,8 @@ async function renderDailyPlan(container) {
     </div>
 
     ${renderPlanAddProductHTML(products, layout)}
+
+    ${renderActiveRunsSectionHTML(activeRunData, activeRunsProductMap)}
 
     <div class="card manager-plan-list-card">
       <div class="card-title">3 · רשימת היום</div>
