@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=269';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=269';
-import { defaultColorForIndex } from './chart.js?v=269';
+} from './validators.js?v=270';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=270';
+import { defaultColorForIndex } from './chart.js?v=270';
 
 export { ValidationError };
 
@@ -4865,7 +4865,7 @@ export async function getGroupPortionPresets(categoryGroupId) {
   return rows;
 }
 
-/** מנות ממתכונים הרלוונטיות למוצר (לפי שיוך מתכון או רכיבי מוצר) */
+/** מנות הרלוונטיות למוצר — גם ממתכונים מקושרים וגם מהרשימה הידנית של הקבוצה */
 export async function getPortionPresetsForProduct(productId) {
   const pid = Number(productId);
   if (!pid) return [];
@@ -4875,28 +4875,32 @@ export async function getPortionPresetsForProduct(productId) {
   const gid = cat?.groupId;
   if (!gid) return [];
 
-  const presets = (await getGroupPortionPresets(gid)).filter((p) => p.sourceRecipeId);
-  if (!presets.length) return [];
+  const allPresets = await getGroupPortionPresets(gid);
+  const recipePresets = allPresets.filter((p) => p.sourceRecipeId);
+  const manualPresets = allPresets.filter((p) => !p.sourceRecipeId);
 
-  const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
-  const componentRecipeIds = new Set(
-    (await getProductRecipeComponents(pid)).map((c) => c.recipeId),
-  );
-  const relevant = [];
-  const seen = new Set();
-
-  for (const preset of presets) {
-    const recipe = await db.recipes.get(preset.sourceRecipeId);
-    if (!recipe) continue;
-    const linkedIds = await resolveRecipeLinkedProductIds(recipe);
-    const matches = linkedIds.includes(pid) || componentRecipeIds.has(preset.sourceRecipeId);
-    if (!matches) continue;
-    if (seen.has(preset.id)) continue;
-    seen.add(preset.id);
-    relevant.push(preset);
+  let recipeRelevant = recipePresets;
+  if (recipePresets.length) {
+    const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
+    const componentRecipeIds = new Set(
+      (await getProductRecipeComponents(pid)).map((c) => c.recipeId),
+    );
+    const relevant = [];
+    const seen = new Set();
+    for (const preset of recipePresets) {
+      const recipe = await db.recipes.get(preset.sourceRecipeId);
+      if (!recipe) continue;
+      const linkedIds = await resolveRecipeLinkedProductIds(recipe);
+      const matches = linkedIds.includes(pid) || componentRecipeIds.has(preset.sourceRecipeId);
+      if (!matches) continue;
+      if (seen.has(preset.id)) continue;
+      seen.add(preset.id);
+      relevant.push(preset);
+    }
+    if (relevant.length) recipeRelevant = relevant;
   }
 
-  return relevant.length ? relevant : presets;
+  return [...recipeRelevant, ...manualPresets];
 }
 
 export async function getFlowPortionPresets(flowId) {
@@ -6518,7 +6522,7 @@ export async function addManagerPlanProductWithChecklists({
   let portionMeta = {};
   if (presets.length) {
     const ppid = Number(portionPresetId);
-    if (!ppid) throw new ValidationError('בחר מנה מהמתכון');
+    if (!ppid) throw new ValidationError('בחר מנה מהרשימה');
     const preset = presets.find((p) => p.id === ppid) || await db.groupPortionPresets.get(ppid);
     if (!preset) throw new ValidationError('מנה לא נמצאה');
     const qty = sanitizeQuantity(quantity, { allowZero: false });

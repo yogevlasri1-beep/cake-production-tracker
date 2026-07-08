@@ -15,20 +15,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=269';
+} from '../db.js?v=270';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=269';
-import { openModal, closeModal } from '../modal.js?v=269';
-import { renderTargets } from './targets.js?v=269';
-import { renderPurchasingInManager } from './purchasing.js?v=269';
-import { forceAppUpdate } from '../sw-register.js?v=269';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=269';
+} from '../utils.js?v=270';
+import { openModal, closeModal } from '../modal.js?v=270';
+import { renderTargets } from './targets.js?v=270';
+import { renderPurchasingInManager } from './purchasing.js?v=270';
+import { forceAppUpdate } from '../sw-register.js?v=270';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=270';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=269';
+} from '../daily-plan-export.js?v=270';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -515,6 +515,21 @@ function planPortionPresetLabel(p) {
   return `${p.name} (${p.weight} ק"ג${extra})`;
 }
 
+function buildPlanPortionOptionsHTML(presets) {
+  const recipePresets = presets.filter((p) => p.sourceRecipeId);
+  const manualPresets = presets.filter((p) => !p.sourceRecipeId);
+  const optionsFor = (list) => list.map((p) =>
+    `<option value="${p.id}">${escapeHtml(planPortionPresetLabel(p))}</option>`).join('');
+  let html = '';
+  if (recipePresets.length) {
+    html += `<optgroup label="ממתכונים">${optionsFor(recipePresets)}</optgroup>`;
+  }
+  if (manualPresets.length) {
+    html += `<optgroup label="מהרשימה שבנית">${optionsFor(manualPresets)}</optgroup>`;
+  }
+  return html || optionsFor(presets);
+}
+
 function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
   const dayLabels = weekDayLabels();
   return `
@@ -536,7 +551,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
         </select>
       </div>
       <div class="form-group" id="plan-portion-wrap" hidden>
-        <label for="plan-product-portion">מנה ממתכון</label>
+        <label for="plan-product-portion">מנה (ממתכון או מהרשימה שבנית)</label>
         <select id="plan-product-portion">
           <option value="">בחר מנה...</option>
         </select>
@@ -676,8 +691,7 @@ function bindPlanItems(container, planType, anchorDate) {
         return;
       }
       wrap.hidden = false;
-      sel.innerHTML = `<option value="">בחר מנה...</option>${presets.map((p) =>
-        `<option value="${p.id}">${escapeHtml(planPortionPresetLabel(p))}</option>`).join('')}`;
+      sel.innerHTML = `<option value="">בחר מנה...</option>${buildPlanPortionOptionsHTML(presets)}`;
       if (qty) qty.placeholder = 'כמות מנות';
     } catch {
       wrap.hidden = true;
