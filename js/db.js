@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=270';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=270';
-import { defaultColorForIndex } from './chart.js?v=270';
+} from './validators.js?v=271';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=271';
+import { defaultColorForIndex } from './chart.js?v=271';
 
 export { ValidationError };
 
@@ -6508,6 +6508,15 @@ export async function resolveDefaultFlowForProduct(productId) {
   return flows.find((f) => f.isDefault) || flows[0];
 }
 
+/** תזרים ייעודי לקטגוריה של המוצר בלבד — ללא נפילה לתזרים הכללי של הקבוצה */
+export async function resolveDedicatedFlowForProduct(productId) {
+  const prod = await db.products.get(Number(productId));
+  if (!prod?.categoryId) return null;
+  const flows = await getFlowsForCategory(prod.categoryId);
+  if (!flows.length) return null;
+  return flows.find((f) => f.isDefault) || flows[0];
+}
+
 /** הוספת מוצר לתוכנית + משימות צ׳קליסט (הכנות + ניקיון) מהתזרim */
 export async function addManagerPlanProductWithChecklists({
   planType, anchorDate, dayOffset = 0, productId, quantity = null, portionPresetId = null,
@@ -6518,22 +6527,18 @@ export async function addManagerPlanProductWithChecklists({
   if (!prod) throw new ValidationError('מוצר לא נמצא');
   const offset = Number(dayOffset) || 0;
 
-  const presets = await getPortionPresetsForProduct(pid);
-  let portionMeta = {};
-  if (presets.length) {
-    const ppid = Number(portionPresetId);
-    if (!ppid) throw new ValidationError('בחר מנה מהרשימה');
-    const preset = presets.find((p) => p.id === ppid) || await db.groupPortionPresets.get(ppid);
+  const portionMeta = {};
+  const ppid = Number(portionPresetId);
+  if (ppid) {
+    const preset = await db.groupPortionPresets.get(ppid);
     if (!preset) throw new ValidationError('מנה לא נמצאה');
     const qty = sanitizeQuantity(quantity, { allowZero: false });
     if (qty == null) throw new ValidationError('הזן כמות מנות');
-    portionMeta = {
-      portionPresetId: preset.id,
-      portionName: preset.name,
-      portionWeight: preset.weight,
-      portionExtra: preset.extra || '',
-      quantity: qty,
-    };
+    portionMeta.portionPresetId = preset.id;
+    portionMeta.portionName = preset.name;
+    portionMeta.portionWeight = preset.weight;
+    portionMeta.portionExtra = preset.extra || '';
+    portionMeta.quantity = qty;
   } else if (quantity != null && quantity !== '') {
     portionMeta.quantity = sanitizeQuantity(quantity, { allowZero: false });
   }
@@ -6563,7 +6568,7 @@ export async function addManagerPlanProductWithChecklists({
     });
   }
 
-  const flow = await resolveDefaultFlowForProduct(pid);
+  const flow = await resolveDedicatedFlowForProduct(pid);
   if (!flow) return { checklistsAdded: 0, hasFlow: false };
 
   const cat = await db.categories.get(prod.categoryId);

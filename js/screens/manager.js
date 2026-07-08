@@ -15,20 +15,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=270';
+} from '../db.js?v=271';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=270';
-import { openModal, closeModal } from '../modal.js?v=270';
-import { renderTargets } from './targets.js?v=270';
-import { renderPurchasingInManager } from './purchasing.js?v=270';
-import { forceAppUpdate } from '../sw-register.js?v=270';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=270';
+} from '../utils.js?v=271';
+import { openModal, closeModal } from '../modal.js?v=271';
+import { renderTargets } from './targets.js?v=271';
+import { renderPurchasingInManager } from './purchasing.js?v=271';
+import { forceAppUpdate } from '../sw-register.js?v=271';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=271';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=270';
+} from '../daily-plan-export.js?v=271';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -535,7 +535,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
   return `
     <div class="card manager-plan-add-card">
       <div class="card-title">1 · מה מייצרים${showDay ? '' : ' היום'}</div>
-      <p class="form-hint" style="margin-bottom:12px">בחר מוצר, מנה ממתכון וכמות — משימות מהצ׳קליסט יתווספו אוטומטית</p>
+      <p class="form-hint" style="margin-bottom:12px">בחר מוצר וכמות — מנה היא לא חובה. משימות מהצ׳קליסט יתווספו אוטומטית</p>
       ${showDay ? `
       <div class="form-group">
         <label for="plan-day">יום</label>
@@ -551,7 +551,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
         </select>
       </div>
       <div class="form-group" id="plan-portion-wrap" hidden>
-        <label for="plan-product-portion">מנה (ממתכון או מהרשימה שבנית)</label>
+        <label for="plan-product-portion">מנה — לא חובה (ממתכון או מהרשימה שבנית)</label>
         <select id="plan-product-portion">
           <option value="">בחר מנה...</option>
         </select>
