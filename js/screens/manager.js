@@ -16,20 +16,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=272';
+} from '../db.js?v=273';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=272';
-import { openModal, closeModal } from '../modal.js?v=272';
-import { renderTargets } from './targets.js?v=272';
-import { renderPurchasingInManager } from './purchasing.js?v=272';
-import { forceAppUpdate } from '../sw-register.js?v=272';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=272';
+} from '../utils.js?v=273';
+import { openModal, closeModal } from '../modal.js?v=273';
+import { renderTargets } from './targets.js?v=273';
+import { renderPurchasingInManager } from './purchasing.js?v=273';
+import { forceAppUpdate } from '../sw-register.js?v=273';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=273';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=272';
+} from '../daily-plan-export.js?v=273';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -56,6 +56,29 @@ const TABS = [
   { id: 'notes', label: 'משמרות', icon: '📝' },
   { id: 'targets', label: 'יעדים', icon: '🎯' },
 ];
+
+const ACTIVE_RUNS_HIDDEN_KEY = 'yitzurActiveRunsHidden';
+const ACTIVE_RUNS_DISMISSED_KEY = 'yitzurActiveRunsDismissed';
+
+function getActiveRunsHidden() {
+  return localStorage.getItem(ACTIVE_RUNS_HIDDEN_KEY) === '1';
+}
+
+function setActiveRunsHidden(hidden) {
+  localStorage.setItem(ACTIVE_RUNS_HIDDEN_KEY, hidden ? '1' : '0');
+}
+
+function getDismissedRunIds() {
+  try {
+    return new Set((JSON.parse(localStorage.getItem(ACTIVE_RUNS_DISMISSED_KEY) || '[]')).map(Number));
+  } catch {
+    return new Set();
+  }
+}
+
+function setDismissedRunIds(set) {
+  localStorage.setItem(ACTIVE_RUNS_DISMISSED_KEY, JSON.stringify([...set]));
+}
 
 const PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const STATUS_LABELS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -539,7 +562,24 @@ function activeRunTitle(run, productMap) {
 }
 
 function renderActiveRunsSectionHTML(runData, productMap) {
-  const cards = runData.map(({ run, prep, clean }) => {
+  const hidden = getActiveRunsHidden();
+  const dismissed = getDismissedRunIds();
+  const visible = runData.filter(({ run }) => !dismissed.has(run.id));
+  const dismissedActive = runData.filter(({ run }) => dismissed.has(run.id));
+
+  const toggleBtn = `<button type="button" class="btn btn-secondary btn-sm" id="toggle-active-runs">${hidden ? '👁 הצג' : '🙈 הסתר'}</button>`;
+
+  if (hidden) {
+    return `
+      <div class="card manager-active-runs-card">
+        <div class="filter-row" style="margin:0">
+          <div class="card-title" style="margin:0;flex:1">🔥 תזרימים פעילים${runData.length ? ` (${runData.length})` : ''}</div>
+          ${toggleBtn}
+        </div>
+      </div>`;
+  }
+
+  const cards = visible.map(({ run, prep, clean }) => {
     const remainingSteps = (run.steps || []).filter((s) => s.status !== 'completed');
     const remainingPrep = prep.filter((c) => !c.checked);
     const remainingClean = clean.filter((c) => !c.checked);
@@ -549,7 +589,10 @@ function renderActiveRunsSectionHTML(runData, productMap) {
     const checkItem = (c) => `<div class="manager-active-run-item">○ ${escapeHtml(c.name)}</div>`;
     return `
       <div class="manager-active-run">
-        <div class="manager-active-run-title">🔥 ${escapeHtml(title)}</div>
+        <div class="manager-active-run-head">
+          <div class="manager-active-run-title">🔥 ${escapeHtml(title)}</div>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon manager-active-run-remove" data-run-id="${run.id}" title="הסר מהתוכנית" aria-label="הסר מהתוכנית">✕</button>
+        </div>
         ${nothing ? '<p class="form-hint" style="margin:0">כל השלבים והמשימות בוצעו — ממתין לסגירת התהליך</p>' : `
           ${remainingSteps.length ? `
           <div class="manager-active-run-group">
@@ -572,18 +615,45 @@ function renderActiveRunsSectionHTML(runData, productMap) {
 
   return `
     <div class="card manager-active-runs-card">
-      <div class="card-title">🔥 תזרימים פעילים — מה שנותר לבצע</div>
+      <div class="filter-row" style="margin-bottom:6px">
+        <div class="card-title" style="margin:0;flex:1">🔥 תזרימים פעילים — מה שנותר לבצע</div>
+        ${toggleBtn}
+      </div>
       ${runData.length
     ? '<p class="form-hint" style="margin-bottom:10px">מתעדכן אוטומטית מעמדת התהליך · מוצג רק מה שטרם בוצע (בתזרים ובצ׳קליסט)</p>'
     : '<p class="form-hint" style="margin:0">אין תזרימים פעילים כרגע. התחל תהליך בעמדת התהליך והוא יופיע כאן.</p>'}
       ${cards}
+      ${dismissedActive.length ? `
+      <button type="button" class="btn btn-secondary btn-sm" id="restore-active-runs" style="margin-top:8px">➕ החזר תזרימים שהוסרו (${dismissedActive.length})</button>` : ''}
     </div>`;
 }
 
-function openEditPlanItemModal(container, { id, kind, label, qty }) {
+function bindActiveRunsSection(container) {
+  document.getElementById('toggle-active-runs')?.addEventListener('click', () => {
+    setActiveRunsHidden(!getActiveRunsHidden());
+    renderManager(container);
+  });
+  document.getElementById('restore-active-runs')?.addEventListener('click', () => {
+    setDismissedRunIds(new Set());
+    showToast('התזרימים הוחזרו ✓');
+    renderManager(container);
+  });
+  container.querySelectorAll('.manager-active-run-remove').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const set = getDismissedRunIds();
+      set.add(Number(btn.dataset.runId));
+      setDismissedRunIds(set);
+      showToast('הוסר מהתוכנית');
+      renderManager(container);
+    });
+  });
+}
+
+function openEditPlanItemModal(container, { id, kind, label, qty, planType, anchorDate }) {
   const isFlowTask = kind === 'flow_step' || kind === 'flow_preparation' || kind === 'flow_cleaning';
   const canEditLabel = kind === 'text' || isFlowTask;
   const canEditQty = kind === 'text' || kind === 'product' || kind === 'portion';
+  const canMoveDate = planType === 'daily';
   openModal({
     title: 'עריכת פריט',
     bodyHTML: `
@@ -596,6 +666,12 @@ function openEditPlanItemModal(container, { id, kind, label, qty }) {
       <div class="form-group">
         <label for="edit-item-qty">כמות${kind === 'portion' ? ' מנות' : ''}</label>
         <input type="number" id="edit-item-qty" min="0" step="1" inputmode="numeric" value="${qty}">
+      </div>` : ''}
+      ${canMoveDate ? `
+      <div class="form-group">
+        <label for="edit-item-date">העבר ליום (תאריך)</label>
+        <input type="date" id="edit-item-date" value="${escapeHtml(anchorDate || '')}">
+        <p class="form-hint" style="margin-top:4px">שינוי התאריך יעביר את המשימה ליום הנבחר</p>
       </div>` : ''}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
@@ -608,10 +684,13 @@ function openEditPlanItemModal(container, { id, kind, label, qty }) {
     if (labelEl) patch.label = labelEl.value.trim();
     const qtyEl = document.getElementById('edit-item-qty');
     if (qtyEl) patch.quantity = qtyEl.value;
+    const dateEl = document.getElementById('edit-item-date');
+    const movedDate = dateEl && dateEl.value && dateEl.value !== anchorDate ? dateEl.value : null;
+    if (movedDate) patch.anchorDate = movedDate;
     try {
       await updateManagerPlanItem(id, patch);
       closeModal();
-      showToast('עודכן ✓');
+      showToast(movedDate ? `הועבר ל-${formatDate(movedDate)} ✓` : 'עודכן ✓');
       renderManager(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
@@ -760,6 +839,8 @@ function bindPlanItems(container, planType, anchorDate) {
         kind: row.dataset.kind || 'text',
         label: row.dataset.label || '',
         qty: row.dataset.qty || '',
+        planType,
+        anchorDate,
       });
     });
   });
@@ -933,6 +1014,7 @@ async function renderDailyPlan(container) {
 
   bindManagerTabs(container);
   bindPlanItems(container, 'daily', date);
+  bindActiveRunsSection(container);
 
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;

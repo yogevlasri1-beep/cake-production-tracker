@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=272';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=272';
-import { defaultColorForIndex } from './chart.js?v=272';
+} from './validators.js?v=273';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=273';
+import { defaultColorForIndex } from './chart.js?v=273';
 
 export { ValidationError };
 
@@ -6778,6 +6778,9 @@ export async function updateManagerPlanItem(id, patch) {
   }
   if (patch.done !== undefined) next.done = !!patch.done;
   if (patch.dayOffset !== undefined) next.dayOffset = Number(patch.dayOffset) || 0;
+  if (patch.anchorDate !== undefined && patch.anchorDate && /^\d{4}-\d{2}-\d{2}$/.test(patch.anchorDate)) {
+    next.anchorDate = patch.anchorDate;
+  }
   if (!Object.keys(next).length) return;
   await db.managerPlanItems.update(row.id, next);
 }
