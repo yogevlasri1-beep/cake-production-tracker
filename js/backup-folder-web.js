@@ -1,7 +1,7 @@
 /**
  * Web / Chrome — בחירת תיקייה עם File System Access API
  */
-import { getSetting, setSetting } from './db.js?v=275';
+import { getSetting, setSetting } from './db.js?v=276';
 
 const DIR_KEY = 'backupDirectoryHandle';
 

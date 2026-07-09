@@ -3,15 +3,46 @@ import {
   getProductionMachineFields, addProductionMachineField, updateProductionMachineField, deleteProductionMachineField,
   getProductionMachineAssignments, addProductionMachineAssignment, updateProductionMachineAssignment, deleteProductionMachineAssignment,
   MACHINE_MEASURE_WEIGHT, MACHINE_MEASURE_LENGTH, MACHINE_UNIT_OPTIONS,
+  MACHINE_TARGET_PRODUCT, MACHINE_TARGET_CATEGORY, MACHINE_TARGET_GROUP,
   getMachineMeasureLabel, getMachineUnitLabel, getRecipeForProduct,
-} from './kitchen-db.js?v=275';
-import { escapeHtml, showToast } from './utils.js?v=275';
-import { openModal, closeModal } from './modal.js?v=275';
+  countEffectiveMachineProducts,
+} from './kitchen-db.js?v=276';
+import { escapeHtml, showToast } from './utils.js?v=276';
+import { openModal, closeModal } from './modal.js?v=276';
 
 function machineUnitOptionsHTML(measureKind, selected) {
   const kind = measureKind === MACHINE_MEASURE_LENGTH ? MACHINE_MEASURE_LENGTH : MACHINE_MEASURE_WEIGHT;
   return (MACHINE_UNIT_OPTIONS[kind] || []).map((u) =>
     `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${escapeHtml(u.label)}</option>`).join('');
+}
+
+function buildGroupSelectHTML(productCatalog, selectedId, { excludeIds = [] } = {}) {
+  const excluded = new Set(excludeIds.map(Number));
+  const parts = ['<option value="">בחר קטגוריה כללית...</option>'];
+  for (const group of productCatalog.groups || []) {
+    if (excluded.has(group.id)) continue;
+    const sel = Number(selectedId) === group.id ? ' selected' : '';
+    parts.push(`<option value="${group.id}"${sel}>${escapeHtml(group.name)}</option>`);
+  }
+  return parts.join('');
+}
+
+function buildCategorySelectHTML(productCatalog, selectedId, { excludeIds = [] } = {}) {
+  const excluded = new Set(excludeIds.map(Number));
+  const parts = ['<option value="">בחר קטגוריה...</option>'];
+  for (const group of productCatalog.groups || []) {
+    for (const cat of group.categories || []) {
+      if (excluded.has(cat.id)) continue;
+      const sel = Number(selectedId) === cat.id ? ' selected' : '';
+      parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(`${group.name} › ${cat.name}`)}</option>`);
+    }
+  }
+  for (const cat of productCatalog.ungrouped || []) {
+    if (excluded.has(cat.id)) continue;
+    const sel = Number(selectedId) === cat.id ? ' selected' : '';
+    parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(cat.name)}</option>`);
+  }
+  return parts.join('');
 }
 
 function buildProductSelectHTML(productCatalog, selectedId, { excludeIds = [] } = {}) {
@@ -56,18 +87,63 @@ function renderMachineFieldRow(field) {
     </div>`;
 }
 
+function buildAssignmentTargetPickHTML(targetType, productCatalog, assignment, excludeTargets) {
+  if (targetType === MACHINE_TARGET_GROUP) {
+    return `
+      <div class="form-group">
+        <label for="machine-assignment-group">קטגוריה כללית</label>
+        <select id="machine-assignment-group">${buildGroupSelectHTML(productCatalog, assignment?.categoryGroupId, { excludeIds: excludeTargets.groupIds })}</select>
+      </div>`;
+  }
+  if (targetType === MACHINE_TARGET_CATEGORY) {
+    return `
+      <div class="form-group">
+        <label for="machine-assignment-category">קטגוריה</label>
+        <select id="machine-assignment-category">${buildCategorySelectHTML(productCatalog, assignment?.categoryId, { excludeIds: excludeTargets.categoryIds })}</select>
+      </div>`;
+  }
+  return `
+    <div class="form-group">
+      <label for="machine-assignment-product">מוצר</label>
+      <select id="machine-assignment-product">${buildProductSelectHTML(productCatalog, assignment?.productId, { excludeIds: excludeTargets.productIds })}</select>
+    </div>
+    <div id="machine-assignment-recipe-hint" class="form-hint" style="margin-bottom:10px"></div>`;
+}
+
+function collectExcludedTargets(assignments, editingId) {
+  const groupIds = [];
+  const categoryIds = [];
+  const productIds = [];
+  for (const row of assignments) {
+    if (editingId && row.id === editingId) continue;
+    if (row.targetType === MACHINE_TARGET_GROUP) groupIds.push(row.categoryGroupId);
+    else if (row.targetType === MACHINE_TARGET_CATEGORY) categoryIds.push(row.categoryId);
+    else productIds.push(row.productId);
+  }
+  return { groupIds, categoryIds, productIds };
+}
+
 function renderAssignmentRow(row) {
   const fieldCells = row.fields.map((f) => {
     const val = f.value != null && f.value !== '' ? f.value : '—';
     return `<td><span class="machine-assignment-val">${escapeHtml(String(val))}</span> <span class="machine-assignment-unit">${escapeHtml(f.unitLabel)}</span></td>`;
   }).join('');
-  const recipeLine = row.recipeName
-    ? `<span class="machine-assignment-recipe">📖 ${escapeHtml(row.recipeName)}</span>`
-    : '<span class="form-hint">ללא מתכון משויך</span>';
+  let recipeLine = '';
+  if (row.targetType === MACHINE_TARGET_PRODUCT) {
+    recipeLine = row.recipeName
+      ? `<span class="machine-assignment-recipe">📖 ${escapeHtml(row.recipeName)}</span>`
+      : '<span class="form-hint">ללא מתכון משויך</span>';
+  } else {
+    recipeLine = `<span class="form-hint">${row.productCount} מוצרים · מתכון לפי מוצר</span>`;
+  }
+  const scopeBadge = `<span class="machine-assignment-scope">${escapeHtml(row.targetKindLabel)}</span>`;
+  const pathLine = row.targetPath ? `<div class="form-hint">${escapeHtml(row.targetPath)}</div>` : '';
   return `
     <tr class="machine-assignment-row" data-assignment-id="${row.id}">
       <td class="machine-assignment-product">
-        <strong>${escapeHtml(row.productName)}</strong>
+        ${scopeBadge}
+        <strong>${escapeHtml(row.targetLabel)}</strong>
+        ${pathLine}
         <div>${recipeLine}</div>
       </td>
       ${fieldCells}
@@ -197,25 +273,70 @@ function readAssignmentValuesFromForm() {
   return values;
 }
 
-function openAssignmentForm({ machineId, fields, productCatalog, assignment, assignedProductIds = [], onSaved }) {
+function openAssignmentForm({ machineId, fields, productCatalog, assignment, assignments = [], onSaved }) {
   const valueMap = {};
   if (assignment) {
     for (const f of assignment.fields) valueMap[f.id] = f.value;
   }
-  const excludeIds = assignment ? assignedProductIds.filter((id) => id !== assignment.productId) : assignedProductIds;
+  const targetType = assignment?.targetType || MACHINE_TARGET_PRODUCT;
+  const excludeTargets = collectExcludedTargets(assignments, assignment?.id);
+
   openModal({
-    title: assignment ? 'עריכת שיוך מוצר' : 'שיוך מוצר למכונה',
+    title: assignment ? 'עריכת שיוך' : 'שיוך למכונה',
     bodyHTML: `
       <div class="form-group">
-        <label for="machine-assignment-product">מוצר</label>
-        <select id="machine-assignment-product">${buildProductSelectHTML(productCatalog, assignment?.productId, { excludeIds })}</select>
+        <label>סוג שיוך</label>
+        <div class="baking-scope-type-row">
+          <label class="baking-scope-type-option">
+            <input type="radio" name="machine-assignment-target-type" value="${MACHINE_TARGET_GROUP}"${targetType === MACHINE_TARGET_GROUP ? ' checked' : ''}>
+            קטגוריה כללית
+          </label>
+          <label class="baking-scope-type-option">
+            <input type="radio" name="machine-assignment-target-type" value="${MACHINE_TARGET_CATEGORY}"${targetType === MACHINE_TARGET_CATEGORY ? ' checked' : ''}>
+            קטגוריה
+          </label>
+          <label class="baking-scope-type-option">
+            <input type="radio" name="machine-assignment-target-type" value="${MACHINE_TARGET_PRODUCT}"${targetType === MACHINE_TARGET_PRODUCT ? ' checked' : ''}>
+            מוצר
+          </label>
+        </div>
       </div>
-      <div id="machine-assignment-recipe-hint" class="form-hint" style="margin-bottom:10px"></div>
+      <div id="machine-assignment-target-pick">${buildAssignmentTargetPickHTML(targetType, productCatalog, assignment, excludeTargets)}</div>
+      <div id="machine-assignment-scope-hint" class="form-hint" style="margin-bottom:10px"></div>
       ${assignmentValuesFormHTML(fields, valueMap)}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-machine-assignment-form">שמור</button>`,
   });
+
+  const getSelectedTargetType = () =>
+    document.querySelector('input[name="machine-assignment-target-type"]:checked')?.value || MACHINE_TARGET_PRODUCT;
+
+  const updateScopeHint = () => {
+    const type = getSelectedTargetType();
+    const hint = document.getElementById('machine-assignment-scope-hint');
+    if (!hint) return;
+    if (type === MACHINE_TARGET_GROUP) {
+      hint.textContent = 'כל המוצרים בקטגוריה כללית יקבלו את הערכים שהוגדרו';
+    } else if (type === MACHINE_TARGET_CATEGORY) {
+      hint.textContent = 'כל המוצרים בקטגוריה יקבלו את הערכים שהוגדרו';
+    } else {
+      hint.textContent = '';
+    }
+  };
+
+  const syncTargetPick = () => {
+    const type = getSelectedTargetType();
+    const pick = document.getElementById('machine-assignment-target-pick');
+    if (!pick) return;
+    const pickAssignment = assignment && assignment.targetType === type ? assignment : null;
+    pick.innerHTML = buildAssignmentTargetPickHTML(type, productCatalog, pickAssignment, excludeTargets);
+    if (type === MACHINE_TARGET_PRODUCT) {
+      document.getElementById('machine-assignment-product')?.addEventListener('change', updateRecipeHint);
+      updateRecipeHint();
+    }
+    updateScopeHint();
+  };
 
   const updateRecipeHint = async () => {
     const pid = Number(document.getElementById('machine-assignment-product')?.value);
@@ -230,18 +351,33 @@ function openAssignmentForm({ machineId, fields, productCatalog, assignment, ass
       ? `מתכון משויך: <strong>${escapeHtml(recipe.name)}</strong> (יתווסף אוטומטית)`
       : 'אין מתכון משויך למוצר זה';
   };
-  document.getElementById('machine-assignment-product')?.addEventListener('change', updateRecipeHint);
-  updateRecipeHint();
+
+  document.querySelectorAll('input[name="machine-assignment-target-type"]').forEach((el) => {
+    el.addEventListener('change', syncTargetPick);
+  });
+  if (targetType === MACHINE_TARGET_PRODUCT) {
+    document.getElementById('machine-assignment-product')?.addEventListener('change', updateRecipeHint);
+    updateRecipeHint();
+  }
+  updateScopeHint();
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('save-machine-assignment-form')?.addEventListener('click', async () => {
-    const productId = document.getElementById('machine-assignment-product')?.value;
+    const type = getSelectedTargetType();
     const values = readAssignmentValuesFromForm();
+    const target = { targetType: type };
+    if (type === MACHINE_TARGET_GROUP) {
+      target.categoryGroupId = document.getElementById('machine-assignment-group')?.value;
+    } else if (type === MACHINE_TARGET_CATEGORY) {
+      target.categoryId = document.getElementById('machine-assignment-category')?.value;
+    } else {
+      target.productId = document.getElementById('machine-assignment-product')?.value;
+    }
     try {
       if (assignment?.id) {
-        await updateProductionMachineAssignment(assignment.id, { productId, values });
+        await updateProductionMachineAssignment(assignment.id, { target, values });
       } else {
-        await addProductionMachineAssignment(machineId, productId, values);
+        await addProductionMachineAssignment(machineId, target, values);
       }
       closeModal();
       showToast('נשמר ✓');
@@ -260,11 +396,11 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
   }
   const [fields, assignments] = await Promise.all([
     getProductionMachineFields(machineId),
-    getProductionMachineAssignments(machineId),
+    getProductionMachineAssignments(machineId, { productCatalog }),
   ]);
 
   const tableHead = fields.length
-    ? `<tr><th>מוצר / מתכון</th>${fields.map((f) =>
+    ? `<tr><th>שיוך / מתכון</th>${fields.map((f) =>
       `<th>${escapeHtml(f.name)}<br><span class="machine-col-unit">${escapeHtml(getMachineUnitLabel(f.measureKind, f.unit))}</span></th>`).join('')}<th></th></tr>`
     : '';
 
@@ -294,9 +430,10 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
 
     <div class="card machine-assignments-card">
       <div class="section-header">
-        <h2>מוצרים משויכים</h2>
-        <button type="button" class="btn btn-primary btn-sm" id="machine-add-assignment"${fields.length ? '' : ' disabled'}>+ מוצר</button>
+        <h2>שיוכים</h2>
+        <button type="button" class="btn btn-primary btn-sm" id="machine-add-assignment"${fields.length ? '' : ' disabled'}>+ שיוך</button>
       </div>
+      <p class="form-hint">שייך קטגוריה כללית, קטגוריה או מוצר בודד — כל המוצרים בטווח יקבלו את הערכים</p>
       ${assignments.length && fields.length ? `
       <div class="machine-assignment-table-wrap">
         <table class="machine-assignment-table">
@@ -304,7 +441,7 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
           <tbody>${assignments.map(renderAssignmentRow).join('')}</tbody>
         </table>
       </div>` : `
-      <p class="form-hint machine-empty">${fields.length ? 'אין מוצרים משויכים עדיין' : 'הוסף פרמטרים לפני שיוך מוצרים'}</p>`}
+      <p class="form-hint machine-empty">${fields.length ? 'אין שיוכים עדיין' : 'הוסף פרמטרים לפני שיוך'}</p>`}
     </div>`;
 
   document.getElementById('machine-back-list')?.addEventListener('click', () => {
@@ -351,7 +488,7 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
       machineId,
       fields,
       productCatalog,
-      assignedProductIds: assignments.map((a) => a.productId),
+      assignments,
       onSaved: rerender,
     });
   });
@@ -364,7 +501,7 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
           fields,
           productCatalog,
           assignment: row,
-          assignedProductIds: assignments.map((a) => a.productId),
+          assignments,
           onSaved: rerender,
         });
       }
@@ -372,7 +509,7 @@ async function renderMachineDetail(container, machineId, productCatalog, rerende
   });
   container.querySelectorAll('.machine-del-assignment').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm('להסיר את המוצר מהמכונה?')) return;
+      if (!confirm('להסיר את השיוך?')) return;
       try {
         await deleteProductionMachineAssignment(Number(btn.dataset.id));
         showToast('הוסר');
@@ -396,18 +533,18 @@ export async function renderRecipesMachines(container, { productCatalog }) {
   const fieldCounts = new Map();
   const productCounts = new Map();
   await Promise.all(machines.map(async (m) => {
-    const [fields, assignments] = await Promise.all([
+    const [fields, count] = await Promise.all([
       getProductionMachineFields(m.id),
-      getProductionMachineAssignments(m.id),
+      countEffectiveMachineProducts(m.id, productCatalog),
     ]);
     fieldCounts.set(m.id, fields.length);
-    productCounts.set(m.id, assignments.length);
+    productCounts.set(m.id, count);
   }));
 
   container.innerHTML = `
     <div class="card machine-station-intro">
       <div class="card-title">מכונות יצור</div>
-      <p class="form-hint" style="margin:0">הגדר מכונות (למשל רונדו ליין), פרמטרים לכל מכונה, ושייך מוצרים עם הערכים שלהם. מתכון משויך למוצר יתווסף אוטומטית.</p>
+      <p class="form-hint" style="margin:0">הגדר מכונות (למשל רונדו ליין), פרמטרים לכל מכונה, ושייך קטגוריה כללית, קטגוריה או מוצר עם הערכים שלהם. מתכון משויך למוצר יתווסף אוטומטית.</p>
     </div>
     <div class="card machine-list-card">
       <div class="section-header">

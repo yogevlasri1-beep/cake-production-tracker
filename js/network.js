@@ -1,5 +1,5 @@
-import { showToast } from './utils.js?v=275';
-import { isStandaloneApp } from './sw-register.js?v=275';
+import { showToast } from './utils.js?v=276';
+import { isStandaloneApp } from './sw-register.js?v=276';
 
 export async function pingServer(timeoutMs = 5000) {
   if (!navigator.onLine) {

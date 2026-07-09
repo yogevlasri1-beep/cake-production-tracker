@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=275';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=276';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=275';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=275';
+} from './validators.js?v=276';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=276';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3146,6 +3146,10 @@ export function formatSupplierShortagesText(grouped, { includeDone = false } = {
 export const MACHINE_MEASURE_WEIGHT = 'weight';
 export const MACHINE_MEASURE_LENGTH = 'length';
 
+export const MACHINE_TARGET_PRODUCT = 'product';
+export const MACHINE_TARGET_CATEGORY = 'category';
+export const MACHINE_TARGET_GROUP = 'group';
+
 export const MACHINE_UNIT_OPTIONS = {
   [MACHINE_MEASURE_WEIGHT]: [
     { id: 'kg', label: 'ק"ג' },
@@ -3181,6 +3185,97 @@ function sanitizeMachineValue(raw) {
   const n = Number(String(raw).replace(',', '.'));
   if (!Number.isFinite(n)) throw new ValidationError('ערך לא תקין');
   return Math.round(n * 1000) / 1000;
+}
+
+function normalizeMachineTargetInput(raw = {}) {
+  const targetType = raw.targetType === MACHINE_TARGET_CATEGORY
+    ? MACHINE_TARGET_CATEGORY
+    : raw.targetType === MACHINE_TARGET_GROUP
+      ? MACHINE_TARGET_GROUP
+      : MACHINE_TARGET_PRODUCT;
+  if (targetType === MACHINE_TARGET_GROUP) {
+    const categoryGroupId = Number(raw.categoryGroupId);
+    if (!categoryGroupId) throw new ValidationError('בחר קטגוריה כללית');
+    return { targetType, productId: null, categoryId: null, categoryGroupId, recipeId: null };
+  }
+  if (targetType === MACHINE_TARGET_CATEGORY) {
+    const categoryId = Number(raw.categoryId);
+    if (!categoryId) throw new ValidationError('בחר קטגוריה');
+    return { targetType, productId: null, categoryId, categoryGroupId: null, recipeId: null };
+  }
+  const productId = Number(raw.productId);
+  if (!productId) throw new ValidationError('בחר מוצר');
+  return { targetType, productId, categoryId: null, categoryGroupId: null, recipeId: null };
+}
+
+function inferMachineTargetType(row) {
+  if (row?.targetType === MACHINE_TARGET_CATEGORY || row?.targetType === MACHINE_TARGET_GROUP) {
+    return row.targetType;
+  }
+  return MACHINE_TARGET_PRODUCT;
+}
+
+async function findDuplicateMachineAssignment(machineId, target) {
+  const mid = Number(machineId);
+  if (target.targetType === MACHINE_TARGET_GROUP) {
+    return db.productionMachineProducts
+      .where('[machineId+targetType+categoryGroupId]')
+      .equals([mid, MACHINE_TARGET_GROUP, target.categoryGroupId])
+      .first();
+  }
+  if (target.targetType === MACHINE_TARGET_CATEGORY) {
+    return db.productionMachineProducts
+      .where('[machineId+targetType+categoryId]')
+      .equals([mid, MACHINE_TARGET_CATEGORY, target.categoryId])
+      .first();
+  }
+  return db.productionMachineProducts
+    .where('[machineId+targetType+productId]')
+    .equals([mid, MACHINE_TARGET_PRODUCT, target.productId])
+    .first();
+}
+
+export function getMachineTargetKindLabel(targetType) {
+  if (targetType === MACHINE_TARGET_GROUP) return 'קטגוריה כללית';
+  if (targetType === MACHINE_TARGET_CATEGORY) return 'קטגוריה';
+  return 'מוצר';
+}
+
+export function collectProductsForMachineAssignment(rule, products, productCatalog) {
+  const active = (products || []).filter((p) => p.active !== false);
+  const targetType = inferMachineTargetType(rule);
+  if (targetType === MACHINE_TARGET_PRODUCT) {
+    const pid = Number(rule.productId);
+    return pid ? active.filter((p) => p.id === pid) : [];
+  }
+  if (targetType === MACHINE_TARGET_CATEGORY) {
+    const cid = Number(rule.categoryId);
+    return cid ? active.filter((p) => p.categoryId === cid) : [];
+  }
+  const gid = Number(rule.categoryGroupId);
+  if (!gid) return [];
+  const catIds = new Set(
+    (productCatalog?.allCategories || [])
+      .filter((c) => Number(c.groupId) === gid)
+      .map((c) => c.id),
+  );
+  return active.filter((p) => catIds.has(p.categoryId));
+}
+
+export async function countEffectiveMachineProducts(machineId, productCatalog) {
+  const mid = Number(machineId);
+  if (!mid) return 0;
+  const [assignments, products] = await Promise.all([
+    db.productionMachineProducts.where('machineId').equals(mid).toArray(),
+    db.products.toArray(),
+  ]);
+  const covered = new Set();
+  for (const rule of assignments) {
+    for (const p of collectProductsForMachineAssignment(rule, products, productCatalog)) {
+      covered.add(p.id);
+    }
+  }
+  return covered.size;
 }
 
 export async function getProductionMachines() {
@@ -3294,28 +3389,63 @@ async function resolveRecipeIdForProduct(productId) {
   return recipe?.id ?? null;
 }
 
-export async function getProductionMachineAssignments(machineId) {
+export async function getProductionMachineAssignments(machineId, { productCatalog } = {}) {
   const mid = Number(machineId);
   if (!mid) return [];
-  const [assignments, fields, products, recipes] = await Promise.all([
+  const [assignments, fields, products, recipes, categories, groups] = await Promise.all([
     db.productionMachineProducts.where('machineId').equals(mid).toArray(),
     getProductionMachineFields(mid),
     db.products.toArray(),
     db.recipes.toArray(),
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
   ]);
   assignments.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   const productMap = new Map(products.map((p) => [p.id, p]));
   const recipeMap = new Map(recipes.map((r) => [r.id, r]));
-  const fieldMap = new Map(fields.map((f) => [f.id, f]));
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const groupMap = new Map(groups.map((g) => [g.id, g]));
 
   const result = [];
   for (const row of assignments) {
     const values = await db.productionMachineProductValues.where('assignmentId').equals(row.id).toArray();
     const valueMap = new Map(values.map((v) => [v.fieldId, v.value]));
+    const targetType = inferMachineTargetType(row);
+    let targetLabel = '';
+    let targetPath = '';
+    let productCount = 0;
+    if (targetType === MACHINE_TARGET_GROUP) {
+      const group = groupMap.get(Number(row.categoryGroupId));
+      targetLabel = group?.name || '';
+      targetPath = 'כל המוצרים בקטגוריה כללית';
+      productCount = collectProductsForMachineAssignment(row, products, productCatalog).length;
+    } else if (targetType === MACHINE_TARGET_CATEGORY) {
+      const category = categoryMap.get(Number(row.categoryId));
+      targetLabel = category?.name || '';
+      const group = category?.groupId ? groupMap.get(Number(category.groupId)) : null;
+      targetPath = group ? `${group.name} › ${category?.name || ''}` : (category?.name || 'כל המוצרים בקטגוריה');
+      productCount = collectProductsForMachineAssignment(row, products, productCatalog).length;
+    } else {
+      const product = productMap.get(Number(row.productId));
+      targetLabel = product?.name || '';
+      const category = product ? categoryMap.get(product.categoryId) : null;
+      const group = category?.groupId ? groupMap.get(Number(category.groupId)) : null;
+      targetPath = group && category
+        ? `${group.name} › ${category.name}`
+        : (category?.name || '');
+      productCount = product ? 1 : 0;
+    }
     result.push({
       ...row,
-      productName: productMap.get(row.productId)?.name || '',
-      recipeName: row.recipeId ? (recipeMap.get(row.recipeId)?.name || '') : '',
+      targetType,
+      targetLabel,
+      targetPath,
+      targetKindLabel: getMachineTargetKindLabel(targetType),
+      productCount,
+      productName: targetType === MACHINE_TARGET_PRODUCT ? targetLabel : '',
+      recipeName: targetType === MACHINE_TARGET_PRODUCT && row.recipeId
+        ? (recipeMap.get(row.recipeId)?.name || '')
+        : '',
       fields: fields.map((f) => ({
         ...f,
         value: valueMap.get(f.id) ?? null,
@@ -3327,30 +3457,40 @@ export async function getProductionMachineAssignments(machineId) {
   return result;
 }
 
-export async function addProductionMachineAssignment(machineId, productId, values = {}) {
+export async function addProductionMachineAssignment(machineId, targetOrProductId, values = {}) {
   const mid = Number(machineId);
-  const pid = Number(productId);
-  if (!mid || !pid) throw new ValidationError('בחר מוצר');
+  if (!mid) throw new ValidationError('מכונה לא תקינה');
   const machine = await db.productionMachines.get(mid);
   if (!machine) throw new ValidationError('מכונה לא נמצאה');
-  const product = await db.products.get(pid);
-  if (!product) throw new ValidationError('מוצר לא נמצא');
-  const existing = await db.productionMachineProducts
-    .where('[machineId+productId]')
-    .equals([mid, pid])
-    .first();
-  if (existing) throw new ValidationError('המוצר כבר משויך למכונה זו');
+
+  const rawTarget = typeof targetOrProductId === 'object'
+    ? targetOrProductId
+    : { targetType: MACHINE_TARGET_PRODUCT, productId: targetOrProductId };
+  let target = normalizeMachineTargetInput(rawTarget);
+
+  if (target.targetType === MACHINE_TARGET_PRODUCT) {
+    const product = await db.products.get(target.productId);
+    if (!product) throw new ValidationError('מוצר לא נמצא');
+    target = { ...target, recipeId: await resolveRecipeIdForProduct(target.productId) };
+  } else if (target.targetType === MACHINE_TARGET_CATEGORY) {
+    const category = await db.categories.get(target.categoryId);
+    if (!category) throw new ValidationError('קטגוריה לא נמצאה');
+  } else {
+    const group = await db.categoryGroups.get(target.categoryGroupId);
+    if (!group) throw new ValidationError('קטגוריה כללית לא נמצאה');
+  }
+
+  const existing = await findDuplicateMachineAssignment(mid, target);
+  if (existing) throw new ValidationError('שיוך זה כבר קיים למכונה');
 
   const fields = await getProductionMachineFields(mid);
-  const recipeId = await resolveRecipeIdForProduct(pid);
   const existingRows = await db.productionMachineProducts.where('machineId').equals(mid).toArray();
   const maxOrder = existingRows.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
 
   return db.transaction('rw', ...pickDbTables('productionMachineProducts', 'productionMachineProductValues'), async () => {
     const assignmentId = await db.productionMachineProducts.add({
       machineId: mid,
-      productId: pid,
-      recipeId,
+      ...target,
       sortOrder: maxOrder + 1,
     });
     for (const field of fields) {
@@ -3366,21 +3506,38 @@ export async function addProductionMachineAssignment(machineId, productId, value
   });
 }
 
-export async function updateProductionMachineAssignment(id, { productId, values } = {}) {
+export async function updateProductionMachineAssignment(id, { target, productId, values } = {}) {
   const aid = Number(id);
   const row = await db.productionMachineProducts.get(aid);
   if (!row) throw new ValidationError('שיוך לא נמצא');
   const patch = {};
-  if (productId != null) {
-    const pid = Number(productId);
-    if (!pid) throw new ValidationError('מוצר לא תקין');
-    const dup = await db.productionMachineProducts
-      .where('[machineId+productId]')
-      .equals([row.machineId, pid])
-      .first();
-    if (dup && dup.id !== aid) throw new ValidationError('המוצר כבר משויך למכונה זו');
-    patch.productId = pid;
-    patch.recipeId = await resolveRecipeIdForProduct(pid);
+
+  if (target || productId != null) {
+    const rawTarget = target || { targetType: MACHINE_TARGET_PRODUCT, productId };
+    let normalized = normalizeMachineTargetInput({
+      targetType: rawTarget.targetType ?? inferMachineTargetType(row),
+      productId: rawTarget.productId ?? productId ?? row.productId,
+      categoryId: rawTarget.categoryId ?? row.categoryId,
+      categoryGroupId: rawTarget.categoryGroupId ?? row.categoryGroupId,
+    });
+
+    if (normalized.targetType === MACHINE_TARGET_PRODUCT) {
+      const product = await db.products.get(normalized.productId);
+      if (!product) throw new ValidationError('מוצר לא נמצא');
+      normalized = { ...normalized, recipeId: await resolveRecipeIdForProduct(normalized.productId) };
+    } else if (normalized.targetType === MACHINE_TARGET_CATEGORY) {
+      const category = await db.categories.get(normalized.categoryId);
+      if (!category) throw new ValidationError('קטגוריה לא נמצאה');
+      normalized.recipeId = null;
+    } else {
+      const group = await db.categoryGroups.get(normalized.categoryGroupId);
+      if (!group) throw new ValidationError('קטגוריה כללית לא נמצאה');
+      normalized.recipeId = null;
+    }
+
+    const dup = await findDuplicateMachineAssignment(row.machineId, normalized);
+    if (dup && dup.id !== aid) throw new ValidationError('שיוך זה כבר קיים למכונה');
+    Object.assign(patch, normalized);
   }
 
   await db.transaction('rw', ...pickDbTables('productionMachineProducts', 'productionMachineProductValues'), async () => {
