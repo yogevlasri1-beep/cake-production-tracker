@@ -731,6 +731,24 @@ body {
   background: rgba(100, 116, 139, 0.1);
 }
 
+.portion-source-section {
+  margin-bottom: 10px;
+}
+
+.portion-section-count {
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+.portion-source-section.portion-source-section--recipe .backup-section-header {
+  border-bottom: 2px solid rgba(124, 58, 237, 0.2);
+}
+
+.portion-source-section.portion-source-section--flow .backup-section-header {
+  border-bottom: 2px solid rgba(13, 148, 136, 0.2);
+}
+
 .portion-station-intro,
 .portion-list-card {
   margin-bottom: 10px;
