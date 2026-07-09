@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '274';</script>
+  <script>window.__APP_BUILD__ = '275';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=274">
+  <link rel="stylesheet" href="css/styles.css?v=275">
   <script type="importmap">
   {
     "imports": {
@@ -139,6 +139,10 @@
       <button type="button" class="recipes-nav-btn" data-recipe-tab="ratio" aria-label="מחשבון יחס">
         <span class="recipes-nav-icon">⚖️</span>
         <span class="recipes-nav-label">מחשבון יחס</span>
+      </button>
+      <button type="button" class="recipes-nav-btn" data-recipe-tab="machines" aria-label="מכונות יצור">
+        <span class="recipes-nav-icon">⚙️</span>
+        <span class="recipes-nav-label">מכונות</span>
       </button>
     </nav>
 
@@ -310,7 +314,7 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=274"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=274"></script>
+  <script src="js/vendor/dexie.min.js?v=275"></script>
+  <script src="js/vendor/xlsx.full.min.js?v=275"></script>
 </body>
 </html>

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=274';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=275';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=274';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=274';
+} from './validators.js?v=275';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=275';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3143,11 +3143,284 @@ export function formatSupplierShortagesText(grouped, { includeDone = false } = {
   return lines.join('\n').trim();
 }
 
+export const MACHINE_MEASURE_WEIGHT = 'weight';
+export const MACHINE_MEASURE_LENGTH = 'length';
+
+export const MACHINE_UNIT_OPTIONS = {
+  [MACHINE_MEASURE_WEIGHT]: [
+    { id: 'kg', label: 'ק"ג' },
+    { id: 'g', label: 'גרם' },
+  ],
+  [MACHINE_MEASURE_LENGTH]: [
+    { id: 'mm', label: 'מ"מ' },
+    { id: 'cm', label: 'ס"מ' },
+  ],
+};
+
+export function getMachineMeasureLabel(measureKind) {
+  if (measureKind === MACHINE_MEASURE_LENGTH) return 'אורך';
+  return 'משקל';
+}
+
+export function getMachineUnitLabel(measureKind, unit) {
+  const opts = MACHINE_UNIT_OPTIONS[measureKind] || MACHINE_UNIT_OPTIONS[MACHINE_MEASURE_WEIGHT];
+  return opts.find((o) => o.id === unit)?.label || unit || '';
+}
+
+function normalizeMachineFieldInput({ name, measureKind, unit }) {
+  const cleanName = sanitizeName(name, 80);
+  if (!cleanName) throw new ValidationError('שם פרמטר לא תקין');
+  const kind = measureKind === MACHINE_MEASURE_LENGTH ? MACHINE_MEASURE_LENGTH : MACHINE_MEASURE_WEIGHT;
+  const allowed = (MACHINE_UNIT_OPTIONS[kind] || []).map((o) => o.id);
+  const u = allowed.includes(unit) ? unit : allowed[0];
+  return { name: cleanName, measureKind: kind, unit: u };
+}
+
+function sanitizeMachineValue(raw) {
+  if (raw == null || raw === '') return null;
+  const n = Number(String(raw).replace(',', '.'));
+  if (!Number.isFinite(n)) throw new ValidationError('ערך לא תקין');
+  return Math.round(n * 1000) / 1000;
+}
+
+export async function getProductionMachines() {
+  const rows = await db.productionMachines.toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function getProductionMachine(id) {
+  const mid = Number(id);
+  if (!mid) return null;
+  return db.productionMachines.get(mid);
+}
+
+export async function addProductionMachine({ name, notes } = {}) {
+  const cleanName = sanitizeName(name, 80);
+  if (!cleanName) throw new ValidationError('שם מכונה לא תקין');
+  const existing = await getProductionMachines();
+  const maxOrder = existing.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
+  return db.productionMachines.add({
+    name: cleanName,
+    notes: String(notes || '').trim().slice(0, 500),
+    sortOrder: maxOrder + 1,
+  });
+}
+
+export async function updateProductionMachine(id, { name, notes } = {}) {
+  const mid = Number(id);
+  const current = await db.productionMachines.get(mid);
+  if (!current) throw new ValidationError('מכונה לא נמצאה');
+  const patch = {};
+  if (name != null) {
+    const cleanName = sanitizeName(name, 80);
+    if (!cleanName) throw new ValidationError('שם מכונה לא תקין');
+    patch.name = cleanName;
+  }
+  if (notes !== undefined) patch.notes = String(notes || '').trim().slice(0, 500);
+  if (!Object.keys(patch).length) return;
+  await db.productionMachines.update(mid, patch);
+}
+
+export async function deleteProductionMachine(id) {
+  const mid = Number(id);
+  if (!mid) return;
+  await db.transaction('rw', ...pickDbTables(
+    'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
+  ), async () => {
+    const assignments = await db.productionMachineProducts.where('machineId').equals(mid).toArray();
+    for (const a of assignments) {
+      await db.productionMachineProductValues.where('assignmentId').equals(a.id).delete();
+    }
+    await db.productionMachineProducts.where('machineId').equals(mid).delete();
+    await db.productionMachineFields.where('machineId').equals(mid).delete();
+    await db.productionMachines.delete(mid);
+  });
+}
+
+export async function getProductionMachineFields(machineId) {
+  const mid = Number(machineId);
+  if (!mid) return [];
+  const rows = await db.productionMachineFields.where('machineId').equals(mid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function addProductionMachineField(machineId, { name, measureKind, unit } = {}) {
+  const mid = Number(machineId);
+  const machine = await db.productionMachines.get(mid);
+  if (!machine) throw new ValidationError('מכונה לא נמצאה');
+  const field = normalizeMachineFieldInput({ name, measureKind, unit });
+  const existing = await getProductionMachineFields(mid);
+  const maxOrder = existing.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
+  return db.productionMachineFields.add({ machineId: mid, ...field, sortOrder: maxOrder + 1 });
+}
+
+export async function updateProductionMachineField(id, { name, measureKind, unit } = {}) {
+  const fid = Number(id);
+  const current = await db.productionMachineFields.get(fid);
+  if (!current) throw new ValidationError('פרמטר לא נמצא');
+  const patch = {};
+  if (name != null) {
+    const cleanName = sanitizeName(name, 80);
+    if (!cleanName) throw new ValidationError('שם פרמטר לא תקין');
+    patch.name = cleanName;
+  }
+  if (measureKind != null || unit != null) {
+    const merged = normalizeMachineFieldInput({
+      name: patch.name ?? current.name,
+      measureKind: measureKind ?? current.measureKind,
+      unit: unit ?? current.unit,
+    });
+    patch.measureKind = merged.measureKind;
+    patch.unit = merged.unit;
+  }
+  if (!Object.keys(patch).length) return;
+  await db.productionMachineFields.update(fid, patch);
+}
+
+export async function deleteProductionMachineField(id) {
+  const fid = Number(id);
+  if (!fid) return;
+  await db.transaction('rw', ...pickDbTables('productionMachineFields', 'productionMachineProductValues'), async () => {
+    const values = await db.productionMachineProductValues.where('fieldId').equals(fid).toArray();
+    for (const v of values) await db.productionMachineProductValues.delete(v.id);
+    await db.productionMachineFields.delete(fid);
+  });
+}
+
+async function resolveRecipeIdForProduct(productId) {
+  const recipe = await getRecipeForProduct(productId);
+  return recipe?.id ?? null;
+}
+
+export async function getProductionMachineAssignments(machineId) {
+  const mid = Number(machineId);
+  if (!mid) return [];
+  const [assignments, fields, products, recipes] = await Promise.all([
+    db.productionMachineProducts.where('machineId').equals(mid).toArray(),
+    getProductionMachineFields(mid),
+    db.products.toArray(),
+    db.recipes.toArray(),
+  ]);
+  assignments.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const productMap = new Map(products.map((p) => [p.id, p]));
+  const recipeMap = new Map(recipes.map((r) => [r.id, r]));
+  const fieldMap = new Map(fields.map((f) => [f.id, f]));
+
+  const result = [];
+  for (const row of assignments) {
+    const values = await db.productionMachineProductValues.where('assignmentId').equals(row.id).toArray();
+    const valueMap = new Map(values.map((v) => [v.fieldId, v.value]));
+    result.push({
+      ...row,
+      productName: productMap.get(row.productId)?.name || '',
+      recipeName: row.recipeId ? (recipeMap.get(row.recipeId)?.name || '') : '',
+      fields: fields.map((f) => ({
+        ...f,
+        value: valueMap.get(f.id) ?? null,
+        unitLabel: getMachineUnitLabel(f.measureKind, f.unit),
+        measureLabel: getMachineMeasureLabel(f.measureKind),
+      })),
+    });
+  }
+  return result;
+}
+
+export async function addProductionMachineAssignment(machineId, productId, values = {}) {
+  const mid = Number(machineId);
+  const pid = Number(productId);
+  if (!mid || !pid) throw new ValidationError('בחר מוצר');
+  const machine = await db.productionMachines.get(mid);
+  if (!machine) throw new ValidationError('מכונה לא נמצאה');
+  const product = await db.products.get(pid);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+  const existing = await db.productionMachineProducts
+    .where('[machineId+productId]')
+    .equals([mid, pid])
+    .first();
+  if (existing) throw new ValidationError('המוצר כבר משויך למכונה זו');
+
+  const fields = await getProductionMachineFields(mid);
+  const recipeId = await resolveRecipeIdForProduct(pid);
+  const existingRows = await db.productionMachineProducts.where('machineId').equals(mid).toArray();
+  const maxOrder = existingRows.reduce((m, row) => Math.max(m, row.sortOrder ?? 0), 0);
+
+  return db.transaction('rw', ...pickDbTables('productionMachineProducts', 'productionMachineProductValues'), async () => {
+    const assignmentId = await db.productionMachineProducts.add({
+      machineId: mid,
+      productId: pid,
+      recipeId,
+      sortOrder: maxOrder + 1,
+    });
+    for (const field of fields) {
+      const val = sanitizeMachineValue(values[field.id]);
+      if (val == null) continue;
+      await db.productionMachineProductValues.add({
+        assignmentId,
+        fieldId: field.id,
+        value: val,
+      });
+    }
+    return assignmentId;
+  });
+}
+
+export async function updateProductionMachineAssignment(id, { productId, values } = {}) {
+  const aid = Number(id);
+  const row = await db.productionMachineProducts.get(aid);
+  if (!row) throw new ValidationError('שיוך לא נמצא');
+  const patch = {};
+  if (productId != null) {
+    const pid = Number(productId);
+    if (!pid) throw new ValidationError('מוצר לא תקין');
+    const dup = await db.productionMachineProducts
+      .where('[machineId+productId]')
+      .equals([row.machineId, pid])
+      .first();
+    if (dup && dup.id !== aid) throw new ValidationError('המוצר כבר משויך למכונה זו');
+    patch.productId = pid;
+    patch.recipeId = await resolveRecipeIdForProduct(pid);
+  }
+
+  await db.transaction('rw', ...pickDbTables('productionMachineProducts', 'productionMachineProductValues'), async () => {
+    if (Object.keys(patch).length) await db.productionMachineProducts.update(aid, patch);
+    if (values && typeof values === 'object') {
+      const fields = await getProductionMachineFields(row.machineId);
+      for (const field of fields) {
+        if (!(field.id in values)) continue;
+        const val = sanitizeMachineValue(values[field.id]);
+        const existing = await db.productionMachineProductValues
+          .where('[assignmentId+fieldId]')
+          .equals([aid, field.id])
+          .first();
+        if (val == null) {
+          if (existing) await db.productionMachineProductValues.delete(existing.id);
+        } else if (existing) {
+          await db.productionMachineProductValues.update(existing.id, { value: val });
+        } else {
+          await db.productionMachineProductValues.add({ assignmentId: aid, fieldId: field.id, value: val });
+        }
+      }
+    }
+  });
+}
+
+export async function deleteProductionMachineAssignment(id) {
+  const aid = Number(id);
+  if (!aid) return;
+  await db.transaction('rw', ...pickDbTables('productionMachineProducts', 'productionMachineProductValues'), async () => {
+    await db.productionMachineProductValues.where('assignmentId').equals(aid).delete();
+    await db.productionMachineProducts.delete(aid);
+  });
+}
+
 export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
     recipeProductCategoryLinks, recipeProductGroupLinks,
     productRecipeComponents,
+    productionMachines, productionMachineFields, productionMachineProducts, productionMachineProductValues,
     bakingProfiles, bakingProfileProducts, bakingProfileScopes,
     supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory, supplierShortages,
     weeklyProductionPlans, weeklyProductionPlanItems,
@@ -3160,6 +3433,10 @@ export async function exportKitchenTables() {
     db.recipeProductCategoryLinks?.toArray?.() ?? Promise.resolve([]),
     db.recipeProductGroupLinks?.toArray?.() ?? Promise.resolve([]),
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
+    db.productionMachines?.toArray?.() ?? Promise.resolve([]),
+    db.productionMachineFields?.toArray?.() ?? Promise.resolve([]),
+    db.productionMachineProducts?.toArray?.() ?? Promise.resolve([]),
+    db.productionMachineProductValues?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfiles.toArray(),
     db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfileScopes?.toArray?.() ?? Promise.resolve([]),
@@ -3180,6 +3457,10 @@ export async function exportKitchenTables() {
     recipeProductCategoryLinks,
     recipeProductGroupLinks,
     productRecipeComponents,
+    productionMachines,
+    productionMachineFields,
+    productionMachineProducts,
+    productionMachineProductValues,
     bakingProfiles,
     bakingProfileProducts,
     bakingProfileScopes,
@@ -3198,6 +3479,7 @@ export async function importKitchenTables(payload) {
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
     'recipeProductCategoryLinks', 'recipeProductGroupLinks',
     'productRecipeComponents',
+    'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
     'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
@@ -3270,6 +3552,7 @@ export async function clearKitchenTables() {
   const tableNames = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
     'productRecipeComponents',
+    'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
     'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',
     'weeklyProductionPlans', 'weeklyProductionPlanItems',
@@ -3282,6 +3565,10 @@ export async function clearKitchenTables() {
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
       await db.productRecipeComponents.clear();
+      await db.productionMachineProductValues?.clear?.();
+      await db.productionMachineProducts?.clear?.();
+      await db.productionMachineFields?.clear?.();
+      await db.productionMachines?.clear?.();
       await db.recipes.clear();
       await db.recipeCategories.clear();
       await db.recipeGroups.clear();

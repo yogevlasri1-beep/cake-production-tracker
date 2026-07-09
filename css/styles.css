@@ -616,6 +616,89 @@ body {
   }
 }
 
+.machine-station-intro,
+.machine-list-card,
+.machine-detail-card,
+.machine-fields-card,
+.machine-assignments-card {
+  margin-bottom: 10px;
+}
+
+.machine-catalog-row--clickable {
+  cursor: pointer;
+}
+
+.machine-catalog-row--clickable:hover {
+  background: var(--bg-muted, #f8fafc);
+}
+
+.machine-field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.machine-measure-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.machine-assignment-table-wrap {
+  overflow-x: auto;
+}
+
+.machine-assignment-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.machine-assignment-table th,
+.machine-assignment-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  vertical-align: top;
+}
+
+.machine-assignment-table th {
+  background: var(--bg-muted, #f8fafc);
+  font-weight: 600;
+}
+
+.machine-col-unit {
+  font-weight: 400;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.machine-assignment-product strong {
+  display: block;
+}
+
+.machine-assignment-recipe {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.machine-assignment-val {
+  font-weight: 600;
+}
+
+.machine-assignment-unit {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.machine-assignment-actions {
+  white-space: nowrap;
+}
+
+.machine-empty {
+  margin: 0;
+}
+
 .recipe-oven-custom {
   width: 100%;
   margin-top: 8px;

@@ -27,15 +27,16 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=274';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=274';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=274';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=274';
-import { openModal, closeModal } from '../modal.js?v=274';
+} from '../kitchen-db.js?v=275';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=275';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=275';
+import { renderRecipesMachines } from '../recipes-machines.js?v=275';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=275';
+import { openModal, closeModal } from '../modal.js?v=275';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=274';
-import { defaultColorForIndex } from '../chart.js?v=274';
+} from '../product-drag.js?v=275';
+import { defaultColorForIndex } from '../chart.js?v=275';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -50,6 +51,7 @@ export const RECIPE_TABS = {
   edit: { id: 'edit', label: 'עריכה ובנייה', subtitle: 'הוספה, ייבוא Word וניהול קטגוריות' },
   baking: { id: 'baking', label: 'אפיות', subtitle: 'פרופילי אפייה ושיוך למתכונים' },
   ratio: { id: 'ratio', label: 'מחשבון יחס', subtitle: 'המרת כמויות לפי חומר בסיס' },
+  machines: { id: 'machines', label: 'מכונות', subtitle: 'מכונות יצור, פרמטרים ושיוך מוצרים' },
 };
 
 function getRecipeTab(container) {
@@ -370,6 +372,7 @@ export async function renderRecipes(container) {
   if (tab === 'browse') return renderRecipesBrowse(container, { layout, productCatalog });
   if (tab === 'edit') return renderRecipesEdit(container, { layout, productCatalog });
   if (tab === 'baking') return renderRecipesBaking(container, { layout, productCatalog });
+  if (tab === 'machines') return renderRecipesMachines(container, { productCatalog });
   if (tab === 'ratio') return renderRecipesRatio(container, { layout });
 }
 
