@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=276';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=276';
-import { defaultColorForIndex } from './chart.js?v=276';
+} from './validators.js?v=277';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=277';
+import { defaultColorForIndex } from './chart.js?v=277';
 
 export { ValidationError };
 
@@ -2453,6 +2453,75 @@ db.version(56).stores({
   await table.toCollection().modify((row) => {
     if (!row.targetType) row.targetType = row.productId ? 'product' : 'product';
   });
+});
+
+db.version(57).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, linkTargetType, linkProductId, linkCategoryId, linkCategoryGroupId, catalogSortOrder, sortOrder',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  productionMachines: '++id, name, sortOrder',
+  productionMachineFields: '++id, machineId, name, measureKind, unit, sortOrder',
+  productionMachineProducts: '++id, machineId, targetType, productId, categoryId, categoryGroupId, recipeId, [machineId+targetType+productId], [machineId+targetType+categoryId], [machineId+targetType+categoryGroupId]',
+  productionMachineProductValues: '++id, assignmentId, fieldId, [assignmentId+fieldId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+}).upgrade(async (tx) => {
+  const table = tx.table('groupPortionPresets');
+  let order = 1;
+  const rows = await table.toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  for (const row of rows) {
+    if (row.catalogSortOrder == null) {
+      await table.update(row.id, { catalogSortOrder: order++ });
+    }
+  }
 });
 
 async function migrateFlowPreparationsToGroup(tx) {
@@ -5015,11 +5084,157 @@ export async function getGroupPortionPresets(categoryGroupId) {
   const gid = sanitizeProductId(categoryGroupId);
   if (!gid) return [];
   const rows = await db.groupPortionPresets.where('categoryGroupId').equals(gid).toArray();
-  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  rows.sort((a, b) => comparePortionPresets(a, b));
   return rows;
 }
 
-/** מנות הרלוונטיות למוצר — גם ממתכונים מקושרים וגם מהרשימה הידנית של הקבוצה */
+export const PORTION_LINK_PRODUCT = 'product';
+export const PORTION_LINK_CATEGORY = 'category';
+export const PORTION_LINK_GROUP = 'group';
+
+function comparePortionPresets(a, b) {
+  return (a.catalogSortOrder ?? a.sortOrder ?? 0) - (b.catalogSortOrder ?? b.sortOrder ?? 0) || a.id - b.id;
+}
+
+export function getPortionLinkKindLabel(linkTargetType) {
+  if (linkTargetType === PORTION_LINK_GROUP) return 'קטגוריה כללית';
+  if (linkTargetType === PORTION_LINK_CATEGORY) return 'קטגוריה';
+  if (linkTargetType === PORTION_LINK_PRODUCT) return 'מוצר';
+  return '';
+}
+
+function normalizePortionLinkInput(raw = {}) {
+  const linkTargetType = raw.linkTargetType === PORTION_LINK_CATEGORY
+    ? PORTION_LINK_CATEGORY
+    : raw.linkTargetType === PORTION_LINK_GROUP
+      ? PORTION_LINK_GROUP
+      : raw.linkTargetType === PORTION_LINK_PRODUCT
+        ? PORTION_LINK_PRODUCT
+        : null;
+  if (!linkTargetType) {
+    return {
+      linkTargetType: null,
+      linkProductId: null,
+      linkCategoryId: null,
+      linkCategoryGroupId: null,
+    };
+  }
+  if (linkTargetType === PORTION_LINK_GROUP) {
+    const linkCategoryGroupId = Number(raw.linkCategoryGroupId);
+    if (!linkCategoryGroupId) throw new ValidationError('בחר קטגוריה כללית');
+    return { linkTargetType, linkProductId: null, linkCategoryId: null, linkCategoryGroupId };
+  }
+  if (linkTargetType === PORTION_LINK_CATEGORY) {
+    const linkCategoryId = Number(raw.linkCategoryId);
+    if (!linkCategoryId) throw new ValidationError('בחר קטגוריה');
+    return { linkTargetType, linkProductId: null, linkCategoryId, linkCategoryGroupId: null };
+  }
+  const linkProductId = Number(raw.linkProductId);
+  if (!linkProductId) throw new ValidationError('בחר מוצר');
+  return { linkTargetType, linkProductId, linkCategoryId: null, linkCategoryGroupId: null };
+}
+
+async function portionPresetAppliesToProduct(preset, productId, prod, cat, gid) {
+  const linkType = preset.linkTargetType;
+  if (linkType === PORTION_LINK_PRODUCT) {
+    return Number(preset.linkProductId) === productId;
+  }
+  if (linkType === PORTION_LINK_CATEGORY) {
+    return Number(preset.linkCategoryId) === prod.categoryId;
+  }
+  if (linkType === PORTION_LINK_GROUP) {
+    const linkGid = Number(preset.linkCategoryGroupId || preset.categoryGroupId);
+    return linkGid && Number(gid) === linkGid;
+  }
+
+  if (preset.sourceRecipeId) {
+    if (gid && Number(preset.categoryGroupId) !== Number(gid)) return false;
+    const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
+    const recipe = await db.recipes.get(preset.sourceRecipeId);
+    if (!recipe) return false;
+    const componentRecipeIds = new Set(
+      (await getProductRecipeComponents(productId)).map((c) => c.recipeId),
+    );
+    const linkedIds = await resolveRecipeLinkedProductIds(recipe);
+    return linkedIds.includes(productId) || componentRecipeIds.has(preset.sourceRecipeId);
+  }
+
+  return gid && Number(preset.categoryGroupId) === Number(gid);
+}
+
+export async function getPortionPresetsCatalog() {
+  const [presets, recipes, groups, categories, products] = await Promise.all([
+    db.groupPortionPresets.toArray(),
+    db.recipes.toArray(),
+    db.categoryGroups.toArray(),
+    db.categories.toArray(),
+    db.products.toArray(),
+  ]);
+  const recipeMap = new Map(recipes.map((r) => [r.id, r]));
+  const groupMap = new Map(groups.map((g) => [g.id, g]));
+  const categoryMap = new Map(categories.map((c) => [c.id, c]));
+  const productMap = new Map(products.map((p) => [p.id, p]));
+
+  return presets.slice().sort(comparePortionPresets).map((preset) => {
+    const recipe = preset.sourceRecipeId ? recipeMap.get(preset.sourceRecipeId) : null;
+    const homeGroup = groupMap.get(Number(preset.categoryGroupId));
+    let linkLabel = '';
+    let linkPath = '';
+    if (preset.linkTargetType === PORTION_LINK_PRODUCT) {
+      const p = productMap.get(Number(preset.linkProductId));
+      linkLabel = p?.name || '';
+      const cat = p ? categoryMap.get(p.categoryId) : null;
+      const grp = cat?.groupId ? groupMap.get(Number(cat.groupId)) : null;
+      linkPath = grp && cat ? `${grp.name} › ${cat.name}` : (cat?.name || '');
+    } else if (preset.linkTargetType === PORTION_LINK_CATEGORY) {
+      const cat = categoryMap.get(Number(preset.linkCategoryId));
+      linkLabel = cat?.name || '';
+      const grp = cat?.groupId ? groupMap.get(Number(cat.groupId)) : null;
+      linkPath = grp ? grp.name : 'כל המוצרים בקטגוריה';
+    } else if (preset.linkTargetType === PORTION_LINK_GROUP) {
+      const grp = groupMap.get(Number(preset.linkCategoryGroupId || preset.categoryGroupId));
+      linkLabel = grp?.name || '';
+      linkPath = 'כל המוצרים בקטגוריה כללית';
+    } else if (preset.sourceRecipeId) {
+      linkLabel = 'לפי שיוך מתכון';
+      linkPath = recipe?.name ? `מתכון: ${recipe.name}` : '';
+    } else {
+      linkLabel = homeGroup?.name ? `כל ${homeGroup.name}` : 'כל הקבוצה';
+      linkPath = 'ברירת מחדל — כל המוצרים בקבוצת התזרים';
+    }
+    return {
+      ...preset,
+      recipeName: recipe?.name || null,
+      homeGroupName: homeGroup?.name || '',
+      sourceKind: preset.sourceRecipeId ? 'recipe' : 'manual',
+      sourceLabel: preset.sourceRecipeId ? `מתכון · ${recipe?.name || ''}` : `תזרים · ${homeGroup?.name || ''}`,
+      linkKindLabel: getPortionLinkKindLabel(preset.linkTargetType),
+      linkLabel,
+      linkPath,
+    };
+  });
+}
+
+export async function updatePortionPresetLink(id, link = {}) {
+  const pid = Number(id);
+  const existing = await db.groupPortionPresets.get(pid);
+  if (!existing) throw new ValidationError('מנה לא נמצאה');
+  const patch = normalizePortionLinkInput(link);
+  await db.groupPortionPresets.update(pid, patch);
+}
+
+export async function setPortionPresetCatalogOrder(orderedIds) {
+  if (!Array.isArray(orderedIds) || !orderedIds.length) return;
+  await db.transaction('rw', db.groupPortionPresets, async () => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      const id = Number(orderedIds[i]);
+      if (!id) continue;
+      await db.groupPortionPresets.update(id, { catalogSortOrder: i + 1 });
+    }
+  });
+}
+
+/** מנות הרלוונטיות למוצר — לפי שיוך מפורש, מתכון או קבוצת תזרים */
 export async function getPortionPresetsForProduct(productId) {
   const pid = Number(productId);
   if (!pid) return [];
@@ -5027,34 +5242,16 @@ export async function getPortionPresetsForProduct(productId) {
   if (!prod?.categoryId) return [];
   const cat = await db.categories.get(prod.categoryId);
   const gid = cat?.groupId;
-  if (!gid) return [];
 
-  const allPresets = await getGroupPortionPresets(gid);
-  const recipePresets = allPresets.filter((p) => p.sourceRecipeId);
-  const manualPresets = allPresets.filter((p) => !p.sourceRecipeId);
-
-  let recipeRelevant = recipePresets;
-  if (recipePresets.length) {
-    const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
-    const componentRecipeIds = new Set(
-      (await getProductRecipeComponents(pid)).map((c) => c.recipeId),
-    );
-    const relevant = [];
-    const seen = new Set();
-    for (const preset of recipePresets) {
-      const recipe = await db.recipes.get(preset.sourceRecipeId);
-      if (!recipe) continue;
-      const linkedIds = await resolveRecipeLinkedProductIds(recipe);
-      const matches = linkedIds.includes(pid) || componentRecipeIds.has(preset.sourceRecipeId);
-      if (!matches) continue;
-      if (seen.has(preset.id)) continue;
-      seen.add(preset.id);
-      relevant.push(preset);
+  const allPresets = await db.groupPortionPresets.toArray();
+  const applicable = [];
+  for (const preset of allPresets) {
+    if (await portionPresetAppliesToProduct(preset, pid, prod, cat, gid)) {
+      applicable.push(preset);
     }
-    if (relevant.length) recipeRelevant = relevant;
   }
-
-  return [...recipeRelevant, ...manualPresets];
+  applicable.sort(comparePortionPresets);
+  return applicable;
 }
 
 export async function getFlowPortionPresets(flowId) {

@@ -695,6 +695,61 @@ body {
   white-space: nowrap;
 }
 
+.portion-scope-default {
+  color: var(--text-muted);
+  background: rgba(100, 116, 139, 0.1);
+}
+
+.portion-station-intro,
+.portion-list-card {
+  margin-bottom: 10px;
+}
+
+.portion-catalog-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.portion-order-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.portion-order-actions .btn {
+  min-width: 32px;
+  padding: 2px 6px;
+}
+
+.portion-link-line {
+  margin-top: 4px;
+}
+
+.portion-source-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 4px;
+}
+
+.portion-source-badge--recipe {
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.portion-source-badge--flow {
+  color: #0d9488;
+  background: rgba(13, 148, 136, 0.1);
+}
+
+.portion-empty {
+  margin: 0;
+}
+
 .machine-assignment-scope {
   display: inline-block;
   font-size: 0.72rem;

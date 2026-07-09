@@ -27,16 +27,17 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=276';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=276';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=276';
-import { renderRecipesMachines } from '../recipes-machines.js?v=276';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=276';
-import { openModal, closeModal } from '../modal.js?v=276';
+} from '../kitchen-db.js?v=277';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=277';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=277';
+import { renderRecipesMachines } from '../recipes-machines.js?v=277';
+import { renderRecipesPortions } from '../recipes-portions.js?v=277';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=277';
+import { openModal, closeModal } from '../modal.js?v=277';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=276';
-import { defaultColorForIndex } from '../chart.js?v=276';
+} from '../product-drag.js?v=277';
+import { defaultColorForIndex } from '../chart.js?v=277';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -52,6 +53,7 @@ export const RECIPE_TABS = {
   baking: { id: 'baking', label: 'אפיות', subtitle: 'פרופילי אפייה ושיוך למתכונים' },
   ratio: { id: 'ratio', label: 'מחשבון יחס', subtitle: 'המרת כמויות לפי חומר בסיס' },
   machines: { id: 'machines', label: 'מכונות', subtitle: 'מכונות יצור, פרמטרים ושיוך מוצרים' },
+  portions: { id: 'portions', label: 'מנות', subtitle: 'סדר ושיוך מנות לייצור' },
 };
 
 function getRecipeTab(container) {
@@ -373,6 +375,7 @@ export async function renderRecipes(container) {
   if (tab === 'edit') return renderRecipesEdit(container, { layout, productCatalog });
   if (tab === 'baking') return renderRecipesBaking(container, { layout, productCatalog });
   if (tab === 'machines') return renderRecipesMachines(container, { productCatalog });
+  if (tab === 'portions') return renderRecipesPortions(container, { productCatalog });
   if (tab === 'ratio') return renderRecipesRatio(container, { layout });
 }
 
