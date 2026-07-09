@@ -1,103 +1,111 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-  getPortionLinkKindLabel,
-} from './db.js?v=277';
-import { escapeHtml, showToast } from './utils.js?v=277';
-import { openModal, closeModal } from './modal.js?v=277';
+} from './db.js?v=278';
+import { escapeHtml, showToast } from './utils.js?v=278';
+import { openModal, closeModal } from './modal.js?v=278';
 
 function portionPresetLabel(p) {
   const extra = p.extra ? ` · ${p.extra}` : '';
   return `${p.name} (${p.weight} ק"ג${extra})`;
 }
 
-function buildGroupSelectHTML(productCatalog, selectedId) {
-  const parts = ['<option value="">בחר קטגוריה כללית...</option>'];
-  for (const group of productCatalog.groups || []) {
-    const sel = Number(selectedId) === group.id ? ' selected' : '';
-    parts.push(`<option value="${group.id}"${sel}>${escapeHtml(group.name)}</option>`);
-  }
-  return parts.join('');
+function buildGroupCheckboxesHTML(productCatalog, selectedIds = []) {
+  const selected = new Set(selectedIds.map(Number));
+  const groups = productCatalog.groups || [];
+  if (!groups.length) return '<p class="form-hint">אין קטגוריות כלליות</p>';
+  return `<div class="portion-link-checklist">${groups.map((group) => `
+    <label class="checkbox-label portion-link-pick">
+      <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_GROUP}" value="${group.id}"${selected.has(group.id) ? ' checked' : ''}>
+      <span>${escapeHtml(group.name)}</span>
+    </label>`).join('')}</div>`;
 }
 
-function buildCategorySelectHTML(productCatalog, selectedId) {
-  const parts = ['<option value="">בחר קטגוריה...</option>'];
+function buildCategoryCheckboxesHTML(productCatalog, selectedIds = []) {
+  const selected = new Set(selectedIds.map(Number));
+  const parts = [];
   for (const group of productCatalog.groups || []) {
     for (const cat of group.categories || []) {
-      const sel = Number(selectedId) === cat.id ? ' selected' : '';
-      parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(`${group.name} › ${cat.name}`)}</option>`);
+      parts.push(`
+        <label class="checkbox-label portion-link-pick">
+          <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_CATEGORY}" value="${cat.id}"${selected.has(cat.id) ? ' checked' : ''}>
+          <span>${escapeHtml(`${group.name} › ${cat.name}`)}</span>
+        </label>`);
     }
   }
   for (const cat of productCatalog.ungrouped || []) {
-    const sel = Number(selectedId) === cat.id ? ' selected' : '';
-    parts.push(`<option value="${cat.id}"${sel}>${escapeHtml(cat.name)}</option>`);
+    parts.push(`
+      <label class="checkbox-label portion-link-pick">
+        <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_CATEGORY}" value="${cat.id}"${selected.has(cat.id) ? ' checked' : ''}>
+        <span>${escapeHtml(cat.name)}</span>
+      </label>`);
   }
-  return parts.join('');
+  return parts.length
+    ? `<div class="portion-link-checklist">${parts.join('')}</div>`
+    : '<p class="form-hint">אין קטגוריות</p>';
 }
 
-function buildProductSelectHTML(productCatalog, selectedId) {
-  const parts = ['<option value="">בחר מוצר...</option>'];
+function buildProductCheckboxesHTML(productCatalog, selectedIds = []) {
+  const selected = new Set(selectedIds.map(Number));
+  const parts = [];
   for (const group of productCatalog.groups || []) {
     for (const cat of group.categories || []) {
-      const products = (cat.products || []).filter((p) => p.active !== false);
-      if (!products.length) continue;
-      parts.push(`<optgroup label="${escapeHtml(`${group.name} › ${cat.name}`)}">`);
-      for (const p of products) {
-        const sel = Number(selectedId) === p.id ? ' selected' : '';
-        parts.push(`<option value="${p.id}"${sel}>${escapeHtml(p.name)}</option>`);
+      for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
+        parts.push(`
+          <label class="checkbox-label portion-link-pick">
+            <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_PRODUCT}" value="${p.id}"${selected.has(p.id) ? ' checked' : ''}>
+            <span>${escapeHtml(`${group.name} › ${cat.name} › ${p.name}`)}</span>
+          </label>`);
       }
-      parts.push('</optgroup>');
     }
   }
   for (const cat of productCatalog.ungrouped || []) {
-    const products = (cat.products || []).filter((p) => p.active !== false);
-    if (!products.length) continue;
-    parts.push(`<optgroup label="${escapeHtml(cat.name)}">`);
-    for (const p of products) {
-      const sel = Number(selectedId) === p.id ? ' selected' : '';
-      parts.push(`<option value="${p.id}"${sel}>${escapeHtml(p.name)}</option>`);
+    for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
+      parts.push(`
+        <label class="checkbox-label portion-link-pick">
+          <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_PRODUCT}" value="${p.id}"${selected.has(p.id) ? ' checked' : ''}>
+          <span>${escapeHtml(`${cat.name} › ${p.name}`)}</span>
+        </label>`);
     }
-    parts.push('</optgroup>');
   }
-  return parts.join('');
+  return parts.length
+    ? `<div class="portion-link-checklist portion-link-checklist--products">${parts.join('')}</div>`
+    : '<p class="form-hint">אין מוצרים</p>';
 }
 
-function buildPortionLinkPickHTML(linkMode, productCatalog, portion) {
-  if (linkMode === PORTION_LINK_GROUP) {
-    return `
-      <div class="form-group">
-        <label for="portion-link-group">קטגוריה כללית</label>
-        <select id="portion-link-group">${buildGroupSelectHTML(productCatalog, portion?.linkCategoryGroupId)}</select>
-      </div>`;
-  }
-  if (linkMode === PORTION_LINK_CATEGORY) {
-    return `
-      <div class="form-group">
-        <label for="portion-link-category">קטגוריה</label>
-        <select id="portion-link-category">${buildCategorySelectHTML(productCatalog, portion?.linkCategoryId)}</select>
-      </div>`;
-  }
-  if (linkMode === PORTION_LINK_PRODUCT) {
-    return `
-      <div class="form-group">
-        <label for="portion-link-product">מוצר</label>
-        <select id="portion-link-product">${buildProductSelectHTML(productCatalog, portion?.linkProductId)}</select>
-      </div>`;
-  }
-  return `<p class="form-hint">${portion?.sourceRecipeId
-    ? 'המנה תוצג לפי שיוך המתכון למוצרים (במסך עריכת מתכון)'
-    : `המנה תוצג לכל המוצרים בקבוצת התזרים «${escapeHtml(portion?.homeGroupName || '')}»`}</p>`;
+function buildCustomLinkPickHTML(productCatalog, portion) {
+  return `
+    <div class="portion-link-section">
+      <div class="portion-link-section-title">קטגוריות כלליות</div>
+      ${buildGroupCheckboxesHTML(productCatalog, portion.linkGroupIds)}
+    </div>
+    <div class="portion-link-section">
+      <div class="portion-link-section-title">קטגוריות</div>
+      ${buildCategoryCheckboxesHTML(productCatalog, portion.linkCategoryIds)}
+    </div>
+    <div class="portion-link-section">
+      <div class="portion-link-section-title">מוצרים</div>
+      ${buildProductCheckboxesHTML(productCatalog, portion.linkProductIds)}
+    </div>`;
 }
 
-function inferLinkMode(portion) {
-  if (portion?.linkTargetType === PORTION_LINK_GROUP) return PORTION_LINK_GROUP;
-  if (portion?.linkTargetType === PORTION_LINK_CATEGORY) return PORTION_LINK_CATEGORY;
-  if (portion?.linkTargetType === PORTION_LINK_PRODUCT) return PORTION_LINK_PRODUCT;
-  return 'default';
+function readSelectedPortionLinks() {
+  const productIds = [];
+  const categoryIds = [];
+  const groupIds = [];
+  document.querySelectorAll('.portion-link-cb:checked').forEach((cb) => {
+    const id = Number(cb.value);
+    if (!id) return;
+    const type = cb.dataset.linkType;
+    if (type === PORTION_LINK_PRODUCT) productIds.push(id);
+    else if (type === PORTION_LINK_CATEGORY) categoryIds.push(id);
+    else if (type === PORTION_LINK_GROUP) groupIds.push(id);
+  });
+  return { productIds, categoryIds, groupIds };
 }
 
 function openPortionLinkForm({ portion, productCatalog, onSaved }) {
-  const linkMode = inferLinkMode(portion);
+  const linkMode = portion.hasCustomLinks ? 'custom' : 'default';
   openModal({
     title: `שיוך מנה · ${escapeHtml(portion.name)}`,
     bodyHTML: `
@@ -111,20 +119,16 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
             ברירת מחדל
           </label>
           <label class="baking-scope-type-option">
-            <input type="radio" name="portion-link-mode" value="${PORTION_LINK_GROUP}"${linkMode === PORTION_LINK_GROUP ? ' checked' : ''}>
-            קטגוריה כללית
-          </label>
-          <label class="baking-scope-type-option">
-            <input type="radio" name="portion-link-mode" value="${PORTION_LINK_CATEGORY}"${linkMode === PORTION_LINK_CATEGORY ? ' checked' : ''}>
-            קטגוריה
-          </label>
-          <label class="baking-scope-type-option">
-            <input type="radio" name="portion-link-mode" value="${PORTION_LINK_PRODUCT}"${linkMode === PORTION_LINK_PRODUCT ? ' checked' : ''}>
-            מוצר
+            <input type="radio" name="portion-link-mode" value="custom"${linkMode === 'custom' ? ' checked' : ''}>
+            שיוך מותאם
           </label>
         </div>
       </div>
-      <div id="portion-link-pick">${buildPortionLinkPickHTML(linkMode, productCatalog, portion)}</div>
+      <div id="portion-link-pick">${linkMode === 'custom'
+    ? buildCustomLinkPickHTML(productCatalog, portion)
+    : `<p class="form-hint">${portion.sourceRecipeId
+      ? 'המנה תוצג לפי שיוך המתכון למוצרים (במסך עריכת מתכון)'
+      : `המנה תוצג לכל המוצרים בקבוצת התזרים «${escapeHtml(portion.homeGroupName || '')}»`}</p>`}</div>
       <div id="portion-link-hint" class="form-hint"></div>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
@@ -138,18 +142,22 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
     const mode = getLinkMode();
     const hint = document.getElementById('portion-link-hint');
     if (!hint) return;
-    if (mode === PORTION_LINK_GROUP) hint.textContent = 'המנה תופיע לכל המוצרים בקטגוריה כללית שנבחרה';
-    else if (mode === PORTION_LINK_CATEGORY) hint.textContent = 'המנה תופיע לכל המוצרים בקטגוריה שנבחרה';
-    else if (mode === PORTION_LINK_PRODUCT) hint.textContent = 'המנה תופיע רק למוצר שנבחר';
-    else hint.textContent = '';
+    if (mode === 'custom') {
+      hint.textContent = 'ניתן לבחור כמה קטגוריות וכמה מוצרים — המנה תופיע אם המוצר מתאים לאחד מהיעדים';
+    } else {
+      hint.textContent = '';
+    }
   };
 
   const syncPick = () => {
     const mode = getLinkMode();
     const pick = document.getElementById('portion-link-pick');
     if (!pick) return;
-    const pickPortion = portion.linkTargetType === mode ? portion : { ...portion, linkCategoryGroupId: null, linkCategoryId: null, linkProductId: null };
-    pick.innerHTML = buildPortionLinkPickHTML(mode, productCatalog, pickPortion);
+    pick.innerHTML = mode === 'custom'
+      ? buildCustomLinkPickHTML(productCatalog, portion)
+      : `<p class="form-hint">${portion.sourceRecipeId
+        ? 'המנה תוצג לפי שיוך המתכון למוצרים (במסך עריכת מתכון)'
+        : `המנה תוצג לכל המוצרים בקבוצת התזרים «${escapeHtml(portion.homeGroupName || '')}»`}</p>`;
     updateHint();
   };
 
@@ -161,19 +169,13 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('save-portion-link-form')?.addEventListener('click', async () => {
     const mode = getLinkMode();
-    const link = { linkTargetType: null };
-    if (mode === PORTION_LINK_GROUP) {
-      link.linkTargetType = PORTION_LINK_GROUP;
-      link.linkCategoryGroupId = document.getElementById('portion-link-group')?.value;
-    } else if (mode === PORTION_LINK_CATEGORY) {
-      link.linkTargetType = PORTION_LINK_CATEGORY;
-      link.linkCategoryId = document.getElementById('portion-link-category')?.value;
-    } else if (mode === PORTION_LINK_PRODUCT) {
-      link.linkTargetType = PORTION_LINK_PRODUCT;
-      link.linkProductId = document.getElementById('portion-link-product')?.value;
-    }
     try {
-      await updatePortionPresetLink(portion.id, link);
+      if (mode === 'default') {
+        await updatePortionPresetLink(portion.id, { useDefault: true });
+      } else {
+        const { productIds, categoryIds, groupIds } = readSelectedPortionLinks();
+        await updatePortionPresetLink(portion.id, { productIds, categoryIds, groupIds });
+      }
       closeModal();
       showToast('נשמר ✓');
       onSaved?.();
@@ -184,9 +186,9 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
 }
 
 function renderPortionRow(portion, index, total) {
-  const scopeBadge = portion.linkTargetType
-    ? `<span class="machine-assignment-scope">${escapeHtml(getPortionLinkKindLabel(portion.linkTargetType))}</span>`
-    : `<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>`;
+  const scopeBadge = portion.hasCustomLinks
+    ? '<span class="machine-assignment-scope">שיוך מותאם</span>'
+    : '<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>';
   const sourceBadge = portion.sourceKind === 'recipe'
     ? '<span class="portion-source-badge portion-source-badge--recipe">מתכון</span>'
     : '<span class="portion-source-badge portion-source-badge--flow">תזרים</span>';
@@ -218,7 +220,7 @@ export async function renderRecipesPortions(container, { productCatalog }) {
   container.innerHTML = `
     <div class="card portion-station-intro">
       <div class="card-title">מנות לייצור</div>
-      <p class="form-hint" style="margin:0">כל המנות ממתכונים ומתזרימי ייצור. סדר אותן ושייך לקטגוריה כללית, קטגוריה או מוצר — בתוכנית היומית יוצגו רק המנות הרלוונטיות למוצר שנבחר.</p>
+      <p class="form-hint" style="margin:0">כל המנות ממתכונים ומתזרימי ייצור. סדר אותן ושייך לכמה קטגוריות ומוצרים — בתוכנית היומית יוצגו רק המנות הרלוונטיות.</p>
     </div>
     <div class="card portion-list-card">
       <div class="section-header">

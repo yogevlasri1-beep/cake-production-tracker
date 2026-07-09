@@ -695,6 +695,37 @@ body {
   white-space: nowrap;
 }
 
+.portion-link-section {
+  margin-bottom: 12px;
+}
+
+.portion-link-section-title {
+  font-weight: 600;
+  font-size: 0.88rem;
+  margin-bottom: 6px;
+}
+
+.portion-link-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-muted, #f8fafc);
+}
+
+.portion-link-checklist--products {
+  max-height: 180px;
+}
+
+.portion-link-pick {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
 .portion-scope-default {
   color: var(--text-muted);
   background: rgba(100, 116, 139, 0.1);
