@@ -16,20 +16,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=273';
+} from '../db.js?v=274';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=273';
-import { openModal, closeModal } from '../modal.js?v=273';
-import { renderTargets } from './targets.js?v=273';
-import { renderPurchasingInManager } from './purchasing.js?v=273';
-import { forceAppUpdate } from '../sw-register.js?v=273';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=273';
+} from '../utils.js?v=274';
+import { openModal, closeModal } from '../modal.js?v=274';
+import { renderTargets } from './targets.js?v=274';
+import { renderPurchasingInManager } from './purchasing.js?v=274';
+import { forceAppUpdate } from '../sw-register.js?v=274';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=274';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=273';
+} from '../daily-plan-export.js?v=274';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -703,19 +703,44 @@ function planPortionPresetLabel(p) {
   return `${p.name} (${p.weight} ק"ג${extra})`;
 }
 
-function buildPlanPortionOptionsHTML(presets) {
+function buildPlanPortionPicksHTML(presets) {
   const recipePresets = presets.filter((p) => p.sourceRecipeId);
   const manualPresets = presets.filter((p) => !p.sourceRecipeId);
-  const optionsFor = (list) => list.map((p) =>
-    `<option value="${p.id}">${escapeHtml(planPortionPresetLabel(p))}</option>`).join('');
-  let html = '';
-  if (recipePresets.length) {
-    html += `<optgroup label="ממתכונים">${optionsFor(recipePresets)}</optgroup>`;
-  }
-  if (manualPresets.length) {
-    html += `<optgroup label="מהרשימה שבנית">${optionsFor(manualPresets)}</optgroup>`;
-  }
-  return html || optionsFor(presets);
+  const row = (p) => `
+    <label class="checkbox-label plan-portion-pick">
+      <input type="checkbox" class="plan-portion-cb" value="${p.id}">
+      <span class="plan-portion-pick-label">${escapeHtml(planPortionPresetLabel(p))}</span>
+      <input type="number" class="plan-portion-qty" min="1" step="1" inputmode="numeric" placeholder="כמות" disabled aria-label="כמות מנות">
+    </label>`;
+  const group = (title, list) => list.length ? `
+    <div class="plan-portion-pick-group">
+      <div class="plan-portion-pick-heading">${escapeHtml(title)}</div>
+      ${list.map(row).join('')}
+    </div>` : '';
+  return group('ממתכונים', recipePresets) + group('מהרשימה שבנית', manualPresets) || presets.map(row).join('');
+}
+
+function bindPlanPortionPickers() {
+  document.querySelectorAll('.plan-portion-cb').forEach((cb) => {
+    const qty = cb.closest('.plan-portion-pick')?.querySelector('.plan-portion-qty');
+    const sync = () => {
+      if (!qty) return;
+      qty.disabled = !cb.checked;
+      if (!cb.checked) qty.value = '';
+    };
+    cb.addEventListener('change', sync);
+    sync();
+  });
+}
+
+function getSelectedPlanPortions(defaultQty) {
+  const picks = [...document.querySelectorAll('.plan-portion-cb:checked')];
+  if (!picks.length) return [];
+  return picks.map((cb) => {
+    const qtyEl = cb.closest('.plan-portion-pick')?.querySelector('.plan-portion-qty');
+    const qty = qtyEl?.value || defaultQty || '';
+    return { portionPresetId: Number(cb.value), quantity: qty };
+  });
 }
 
 function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
@@ -723,7 +748,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
   return `
     <div class="card manager-plan-add-card">
       <div class="card-title">1 · מה מייצרים${showDay ? '' : ' היום'}</div>
-      <p class="form-hint" style="margin-bottom:12px">בחר מוצר וכמות — מנה היא לא חובה. משימות מהצ׳קליסט יתווספו אוטומטית</p>
+      <p class="form-hint" style="margin-bottom:12px">בחר מוצר וכמות — ניתן לסמן כמה מנות למוצר אחד. משימות מהצ׳קליסט יתווספו אוטומטית</p>
       ${showDay ? `
       <div class="form-group">
         <label for="plan-day">יום</label>
@@ -739,10 +764,9 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
         </select>
       </div>
       <div class="form-group" id="plan-portion-wrap" hidden>
-        <label for="plan-product-portion">מנה — לא חובה (ממתכון או מהרשימה שבנית)</label>
-        <select id="plan-product-portion">
-          <option value="">בחר מנה...</option>
-        </select>
+        <label>מנות — ניתן לבחור יותר מאחת (ממתכון או מהרשימה שבנית)</label>
+        <div id="plan-portion-picks" class="plan-portion-pick-list"></div>
+        <p class="form-hint" style="margin-top:6px">סמן ✓ מנה וכמות לכל סוג — או השאר ריק להוספה בלי מנה</p>
       </div>
       <div class="filter-row">
         <input type="number" id="plan-qty" min="1" step="1" inputmode="numeric" placeholder="כמות" style="flex:1" aria-label="כמות">
@@ -876,12 +900,12 @@ function bindPlanItems(container, planType, anchorDate) {
   document.getElementById('plan-product')?.addEventListener('change', async (e) => {
     const productId = e.target.value;
     const wrap = document.getElementById('plan-portion-wrap');
-    const sel = document.getElementById('plan-product-portion');
+    const picks = document.getElementById('plan-portion-picks');
     const qty = document.getElementById('plan-qty');
-    if (!wrap || !sel) return;
+    if (!wrap || !picks) return;
     if (!productId) {
       wrap.hidden = true;
-      sel.innerHTML = '<option value="">בחר מנה...</option>';
+      picks.innerHTML = '';
       if (qty) qty.placeholder = 'כמות';
       return;
     }
@@ -889,13 +913,14 @@ function bindPlanItems(container, planType, anchorDate) {
       const presets = await getPortionPresetsForProduct(productId);
       if (!presets.length) {
         wrap.hidden = true;
-        sel.innerHTML = '<option value="">בחר מנה...</option>';
+        picks.innerHTML = '';
         if (qty) qty.placeholder = 'כמות';
         return;
       }
       wrap.hidden = false;
-      sel.innerHTML = `<option value="">בחר מנה...</option>${buildPlanPortionOptionsHTML(presets)}`;
-      if (qty) qty.placeholder = 'כמות מנות';
+      picks.innerHTML = buildPlanPortionPicksHTML(presets);
+      bindPlanPortionPickers();
+      if (qty) qty.placeholder = 'כמות ברירת מחדל למנות';
     } catch {
       wrap.hidden = true;
     }
@@ -904,20 +929,26 @@ function bindPlanItems(container, planType, anchorDate) {
   document.getElementById('add-plan-product')?.addEventListener('click', async () => {
     const productId = document.getElementById('plan-product').value;
     const qty = document.getElementById('plan-qty').value;
-    const portionPresetId = document.getElementById('plan-product-portion')?.value || null;
     const dayOffset = document.getElementById('plan-day')?.value ?? 0;
     if (!productId) return showToast('בחר מוצר');
+    const portions = getSelectedPlanPortions(qty);
+    if (portions.length && portions.some((p) => !p.quantity)) {
+      return showToast('הזן כמות לכל מנה שנבחרה');
+    }
     try {
       const res = await addManagerPlanProductWithChecklists({
         planType, anchorDate, dayOffset: Number(dayOffset),
-        productId, quantity: qty || null, portionPresetId,
+        productId,
+        quantity: portions.length ? null : (qty || null),
+        portions: portions.length ? portions : null,
       });
+      const portionCount = portions.length || 1;
       const msg = res.checklistsAdded
-        ? `נוסף ✓ · ${res.checklistsAdded} משימות מהצ׳קליסט`
+        ? `נוסף ✓ · ${portionCount} שורות · ${res.checklistsAdded} משימות מהצ׳קליסט`
         : res.hasFlow === false
-          ? 'מוצר נוסף · אין תזרim משויך — הוסף משימות ידנית'
+          ? `נוסף ✓ · ${portionCount} שורות · אין תזרim משויך`
           : res.hasFlow
-            ? 'מוצר נוסף ✓ · משימות משותפות לתזרים'
+            ? `נוסף ✓ · ${portionCount} שורות`
             : 'מוצר נוסף ✓';
       showToast(msg);
       renderManager(container);

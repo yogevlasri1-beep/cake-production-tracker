@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=273';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=273';
-import { defaultColorForIndex } from './chart.js?v=273';
+} from './validators.js?v=274';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=274';
+import { defaultColorForIndex } from './chart.js?v=274';
 
 export { ValidationError };
 
@@ -6519,7 +6519,7 @@ export async function resolveDedicatedFlowForProduct(productId) {
 
 /** הוספת מוצר לתוכנית + משימות צ׳קליסט (הכנות + ניקיון) מהתזרim */
 export async function addManagerPlanProductWithChecklists({
-  planType, anchorDate, dayOffset = 0, productId, quantity = null, portionPresetId = null,
+  planType, anchorDate, dayOffset = 0, productId, quantity = null, portionPresetId = null, portions = null,
 } = {}) {
   const pid = Number(productId);
   if (!pid) throw new ValidationError('בחר מוצר');
@@ -6527,49 +6527,67 @@ export async function addManagerPlanProductWithChecklists({
   if (!prod) throw new ValidationError('מוצר לא נמצא');
   const offset = Number(dayOffset) || 0;
 
-  const portionMeta = {};
-  const ppid = Number(portionPresetId);
-  if (ppid) {
-    const preset = await db.groupPortionPresets.get(ppid);
-    if (!preset) throw new ValidationError('מנה לא נמצאה');
-    const qty = sanitizeQuantity(quantity, { allowZero: false });
-    if (qty == null) throw new ValidationError('הזן כמות מנות');
-    portionMeta.portionPresetId = preset.id;
-    portionMeta.portionName = preset.name;
-    portionMeta.portionWeight = preset.weight;
-    portionMeta.portionExtra = preset.extra || '';
-    portionMeta.quantity = qty;
-  } else if (quantity != null && quantity !== '') {
-    portionMeta.quantity = sanitizeQuantity(quantity, { allowZero: false });
+  let portionRows = [];
+  if (Array.isArray(portions) && portions.length) {
+    portionRows = portions.map((p) => ({
+      portionPresetId: p.portionPresetId != null ? Number(p.portionPresetId) : null,
+      quantity: p.quantity,
+    }));
+  } else if (portionPresetId) {
+    portionRows = [{ portionPresetId: Number(portionPresetId), quantity }];
+  } else {
+    portionRows = [{ portionPresetId: null, quantity }];
   }
 
   const existing = await getManagerPlanItems(planType, anchorDate);
   const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === offset);
-  let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+  let productsAdded = 0;
 
-  const existingProduct = sameDay.find((i) => i.itemKind === 'product' && i.productId === pid);
-  if (existingProduct) {
-    const patch = { ...portionMeta };
-    if (Object.keys(patch).length) {
-      await db.managerPlanItems.update(existingProduct.id, patch);
+  for (const sel of portionRows) {
+    const portionMeta = {};
+    const ppid = Number(sel.portionPresetId);
+    if (ppid) {
+      const preset = await db.groupPortionPresets.get(ppid);
+      if (!preset) throw new ValidationError('מנה לא נמצאה');
+      const qty = sanitizeQuantity(sel.quantity ?? quantity, { allowZero: false });
+      if (qty == null) throw new ValidationError('הזן כמות מנות');
+      portionMeta.portionPresetId = preset.id;
+      portionMeta.portionName = preset.name;
+      portionMeta.portionWeight = preset.weight;
+      portionMeta.portionExtra = preset.extra || '';
+      portionMeta.quantity = qty;
+    } else if ((sel.quantity ?? quantity) != null && (sel.quantity ?? quantity) !== '') {
+      portionMeta.quantity = sanitizeQuantity(sel.quantity ?? quantity, { allowZero: false });
     }
-  } else {
-    await addManagerPlanItem({
-      planType,
-      anchorDate,
-      dayOffset: offset,
-      itemKind: 'product',
-      productId: pid,
-      quantity: portionMeta.quantity ?? null,
-      portionPresetId: portionMeta.portionPresetId ?? null,
-      portionName: portionMeta.portionName ?? null,
-      portionWeight: portionMeta.portionWeight ?? null,
-      portionExtra: portionMeta.portionExtra ?? null,
-    });
+
+    const existingProduct = sameDay.find((i) => i.itemKind === 'product'
+      && i.productId === pid
+      && (i.portionPresetId ?? null) === (portionMeta.portionPresetId ?? null));
+
+    if (existingProduct) {
+      const patch = { ...portionMeta };
+      if (Object.keys(patch).length) {
+        await db.managerPlanItems.update(existingProduct.id, patch);
+      }
+    } else {
+      await addManagerPlanItem({
+        planType,
+        anchorDate,
+        dayOffset: offset,
+        itemKind: 'product',
+        productId: pid,
+        quantity: portionMeta.quantity ?? null,
+        portionPresetId: portionMeta.portionPresetId ?? null,
+        portionName: portionMeta.portionName ?? null,
+        portionWeight: portionMeta.portionWeight ?? null,
+        portionExtra: portionMeta.portionExtra ?? null,
+      });
+      productsAdded += 1;
+    }
   }
 
   const flow = await resolveDedicatedFlowForProduct(pid);
-  if (!flow) return { checklistsAdded: 0, hasFlow: false };
+  if (!flow) return { checklistsAdded: 0, hasFlow: false, productsAdded };
 
   const cat = await db.categories.get(prod.categoryId);
   const categoryGroupId = cat?.groupId || flow.categoryGroupId || null;
@@ -6578,19 +6596,21 @@ export async function addManagerPlanProductWithChecklists({
     getFlowCleaningTasks(flow.id),
   ]);
 
+  const freshSameDay = (await getManagerPlanItems(planType, anchorDate))
+    .filter((i) => (i.dayOffset ?? 0) === offset);
   const existingPrepKeys = new Set(
-    sameDay
+    freshSameDay
       .filter((i) => i.itemKind === 'flow_preparation' && i.flowId === flow.id)
       .map((i) => i.flowPreparationId),
   );
   const existingCleanKeys = new Set(
-    sameDay
+    freshSameDay
       .filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === flow.id)
       .map((i) => i.flowCleaningTaskId),
   );
 
   const fresh = await getManagerPlanItems(planType, anchorDate);
-  sortOrder = fresh.length ? Math.max(...fresh.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+  let sortOrder = fresh.length ? Math.max(...fresh.map((i) => i.sortOrder ?? 0)) + 1 : 1;
   const rows = [];
 
   for (const prep of preps) {
@@ -6632,7 +6652,7 @@ export async function addManagerPlanProductWithChecklists({
   }
 
   if (rows.length) await db.managerPlanItems.bulkAdd(rows);
-  return { checklistsAdded: rows.length, hasFlow: true, flowName: flow.name };
+  return { checklistsAdded: rows.length, hasFlow: true, flowName: flow.name, productsAdded };
 }
 
 /** הוספת שלבי תזרים נבחרים לתוכנית יומית/שבועית */
@@ -6791,29 +6811,22 @@ export async function deleteManagerPlanItem(id) {
   if (row.itemKind === 'product' && row.productId) {
     const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
     const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
-    const flow = await resolveDefaultFlowForProduct(row.productId);
+    const hasOtherSameProduct = sameDay.some((p) => p.id !== row.id
+      && p.itemKind === 'product' && p.productId === row.productId);
+    const flow = await resolveDedicatedFlowForProduct(row.productId);
     const flowId = flow?.id || null;
 
     let linked = [];
-    if (flowId) {
-      let otherSameFlow = false;
-      for (const p of sameDay) {
-        if (p.itemKind !== 'product' || p.productId === row.productId) continue;
-        const otherFlow = await resolveDefaultFlowForProduct(p.productId);
-        if (otherFlow?.id === flowId) {
-          otherSameFlow = true;
-          break;
-        }
-      }
-      if (!otherSameFlow) {
+    if (!hasOtherSameProduct) {
+      if (flowId) {
         linked = sameDay.filter((i) => i.id !== row.id
           && i.flowId === flowId
           && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
+      } else {
+        linked = sameDay.filter((i) => i.id !== row.id
+          && i.productId === row.productId
+          && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
       }
-    } else {
-      linked = sameDay.filter((i) => i.id !== row.id
-        && i.productId === row.productId
-        && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
     }
 
     if (linked.length) {

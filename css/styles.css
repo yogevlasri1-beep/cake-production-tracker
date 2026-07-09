@@ -6527,6 +6527,50 @@ body {
   margin-top: 4px;
 }
 
+.plan-portion-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.plan-portion-pick-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-portion-pick-heading {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.plan-portion-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 0;
+}
+
+.plan-portion-pick-label {
+  flex: 1;
+  min-width: 120px;
+}
+
+.plan-portion-qty {
+  width: 5.5rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.plan-portion-qty:disabled {
+  opacity: 0.45;
+}
+
 .manager-plan-item--product .manager-plan-body {
   display: flex;
   flex-direction: column;
