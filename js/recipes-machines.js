@@ -2,18 +2,36 @@ import {
   getProductionMachines, getProductionMachine, addProductionMachine, updateProductionMachine, deleteProductionMachine,
   getProductionMachineFields, addProductionMachineField, updateProductionMachineField, deleteProductionMachineField,
   getProductionMachineAssignments, addProductionMachineAssignment, updateProductionMachineAssignment, deleteProductionMachineAssignment,
-  MACHINE_MEASURE_WEIGHT, MACHINE_MEASURE_LENGTH, MACHINE_UNIT_OPTIONS,
+  MACHINE_MEASURE_WEIGHT, MACHINE_MEASURE_LENGTH, MACHINE_MEASURE_SPEED, MACHINE_UNIT_OPTIONS,
   MACHINE_TARGET_PRODUCT, MACHINE_TARGET_CATEGORY, MACHINE_TARGET_GROUP,
   getMachineMeasureLabel, getMachineUnitLabel, getRecipeForProduct,
   countEffectiveMachineProducts,
-} from './kitchen-db.js?v=289';
-import { escapeHtml, showToast } from './utils.js?v=289';
-import { openModal, closeModal } from './modal.js?v=289';
+} from './kitchen-db.js?v=290';
+import { escapeHtml, showToast } from './utils.js?v=290';
+import { openModal, closeModal } from './modal.js?v=290';
 
 function machineUnitOptionsHTML(measureKind, selected) {
-  const kind = measureKind === MACHINE_MEASURE_LENGTH ? MACHINE_MEASURE_LENGTH : MACHINE_MEASURE_WEIGHT;
+  const kind = measureKind === MACHINE_MEASURE_LENGTH
+    ? MACHINE_MEASURE_LENGTH
+    : measureKind === MACHINE_MEASURE_SPEED
+      ? MACHINE_MEASURE_SPEED
+      : MACHINE_MEASURE_WEIGHT;
   return (MACHINE_UNIT_OPTIONS[kind] || []).map((u) =>
     `<option value="${u.id}"${u.id === selected ? ' selected' : ''}>${escapeHtml(u.label)}</option>`).join('');
+}
+
+function isMachineMeasureKind(measureKind, kind) {
+  return measureKind === kind;
+}
+
+function machineValueInputAttrs(field) {
+  if (isMachineMeasureKind(field.measureKind, MACHINE_MEASURE_SPEED) && field.unit === 'ms') {
+    return { step: '1', inputmode: 'numeric', placeholder: 'לדוגמה: 500' };
+  }
+  if (isMachineMeasureKind(field.measureKind, MACHINE_MEASURE_SPEED)) {
+    return { step: '0.001', inputmode: 'decimal', placeholder: 'לדוגמה: 1.5' };
+  }
+  return { step: '0.001', inputmode: 'decimal', placeholder: 'ערך' };
 }
 
 function buildGroupSelectHTML(productCatalog, selectedId, { excludeIds = [] } = {}) {
@@ -192,23 +210,30 @@ function openMachineForm(container, { machine, onSaved }) {
 
 function openMachineFieldForm({ machineId, field, onSaved }) {
   const measureKind = field?.measureKind || MACHINE_MEASURE_WEIGHT;
+  const weightChecked = isMachineMeasureKind(measureKind, MACHINE_MEASURE_WEIGHT);
+  const lengthChecked = isMachineMeasureKind(measureKind, MACHINE_MEASURE_LENGTH);
+  const speedChecked = isMachineMeasureKind(measureKind, MACHINE_MEASURE_SPEED);
   openModal({
     title: field ? 'עריכת פרמטר' : 'פרמטר חדש',
     bodyHTML: `
       <div class="form-group">
         <label for="machine-field-name">שם פרמטר</label>
-        <input type="text" id="machine-field-name" maxlength="80" placeholder="לדוגמה: עובי בצק" value="${escapeHtml(field?.name || '')}">
+        <input type="text" id="machine-field-name" maxlength="80" placeholder="לדוגמה: עובי בצק / מהירות סיבוב" value="${escapeHtml(field?.name || '')}">
       </div>
       <div class="form-group">
         <label>סוג מדידה</label>
         <div class="machine-measure-row">
           <label class="checkbox-label">
-            <input type="radio" name="machine-field-measure" value="${MACHINE_MEASURE_WEIGHT}" ${measureKind !== MACHINE_MEASURE_LENGTH ? 'checked' : ''}>
+            <input type="radio" name="machine-field-measure" value="${MACHINE_MEASURE_WEIGHT}" ${weightChecked ? 'checked' : ''}>
             משקל
           </label>
           <label class="checkbox-label">
-            <input type="radio" name="machine-field-measure" value="${MACHINE_MEASURE_LENGTH}" ${measureKind === MACHINE_MEASURE_LENGTH ? 'checked' : ''}>
+            <input type="radio" name="machine-field-measure" value="${MACHINE_MEASURE_LENGTH}" ${lengthChecked ? 'checked' : ''}>
             אורך
+          </label>
+          <label class="checkbox-label">
+            <input type="radio" name="machine-field-measure" value="${MACHINE_MEASURE_SPEED}" ${speedChecked ? 'checked' : ''}>
+            מהירות
           </label>
         </div>
       </div>
@@ -255,12 +280,15 @@ function openMachineFieldForm({ machineId, field, onSaved }) {
 
 function assignmentValuesFormHTML(fields, valueMap = {}) {
   if (!fields.length) return '<p class="form-hint">הוסף פרמטרים למכונה לפני שיוך מוצרים</p>';
-  return fields.map((f) => `
+  return fields.map((f) => {
+    const attrs = machineValueInputAttrs(f);
+    return `
     <div class="form-group machine-value-field" data-field-id="${f.id}">
       <label>${escapeHtml(f.name)} <span class="form-hint">(${escapeHtml(getMachineMeasureLabel(f.measureKind))} · ${escapeHtml(getMachineUnitLabel(f.measureKind, f.unit))})</span></label>
-      <input type="number" class="machine-assignment-value-input" data-field-id="${f.id}" step="0.001" inputmode="decimal"
-        value="${valueMap[f.id] != null ? escapeHtml(String(valueMap[f.id])) : ''}" placeholder="ערך">
-    </div>`).join('');
+      <input type="number" class="machine-assignment-value-input" data-field-id="${f.id}" step="${attrs.step}" inputmode="${attrs.inputmode}"
+        value="${valueMap[f.id] != null ? escapeHtml(String(valueMap[f.id])) : ''}" placeholder="${escapeHtml(attrs.placeholder)}">
+    </div>`;
+  }).join('');
 }
 
 function readAssignmentValuesFromForm() {

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=289';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=290';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=289';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=289';
+} from './validators.js?v=290';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=290';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3393,6 +3393,7 @@ export function formatSupplierShortagesText(grouped, { includeDone = false } = {
 
 export const MACHINE_MEASURE_WEIGHT = 'weight';
 export const MACHINE_MEASURE_LENGTH = 'length';
+export const MACHINE_MEASURE_SPEED = 'speed';
 
 export const MACHINE_TARGET_PRODUCT = 'product';
 export const MACHINE_TARGET_CATEGORY = 'category';
@@ -3407,10 +3408,15 @@ export const MACHINE_UNIT_OPTIONS = {
     { id: 'mm', label: 'מ"מ' },
     { id: 'cm', label: 'ס"מ' },
   ],
+  [MACHINE_MEASURE_SPEED]: [
+    { id: 's', label: 'שניות' },
+    { id: 'ms', label: 'מילי-שניות' },
+  ],
 };
 
 export function getMachineMeasureLabel(measureKind) {
   if (measureKind === MACHINE_MEASURE_LENGTH) return 'אורך';
+  if (measureKind === MACHINE_MEASURE_SPEED) return 'מהירות';
   return 'משקל';
 }
 
@@ -3419,10 +3425,16 @@ export function getMachineUnitLabel(measureKind, unit) {
   return opts.find((o) => o.id === unit)?.label || unit || '';
 }
 
+function normalizeMachineMeasureKind(measureKind) {
+  if (measureKind === MACHINE_MEASURE_LENGTH) return MACHINE_MEASURE_LENGTH;
+  if (measureKind === MACHINE_MEASURE_SPEED) return MACHINE_MEASURE_SPEED;
+  return MACHINE_MEASURE_WEIGHT;
+}
+
 function normalizeMachineFieldInput({ name, measureKind, unit }) {
   const cleanName = sanitizeName(name, 80);
   if (!cleanName) throw new ValidationError('שם פרמטר לא תקין');
-  const kind = measureKind === MACHINE_MEASURE_LENGTH ? MACHINE_MEASURE_LENGTH : MACHINE_MEASURE_WEIGHT;
+  const kind = normalizeMachineMeasureKind(measureKind);
   const allowed = (MACHINE_UNIT_OPTIONS[kind] || []).map((o) => o.id);
   const u = allowed.includes(unit) ? unit : allowed[0];
   return { name: cleanName, measureKind: kind, unit: u };

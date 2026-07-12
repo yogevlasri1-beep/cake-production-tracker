@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=289';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=289';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=289';
-import { renderRecipesMachines } from '../recipes-machines.js?v=289';
-import { renderRecipesPortions } from '../recipes-portions.js?v=289';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=289';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=289';
-import { openModal, closeModal } from '../modal.js?v=289';
+} from '../kitchen-db.js?v=290';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=290';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=290';
+import { renderRecipesMachines } from '../recipes-machines.js?v=290';
+import { renderRecipesPortions } from '../recipes-portions.js?v=290';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=290';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=290';
+import { openModal, closeModal } from '../modal.js?v=290';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=289';
-import { defaultColorForIndex } from '../chart.js?v=289';
+} from '../product-drag.js?v=290';
+import { defaultColorForIndex } from '../chart.js?v=290';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -931,46 +931,6 @@ function renderBakingListGroupCard(group, viewMode = 'category') {
               ${renderBakingParamsCells(baking)}
             </tr>`;
   }).join('')}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-function renderBakingProfileGroupCard(group) {
-  const subtitleParts = [];
-  if (group.ovenLabel) subtitleParts.push(group.ovenLabel);
-  if (group.paramsLine) subtitleParts.push(group.paramsLine);
-  const subtitle = subtitleParts.length ? `<p class="baking-profile-group-params">${escapeHtml(subtitleParts.join(' · '))}</p>` : '';
-  return `
-    <div class="card baking-profile-group-card" data-profile-key="${escapeHtml(group.key)}">
-      <div class="baking-oven-group-header">
-        <div>
-          <h3 class="baking-oven-group-title">🔥 ${escapeHtml(group.label)}</h3>
-          ${subtitle}
-        </div>
-        <span class="baking-oven-group-count">${group.items.length} מתכונים</span>
-      </div>
-      <div class="baking-table-wrap">
-        <table class="baking-table">
-          <thead>
-            <tr>
-              <th scope="col" class="baking-col-name">מתכון</th>
-              <th scope="col" class="baking-col-param">טמפ׳</th>
-              <th scope="col" class="baking-col-param">זמן</th>
-              <th scope="col" class="baking-col-param">קיטור</th>
-              <th scope="col" class="baking-col-param">יבוש</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${group.items.map(({ recipe, baking, categoryPath }) => `
-            <tr class="baking-row recipe-row-open" data-recipe-id="${recipe.id}" role="button" tabindex="0">
-              <td class="baking-col-name">
-                <strong class="baking-recipe-name">${escapeHtml(recipe.name)}</strong>
-                <span class="baking-recipe-path">${escapeHtml(categoryPath)}</span>
-              </td>
-              ${renderBakingParamsCells(baking)}
-            </tr>`).join('')}
           </tbody>
         </table>
       </div>
