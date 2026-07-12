@@ -27,17 +27,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=279';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=279';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=279';
-import { renderRecipesMachines } from '../recipes-machines.js?v=279';
-import { renderRecipesPortions } from '../recipes-portions.js?v=279';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=279';
-import { openModal, closeModal } from '../modal.js?v=279';
+} from '../kitchen-db.js?v=280';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=280';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=280';
+import { renderRecipesMachines } from '../recipes-machines.js?v=280';
+import { renderRecipesPortions } from '../recipes-portions.js?v=280';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=280';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=280';
+import { openModal, closeModal } from '../modal.js?v=280';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=279';
-import { defaultColorForIndex } from '../chart.js?v=279';
+} from '../product-drag.js?v=280';
+import { defaultColorForIndex } from '../chart.js?v=280';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2173,6 +2174,17 @@ function formatRatioFactor(r) {
   return String(rounded).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
 }
 
+function printRatioSnapshot(snapshot) {
+  if (!snapshot?.rows?.length) {
+    showToast('אין נתונים להדפסה');
+    return;
+  }
+  const html = buildRatioPrintHtml(snapshot);
+  if (!printRatioHtml(html)) {
+    showToast('חסום חלון קופץ — אפשר הדפסה מהדפדפן');
+  }
+}
+
 function bindRatioCalculator(recipe, hostEl) {
   const ingredients = recipe.ingredients || [];
   if (!ingredients.length) {
@@ -2331,6 +2343,38 @@ function bindRatioCalculator(recipe, hostEl) {
       }
     }
 
+    const weightSummary = getRecipeWeightSummary(scaled, { useScaled: true, recipe });
+    const extras = [];
+    if (yieldEl && !yieldEl.hidden && yieldEl.textContent.trim()) {
+      extras.push(yieldEl.textContent.trim());
+    }
+    if (cakesResultEl && !cakesResultEl.hidden && cakesResultEl.textContent.trim()) {
+      extras.push(cakesResultEl.textContent.trim());
+    }
+    hostEl._ratioPrintSnapshot = {
+      recipeName: recipe.name,
+      anchorName: anchor.name,
+      anchorUnit: anchor.unit,
+      baseQty: formatRecipeQuantity(baseQty),
+      targetQty: formatRecipeQuantity(displayTargetQty),
+      ratioFactor: formatRatioFactor(ratio),
+      rows: scaled.map((ing) => {
+        const orig = ingredients.find((i) => i.id === ing.id);
+        return {
+          name: ing.name,
+          unit: ing.unit,
+          origQty: formatRecipeQuantity(orig?.quantity),
+          scaledQty: String(ing.scaledQuantity),
+          isAnchor: ing.id === Number(state.anchorId),
+        };
+      }),
+      totalText: weightSummary.mainText
+        ? [weightSummary.mainText, weightSummary.breakdownText].filter(Boolean).join(' · ')
+        : '',
+      extras,
+      printedAt: new Date().toLocaleString('he-IL'),
+    };
+
     hostEl.querySelectorAll('.ratio-ing-row').forEach((row) => {
       row.addEventListener('click', (e) => {
         if (e.target.closest('input[type="radio"]')) return;
@@ -2361,6 +2405,9 @@ function bindRatioCalculator(recipe, hostEl) {
   };
 
   hostEl.innerHTML = `
+    <div class="ratio-actions">
+      <button type="button" class="btn btn-secondary btn-sm" id="ratio-print-btn">🖨️ הדפס</button>
+    </div>
     <p class="form-hint ratio-intro">סמן חומר גלם לשינוי, הזן כמות יעד — או הזן משקל יחידה ומספר יחידות. השדות מסתנכרנים אוטומטית.</p>
     <div id="ratio-change-banner" class="ratio-change-banner"></div>
     <div id="ratio-error" class="ratio-error" role="alert"></div>
@@ -2418,6 +2465,10 @@ function bindRatioCalculator(recipe, hostEl) {
       state.scaleMode = 'anchor';
     }
     render();
+  });
+
+  hostEl.querySelector('#ratio-print-btn')?.addEventListener('click', () => {
+    printRatioSnapshot(hostEl._ratioPrintSnapshot);
   });
 
   render();

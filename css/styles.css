@@ -7615,6 +7615,12 @@ body.supplier-drag-active {
   font-size: 0.95rem;
 }
 
+.ratio-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
 .ratio-intro {
   margin-bottom: 10px;
 }
