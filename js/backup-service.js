@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=284';
+} from './db.js?v=285';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=284';
-import { downloadBlob } from './download.js?v=284';
-import { ValidationError } from './validators.js?v=284';
-import { openModal, closeModal } from './modal.js?v=284';
-import { escapeHtml, showToast } from './utils.js?v=284';
+} from './backup.js?v=285';
+import { downloadBlob } from './download.js?v=285';
+import { ValidationError } from './validators.js?v=285';
+import { openModal, closeModal } from './modal.js?v=285';
+import { escapeHtml, showToast } from './utils.js?v=285';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=284';
+} from './backup-folder-bridge.js?v=285';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -33,7 +33,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=284';
+} from './supabase-backup.js?v=285';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -372,7 +372,7 @@ function installDbChangeHooks() {
     'departmentCleaningLists', 'departmentCleaningTasks',
     'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'portionPresetIngredientSettings', 'groupPreparations', 'checklistTasks', 'flowChecklistItems', 'flowCleaningTasks', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks', 'runCleaningChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',     'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',     'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'productFlowLinks', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'purchaseCategories', 'purchaseItems',
     'settings',
   ];

@@ -5,7 +5,8 @@ import {
   importCatalogRows, importProductionRows, setProductOrderInCategory, setCategoryOrderInContainer, setCategoryGroupOrder, setCategoryUnitPrice,
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
-} from '../db.js?v=284';
+  getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
+} from '../db.js?v=285';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -15,12 +16,12 @@ import {
   syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=284';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=284';
-import { openModal, closeModal } from '../modal.js?v=284';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=284';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=284';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=284';
+} from '../kitchen-db.js?v=285';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=285';
+import { openModal, closeModal } from '../modal.js?v=285';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=285';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=285';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=285';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -396,7 +397,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=284');
+    const { navigate } = await import('../app.js?v=285');
     navigate('backup');
   });
 
@@ -620,7 +621,7 @@ function bindProductDetailOpen(container) {
   });
 }
 
-function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap }) {
+function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [] }) {
   const { product, category, components, linkedRecipes, bakingProfile, bakingProfileLink, totalWeightGrams } = detail;
   const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
   const usedRecipeIds = new Set(components.map((c) => c.recipeId));
@@ -703,6 +704,16 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
     ? `<button type="button" class="btn btn-secondary btn-sm" id="product-switch-manual-cost" style="margin-top:10px">עבור להזנה ידנית</button>`
     : `<button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">החל עלות מהמתכונים</button>`;
 
+  const linkedFlowIds = new Set(linkedFlows.map((row) => row.flow.id));
+  const flowCheckboxes = candidateFlows.length
+    ? candidateFlows.map((f) => `
+        <label class="product-flow-link-item">
+          <input type="checkbox" class="product-flow-link-cb" value="${f.id}" ${linkedFlowIds.has(f.id) ? 'checked' : ''}>
+          <span class="product-flow-link-name">${escapeHtml(f.name)}${f.isDefault ? ' ★' : ''}</span>
+          <span class="product-flow-link-meta">${escapeHtml(f.targetLabel || '')} · ${f.stepCount || 0} שלבים</span>
+        </label>`).join('')
+    : '<p class="recipe-sheet-empty">אין תזרימים — הגדר ב«תהליך יצור» → נהל תזרים</p>';
+
   return `
     <article class="product-detail-sheet">
       <header class="recipe-sheet-header">
@@ -738,6 +749,13 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
         </div>
         ${productBakingHtml}
         ${componentBakingRows ? `<div class="product-baking-recipes"><p class="product-detail-subtitle">מתכוני הרכב:</p><ul>${componentBakingRows}</ul></div>` : ''}
+      </section>
+
+      <section class="recipe-sheet-section product-detail-section" aria-label="תזרימי ייצור">
+        <h2 class="recipe-sheet-section-title">תזרימי ייצור</h2>
+        <p class="form-hint product-detail-subtitle">שיוך ישיר גובר על תזרים לפי קטגוריה. ניתן לשייך כמה תזרימים למוצר.</p>
+        <div class="product-flow-links-list">${flowCheckboxes}</div>
+        <button type="button" class="btn btn-primary btn-sm" id="product-save-flow-links" style="margin-top:10px">שמור שיוך תזרימים</button>
       </section>
 
       <section class="recipe-sheet-section product-detail-section" aria-label="תמחור">
@@ -785,13 +803,20 @@ async function openProductDetailModal(container, productId) {
   let bakingProfiles = [];
   let profileMap = new Map();
 
+  let linkedFlows = [];
+  let candidateFlows = [];
+
   async function loadContext() {
-    const [d, layout, profiles] = await Promise.all([
+    const [d, layout, profiles, linked, candidates] = await Promise.all([
       getProductDetail(productId),
       getRecipesCatalogLayout(),
       getBakingProfiles(),
+      getLinkedFlowsForProduct(productId),
+      getCandidateFlowsForProduct(productId),
     ]);
     detail = d;
+    linkedFlows = linked;
+    candidateFlows = candidates;
     bakingProfiles = profiles;
     profileMap = new Map(profiles.map((p) => [p.id, p]));
     allRecipes = [];
@@ -806,7 +831,7 @@ async function openProductDetailModal(container, productId) {
   async function refreshModal() {
     await loadContext();
     const body = document.querySelector('.modal-body');
-    if (body) body.innerHTML = buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap });
+    if (body) body.innerHTML = buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows });
     bindProductDetailModalEvents(container, productId, refreshModal);
   }
 
@@ -815,7 +840,7 @@ async function openProductDetailModal(container, productId) {
   openModal({
     title: '',
     modalClass: 'modal-product-detail',
-    bodyHTML: buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap }),
+    bodyHTML: buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-primary" id="product-detail-edit">עריכת פרטים</button>`,
@@ -904,6 +929,17 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
       } else if (link?.source === 'product') {
         await unlinkProductFromBakingProfile(link.bakingProfileId, productId);
       }
+      await refreshModal();
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('product-save-flow-links')?.addEventListener('click', async () => {
+    const flowIds = [...document.querySelectorAll('.product-flow-link-cb:checked')].map((cb) => Number(cb.value));
+    try {
+      await setProductFlowLinks(productId, flowIds);
+      showToast('שיוך תזרימים נשמר ✓');
       await refreshModal();
     } catch (err) {
       showToast(err.message || 'שגיאה');

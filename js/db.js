@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=284';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=284';
-import { defaultColorForIndex } from './chart.js?v=284';
+} from './validators.js?v=285';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=285';
+import { defaultColorForIndex } from './chart.js?v=285';
 
 export { ValidationError };
 
@@ -2739,6 +2739,68 @@ db.version(60).stores({
   purchaseItems: '++id, categoryId, name, sortOrder, active',
 });
 
+db.version(61).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, linkTargetType, linkProductId, linkCategoryId, linkCategoryGroupId, catalogSortOrder, sortOrder',
+  portionPresetLinks: '++id, portionPresetId, linkType, targetId, sortOrder, [portionPresetId+linkType+targetId]',
+  portionPresetIngredientSettings: '++id, portionPresetId, recipeIngredientId, [portionPresetId+recipeIngredientId]',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  productFlowLinks: '++id, productId, flowId, sortOrder, [productId+flowId], [flowId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  productionMachines: '++id, name, sortOrder',
+  productionMachineFields: '++id, machineId, name, measureKind, unit, sortOrder',
+  productionMachineProducts: '++id, machineId, targetType, productId, categoryId, categoryGroupId, recipeId, [machineId+targetType+productId], [machineId+targetType+categoryId], [machineId+targetType+categoryGroupId]',
+  productionMachineProductValues: '++id, assignmentId, fieldId, [assignmentId+fieldId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3329,6 +3391,7 @@ export async function exportAllData() {
     bakingProfileProducts,
     bakingProfileScopes,
     productRecipeComponents,
+    productFlowLinks,
     productionMachines,
     productionMachineFields,
     productionMachineProducts,
@@ -3387,6 +3450,7 @@ export async function exportAllData() {
     db.bakingProfileProducts?.toArray?.() ?? Promise.resolve([]),
     db.bakingProfileScopes?.toArray?.() ?? Promise.resolve([]),
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
+    db.productFlowLinks?.toArray?.() ?? Promise.resolve([]),
     db.productionMachines?.toArray?.() ?? Promise.resolve([]),
     db.productionMachineFields?.toArray?.() ?? Promise.resolve([]),
     db.productionMachineProducts?.toArray?.() ?? Promise.resolve([]),
@@ -3445,6 +3509,7 @@ export async function exportAllData() {
     bakingProfileProducts,
     bakingProfileScopes,
     productRecipeComponents,
+    productFlowLinks,
     productionMachines,
     productionMachineFields,
     productionMachineProducts,
@@ -3520,6 +3585,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.bakingProfileProducts)) payload.bakingProfileProducts = [];
   if (!Array.isArray(payload.bakingProfileScopes)) payload.bakingProfileScopes = [];
   if (!Array.isArray(payload.productRecipeComponents)) payload.productRecipeComponents = [];
+  if (!Array.isArray(payload.productFlowLinks)) payload.productFlowLinks = [];
   if (!Array.isArray(payload.productionMachines)) payload.productionMachines = [];
   if (!Array.isArray(payload.productionMachineFields)) payload.productionMachineFields = [];
   if (!Array.isArray(payload.productionMachineProducts)) payload.productionMachineProducts = [];
@@ -3557,6 +3623,7 @@ export async function importAllData(payload) {
       'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
       'weeklyProductionPlanItems', 'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
       'productRecipeComponents',
+      'productFlowLinks',
       'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
       'purchaseCategories', 'purchaseItems',
     ),
@@ -3566,6 +3633,7 @@ export async function importAllData(payload) {
       await db.weeklyProductionPlanItems.clear();
       await db.weeklyProductionPlans.clear();
       await db.productRecipeComponents.clear();
+      await db.productFlowLinks?.clear?.();
       await db.productionMachineProductValues?.clear?.();
       await db.productionMachineProducts?.clear?.();
       await db.productionMachineFields?.clear?.();
@@ -3677,6 +3745,9 @@ export async function importAllData(payload) {
       }
       if (payload.productRecipeComponents?.length) {
         await db.productRecipeComponents.bulkPut(payload.productRecipeComponents);
+      }
+      if (payload.productFlowLinks?.length) {
+        await db.productFlowLinks.bulkPut(payload.productFlowLinks);
       }
       if (payload.productionMachines?.length) await db.productionMachines.bulkPut(payload.productionMachines);
       if (payload.productionMachineFields?.length) {
@@ -7148,37 +7219,164 @@ export async function collectPlanProductFlowsForExport(items) {
   const flowData = new Map();
 
   for (const item of productItems) {
-    const flow = await resolveDefaultFlowForProduct(item.productId);
-    if (!flow) continue;
-    if (!flowData.has(flow.id)) {
-      const steps = await getFlowStepsForFlow(flow.id);
-      flowData.set(flow.id, { flow, steps, products: [] });
-      flowOrder.push(flow.id);
+    const flows = await resolveFlowsForProduct(item.productId);
+    for (const flow of flows) {
+      if (!flow) continue;
+      if (!flowData.has(flow.id)) {
+        const steps = await getFlowStepsForFlow(flow.id);
+        flowData.set(flow.id, { flow, steps, products: [] });
+        flowOrder.push(flow.id);
+      }
+      flowData.get(flow.id).products.push({
+        label: item.label,
+        quantity: item.quantity,
+      });
     }
-    flowData.get(flow.id).products.push({
-      label: item.label,
-      quantity: item.quantity,
-    });
   }
 
   return flowOrder.map((id) => flowData.get(id)).filter(Boolean);
 }
 
-/** תזרים ברירת מחדל למוצר (לפי קטגוריה / קבוצה) */
-export async function resolveDefaultFlowForProduct(productId) {
+export async function getProductFlowLinkRows(productId) {
+  const pid = Number(productId);
+  if (!pid || !db.productFlowLinks) return [];
+  const rows = await db.productFlowLinks.where('productId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getFlowProductLinkRows(flowId) {
+  const fid = Number(flowId);
+  if (!fid || !db.productFlowLinks) return [];
+  const rows = await db.productFlowLinks.where('flowId').equals(fid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getLinkedFlowsForProduct(productId) {
+  const links = await getProductFlowLinkRows(productId);
+  if (!links.length) return [];
+  const flows = await Promise.all(links.map((l) => db.flows.get(l.flowId)));
+  return links
+    .map((link, i) => ({ link, flow: flows[i] }))
+    .filter((row) => row.flow);
+}
+
+export async function getLinkedProductsForFlow(flowId) {
+  const links = await getFlowProductLinkRows(flowId);
+  if (!links.length) return [];
+  const products = await Promise.all(links.map((l) => db.products.get(l.productId)));
+  return links
+    .map((link, i) => ({ link, product: products[i] }))
+    .filter((row) => row.product);
+}
+
+export async function setProductFlowLinks(productId, flowIds) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('מוצר לא תקין');
+  if (!db.productFlowLinks) return;
+  const ids = [...new Set((flowIds || []).map((id) => sanitizeProductId(id)).filter(Boolean))];
+  for (const fid of ids) {
+    const flow = await db.flows.get(fid);
+    if (!flow) throw new ValidationError('תזרים לא נמצא');
+  }
+  await db.transaction('rw', db.productFlowLinks, async () => {
+    await db.productFlowLinks.where('productId').equals(pid).delete();
+    for (let i = 0; i < ids.length; i++) {
+      await db.productFlowLinks.add({ productId: pid, flowId: ids[i], sortOrder: i + 1 });
+    }
+  });
+}
+
+export async function setFlowProductLinks(flowId, productIds) {
+  const fid = sanitizeProductId(flowId);
+  if (!fid) throw new ValidationError('תזרים לא תקין');
+  if (!db.productFlowLinks) return;
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+  const newPids = new Set((productIds || []).map((id) => sanitizeProductId(id)).filter(Boolean));
+  for (const pid of newPids) {
+    const prod = await db.products.get(pid);
+    if (!prod) throw new ValidationError('מוצר לא נמצא');
+  }
+  const existing = await db.productFlowLinks.where('flowId').equals(fid).toArray();
+  const existingPids = new Set(existing.map((l) => l.productId));
+  await db.transaction('rw', db.productFlowLinks, async () => {
+    for (const link of existing) {
+      if (!newPids.has(link.productId)) await db.productFlowLinks.delete(link.id);
+    }
+    for (const pid of newPids) {
+      if (existingPids.has(pid)) continue;
+      const productLinks = await db.productFlowLinks.where('productId').equals(pid).toArray();
+      const maxOrder = productLinks.reduce((m, l) => Math.max(m, l.sortOrder ?? 0), 0);
+      await db.productFlowLinks.add({ productId: pid, flowId: fid, sortOrder: maxOrder + 1 });
+    }
+  });
+}
+
+/** תזרימים משויכים למוצר, או לפי קטגוריה/קבוצה אם אין שיוך ישיר */
+export async function resolveFlowsForProduct(productId) {
+  const linked = await getLinkedFlowsForProduct(productId);
+  if (linked.length) return linked.map((row) => row.flow);
   const prod = await db.products.get(Number(productId));
-  if (!prod) return null;
+  if (!prod) return [];
   const cat = await db.categories.get(prod.categoryId);
-  const flows = await resolveFlows({
+  return resolveFlows({
     categoryId: prod.categoryId,
     categoryGroupId: cat?.groupId || null,
   });
+}
+
+export async function getCandidateFlowsForProduct(productId) {
+  const overview = await getAllFlowsOverview();
+  const prod = await db.products.get(Number(productId));
+  if (!prod) return overview;
+  const cat = await db.categories.get(prod.categoryId);
+  const groupId = cat?.groupId || null;
+  const relevant = overview.filter((f) => {
+    if (f.categoryId && f.categoryId === prod.categoryId) return true;
+    if (groupId && Number(f.groupId || f.categoryGroupId) === Number(groupId)) return true;
+    return false;
+  });
+  return relevant.length ? relevant : overview;
+}
+
+export async function getCandidateProductsForFlow(flowId) {
+  const fid = Number(flowId);
+  const flow = await db.flows.get(fid);
+  if (!flow) return [];
+  let products = [];
+  if (flow.categoryId) {
+    products = await db.products.where('categoryId').equals(flow.categoryId).toArray();
+  } else if (flow.categoryGroupId) {
+    const cats = await db.categories.where('groupId').equals(flow.categoryGroupId).toArray();
+    const catIds = new Set(cats.map((c) => c.id));
+    products = (await db.products.toArray()).filter((p) => catIds.has(p.categoryId));
+  } else {
+    products = await db.products.toArray();
+  }
+  const linked = await getLinkedProductsForFlow(fid);
+  const seen = new Set(products.map((p) => p.id));
+  for (const { product } of linked) {
+    if (product && !seen.has(product.id)) {
+      products.push(product);
+      seen.add(product.id);
+    }
+  }
+  return products
+    .filter((p) => p.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
+}
+
+/** תזרים ברירת מחדל למוצר — שיוך ישיר קודם, אחרת לפי קטגוריה / קבוצה */
+export async function resolveDefaultFlowForProduct(productId) {
+  const flows = await resolveFlowsForProduct(productId);
   if (!flows.length) return null;
   return flows.find((f) => f.isDefault) || flows[0];
 }
 
 /** תזרים ייעודי לקטגוריה של המוצר בלבד — ללא נפילה לתזרים הכללי של הקבוצה */
 export async function resolveDedicatedFlowForProduct(productId) {
+  const linked = await getLinkedFlowsForProduct(productId);
+  if (linked.length) return linked[0].flow;
   const prod = await db.products.get(Number(productId));
   if (!prod?.categoryId) return null;
   const flows = await getFlowsForCategory(prod.categoryId);
@@ -7255,73 +7453,88 @@ export async function addManagerPlanProductWithChecklists({
     }
   }
 
-  const flow = await resolveDedicatedFlowForProduct(pid);
-  if (!flow) return { checklistsAdded: 0, hasFlow: false, productsAdded };
+  const flows = await resolveFlowsForProduct(pid);
+  if (!flows.length) return { checklistsAdded: 0, hasFlow: false, productsAdded };
 
   const cat = await db.categories.get(prod.categoryId);
-  const categoryGroupId = cat?.groupId || flow.categoryGroupId || null;
-  const [preps, cleaningTasks] = await Promise.all([
-    getFlowPreparations(flow.id),
-    getFlowCleaningTasks(flow.id),
-  ]);
+  const categoryGroupId = cat?.groupId || null;
+  let checklistsAdded = 0;
+  const flowNames = [];
 
-  const freshSameDay = (await getManagerPlanItems(planType, anchorDate))
-    .filter((i) => (i.dayOffset ?? 0) === offset);
-  const existingPrepKeys = new Set(
-    freshSameDay
-      .filter((i) => i.itemKind === 'flow_preparation' && i.flowId === flow.id)
-      .map((i) => i.flowPreparationId),
-  );
-  const existingCleanKeys = new Set(
-    freshSameDay
-      .filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === flow.id)
-      .map((i) => i.flowCleaningTaskId),
-  );
+  for (const flow of flows) {
+    const [preps, cleaningTasks] = await Promise.all([
+      getFlowPreparations(flow.id),
+      getFlowCleaningTasks(flow.id),
+    ]);
 
-  const fresh = await getManagerPlanItems(planType, anchorDate);
-  let sortOrder = fresh.length ? Math.max(...fresh.map((i) => i.sortOrder ?? 0)) + 1 : 1;
-  const rows = [];
+    const freshSameDay = (await getManagerPlanItems(planType, anchorDate))
+      .filter((i) => (i.dayOffset ?? 0) === offset);
+    const existingPrepKeys = new Set(
+      freshSameDay
+        .filter((i) => i.itemKind === 'flow_preparation' && i.flowId === flow.id)
+        .map((i) => i.flowPreparationId),
+    );
+    const existingCleanKeys = new Set(
+      freshSameDay
+        .filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === flow.id)
+        .map((i) => i.flowCleaningTaskId),
+    );
 
-  for (const prep of preps) {
-    if (existingPrepKeys.has(prep.checklistTaskId)) continue;
-    rows.push({
-      planType,
-      anchorDate,
-      dayOffset: offset,
-      itemKind: 'flow_preparation',
-      flowId: flow.id,
-      flowPreparationId: prep.checklistTaskId,
-      productId: pid,
-      categoryId: prod.categoryId,
-      categoryGroupId,
-      label: prep.name,
-      quantity: null,
-      done: false,
-      sortOrder: sortOrder++,
-    });
+    const fresh = await getManagerPlanItems(planType, anchorDate);
+    let sortOrder = fresh.length ? Math.max(...fresh.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+    const rows = [];
+
+    for (const prep of preps) {
+      if (existingPrepKeys.has(prep.checklistTaskId)) continue;
+      rows.push({
+        planType,
+        anchorDate,
+        dayOffset: offset,
+        itemKind: 'flow_preparation',
+        flowId: flow.id,
+        flowPreparationId: prep.checklistTaskId,
+        productId: pid,
+        categoryId: prod.categoryId,
+        categoryGroupId: categoryGroupId || flow.categoryGroupId || null,
+        label: prep.name,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+    }
+
+    for (const task of cleaningTasks) {
+      if (existingCleanKeys.has(task.id)) continue;
+      rows.push({
+        planType,
+        anchorDate,
+        dayOffset: offset,
+        itemKind: 'flow_cleaning',
+        flowId: flow.id,
+        flowCleaningTaskId: task.id,
+        productId: pid,
+        categoryId: prod.categoryId,
+        categoryGroupId: categoryGroupId || flow.categoryGroupId || null,
+        label: task.name,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+    }
+
+    if (rows.length) {
+      await db.managerPlanItems.bulkAdd(rows);
+      checklistsAdded += rows.length;
+    }
+    flowNames.push(flow.name);
   }
 
-  for (const task of cleaningTasks) {
-    if (existingCleanKeys.has(task.id)) continue;
-    rows.push({
-      planType,
-      anchorDate,
-      dayOffset: offset,
-      itemKind: 'flow_cleaning',
-      flowId: flow.id,
-      flowCleaningTaskId: task.id,
-      productId: pid,
-      categoryId: prod.categoryId,
-      categoryGroupId,
-      label: task.name,
-      quantity: null,
-      done: false,
-      sortOrder: sortOrder++,
-    });
-  }
-
-  if (rows.length) await db.managerPlanItems.bulkAdd(rows);
-  return { checklistsAdded: rows.length, hasFlow: true, flowName: flow.name, productsAdded };
+  return {
+    checklistsAdded,
+    hasFlow: true,
+    flowName: flowNames.join(', '),
+    productsAdded,
+  };
 }
 
 /** הוספת שלבי תזרים נבחרים לתוכנית יומית/שבועית */

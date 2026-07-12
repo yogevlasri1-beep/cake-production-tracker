@@ -22,20 +22,21 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=284';
+  getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
+} from '../db.js?v=285';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=284').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=285').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=284';
-import { openModal, closeModal } from '../modal.js?v=284';
-import { requestAutoBackupNow } from '../backup-service.js?v=284';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=284';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=284';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=285';
+import { openModal, closeModal } from '../modal.js?v=285';
+import { requestAutoBackupNow } from '../backup-service.js?v=285';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=285';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=285';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -776,12 +777,22 @@ function filterCategoriesForRun(run, categories) {
   return categories;
 }
 
-function filterProductsForRun(run, products, categories) {
+async function filterProductsForRun(run, products, categories) {
   const scopedCats = filterCategoriesForRun(run, categories);
   const catSet = new Set(scopedCats.map((c) => c.id));
   let list = products.filter((p) => catSet.has(p.categoryId));
   if (run.productId) list = list.filter((p) => p.id === run.productId);
-  return list;
+  if (run.flowId) {
+    const linked = await getLinkedProductsForFlow(run.flowId);
+    const seen = new Set(list.map((p) => p.id));
+    for (const { product } of linked) {
+      if (product && !seen.has(product.id)) {
+        list.push(product);
+        seen.add(product.id);
+      }
+    }
+  }
+  return list.sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
 }
 
 function runProdCategoryKey(stepIndex) {
@@ -1610,6 +1621,12 @@ async function renderRunView(container, runId, ctx) {
     }
   }
   const prepFlowLabel = run.flowName || (run.flowId ? 'תזרים' : null);
+  let linkedProductsLabel = '';
+  if (run.flowId) {
+    const linkedRows = await getLinkedProductsForFlow(run.flowId);
+    const names = linkedRows.map((row) => row.product?.name).filter(Boolean);
+    if (names.length) linkedProductsLabel = names.join(', ');
+  }
 
   const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
   const portionPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
@@ -1624,7 +1641,7 @@ async function renderRunView(container, runId, ctx) {
 
   if (hasProductionSteps) {
     const scopedCategories = filterCategoriesForRun(run, categories);
-    const scopedProducts = filterProductsForRun(run, products, categories);
+    const scopedProducts = await filterProductsForRun(run, products, categories);
     const selectedCategories = {};
     const selectedFormProducts = {};
     if (productionStepIdx >= 0) {
@@ -1712,7 +1729,7 @@ async function renderRunView(container, runId, ctx) {
       </div>
       <div class="flow-run-header-info">
         <h2 class="flow-run-title">${run.batchNumber ? `אצווה ${escapeHtml(run.batchNumber)}` : runTitle(run, catMap, productMap, groupMap)}</h2>
-        <p class="flow-run-subtitle">${runTitle(run, catMap, productMap, groupMap)}</p>
+        <p class="flow-run-subtitle">${runTitle(run, catMap, productMap, groupMap)}${linkedProductsLabel ? ` · מוצרים משויכים: ${escapeHtml(linkedProductsLabel)}` : ''}</p>
       </div>
       <button type="button" class="flow-run-dates flow-run-dates--clickable" id="edit-run-details" aria-label="פרטי תהליך">
         <div class="flow-run-dates-row">
@@ -2374,13 +2391,31 @@ async function renderManageView(container, ctx) {
   if (activeFlow) {
     await ensureFlowProductionStep(activeFlow.id);
   }
-  const [steps, flowPreps, flowCleaningTasks, availableChecklistTasks, portionPresets] = await Promise.all([
+  const [steps, flowPreps, flowCleaningTasks, availableChecklistTasks, portionPresets, linkedProducts, candidateProducts] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getFlowPreparations(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getFlowCleaningTasks(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getAvailableChecklistTasksForFlow(activeFlow.id) : Promise.resolve([]),
     portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),
+    activeFlow ? getLinkedProductsForFlow(activeFlow.id) : Promise.resolve([]),
+    activeFlow ? getCandidateProductsForFlow(activeFlow.id) : Promise.resolve([]),
   ]);
+
+  const linkedProductIds = new Set(linkedProducts.map((row) => row.product.id));
+  const flowProductsHTML = activeFlow && candidateProducts.length
+    ? `<div class="flow-prep-manage-card flow-linked-products-card">
+          <div class="card-title" style="margin-bottom:6px">📦 מוצרים משויכים · ${escapeHtml(activeFlow.name)}</div>
+          <p class="form-hint" style="margin-bottom:10px">מוצרים שיופיעו בתזרים זה ובתיעוד ייצור — גם מקטגוריות אחרות</p>
+          <div class="product-flow-links-list flow-product-links-list">
+            ${candidateProducts.map((p) => `
+              <label class="product-flow-link-item">
+                <input type="checkbox" class="flow-product-link-cb" value="${p.id}" ${linkedProductIds.has(p.id) ? 'checked' : ''}>
+                <span class="product-flow-link-name">${escapeHtml(p.name)}</span>
+              </label>`).join('')}
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="save-flow-product-links" style="margin-top:10px">שמור שיוך מוצרים</button>
+        </div>`
+    : '';
 
   const managePickOptions = {
     pickExtraClass: '',
@@ -2449,6 +2484,7 @@ async function renderManageView(container, ctx) {
         </div>
 
         ${activeFlow ? `
+        ${flowProductsHTML}
         <div class="flow-prep-manage-card">
           <div class="card-title" style="margin-bottom:6px">✅ צ׳קליסט משימות · ${escapeHtml(activeFlow.name)}</div>
           <p class="form-hint" style="margin-bottom:10px">רשימה ייחודית לתזרim זה — גרור ⠿ לשינוי סדר · מחיקה מסירה מהתזרim בלבד</p>
@@ -2555,7 +2591,7 @@ async function renderManageView(container, ctx) {
                   ${p.sourceRecipeId ? `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn"
-                      data-id="${p.id}" data-portion-name="${escapeHtml(p.name)}" title="רכיבי מתכון">📋 רכיבים</button>
+                      data-id="${p.id}" title="רכיבי מתכון">📋 רכיבים</button>
                   </div>` : `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm edit-preset"
@@ -2625,6 +2661,19 @@ async function renderManageView(container, ctx) {
         categoryId: btn.dataset.categoryId,
       });
     });
+  });
+
+  document.getElementById('save-flow-product-links')?.addEventListener('click', async () => {
+    if (!activeFlow) return;
+    const productIds = [...container.querySelectorAll('.flow-product-link-cb:checked')].map((cb) => Number(cb.value));
+    try {
+      await setFlowProductLinks(activeFlow.id, productIds);
+      requestAutoBackupNow().catch(() => {});
+      showToast('שיוך מוצרים נשמר ✓');
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('add-flow-prep-btn')?.addEventListener('click', async () => {

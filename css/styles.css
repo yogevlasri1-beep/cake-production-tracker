@@ -3286,6 +3286,53 @@ textarea {
   margin-bottom: 12px;
 }
 
+.product-flow-links-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 2px 0;
+}
+
+.product-flow-link-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.product-flow-link-item input {
+  flex-shrink: 0;
+}
+
+.product-flow-link-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.product-flow-link-meta {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-inline-start: auto;
+}
+
+.manager-plan-flow-label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.flow-linked-products-card .flow-product-links-list {
+  max-height: 320px;
+}
+
 .product-composition-row {
   display: flex;
   align-items: center;

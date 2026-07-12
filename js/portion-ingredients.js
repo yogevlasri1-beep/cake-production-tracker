@@ -1,10 +1,10 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=284';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=284';
-import { openModal, closeModal } from './modal.js?v=284';
-import { requestAutoBackupNow } from './backup-service.js?v=284';
+} from './kitchen-db.js?v=285';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=285';
+import { openModal, closeModal } from './modal.js?v=285';
+import { requestAutoBackupNow } from './backup-service.js?v=285';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
@@ -77,8 +77,8 @@ export async function openPortionIngredientsModal({ portionPresetId, portionName
     return;
   }
 
-  const title = portionName
-    ? `רכיבי מתכון · ${portionName}`
+  const title = presetName
+    ? `רכיבי מתכון · ${presetName}`
     : 'רכיבי מתכון';
 
   openModal({

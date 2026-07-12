@@ -3,7 +3,7 @@ import {
   getProducts, getProductsCatalogLayout,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
   addManagerPlanItem, addManagerPlanProductWithChecklists,
-  updateManagerPlanItem, deleteManagerPlanItem, resolveDefaultFlowForProduct,
+  updateManagerPlanItem, deleteManagerPlanItem, resolveFlowsForProduct,
   getPortionPresetsForProduct,
   collectPlanProductFlowsForExport,
   getActiveProductionRuns, ensureRunPreparationChecks, ensureRunCleaningChecks,
@@ -16,20 +16,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=284';
+} from '../db.js?v=285';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=284';
-import { openModal, closeModal } from '../modal.js?v=284';
-import { renderTargets } from './targets.js?v=284';
-import { renderPurchasingInManager } from './purchasing.js?v=284';
-import { forceAppUpdate } from '../sw-register.js?v=284';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=284';
+} from '../utils.js?v=285';
+import { openModal, closeModal } from '../modal.js?v=285';
+import { renderTargets } from './targets.js?v=285';
+import { renderPurchasingInManager } from './purchasing.js?v=285';
+import { forceAppUpdate } from '../sw-register.js?v=285';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=285';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=284';
+} from '../daily-plan-export.js?v=285';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -397,6 +397,13 @@ function dedupeChecklistItems(items) {
   return out;
 }
 
+function productMatchesFlow(productFlowMap, productId, flowId) {
+  const entry = productFlowMap?.get(productId);
+  if (!entry) return false;
+  if (entry instanceof Set) return entry.has(flowId);
+  return entry === flowId;
+}
+
 function groupChecklistByFlow(items, { productFlowMap, flowNames, productsInPlan, productMap } = {}) {
   const byFlow = new Map();
   const orphans = [];
@@ -412,7 +419,7 @@ function groupChecklistByFlow(items, { productFlowMap, flowNames, productsInPlan
 
   const groups = [...byFlow.entries()].map(([flowId, groupItems]) => {
     const productNames = productsInPlan
-      .filter((p) => productFlowMap?.get(p.productId) === flowId)
+      .filter((p) => productMatchesFlow(productFlowMap, p.productId, flowId))
       .map((p) => productMap.get(p.productId)?.name || p.label)
       .filter(Boolean);
     const flowLabel = flowNames?.get(flowId) || 'תזרים';
@@ -439,6 +446,7 @@ function renderProductCentricPlanHTML(items, products, {
   plan = null,
   showHighlights = false,
   productFlowMap = null,
+  productFlowNamesMap = null,
   flowNames = null,
 } = {}) {
   let filtered = items;
@@ -469,7 +477,7 @@ function renderProductCentricPlanHTML(items, products, {
     html += `
       <div class="manager-plan-section">
         <div class="manager-plan-section-title">📦 מוצרים לייצור</div>
-        ${productsInPlan.map((item) => planItemRow(item)).join('')}
+        ${productsInPlan.map((item) => planItemRow(item, { productFlowNamesMap })).join('')}
       </div>`;
   }
 
@@ -782,7 +790,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false } = {}) {
     </div>`;
 }
 
-function planItemRow(item, { showDay = false } = {}) {
+function planItemRow(item, { showDay = false, productFlowNamesMap = null } = {}) {
   const dayLabels = weekDayLabels();
   const isPortion = item.itemKind === 'portion';
   const isFlowStep = item.itemKind === 'flow_step';
@@ -808,11 +816,15 @@ function planItemRow(item, { showDay = false } = {}) {
     bodyInner = `
         <span class="manager-plan-label">🧹 ${escapeHtml(item.label)}</span>`;
   } else if (item.itemKind === 'product') {
+    const flowDetail = productFlowNamesMap?.get(item.productId)
+      ? `<span class="manager-plan-flow-label">תזרים: ${escapeHtml(productFlowNamesMap.get(item.productId))}</span>`
+      : '';
     const portionDetail = item.portionPresetId || item.portionName
       ? `<span class="manager-plan-portion-detail">🍽 ${escapeHtml(item.portionName || '')}${item.portionWeight != null ? ` (${item.portionWeight} ק"ג` : ''}${item.portionExtra ? ` · ${escapeHtml(item.portionExtra)}` : ''}${item.portionWeight != null ? ')' : ''}</span>`
       : '';
     bodyInner = `
         <span class="manager-plan-label">📦 ${escapeHtml(item.label)}</span>
+        ${flowDetail}
         ${portionDetail}
         ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}${item.portionPresetId ? ' מנות' : ''}</span>` : ''}`;
   } else {
@@ -948,7 +960,7 @@ function bindPlanItems(container, planType, anchorDate) {
         : res.hasFlow === false
           ? `נוסף ✓ · ${portionCount} שורות · אין תזרim משויך`
           : res.hasFlow
-            ? `נוסף ✓ · ${portionCount} שורות`
+            ? `נוסף ✓ · ${portionCount} שורות${res.flowName ? ` · ${res.flowName}` : ''}`
             : 'מוצר נוסף ✓';
       showToast(msg);
       renderManager(container);
@@ -984,14 +996,16 @@ async function buildPlanFlowContext(items, { dayOffset = null } = {}) {
     filtered.filter((i) => i.itemKind === 'product').map((i) => i.productId).filter(Boolean),
   )];
   const productFlowMap = new Map();
+  const productFlowNamesMap = new Map();
   const flowNames = new Map();
   for (const pid of productIds) {
-    const flow = await resolveDefaultFlowForProduct(pid);
-    if (!flow) continue;
-    productFlowMap.set(pid, flow.id);
-    flowNames.set(flow.id, flow.name);
+    const flows = await resolveFlowsForProduct(pid);
+    if (!flows.length) continue;
+    productFlowMap.set(pid, new Set(flows.map((f) => f.id)));
+    for (const flow of flows) flowNames.set(flow.id, flow.name);
+    productFlowNamesMap.set(pid, flows.map((f) => f.name).join(', '));
   }
-  return { productFlowMap, flowNames };
+  return { productFlowMap, productFlowNamesMap, flowNames };
 }
 
 async function renderDailyPlan(container) {
@@ -1004,7 +1018,7 @@ async function renderDailyPlan(container) {
     getProductsCatalogLayout(),
     loadActiveRunsForPlan(),
   ]);
-  const { productFlowMap, flowNames } = await buildPlanFlowContext(items);
+  const { productFlowMap, productFlowNamesMap, flowNames } = await buildPlanFlowContext(items);
   const activeRunsProductMap = new Map(products.map((p) => [p.id, p]));
   const done = items.filter((i) => i.done).length;
   const progressPct = items.length ? Math.round((done / items.length) * 100) : 0;
@@ -1039,6 +1053,7 @@ async function renderDailyPlan(container) {
     plan,
     showHighlights: true,
     productFlowMap,
+    productFlowNamesMap,
     flowNames,
   })}
     </div>`;
@@ -1108,7 +1123,7 @@ async function renderWeeklyPlan(container) {
   ]);
   const weekEnd = addDaysISO(weekStart, 6);
   const dayItems = items.filter((i) => (i.dayOffset ?? 0) === selectedDay);
-  const { productFlowMap, flowNames } = await buildPlanFlowContext(items, { dayOffset: selectedDay });
+  const { productFlowMap, productFlowNamesMap, flowNames } = await buildPlanFlowContext(items, { dayOffset: selectedDay });
   const done = dayItems.filter((i) => i.done).length;
   const progressPct = dayItems.length ? Math.round((done / dayItems.length) * 100) : 0;
 
@@ -1154,6 +1169,7 @@ async function renderWeeklyPlan(container) {
       ${renderProductCentricPlanHTML(items, products, {
         dayOffset: selectedDay,
         productFlowMap,
+        productFlowNamesMap,
         flowNames,
       })}
     </div>

@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=284';
-import { APP_VERSION } from './version.js?v=284';
-import { defaultColorForIndex } from './chart.js?v=284';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=284';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=284';
-import { ValidationError } from './validators.js?v=284';
+import { exportAllData, importAllData } from './db.js?v=285';
+import { APP_VERSION } from './version.js?v=285';
+import { defaultColorForIndex } from './chart.js?v=285';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=285';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=285';
+import { ValidationError } from './validators.js?v=285';
 
 export const BACKUP_VERSION = 3;
 
@@ -189,6 +189,7 @@ export function enrichBackupData(raw) {
     bakingProfileProducts: raw.bakingProfileProducts || [],
     bakingProfileScopes: raw.bakingProfileScopes || [],
     productRecipeComponents: raw.productRecipeComponents || [],
+    productFlowLinks: raw.productFlowLinks || [],
     productionMachines: raw.productionMachines || [],
     productionMachineFields: raw.productionMachineFields || [],
     productionMachineProducts: raw.productionMachineProducts || [],
@@ -377,6 +378,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];
   if (!Array.isArray(data.bakingProfileScopes)) data.bakingProfileScopes = [];
   if (!Array.isArray(data.productRecipeComponents)) data.productRecipeComponents = [];
+  if (!Array.isArray(data.productFlowLinks)) data.productFlowLinks = [];
   if (!Array.isArray(data.productionMachines)) data.productionMachines = [];
   if (!Array.isArray(data.productionMachineFields)) data.productionMachineFields = [];
   if (!Array.isArray(data.productionMachineProducts)) data.productionMachineProducts = [];
