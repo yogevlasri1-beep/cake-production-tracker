@@ -10,9 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=285';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=285';
-import { defaultColorForIndex } from './chart.js?v=285';
+} from './validators.js?v=286';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=286';
+import { defaultColorForIndex } from './chart.js?v=286';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=286';
 
 export { ValidationError };
 
@@ -5827,7 +5828,7 @@ export async function copyDefaultFlowStepsToGroup(categoryGroupId) {
 }
 
 function nowISO() {
-  return new Date().toISOString();
+  return localDateTimeISO();
 }
 
 function isoDatePart(iso) {
@@ -5837,7 +5838,7 @@ function isoDatePart(iso) {
 
 function mergeDateIntoIso(dateStr, existingIso) {
   if (!isValidISODate(dateStr)) throw new ValidationError('תאריך לא תקין');
-  let time = '12:00:00';
+  let time = localDateTimeISO().slice(11, 19);
   if (existingIso && String(existingIso).length >= 19) {
     time = String(existingIso).slice(11, 19);
   }
@@ -5993,7 +5994,7 @@ export async function startProductionRun({
 
   await assertProductionDbReady();
 
-  const startedAt = mergeDateIntoIso(date, nowISO());
+  const startedAt = `${date}T${localDateTimeISO().slice(11, 19)}`;
   const prepChecks = resolvedFlowId ? await getFlowPreparations(resolvedFlowId) : [];
   const cleaningTasks = resolvedFlowId ? await getFlowCleaningTasks(resolvedFlowId) : [];
 
@@ -6421,6 +6422,7 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
   if (!step.tracksPortions) throw new ValidationError('שלב זה לא עוקב אחר מנות');
 
   const stepReached = step.status === 'completed'
+    || step.status === 'active'
     || stepIndex <= run.currentStepIndex
     || run.status === 'completed';
   if (!stepReached) throw new ValidationError('השלב עדיין לא הגיע ליצור');
@@ -6513,6 +6515,75 @@ export async function deleteRunStepPortionBatch(runId, stepIndex, batchIndex) {
   });
 }
 
+export async function activateRunStep(runId, stepIndex) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status === 'completed') throw new ValidationError('התהליך הושלם');
+  const idx = Number(stepIndex);
+  if (!Number.isInteger(idx) || idx < 0 || idx >= run.steps.length) {
+    throw new ValidationError('שלב לא תקין');
+  }
+  const step = run.steps[idx];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  if (step.status === 'completed') throw new ValidationError('השלב כבר הושלם');
+
+  return db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    await db.runStepStates.update(step.id, {
+      status: 'active',
+      startedAt: step.startedAt || nowISO(),
+    });
+    const newCurrent = Math.max(run.currentStepIndex ?? 0, idx);
+    await db.productionRuns.update(runId, {
+      currentStepIndex: newCurrent,
+      status: 'active',
+      completedAt: null,
+    });
+  });
+}
+
+function pauseStepTimerPatch(step) {
+  if (step.timerState !== 'running' || !step.timerSegmentStartedAt) {
+    return { timerState: 'paused', timerElapsedMs: Number(step.timerElapsedMs) || 0, timerSegmentStartedAt: null };
+  }
+  const started = parseLocalDateTimeIso(step.timerSegmentStartedAt).getTime();
+  const segmentMs = Number.isFinite(started) ? Math.max(0, Date.now() - started) : 0;
+  return {
+    timerState: 'paused',
+    timerElapsedMs: (Number(step.timerElapsedMs) || 0) + segmentMs,
+    timerSegmentStartedAt: null,
+  };
+}
+
+export async function setStepTimerAction(runId, stepIndex, action) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status === 'completed') throw new ValidationError('התהליך הושלם');
+  const idx = Number(stepIndex);
+  const step = run.steps[idx];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  if (step.status === 'completed') throw new ValidationError('לא ניתן לנהל טיימר לשלב שהושלם');
+  if (step.status !== 'active') throw new ValidationError('הפעל את השלב לפני טיימר');
+
+  let patch = {};
+  const act = String(action || '').trim();
+  if (act === 'start' || act === 'resume') {
+    if (step.timerState === 'running') return;
+    patch = {
+      timerState: 'running',
+      timerElapsedMs: Number(step.timerElapsedMs) || 0,
+      timerSegmentStartedAt: nowISO(),
+    };
+  } else if (act === 'pause') {
+    if (step.timerState !== 'running') return;
+    patch = pauseStepTimerPatch(step);
+  } else if (act === 'reset') {
+    patch = { timerState: 'off', timerElapsedMs: 0, timerSegmentStartedAt: null };
+  } else {
+    throw new ValidationError('פעולת טיימר לא תקינה');
+  }
+  return db.runStepStates.update(step.id, patch);
+}
+
 export async function completeRunStep(runId, stepIndex, {
   notes, issues, improvements, portionUnit, portionSize, portionCount,
   startedDate, startedTime, completedDate, completedTime,
@@ -6520,10 +6591,11 @@ export async function completeRunStep(runId, stepIndex, {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (run.status === 'completed') throw new ValidationError('התהליך כבר הושלם');
-  if (stepIndex !== run.currentStepIndex) throw new ValidationError('זה לא השלב הפעיל');
-
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
+  if (step.status !== 'active' && stepIndex !== run.currentStepIndex) {
+    throw new ValidationError('הפעל את השלב לפני השלמה');
+  }
 
   let startedAt = step.startedAt || null;
   if (startedDate || startedTime) {
@@ -6555,6 +6627,10 @@ export async function completeRunStep(runId, stepIndex, {
       issues: String(issues ?? step.issues ?? '').trim().slice(0, 500),
       improvements: String(improvements ?? step.improvements ?? '').trim().slice(0, 500),
     };
+    if (step.timerState === 'running' || step.timerState === 'paused') {
+      Object.assign(stepPatch, pauseStepTimerPatch(step));
+      stepPatch.timerState = 'paused';
+    }
     if (step.tracksPortions) {
       const unit = step.portionUnit === 'weight' ? 'weight' : 'units';
       const pSize = sanitizePortionSizeForUnit(step.portionSize, unit);
@@ -6592,19 +6668,21 @@ export async function completeRunStep(runId, stepIndex, {
     }
     await db.runStepStates.update(step.id, stepPatch);
 
-    const nextIndex = stepIndex + 1;
-    const isLast = nextIndex >= run.steps.length;
+    const updatedStatuses = run.steps.map((s, i) => (i === stepIndex ? 'completed' : s.status));
+    const allCompleted = updatedStatuses.every((status) => status === 'completed');
+    const wasSequential = stepIndex === run.currentStepIndex;
 
-    if (isLast) {
+    if (allCompleted) {
       await db.productionRuns.update(runId, {
         status: 'completed',
-        currentStepIndex: nextIndex,
+        currentStepIndex: run.steps.length,
         completedAt: nowISO(),
       });
-    } else {
+    } else if (wasSequential) {
+      const nextIndex = stepIndex + 1;
       await db.productionRuns.update(runId, { currentStepIndex: nextIndex });
       const nextStep = run.steps[nextIndex];
-      if (nextStep) {
+      if (nextStep && nextStep.status === 'pending') {
         await db.runStepStates.update(nextStep.id, {
           status: 'active',
           startedAt: nextStep.startedAt || nowISO(),

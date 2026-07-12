@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=285';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=286';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -105,47 +105,100 @@ export function formatDuration(ms) {
 }
 
 export function runDurationMs(run) {
-  const start = run?.startedAt ? Date.parse(run.startedAt) : NaN;
+  const start = run?.startedAt ? parseLocalDateTimeIso(run.startedAt).getTime() : NaN;
   if (!Number.isFinite(start)) return null;
-  const end = run?.completedAt ? Date.parse(run.completedAt) : Date.now();
+  const end = run?.completedAt ? parseLocalDateTimeIso(run.completedAt).getTime() : Date.now();
   if (!Number.isFinite(end)) return null;
   return Math.max(0, end - start);
 }
 
 export function stepDurationMs(step, prevCompletedAt, runStartedAt) {
   if (!step?.completedAt) return null;
-  const end = Date.parse(step.completedAt);
+  const end = parseLocalDateTimeIso(step.completedAt).getTime();
   if (!Number.isFinite(end)) return null;
   let start = NaN;
   if (step.startedAt) {
-    start = Date.parse(step.startedAt);
+    start = parseLocalDateTimeIso(step.startedAt).getTime();
   } else if (prevCompletedAt) {
-    start = Date.parse(prevCompletedAt);
+    start = parseLocalDateTimeIso(prevCompletedAt).getTime();
   } else if (runStartedAt) {
-    start = Date.parse(runStartedAt);
+    start = parseLocalDateTimeIso(runStartedAt).getTime();
   }
   if (!Number.isFinite(start)) return null;
   return Math.max(0, end - start);
 }
 
+export function getStepTimerElapsedMs(step, nowMs = Date.now()) {
+  if (!step) return 0;
+  let ms = Number(step.timerElapsedMs) || 0;
+  if (step.timerState === 'running' && step.timerSegmentStartedAt) {
+    const started = parseLocalDateTimeIso(step.timerSegmentStartedAt).getTime();
+    if (Number.isFinite(started)) ms += Math.max(0, nowMs - started);
+  }
+  return ms;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+/** תאריך מקומי YYYY-MM-DD */
+export function localDateISO(d = new Date()) {
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+/** שעה מקומית HH:MM:SS */
+export function localTimeHMS(d = new Date()) {
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return '00:00:00';
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+/** תאריך+שעה מקומיים ללא אזור זמן (לשמירה במסד) */
+export function localDateTimeISO(d = new Date()) {
+  const date = localDateISO(d);
+  if (!date) return '';
+  return `${date}T${localTimeHMS(d)}`;
+}
+
+export function parseLocalDateTimeIso(iso) {
+  if (!iso) return new Date(NaN);
+  const text = String(iso).trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return new Date(text);
+  return new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0),
+  );
+}
+
 export function isoToDateInput(iso) {
   if (!iso) return '';
+  if (iso instanceof Date) return localDateISO(iso);
+  const local = parseLocalDateTimeIso(iso);
+  if (!Number.isNaN(local.getTime())) return localDateISO(local);
   return String(iso).slice(0, 10);
 }
 
 export function isoToTimeInput(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
+  const d = iso instanceof Date ? iso : parseLocalDateTimeIso(iso);
   if (Number.isNaN(d.getTime())) {
     const part = String(iso).slice(11, 16);
     return /^\d{2}:\d{2}$/.test(part) ? part : '';
   }
-  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 export function formatDateTime(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = parseLocalDateTimeIso(iso);
   if (Number.isNaN(d.getTime())) return '—';
   const date = d.toLocaleDateString('he-IL');
   const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });

@@ -13,6 +13,7 @@ import {
   getAllProductionRuns,
   getProductionRunsForFlow, getFlowProductsHistory, getFlow,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
+  activateRunStep, setStepTimerAction,
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal,
@@ -23,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=285';
+} from '../db.js?v=286';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=285').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=286').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=285';
-import { openModal, closeModal } from '../modal.js?v=285';
-import { requestAutoBackupNow } from '../backup-service.js?v=285';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=285';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=285';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=286';
+import { openModal, closeModal } from '../modal.js?v=286';
+import { requestAutoBackupNow } from '../backup-service.js?v=286';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=286';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=286';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -475,10 +476,39 @@ function runTitle(run, catMap, productMap, groupMap) {
 }
 
 function stepVisualState(stepIndex, currentIndex, totalSteps, stepStatus) {
-  if (stepStatus === 'completed' || stepIndex < currentIndex) return 'done';
+  if (stepStatus === 'completed') return 'done';
+  if (stepStatus === 'active') return 'active';
+  if (stepIndex < currentIndex) return 'done';
   if (stepIndex === currentIndex) return 'active';
   if (stepIndex === currentIndex + 1) return 'next';
   return 'future';
+}
+
+function stepTimerHTML(step, stepIndex, { runActive = false } = {}) {
+  const elapsed = getStepTimerElapsedMs(step);
+  const hasTimer = step.timerState && step.timerState !== 'off';
+  const label = hasTimer || elapsed > 0 ? formatDuration(elapsed) : '00:00';
+  const state = step.timerState || 'off';
+  if (!runActive || step.status === 'completed') {
+    if (!hasTimer && elapsed <= 0) return '';
+    return `<div class="flow-step-timer-row flow-step-timer-row--readonly">
+      <span class="flow-step-timer-display" data-step-timer-display="${stepIndex}">⏱ ${escapeHtml(label)}</span>
+    </div>`;
+  }
+  if (step.status !== 'active') return '';
+  let actionBtn = '';
+  if (state === 'off') {
+    actionBtn = `<button type="button" class="btn btn-secondary btn-sm flow-step-timer-btn" data-step="${stepIndex}" data-timer-action="start">▶ טיימר</button>`;
+  } else if (state === 'running') {
+    actionBtn = `<button type="button" class="btn btn-secondary btn-sm flow-step-timer-btn is-running" data-step="${stepIndex}" data-timer-action="pause">⏸ השהה</button>`;
+  } else if (state === 'paused') {
+    actionBtn = `<button type="button" class="btn btn-secondary btn-sm flow-step-timer-btn" data-step="${stepIndex}" data-timer-action="resume">▶ המשך</button>`;
+  }
+  return `<div class="flow-step-timer-row">
+    <span class="flow-step-timer-display${state === 'running' ? ' is-running' : ''}" data-step-timer-display="${stepIndex}">⏱ ${escapeHtml(label)}</span>
+    ${actionBtn}
+    ${hasTimer ? `<button type="button" class="btn btn-secondary btn-sm flow-step-timer-btn" data-step="${stepIndex}" data-timer-action="reset" title="איפוס טיימר">↺</button>` : ''}
+  </div>`;
 }
 
 function runStartDateIso(run) {
@@ -688,11 +718,11 @@ function stepTimingFieldsHTML(step, stepIndex, { editable = true, defaultStartNo
   let endTime = isoToTimeInput(step.completedAt);
   if (editable && defaultStartNow && !startDate) {
     startDate = todayISO();
-    startTime = isoToTimeInput(new Date().toISOString());
+    startTime = isoToTimeInput(new Date());
   }
   if (editable && defaultEndNow && !endDate) {
     endDate = todayISO();
-    endTime = isoToTimeInput(new Date().toISOString());
+    endTime = isoToTimeInput(new Date());
   }
   const durMs = stepDurationMs(step, null, null);
   const durLabel = durMs != null ? formatDuration(durMs) : '';
@@ -956,8 +986,10 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const stepCompletedLabel = step.completedAt ? formatDateTime(step.completedAt) : '';
   const isActive = visual === 'active';
   const isDone = visual === 'done';
-  const stepUnlocked = stepIndex <= currentIndex || step.status === 'completed' || step.status === 'active';
+  const isStepActive = step.status === 'active';
+  const stepUnlocked = isStepActive || step.status === 'completed' || stepIndex <= currentIndex || run?.status === 'completed';
   const runActive = run?.status === 'active';
+  const canActivate = runActive && step.status === 'pending' && !isDone;
   const useTopProductionPanel = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
@@ -1005,8 +1037,13 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
       presets: portionPresets,
     }) : '<p class="form-hint">אין מנות מתועדות עדיין</p>'}`
     : '';
+  const timerElapsed = getStepTimerElapsedMs(step);
+  const timerMeta = timerElapsed > 0 || (step.timerState && step.timerState !== 'off')
+    ? formatDuration(timerElapsed)
+    : '';
   const metaParts = [];
-  if (stepDurationLabel) metaParts.push(`<span class="flow-step-meta-item">⏱ ${escapeHtml(stepDurationLabel)}</span>`);
+  if (timerMeta) metaParts.push(`<span class="flow-step-meta-item flow-step-meta-item--timer">⏱ ${escapeHtml(timerMeta)}</span>`);
+  if (stepDurationLabel && !timerMeta) metaParts.push(`<span class="flow-step-meta-item">⏱ ${escapeHtml(stepDurationLabel)}</span>`);
   if (stepStartedLabel) metaParts.push(`<span class="flow-step-meta-item">${escapeHtml(stepStartedLabel)}</span>`);
   else if (stepCompletedLabel) metaParts.push(`<span class="flow-step-meta-item">${escapeHtml(stepCompletedLabel)}</span>`);
   if (portionText) metaParts.push(`<span class="flow-step-meta-item">🍽 ${escapeHtml(portionText)}</span>`);
@@ -1025,16 +1062,18 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
               <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
             </div>
             ${metaHTML}
+            ${stepTimerHTML(step, stepIndex, { runActive })}
           </div>
           <div class="flow-step-header-actions">
+            ${canActivate ? `<button type="button" class="btn btn-secondary btn-sm flow-step-activate-btn" data-step="${stepIndex}">הפעל שלב</button>` : ''}
             ${showTimingBtn ? `
               <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-timing-btn${hasTimingData ? ' has-content' : ''}" data-step="${stepIndex}" title="עריכת זמנים" aria-label="עריכת זמנים">🕐</button>` : ''}
             ${showPortionsBtn ? `
               <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-portions-btn${hasPortionsData ? ' has-content' : ''}" data-step="${stepIndex}" title="תיעוד מנות" aria-label="תיעוד מנות">${FLOW_STEP_PORTIONS_ICON}</button>` : ''}
             ${canEditFields ? `
               <button type="button" class="btn btn-secondary btn-sm btn-icon flow-step-notes-btn${hasNotes ? ' has-content' : ''}" data-step="${stepIndex}" title="הערות · תקלות · שיפור" aria-label="הערות תקלות ושיפור">📝</button>` : ''}
-            ${isActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
-            ${isActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
+            ${isStepActive && runActive && !editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓</button>` : ''}
+            ${isStepActive && runActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
           </div>
         </div>
         ${prodPanel}
@@ -1595,6 +1634,11 @@ function flowCleaningCompactButtonHTML({ checks, flowLabel }) {
 }
 
 async function renderRunView(container, runId, ctx) {
+  if (container._runTimerInterval) {
+    clearInterval(container._runTimerInterval);
+    container._runTimerInterval = null;
+  }
+
   try {
     await syncProductionRunWithFlow(runId);
   } catch {
@@ -1963,6 +2007,57 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  container.querySelectorAll('.flow-step-activate-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const stepIndex = Number(btn.dataset.step);
+      try {
+        await activateRunStep(run.id, stepIndex);
+        requestAutoBackupNow().catch(() => {});
+        showToast('השלב הופעל ✓');
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.flow-step-timer-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const stepIndex = Number(btn.dataset.step);
+      const action = btn.dataset.timerAction;
+      if (action === 'reset' && !confirm('לאפס את הטיימר לשלב זה?')) return;
+      try {
+        await setStepTimerAction(run.id, stepIndex, action);
+        container.dataset.runId = String(run.id);
+        container.dataset.view = 'run';
+        renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  const hasRunningTimer = run.steps.some((s) => s.timerState === 'running');
+  if (hasRunningTimer) {
+    container._runTimerInterval = setInterval(() => {
+      container.querySelectorAll('[data-step-timer-display]').forEach((el) => {
+        const stepIndex = Number(el.dataset.stepTimerDisplay);
+        const step = run.steps[stepIndex];
+        if (!step || step.timerState !== 'running') return;
+        el.textContent = `⏱ ${formatDuration(getStepTimerElapsedMs(step))}`;
+      });
+      container.querySelectorAll('.flow-step-meta-item--timer').forEach((el) => {
+        const row = el.closest('.flow-step');
+        const stepIndex = Number(row?.dataset.stepIndex);
+        const step = run.steps[stepIndex];
+        if (!step || step.timerState !== 'running') return;
+        el.textContent = `⏱ ${formatDuration(getStepTimerElapsedMs(step))}`;
+      });
+    }, 1000);
+  }
+
   container.querySelectorAll('.flow-step-reopen-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const stepIndex = Number(btn.dataset.step);
@@ -2015,7 +2110,7 @@ async function renderRunView(container, runId, ctx) {
       const kind = btn.dataset.kind;
       const now = new Date();
       const dateVal = todayISO();
-      const timeVal = isoToTimeInput(now.toISOString());
+      const timeVal = isoToTimeInput(new Date());
       if (kind === 'start') {
         const d = document.getElementById(`step-${stepIndex}-started-date`);
         const t = document.getElementById(`step-${stepIndex}-started-time`);

@@ -1262,6 +1262,35 @@ body {
   gap: 4px;
   margin-inline-start: auto;
   flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.flow-step-timer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.flow-step-timer-display {
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.flow-step-timer-display.is-running {
+  color: var(--primary);
+}
+
+.flow-step-timer-btn.is-running {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+}
+
+.flow-step-activate-btn {
+  white-space: nowrap;
 }
 
 .flow-step-timing-btn,
