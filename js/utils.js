@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=290';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=291';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -102,6 +102,17 @@ export function formatDuration(ms) {
   if (!parts.length) return "0 דק'";
 
   return parts.join(' ');
+}
+
+/** סטופר — זמן רץ קדימה (ms → MM:SS או H:MM:SS) */
+export function formatStopwatch(ms) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '00:00';
+  const totalSec = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hours > 0) return `${hours}:${pad2(mins)}:${pad2(secs)}`;
+  return `${pad2(mins)}:${pad2(secs)}`;
 }
 
 export function runDurationMs(run) {

@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=290';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=290';
-import { defaultColorForIndex } from './chart.js?v=290';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=290';
+} from './validators.js?v=291';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=291';
+import { defaultColorForIndex } from './chart.js?v=291';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=291';
 
 export { ValidationError };
 
@@ -6632,8 +6632,8 @@ export async function setStepTimerAction(runId, stepIndex, action) {
   const idx = Number(stepIndex);
   const step = run.steps[idx];
   if (!step) throw new ValidationError('שלב לא תקין');
-  if (step.status === 'completed') throw new ValidationError('לא ניתן לנהל טיימר לשלב שהושלם');
-  if (step.status !== 'active') throw new ValidationError('הפעל את השלב לפני טיימר');
+  if (step.status === 'completed') throw new ValidationError('לא ניתן לנהל סטופר לשלב שהושלם');
+  if (step.status !== 'active') throw new ValidationError('הפעל את השלב לפני סטופר');
 
   let patch = {};
   const act = String(action || '').trim();
@@ -6650,7 +6650,7 @@ export async function setStepTimerAction(runId, stepIndex, action) {
   } else if (act === 'reset') {
     patch = { timerState: 'off', timerElapsedMs: 0, timerSegmentStartedAt: null };
   } else {
-    throw new ValidationError('פעולת טיימר לא תקינה');
+    throw new ValidationError('פעולת סטופר לא תקינה');
   }
   return db.runStepStates.update(step.id, patch);
 }

@@ -1,17 +1,17 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=290';
+} from './db.js?v=291';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=290').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=291').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { escapeHtml, showToast } from './utils.js?v=290';
-import { openModal, closeModal } from './modal.js?v=290';
+import { escapeHtml, showToast } from './utils.js?v=291';
+import { openModal, closeModal } from './modal.js?v=291';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
 

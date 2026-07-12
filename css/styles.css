@@ -1291,10 +1291,19 @@ body {
 }
 
 .flow-step-timer-display {
-  font-size: 0.85rem;
+  font-size: 1.05rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
+}
+
+.flow-step-stopwatch-display {
+  min-width: 3.5rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border) 35%, transparent);
 }
 
 .flow-step-timer-display.is-running {
