@@ -1,9 +1,10 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=282';
-import { escapeHtml, showToast } from './utils.js?v=282';
-import { openModal, closeModal } from './modal.js?v=282';
+} from './db.js?v=283';
+import { bindPortionIngredientsButtons } from '../portion-ingredients.js?v=283';
+import { escapeHtml, showToast } from './utils.js?v=283';
+import { openModal, closeModal } from './modal.js?v=283';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
 
@@ -228,6 +229,9 @@ function renderPortionRow(portion, index, total) {
         </div>
       </div>
       <div class="list-item-actions">
+        ${portion.sourceKind === 'recipe' ? `
+        <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn" data-id="${portion.id}"
+          data-portion-name="${escapeHtml(portion.name)}" title="רכיבי מתכון">📋</button>` : ''}
         <button type="button" class="btn btn-secondary btn-sm portion-edit-link" data-id="${portion.id}" title="שיוך">🔗</button>
       </div>
     </div>`;
@@ -313,4 +317,6 @@ export async function renderRecipesPortions(container, { productCatalog }) {
       if (portion) openPortionLinkForm({ portion, productCatalog, onSaved: rerender });
     });
   });
+
+  bindPortionIngredientsButtons(container, { onSaved: rerender });
 }

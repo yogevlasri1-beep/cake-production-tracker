@@ -22,12 +22,13 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=282';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=282';
-import { openModal, closeModal } from '../modal.js?v=282';
-import { requestAutoBackupNow } from '../backup-service.js?v=282';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=282';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=282';
+} from '../db.js?v=283';
+import { bindPortionIngredientsButtons } from '../portion-ingredients.js?v=283';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=283';
+import { openModal, closeModal } from '../modal.js?v=283';
+import { requestAutoBackupNow } from '../backup-service.js?v=283';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=283';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=283';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -573,6 +574,9 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
                 <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
               `}
               ${b.note ? `<span class="flow-portion-batch-note">${escapeHtml(b.note)}</span>` : ''}
+              ${b.presetId && b.fromRecipe ? `
+                <button type="button" class="btn btn-secondary btn-sm flow-portion-ingredients-btn"
+                  data-preset-id="${b.presetId}" data-portion-name="${escapeHtml(b.name || '')}" title="רכיבי מתכון">📋 רכיבים</button>` : ''}
             </li>`).join('')}
         </ul>
         ${total != null ? `<p class="flow-portion-batch-total">סה"כ: <strong>${formatPortionCount(total)}</strong> מנות</p>` : ''}
@@ -2115,6 +2119,10 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  bindPortionIngredientsButtons(container, {
+    onSaved: () => renderProcess(container),
+  });
+
   bindRunProductionPanels(container, run, productionCtx);
 }
 
@@ -2537,7 +2545,11 @@ async function renderManageView(container, ctx) {
                     <div class="list-item-name">${p.sourceRecipeId ? '<span class="flow-preset-recipe-star" title="ממתכון מקושר">★</span> ' : ''}${escapeHtml(p.name)}</div>
                     <div class="list-item-meta">${p.weight} ק"ג${p.extra ? ` · ${escapeHtml(p.extra)}` : ''}${p.sourceRecipeId ? ' · עריכה במתכונים' : ''}</div>
                   </div>
-                  ${p.sourceRecipeId ? '' : `
+                  ${p.sourceRecipeId ? `
+                  <div class="list-item-actions">
+                    <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn"
+                      data-id="${p.id}" data-portion-name="${escapeHtml(p.name)}" title="רכיבי מתכון">📋 רכיבים</button>
+                  </div>` : `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm edit-preset"
                       data-id="${p.id}" data-name="${escapeHtml(p.name)}"
@@ -2874,6 +2886,10 @@ async function renderManageView(container, ctx) {
       showToast('נמחק');
       renderProcess(container);
     });
+  });
+
+  bindPortionIngredientsButtons(container, {
+    onSaved: () => renderProcess(container),
   });
 
   container.querySelectorAll('.edit-step').forEach((btn) => {

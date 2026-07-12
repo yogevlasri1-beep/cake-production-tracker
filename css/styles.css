@@ -8440,6 +8440,51 @@ body.supplier-drag-active {
   color: #166534;
 }
 
+.portion-ingredients-table-wrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.portion-ingredients-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.portion-ingredients-table th,
+.portion-ingredients-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  vertical-align: middle;
+}
+
+.portion-ingredients-table th {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.portion-ingredients-table input[type="number"],
+.portion-ingredients-table select {
+  width: 100%;
+  min-width: 90px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.portion-ing-supplier-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.flow-portion-ingredients-btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .catalog-intro {
   margin-bottom: 0;
 }

@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=282';
-import { APP_VERSION } from './version.js?v=282';
-import { defaultColorForIndex } from './chart.js?v=282';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=282';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=282';
-import { ValidationError } from './validators.js?v=282';
+import { exportAllData, importAllData } from './db.js?v=283';
+import { APP_VERSION } from './version.js?v=283';
+import { defaultColorForIndex } from './chart.js?v=283';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=283';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=283';
+import { ValidationError } from './validators.js?v=283';
 
 export const BACKUP_VERSION = 3;
 
@@ -175,6 +175,7 @@ export function enrichBackupData(raw) {
     flowPortionPresets: raw.flowPortionPresets || [],
     groupPortionPresets: raw.groupPortionPresets || [],
     portionPresetLinks: raw.portionPresetLinks || [],
+    portionPresetIngredientSettings: raw.portionPresetIngredientSettings || [],
     groupPreparations: raw.groupPreparations || [],
     flowPreparations: raw.flowPreparations || [],
     recipeGroups: raw.recipeGroups || [],
@@ -389,6 +390,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.weeklyProductionPlanItems)) data.weeklyProductionPlanItems = [];
   if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];
   if (!Array.isArray(data.portionPresetLinks)) data.portionPresetLinks = [];
+  if (!Array.isArray(data.portionPresetIngredientSettings)) data.portionPresetIngredientSettings = [];
   if (!Array.isArray(data.managerPlans)) data.managerPlans = [];
   if (!Array.isArray(data.managerPlanItems)) data.managerPlanItems = [];
   if (!Array.isArray(data.managerTasks)) data.managerTasks = [];
