@@ -1,12 +1,12 @@
 import {
   getCategories, getProducts, upsertTarget, getTarget,
   getEntriesForDate, getEntriesForMonth, getProductionTotals,
-} from '../db.js?v=280';
+} from '../db.js?v=281';
 import {
   todayISO, progressBar, moneyProgressBar, moneyProgressBadge,
   formatMoney, currentMonth, monthLabel,
-} from '../utils.js?v=280';
-import { showToast } from '../utils.js?v=280';
+} from '../utils.js?v=281';
+import { showToast } from '../utils.js?v=281';
 
 export async function renderTargets(container) {
   const period = container.dataset.period || 'daily';

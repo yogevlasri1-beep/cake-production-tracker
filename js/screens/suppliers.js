@@ -15,13 +15,13 @@ import {
   clearDoneSupplierShortages, formatSupplierShortagesText,
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
-} from '../kitchen-db.js?v=280';
-import { getProducts } from '../db.js?v=280';
-import { parseSupplierFile } from '../supplier-import.js?v=280';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=280';
-import { openModal, closeModal } from '../modal.js?v=280';
-import { requestAutoBackupNow } from '../backup-service.js?v=280';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=280';
+} from '../kitchen-db.js?v=281';
+import { getProducts } from '../db.js?v=281';
+import { parseSupplierFile } from '../supplier-import.js?v=281';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=281';
+import { openModal, closeModal } from '../modal.js?v=281';
+import { requestAutoBackupNow } from '../backup-service.js?v=281';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=281';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -718,7 +718,7 @@ async function renderBrowseTab(body, container) {
   body.innerHTML = `
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים</p>
+      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
       ${hasData ? `
       <div class="form-group" style="margin:0">
         <input type="search" id="browse-search" class="catalog-search-input"
@@ -750,22 +750,59 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
     </div>`;
 }
 
+function renderBrowseMaterialRow(m) {
+  const isActive = m.active === true;
+  const rowClass = isActive ? 'browse-material-row--active' : 'browse-material-row--inactive';
+  return `
+        <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
+          <span class="browse-mat-name">${escapeHtml(m.name)}</span>
+          <span class="browse-mat-price">${formatMaterialPriceMeta(m)}${renderPackagingMetaLine(m)}</span>
+        </button>`;
+}
+
+function renderBrowseSupplierMaterialsHTML(materials) {
+  const activeMats = materials.filter((m) => m.active === true);
+  const inactiveMats = materials.filter((m) => m.active !== true);
+  const sections = [];
+
+  if (activeMats.length) {
+    sections.push(`
+      <div class="browse-mats-section browse-mats-section--active">
+        <div class="browse-mats-section-label">פעילים — במתכונים (${activeMats.length})</div>
+        ${activeMats.map((m) => renderBrowseMaterialRow(m)).join('')}
+      </div>`);
+  }
+  if (inactiveMats.length) {
+    if (activeMats.length) {
+      sections.push('<div class="browse-mats-divider" role="separator" aria-hidden="true"></div>');
+    }
+    sections.push(`
+      <div class="browse-mats-section browse-mats-section--inactive">
+        <div class="browse-mats-section-label">לא פעילים — לא במתכונים (${inactiveMats.length})</div>
+        ${inactiveMats.map((m) => renderBrowseMaterialRow(m)).join('')}
+      </div>`);
+  }
+  return sections.join('');
+}
+
 function renderBrowseSupplierBlock(supplier, { search, expandedIds } = {}) {
   const expanded = supplier.autoExpand || expandedIds.has(supplier.id);
   const collapsedClass = expanded ? '' : ' is-collapsed';
+  const activeCount = supplier.materials.filter((m) => m.active === true).length;
+  const inactiveCount = supplier.materials.length - activeCount;
+  const metaParts = [];
+  if (activeCount) metaParts.push(`${activeCount} פעילים`);
+  if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
+  const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
   return `
     <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}">
       <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
         <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
-        <span class="supplier-browse-sup-meta">${supplier.materials.length} חומרים</span>
+        <span class="supplier-browse-sup-meta">${metaText}</span>
       </button>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
-        ${supplier.materials.map((m) => `
-        <button type="button" class="browse-material-row" data-material-id="${m.id}">
-          <span class="browse-mat-name">${escapeHtml(m.name)}</span>
-          <span class="browse-mat-price">${formatMaterialPriceMeta(m)}${renderPackagingMetaLine(m)}</span>
-        </button>`).join('')}
+        ${renderBrowseSupplierMaterialsHTML(supplier.materials)}
       </div>`
     : '<p class="form-hint supplier-browse-empty">אין חומרי גלם</p>'}
     </section>`;

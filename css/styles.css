@@ -8101,9 +8101,77 @@ body.supplier-drag-active {
   touch-action: manipulation;
 }
 
-.browse-material-row:hover {
+.browse-material-row--active {
   background: #ecfdf5;
   border-color: #6ee7b7;
+}
+
+.browse-material-row--active .browse-mat-name {
+  color: #047857;
+}
+
+.browse-material-row--active .browse-mat-price {
+  color: #059669;
+}
+
+.browse-material-row--active:hover {
+  background: #d1fae5;
+  border-color: #34d399;
+}
+
+.browse-material-row--inactive {
+  background: #fef2f2;
+  border-color: #fca5a5;
+}
+
+.browse-material-row--inactive .browse-mat-name {
+  color: #b91c1c;
+}
+
+.browse-material-row--inactive .browse-mat-price {
+  color: #dc2626;
+}
+
+.browse-material-row--inactive:hover {
+  background: #fee2e2;
+  border-color: #f87171;
+}
+
+.browse-legend-active {
+  color: #047857;
+  font-weight: 600;
+}
+
+.browse-legend-inactive {
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.browse-mats-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0 0 8px;
+  padding: 0 2px;
+}
+
+.browse-mats-section--active .browse-mats-section-label {
+  color: #047857;
+}
+
+.browse-mats-section--inactive .browse-mats-section-label {
+  color: #b91c1c;
+}
+
+.browse-mats-section + .browse-mats-section {
+  margin-top: 4px;
+}
+
+.browse-mats-divider {
+  height: 0;
+  border: none;
+  border-top: 2px dashed #cbd5e1;
+  margin: 14px 0 12px;
 }
 
 .browse-mat-name {

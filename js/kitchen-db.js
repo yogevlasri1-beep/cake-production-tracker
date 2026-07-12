@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=280';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=281';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=280';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=280';
+} from './validators.js?v=281';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=281';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1422,6 +1422,7 @@ export async function deleteRecipe(id) {
     for (const p of recipePresets) await db.groupPortionPresets.delete(p.id);
     await db.recipes.delete(rid);
   });
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 /** מוחק את כל המתכונים (רכיבים וקישורים) — קטגוריות וקבוצות נשארות */
@@ -1433,6 +1434,7 @@ export async function deleteAllRecipes() {
     await db.recipeProductGroupLinks.clear();
     await db.recipes.clear();
   });
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 export async function updateRecipeIngredient(id, patch) {
@@ -1459,6 +1461,7 @@ export async function updateRecipeIngredient(id, patch) {
   await db.recipeIngredients.update(iid, data);
   const ing = await db.recipeIngredients.get(iid);
   if (ing?.recipeId) await syncRecipePortionPresets(ing.recipeId);
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 export function getIngredientPriceSource(ing) {
@@ -1475,6 +1478,37 @@ export function buildMaterialsByNameKey(materials) {
     map.get(key).push(m);
   }
   return map;
+}
+
+/** מזהי חומרי גלם שמופיעים במתכונים (לפי שיוך ישיר או התאמת שם) */
+export async function getRecipeLinkedRawMaterialIds() {
+  const [ings, materials] = await Promise.all([
+    db.recipeIngredients.toArray(),
+    db.rawMaterials.toArray(),
+  ]);
+  const byNameKey = buildMaterialsByNameKey(materials);
+  const ids = new Set();
+  for (const ing of ings) {
+    if (ing.rawMaterialId) ids.add(Number(ing.rawMaterialId));
+    const key = normalizeMaterialKey(ing.name);
+    if (!key) continue;
+    for (const m of byNameKey.get(key) || []) ids.add(m.id);
+  }
+  return ids;
+}
+
+/** מסמן חומרי גלם כפעילים אם הם במתכונים, אחרת לא פעילים */
+export async function syncRawMaterialsActiveFromRecipes() {
+  const linkedIds = await getRecipeLinkedRawMaterialIds();
+  const materials = await db.rawMaterials.toArray();
+  const updates = [];
+  for (const m of materials) {
+    const shouldBeActive = linkedIds.has(m.id);
+    if (m.active !== shouldBeActive) {
+      updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
+    }
+  }
+  if (updates.length) await Promise.all(updates);
 }
 
 export function sanitizeProcessedPricePerKg(value) {
@@ -1612,6 +1646,7 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
     priceSource: src,
   });
   await syncRecipePortionPresets(rid);
+  await syncRawMaterialsActiveFromRecipes();
   return ingId;
 }
 
@@ -1621,6 +1656,7 @@ export async function deleteRecipeIngredient(id) {
   const ing = await db.recipeIngredients.get(iid);
   await db.recipeIngredients.delete(iid);
   if (ing?.recipeId) await syncRecipePortionPresets(ing.recipeId);
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 /** קבוצות מוצרים (קטגוריות כלליות) המושפעות משיוך מתכון למוצרים */
@@ -2342,6 +2378,7 @@ export async function addRawMaterial({
       ? null
       : sanitizeProcessedPricePerKg(processedPricePerKg),
     ...packaging,
+    active: false,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {
@@ -2392,7 +2429,10 @@ export async function updateRawMaterial(id, patch) {
     );
     Object.assign(data, packaging);
   }
-  if (Object.keys(data).length) await db.rawMaterials.update(mid, data);
+  if (Object.keys(data).length) {
+    await db.rawMaterials.update(mid, data);
+    if ('name' in data) await syncRawMaterialsActiveFromRecipes();
+  }
 }
 
 export async function deleteRawMaterial(id) {
@@ -2400,6 +2440,7 @@ export async function deleteRawMaterial(id) {
   if (!mid) return;
   await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
   await db.rawMaterials.delete(mid);
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 export function normalizeMaterialKey(name) {
@@ -2546,6 +2587,7 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
     }
   });
   await syncRawMaterialLatestPrice(keep);
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 async function mergeMaterialIntoKeep(keep, mid) {
@@ -2672,6 +2714,7 @@ export async function findOrCreateSupplier(categoryId, name) {
 }
 
 export async function getSuppliersBrowseLayout() {
+  await syncRawMaterialsActiveFromRecipes();
   const [categories, suppliers, materials] = await Promise.all([
     getSupplierCategories(),
     getSuppliers(),
@@ -2684,7 +2727,12 @@ export async function getSuppliersBrowseLayout() {
     matsBySupplier.get(m.supplierId).push(m);
   }
   for (const list of matsBySupplier.values()) {
-    list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+    list.sort((a, b) => {
+      const aActive = a.active === true;
+      const bActive = b.active === true;
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
+    });
   }
   const grouped = categories.map((cat) => ({
     ...cat,
@@ -2801,6 +2849,7 @@ export async function importSupplierExcelEntries(entries, { defaultCategoryId, f
   }
 
   await saveSupplierImportUndo(undo);
+  await syncRawMaterialsActiveFromRecipes();
   return { stats, undo };
 }
 

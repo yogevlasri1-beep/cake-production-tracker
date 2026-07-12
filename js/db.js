@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=280';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=280';
-import { defaultColorForIndex } from './chart.js?v=280';
+} from './validators.js?v=281';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=281';
+import { defaultColorForIndex } from './chart.js?v=281';
 
 export { ValidationError };
 
@@ -2610,6 +2610,71 @@ db.version(58).stores({
       linkCategoryId: null,
       linkCategoryGroupId: null,
     });
+  }
+});
+
+db.version(59).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, linkTargetType, linkProductId, linkCategoryId, linkCategoryGroupId, catalogSortOrder, sortOrder',
+  portionPresetLinks: '++id, portionPresetId, linkType, targetId, sortOrder, [portionPresetId+linkType+targetId]',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  productionMachines: '++id, name, sortOrder',
+  productionMachineFields: '++id, machineId, name, measureKind, unit, sortOrder',
+  productionMachineProducts: '++id, machineId, targetType, productId, categoryId, categoryGroupId, recipeId, [machineId+targetType+productId], [machineId+targetType+categoryId], [machineId+targetType+categoryGroupId]',
+  productionMachineProductValues: '++id, assignmentId, fieldId, [assignmentId+fieldId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+}).upgrade(async (tx) => {
+  const mats = await tx.table('rawMaterials').toArray();
+  for (const m of mats) {
+    if (m.active == null) await tx.table('rawMaterials').update(m.id, { active: false });
   }
 });
 
