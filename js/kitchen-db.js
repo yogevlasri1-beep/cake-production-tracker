@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=281';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=282';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize,
-} from './validators.js?v=281';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=281';
+} from './validators.js?v=282';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=282';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2636,6 +2636,7 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
   for (const kid of touched) {
     await syncRawMaterialLatestPrice(kid);
   }
+  await syncRawMaterialsActiveFromRecipes();
 }
 
 export async function getPriceHistory(rawMaterialId) {

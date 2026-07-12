@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=281';
-import { sanitizeName, sanitizeMoney, sanitizeQuantity } from './validators.js?v=281';
+import { db, ValidationError } from './db.js?v=282';
+import { sanitizeName, sanitizeMoney, sanitizeQuantity } from './validators.js?v=282';
 
 export const PURCHASE_CATEGORY_KEYS = {
   accessories: 'accessories',
@@ -15,8 +15,12 @@ export const PURCHASE_STATUS = {
 export const PURCHASE_STATUS_LABELS = {
   needed: 'לרכישה',
   ordered: 'הוזמן',
-  received: 'התקבל',
+  received: 'בוצע',
 };
+
+export function isPurchaseDone(item) {
+  return item?.status === PURCHASE_STATUS.received;
+}
 
 const DEFAULT_CATEGORIES = [
   { catKey: PURCHASE_CATEGORY_KEYS.accessories, name: 'אביזרים', sortOrder: 1 },

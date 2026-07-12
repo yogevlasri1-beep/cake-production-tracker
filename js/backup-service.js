@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=281';
+} from './db.js?v=282';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=281';
-import { downloadBlob } from './download.js?v=281';
-import { ValidationError } from './validators.js?v=281';
-import { openModal, closeModal } from './modal.js?v=281';
-import { escapeHtml, showToast } from './utils.js?v=281';
+} from './backup.js?v=282';
+import { downloadBlob } from './download.js?v=282';
+import { ValidationError } from './validators.js?v=282';
+import { openModal, closeModal } from './modal.js?v=282';
+import { escapeHtml, showToast } from './utils.js?v=282';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=281';
+} from './backup-folder-bridge.js?v=282';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -33,7 +33,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=281';
+} from './supabase-backup.js?v=282';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';

@@ -8318,6 +8318,70 @@ body.supplier-drag-active {
   background: var(--surface);
 }
 
+.purchase-item--done {
+  background: #f0fdf4;
+  border-color: #86efac;
+  opacity: 0.92;
+}
+
+.purchase-item--done .purchase-item-name {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.purchase-done-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  cursor: pointer;
+  padding-top: 2px;
+  user-select: none;
+}
+
+.purchase-done-cb {
+  width: 22px;
+  height: 22px;
+  accent-color: #16a34a;
+  cursor: pointer;
+}
+
+.purchase-done-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #166534;
+  white-space: nowrap;
+}
+
+.purchase-item--done .purchase-done-label {
+  color: #15803d;
+}
+
+.purchase-list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.purchase-list-section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 0 2px 4px;
+}
+
+.purchase-list-section--done .purchase-list-section-label {
+  color: #166534;
+}
+
+.purchase-list-divider {
+  height: 0;
+  border: none;
+  border-top: 2px dashed #cbd5e1;
+  margin: 10px 0;
+}
+
 .purchase-item-main {
   min-width: 0;
   flex: 1;

@@ -1,11 +1,11 @@
 import {
   getPurchaseCategoryByKey, getPurchaseItems,
   addPurchaseItem, updatePurchaseItem, deletePurchaseItem,
-  PURCHASE_CATEGORY_KEYS, PURCHASE_STATUS, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=281';
-import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=281';
-import { openModal, closeModal } from '../modal.js?v=281';
-import { requestAutoBackupNow } from '../backup-service.js?v=281';
+  PURCHASE_CATEGORY_KEYS, PURCHASE_STATUS, PURCHASE_STATUS_LABELS, isPurchaseDone,
+} from '../purchasing-db.js?v=282';
+import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=282';
+import { openModal, closeModal } from '../modal.js?v=282';
+import { requestAutoBackupNow } from '../backup-service.js?v=282';
 
 const PURCHASING_TAB_KEY = 'yitzurPurchasingTab';
 
@@ -52,12 +52,17 @@ function statusBadge(status) {
 }
 
 function renderPurchaseItemRow(item) {
+  const done = isPurchaseDone(item);
   const qtyLine = item.quantity != null
     ? `${formatDecimal(item.quantity)}${item.unit ? ` ${escapeHtml(item.unit)}` : ''}`
     : '';
   const priceLine = item.unitPrice != null ? formatMoney(item.unitPrice) : '';
   return `
-    <div class="purchase-item" data-id="${item.id}">
+    <div class="purchase-item${done ? ' purchase-item--done' : ''}" data-id="${item.id}">
+      <label class="purchase-done-toggle" title="${done ? 'בטל סימון בוצע' : 'סמן כבוצע'}">
+        <input type="checkbox" class="purchase-done-cb" data-id="${item.id}" ${done ? 'checked' : ''}>
+        <span class="purchase-done-label">בוצע</span>
+      </label>
       <div class="purchase-item-main">
         <div class="purchase-item-title-row">
           <strong class="purchase-item-name">${escapeHtml(item.name)}</strong>
@@ -75,6 +80,31 @@ function renderPurchaseItemRow(item) {
         <button type="button" class="btn btn-danger btn-sm purchase-del" data-id="${item.id}" title="מחק">🗑</button>
       </div>
     </div>`;
+}
+
+function renderPurchaseListHTML(items) {
+  const pending = items.filter((i) => !isPurchaseDone(i));
+  const done = items.filter((i) => isPurchaseDone(i));
+  const sections = [];
+
+  if (pending.length) {
+    sections.push(`
+      <div class="purchase-list-section">
+        ${pending.length && done.length ? '<div class="purchase-list-section-label">פתוחות</div>' : ''}
+        ${pending.map((item) => renderPurchaseItemRow(item)).join('')}
+      </div>`);
+  }
+  if (done.length) {
+    if (pending.length) {
+      sections.push('<div class="purchase-list-divider" role="separator" aria-hidden="true"></div>');
+    }
+    sections.push(`
+      <div class="purchase-list-section purchase-list-section--done">
+        <div class="purchase-list-section-label">בוצעו (${done.length})</div>
+        ${done.map((item) => renderPurchaseItemRow(item)).join('')}
+      </div>`);
+  }
+  return sections.join('');
 }
 
 function openPurchaseItemModal({ categoryId, item = null, onSave }) {
@@ -150,18 +180,19 @@ async function renderCategoryTab(body, rootContainer, tabMeta, refresh) {
   const items = await getPurchaseItems(category.id);
   const needed = items.filter((i) => i.status === PURCHASE_STATUS.needed).length;
   const ordered = items.filter((i) => i.status === PURCHASE_STATUS.ordered).length;
+  const doneCount = items.filter((i) => isPurchaseDone(i)).length;
 
   body.innerHTML = `
     <div class="card">
       <div class="card-title">${tabMeta.icon} ${escapeHtml(tabMeta.label)}</div>
       <p class="form-hint" style="margin-bottom:10px">
-        ${items.length} פריטים · ${needed} לרכישה · ${ordered} בהזמנה
+        ${items.length} פריטים · ${needed} לרכישה · ${ordered} בהזמנה${doneCount ? ` · ${doneCount} בוצעו` : ''}
       </p>
       <button type="button" class="btn btn-primary btn-sm" id="purchase-add-btn" style="width:100%">+ הוסף פריט</button>
     </div>
     <div class="card purchase-list-card">
       ${items.length
-    ? items.map((item) => renderPurchaseItemRow(item)).join('')
+    ? renderPurchaseListHTML(items)
     : '<p class="form-hint" style="text-align:center;padding:16px">אין פריטים — לחץ «הוסף פריט»</p>'}
     </div>`;
 
@@ -191,6 +222,20 @@ async function renderCategoryTab(body, rootContainer, tabMeta, refresh) {
           await refresh();
         },
       });
+    });
+  });
+
+  body.querySelectorAll('.purchase-done-cb').forEach((cb) => {
+    cb.addEventListener('change', async () => {
+      try {
+        await updatePurchaseItem(cb.dataset.id, { done: cb.checked });
+        requestAutoBackupNow().catch(() => {});
+        showToast(cb.checked ? 'סומן כבוצע ✓' : 'הוחזר לרשימה');
+        await refresh();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+        cb.checked = !cb.checked;
+      }
     });
   });
 
