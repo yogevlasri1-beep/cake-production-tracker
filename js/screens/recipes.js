@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=288';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=288';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=288';
-import { renderRecipesMachines } from '../recipes-machines.js?v=288';
-import { renderRecipesPortions } from '../recipes-portions.js?v=288';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=288';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=288';
-import { openModal, closeModal } from '../modal.js?v=288';
+} from '../kitchen-db.js?v=289';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=289';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=289';
+import { renderRecipesMachines } from '../recipes-machines.js?v=289';
+import { renderRecipesPortions } from '../recipes-portions.js?v=289';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=289';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=289';
+import { openModal, closeModal } from '../modal.js?v=289';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=288';
-import { defaultColorForIndex } from '../chart.js?v=288';
+} from '../product-drag.js?v=289';
+import { defaultColorForIndex } from '../chart.js?v=289';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -48,6 +48,7 @@ const RECIPE_SEARCH_KEY = 'yitzurRecipeSearch';
 const RECIPE_EDIT_SEARCH_KEY = 'yitzurRecipeEditSearch';
 const RATIO_RECIPE_KEY = 'yitzurRatioRecipeId';
 const RATIO_CAT_KEY = 'yitzurRatioRecipeCatId';
+const BAKING_VIEW_KEY = 'yitzurBakingViewMode';
 
 export const RECIPE_TABS = {
   browse: { id: 'browse', label: 'מתכונים', subtitle: 'צפייה, חיפוש וספר מתכונים' },
@@ -749,38 +750,111 @@ async function renderRecipesRatio(container, { layout }) {
 
 function collectBakingRecipes(layout, profileMap) {
   const items = [];
+  const walk = (recipes, categoryPath) => {
+    for (const recipe of recipes) {
+      const baking = resolveRecipeBaking(recipe, profileMap);
+      if (baking.hasBaking) {
+        items.push({ recipe, baking, categoryPath });
+      }
+      if (recipe.subRecipes?.length) walk(recipe.subRecipes, categoryPath);
+    }
+  };
   for (const group of layout.groups) {
     for (const cat of group.categories) {
-      for (const recipe of cat.recipes) {
-        const baking = resolveRecipeBaking(recipe, profileMap);
-        if (!baking.hasBaking) continue;
-        items.push({
-          recipe,
-          baking,
-          categoryPath: `${group.name} › ${cat.name}`,
-        });
-      }
+      walk(cat.recipes, `${group.name} › ${cat.name}`);
     }
   }
   return items;
 }
 
-function groupBakingByOven(items) {
-  const groups = [
-    { key: 'large', label: RECIPE_OVEN_TYPES.large, ovenLabel: RECIPE_OVEN_TYPES.large, paramsLine: '', items: [] },
-    { key: 'small', label: RECIPE_OVEN_TYPES.small, ovenLabel: RECIPE_OVEN_TYPES.small, paramsLine: '', items: [] },
-    { key: 'other', label: 'ללא סוג תנור / אחר', ovenLabel: '', paramsLine: '', items: [] },
-  ];
-  const map = new Map(groups.map((g) => [g.key, g]));
+function getBakingViewMode(container) {
+  return container?.dataset?.bakingViewMode
+    || sessionStorage.getItem(BAKING_VIEW_KEY)
+    || 'category';
+}
+
+function setBakingViewMode(container, mode) {
+  sessionStorage.setItem(BAKING_VIEW_KEY, mode);
+  if (container) container.dataset.bakingViewMode = mode;
+}
+
+function findProductCatalogPath(productCatalog, productId) {
+  for (const group of productCatalog?.groups || []) {
+    for (const cat of group.categories || []) {
+      if ((cat.products || []).some((p) => Number(p.id) === Number(productId))) {
+        return `${group.name} › ${cat.name}`;
+      }
+    }
+  }
+  return '';
+}
+
+function groupBakingByCategory(items) {
+  const map = new Map();
   for (const item of items) {
-    const t = item.baking.bakeOvenType;
-    const key = t === 'large' || t === 'small' ? t : 'other';
+    const key = item.categoryPath || 'אחר';
+    if (!map.has(key)) map.set(key, { key, label: key, items: [] });
     map.get(key).items.push(item);
   }
-  for (const g of groups) {
-    g.items.sort((a, b) => a.recipe.name.localeCompare(b.recipe.name, 'he'));
+  return [...map.values()]
+    .map((g) => {
+      g.items.sort((a, b) => a.recipe.name.localeCompare(b.recipe.name, 'he'));
+      return g;
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'he'));
+}
+
+function expandBakingItemsByProduct(items, productCatalog) {
+  const expanded = [];
+  for (const item of items) {
+    const pids = item.recipe.linkedProductIds?.length
+      ? item.recipe.linkedProductIds
+      : (item.recipe.linkedProductId ? [item.recipe.linkedProductId] : []);
+    if (!pids.length) {
+      expanded.push({
+        ...item,
+        productId: null,
+        productName: 'ללא מוצר משויך',
+        productPath: 'אחר',
+      });
+      continue;
+    }
+    const productMap = new Map();
+    for (const group of productCatalog?.groups || []) {
+      for (const cat of group.categories || []) {
+        for (const p of cat.products || []) productMap.set(p.id, p);
+      }
+    }
+    for (const pid of pids) {
+      const prod = productMap.get(pid);
+      expanded.push({
+        ...item,
+        productId: pid,
+        productName: prod?.name || `מוצר #${pid}`,
+        productPath: findProductCatalogPath(productCatalog, pid) || 'אחר',
+      });
+    }
   }
-  return groups.filter((g) => g.items.length);
+  return expanded;
+}
+
+function groupBakingByProduct(items, productCatalog) {
+  const expanded = expandBakingItemsByProduct(items, productCatalog);
+  const map = new Map();
+  for (const item of expanded) {
+    const key = item.productPath || 'אחר';
+    if (!map.has(key)) map.set(key, { key, label: key, items: [] });
+    map.get(key).items.push(item);
+  }
+  return [...map.values()]
+    .map((g) => {
+      g.items.sort((a, b) => {
+        const byProduct = a.productName.localeCompare(b.productName, 'he');
+        return byProduct || a.recipe.name.localeCompare(b.recipe.name, 'he');
+      });
+      return g;
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, 'he'));
 }
 
 function renderBakingParamsCells(baking) {
@@ -815,6 +889,54 @@ function renderBakingProfileCatalogRow(profile, productCount, recipeCount, scope
     </div>`;
 }
 
+function renderBakingListGroupCard(group, viewMode = 'category') {
+  const nameHeader = viewMode === 'product' ? 'מוצר' : 'מתכון';
+  const countLabel = viewMode === 'product'
+    ? `${group.items.length} שורות`
+    : `${group.items.length} מתכונים`;
+  return `
+    <div class="card baking-profile-group-card" data-baking-group-key="${escapeHtml(group.key)}">
+      <div class="baking-oven-group-header">
+        <div>
+          <h3 class="baking-oven-group-title">${viewMode === 'product' ? '📦' : '📂'} ${escapeHtml(group.label)}</h3>
+        </div>
+        <span class="baking-oven-group-count">${countLabel}</span>
+      </div>
+      <div class="baking-table-wrap">
+        <table class="baking-table">
+          <thead>
+            <tr>
+              <th scope="col" class="baking-col-name">${nameHeader}</th>
+              <th scope="col" class="baking-col-param">טמפ׳</th>
+              <th scope="col" class="baking-col-param">זמן</th>
+              <th scope="col" class="baking-col-param">קיטור</th>
+              <th scope="col" class="baking-col-param">יבוש</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${group.items.map((item) => {
+    const { recipe, baking } = item;
+    const primary = viewMode === 'product'
+      ? escapeHtml(item.productName || '—')
+      : escapeHtml(recipe.name);
+    const secondary = viewMode === 'product'
+      ? escapeHtml(recipe.name)
+      : escapeHtml(item.categoryPath || '');
+    return `
+            <tr class="baking-row recipe-row-open" data-recipe-id="${recipe.id}" role="button" tabindex="0">
+              <td class="baking-col-name">
+                <strong class="baking-recipe-name">${primary}</strong>
+                <span class="baking-recipe-path">${secondary}</span>
+              </td>
+              ${renderBakingParamsCells(baking)}
+            </tr>`;
+  }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
 function renderBakingProfileGroupCard(group) {
   const subtitleParts = [];
   if (group.ovenLabel) subtitleParts.push(group.ovenLabel);
@@ -837,7 +959,7 @@ function renderBakingProfileGroupCard(group) {
               <th scope="col" class="baking-col-param">טמפ׳</th>
               <th scope="col" class="baking-col-param">זמן</th>
               <th scope="col" class="baking-col-param">קיטור</th>
-              <th scope="col" class="baking-col-param">ליבוש</th>
+              <th scope="col" class="baking-col-param">יבוש</th>
             </tr>
           </thead>
           <tbody>
@@ -856,10 +978,14 @@ function renderBakingProfileGroupCard(group) {
 }
 
 async function renderRecipesBaking(container, { layout, productCatalog }) {
+  const viewMode = getBakingViewMode(container);
+  setBakingViewMode(container, viewMode);
   const profiles = await getBakingProfiles();
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
   const allItems = collectBakingRecipes(layout, profileMap);
-  const groups = groupBakingByOven(allItems);
+  const groups = viewMode === 'product'
+    ? groupBakingByProduct(allItems, productCatalog)
+    : groupBakingByCategory(allItems);
   const recipeCounts = new Map();
   const productCounts = new Map();
   const scopeCounts = new Map();
@@ -893,10 +1019,16 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     </div>
     ${allItems.length ? `
     <div class="section-header baking-recipes-header">
-      <h2>מתכונים לפי סוג תנור</h2>
-      <span class="baking-total-count">${allItems.length} מתכונים</span>
+      <div class="baking-recipes-header-main">
+        <h2>${viewMode === 'product' ? 'מתכונים לפי מוצר' : 'מתכונים לפי קטגוריה'}</h2>
+        <span class="baking-total-count">${allItems.length} מתכונים</span>
+      </div>
+      <div class="flow-scope-tabs baking-view-tabs">
+        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'category' ? ' active' : ''}" data-baking-view="category">לפי קטגוריות</button>
+        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'product' ? ' active' : ''}" data-baking-view="product">מפורט למוצרים</button>
+      </div>
     </div>
-    ${groups.map(renderBakingProfileGroupCard).join('')}` : `
+    ${groups.map((g) => renderBakingListGroupCard(g, viewMode)).join('')}` : `
     <div class="empty-state">
       <div class="empty-state-icon">🔥</div>
       <p>אין מתכונים עם אפייה עדיין</p>
@@ -905,6 +1037,15 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     </div>`}`;
 
   document.getElementById('baking-go-edit')?.addEventListener('click', () => switchRecipeTab('edit'));
+
+  container.querySelectorAll('.baking-view-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.bakingView;
+      if (!mode || mode === viewMode) return;
+      setBakingViewMode(container, mode);
+      renderRecipesBaking(container, { layout, productCatalog });
+    });
+  });
 
   document.getElementById('add-baking-profile-btn')?.addEventListener('click', () => {
     openBakingProfileForm(container, { layout, productCatalog });
@@ -2592,7 +2733,7 @@ function buildBakingParamsFieldsHTML(values, { idPrefix = 'recipe' } = {}) {
             <input type="number" id="${idPrefix}-bake-steam" min="0" step="1" placeholder="30" value="${values?.bakeSteamSeconds ?? ''}">
           </div>
           <div class="form-group">
-            <label>ליבוש (דק׳)</label>
+            <label>יבוש (דק׳)</label>
             <input type="number" id="${idPrefix}-bake-dry" min="0" step="1" placeholder="10" value="${values?.bakeDryMinutes ?? ''}">
           </div>
         </div>`;
@@ -2691,7 +2832,7 @@ function bindRecipeBakingFormToggle(profiles = []) {
       rows.push({ label: 'קיטור', value: `${profile.bakeSteamSeconds} שנ׳` });
     }
     if (profile.bakeDryMinutes != null && profile.bakeDryMinutes !== '') {
-      rows.push({ label: 'ליבוש', value: `${profile.bakeDryMinutes} דק׳` });
+      rows.push({ label: 'יבוש', value: `${profile.bakeDryMinutes} דק׳` });
     }
     preview.innerHTML = `
       <p class="form-hint" style="margin-bottom:8px">פרטים מפרופיל «${escapeHtml(profile.name)}»</p>
@@ -2741,7 +2882,7 @@ function buildRecipeBakingViewHTML(recipe, profileMap) {
     rows.push({ label: 'קיטור', value: `${baking.bakeSteamSeconds} שניות` });
   }
   if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
-    rows.push({ label: 'ליבוש', value: `${baking.bakeDryMinutes} דק׳` });
+    rows.push({ label: 'יבוש', value: `${baking.bakeDryMinutes} דק׳` });
   }
   if (!rows.length) {
     return `

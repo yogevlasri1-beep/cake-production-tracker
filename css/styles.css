@@ -575,6 +575,22 @@ body {
 
 .baking-recipes-header {
   margin: 4px 0 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.baking-recipes-header-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.baking-view-tabs {
+  flex-shrink: 0;
 }
 
 .baking-recipes-header h2 {

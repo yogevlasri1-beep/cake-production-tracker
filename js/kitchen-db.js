@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=288';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=289';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=288';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=288';
+} from './validators.js?v=289';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=289';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -63,7 +63,7 @@ export function formatRecipeBakingParamsLine(recipe, profileOrMap) {
     parts.push(`קיטור ${baking.bakeSteamSeconds} שנ׳`);
   }
   if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
-    parts.push(`ליבוש ${baking.bakeDryMinutes} דק׳`);
+    parts.push(`יבוש ${baking.bakeDryMinutes} דק׳`);
   }
   return parts.join(' · ') || 'ללא פרטים';
 }
