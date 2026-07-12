@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '283';
+const VERSION = '284';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -44,6 +44,11 @@ const PRECACHE = [
   v('./js/product-drag.js'),
   v('./js/workspaces.js'),
   v('./js/kitchen-db.js'),
+  v('./js/purchasing-db.js'),
+  v('./js/portion-ingredients.js'),
+  v('./js/recipes-portions.js'),
+  v('./js/recipes-machines.js'),
+  v('./js/ratio-print.js'),
   v('./js/docx-loader.js'),
   v('./js/recipe-import.js'),
   v('./js/supplier-import.js'),
@@ -56,6 +61,7 @@ const PRECACHE = [
   v('./js/screens/backup.js'),
   v('./js/screens/recipes.js'),
   v('./js/screens/suppliers.js'),
+  v('./js/screens/purchasing.js'),
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=283';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=284';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=283';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=283';
+} from './validators.js?v=284';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=284';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1413,14 +1413,25 @@ export async function moveRecipesToCategory(recipeIds, categoryId) {
 export async function deleteRecipe(id) {
   const rid = sanitizeProductId(id);
   if (!rid) return;
-  await db.transaction('rw', db.recipes, db.recipeIngredients, db.recipeProductLinks, db.recipeProductCategoryLinks, db.recipeProductGroupLinks, db.groupPortionPresets, async () => {
+  const recipePresets = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
+  await db.transaction(
+    'rw',
+    db.recipes,
+    db.recipeIngredients,
+    db.recipeProductLinks,
+    db.recipeProductCategoryLinks,
+    db.recipeProductGroupLinks,
+    db.groupPortionPresets,
+    db.portionPresetIngredientSettings,
+    async () => {
     await db.recipeIngredients.where('recipeId').equals(rid).delete();
     await db.recipeProductLinks.where('recipeId').equals(rid).delete();
     await db.recipeProductCategoryLinks.where('recipeId').equals(rid).delete();
     await db.recipeProductGroupLinks.where('recipeId').equals(rid).delete();
-    const recipePresets = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
     for (const p of recipePresets) {
-      await deletePortionPresetIngredientSettings(p.id);
+      if (db.portionPresetIngredientSettings) {
+        await db.portionPresetIngredientSettings.where('portionPresetId').equals(p.id).delete();
+      }
       await db.groupPortionPresets.delete(p.id);
     }
     await db.recipes.delete(rid);
@@ -1792,7 +1803,9 @@ export async function getPortionPresetIngredientsFormData(portionPresetId) {
   const settingsMap = new Map(existingSettings.map((s) => [Number(s.recipeIngredientId), s]));
   const ingredientIds = new Set(ingredients.map((i) => i.id));
 
-  return ingredients.map((ing) => {
+  return {
+    presetName: preset.name,
+    rows: ingredients.map((ing) => {
     const key = normalizeMaterialKey(ing.name);
     const offers = (byNameKey.get(key) || [])
       .filter((m) => m.active !== false)
@@ -1819,7 +1832,8 @@ export async function getPortionPresetIngredientsFormData(portionPresetId) {
       rawMaterialId,
       supplierOptions,
     };
-  }).filter((row) => ingredientIds.has(row.recipeIngredientId));
+  }),
+  };
 }
 
 export async function savePortionPresetIngredientSettings(portionPresetId, rows) {

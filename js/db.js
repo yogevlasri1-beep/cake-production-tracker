@@ -10,9 +10,9 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=283';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=283';
-import { defaultColorForIndex } from './chart.js?v=283';
+} from './validators.js?v=284';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=284';
+import { defaultColorForIndex } from './chart.js?v=284';
 
 export { ValidationError };
 

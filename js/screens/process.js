@@ -22,13 +22,20 @@ import {
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
-} from '../db.js?v=283';
-import { bindPortionIngredientsButtons } from '../portion-ingredients.js?v=283';
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=283';
-import { openModal, closeModal } from '../modal.js?v=283';
-import { requestAutoBackupNow } from '../backup-service.js?v=283';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=283';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=283';
+} from '../db.js?v=284';
+
+function wirePortionIngredientsButtons(root, { onSaved } = {}) {
+  import('../portion-ingredients.js?v=284').then(({ bindPortionIngredientsButtons }) => {
+    bindPortionIngredientsButtons(root, { onSaved });
+  }).catch((err) => {
+    console.warn('portion-ingredients load failed', err);
+  });
+}
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, runDurationMs, stepDurationMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=284';
+import { openModal, closeModal } from '../modal.js?v=284';
+import { requestAutoBackupNow } from '../backup-service.js?v=284';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=284';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=284';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -576,7 +583,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
               ${b.note ? `<span class="flow-portion-batch-note">${escapeHtml(b.note)}</span>` : ''}
               ${b.presetId && b.fromRecipe ? `
                 <button type="button" class="btn btn-secondary btn-sm flow-portion-ingredients-btn"
-                  data-preset-id="${b.presetId}" data-portion-name="${escapeHtml(b.name || '')}" title="רכיבי מתכון">📋 רכיבים</button>` : ''}
+                  data-preset-id="${b.presetId}" title="רכיבי מתכון">📋 רכיבים</button>` : ''}
             </li>`).join('')}
         </ul>
         ${total != null ? `<p class="flow-portion-batch-total">סה"כ: <strong>${formatPortionCount(total)}</strong> מנות</p>` : ''}
@@ -2119,7 +2126,7 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
-  bindPortionIngredientsButtons(container, {
+  wirePortionIngredientsButtons(container, {
     onSaved: () => renderProcess(container),
   });
 
@@ -2888,7 +2895,7 @@ async function renderManageView(container, ctx) {
     });
   });
 
-  bindPortionIngredientsButtons(container, {
+  wirePortionIngredientsButtons(container, {
     onSaved: () => renderProcess(container),
   });
 

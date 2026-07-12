@@ -1,10 +1,17 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=283';
-import { bindPortionIngredientsButtons } from '../portion-ingredients.js?v=283';
-import { escapeHtml, showToast } from './utils.js?v=283';
-import { openModal, closeModal } from './modal.js?v=283';
+} from './db.js?v=284';
+
+function wirePortionIngredientsButtons(root, { onSaved } = {}) {
+  import('../portion-ingredients.js?v=284').then(({ bindPortionIngredientsButtons }) => {
+    bindPortionIngredientsButtons(root, { onSaved });
+  }).catch((err) => {
+    console.warn('portion-ingredients load failed', err);
+  });
+}
+import { escapeHtml, showToast } from './utils.js?v=284';
+import { openModal, closeModal } from './modal.js?v=284';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
 
@@ -231,7 +238,7 @@ function renderPortionRow(portion, index, total) {
       <div class="list-item-actions">
         ${portion.sourceKind === 'recipe' ? `
         <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn" data-id="${portion.id}"
-          data-portion-name="${escapeHtml(portion.name)}" title="רכיבי מתכון">📋</button>` : ''}
+          title="רכיבי מתכון">📋</button>` : ''}
         <button type="button" class="btn btn-secondary btn-sm portion-edit-link" data-id="${portion.id}" title="שיוך">🔗</button>
       </div>
     </div>`;
@@ -318,5 +325,5 @@ export async function renderRecipesPortions(container, { productCatalog }) {
     });
   });
 
-  bindPortionIngredientsButtons(container, { onSaved: rerender });
+  wirePortionIngredientsButtons(container, { onSaved: rerender });
 }
