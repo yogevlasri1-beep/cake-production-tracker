@@ -1,17 +1,17 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=286';
+} from './db.js?v=287';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=286').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=287').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { escapeHtml, showToast } from './utils.js?v=286';
-import { openModal, closeModal } from './modal.js?v=286';
+import { escapeHtml, showToast } from './utils.js?v=287';
+import { openModal, closeModal } from './modal.js?v=287';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
 
@@ -220,14 +220,15 @@ function renderPortionRow(portion, index, total) {
   const metaLine = portion.sourceKind === 'recipe'
     ? escapeHtml(portion.recipeName || portion.sourceLabel)
     : escapeHtml(portion.homeGroupName || portion.sourceLabel);
+  const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תת מתכון</span> ' : '';
   return `
-    <div class="portion-catalog-row list-item" data-portion-id="${portion.id}">
+    <div class="portion-catalog-row list-item${portion.isSubRecipe ? ' portion-catalog-row--sub-recipe' : ''}" data-portion-id="${portion.id}">
       <div class="portion-order-actions">
         <button type="button" class="btn btn-secondary btn-sm portion-move-up" data-id="${portion.id}" title="העלה"${index === 0 ? ' disabled' : ''}>↑</button>
         <button type="button" class="btn btn-secondary btn-sm portion-move-down" data-id="${portion.id}" title="הורד"${index >= total - 1 ? ' disabled' : ''}>↓</button>
       </div>
       <div class="list-item-info">
-        <div class="list-item-name">🍽 ${escapeHtml(portionPresetLabel(portion))}</div>
+        <div class="list-item-name">${subBadge}🍽 ${escapeHtml(portionPresetLabel(portion))}</div>
         <div class="list-item-meta">${metaLine}</div>
         <div class="list-item-meta portion-link-line">
           ${scopeBadge}

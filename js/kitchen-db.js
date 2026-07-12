@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=286';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=287';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=286';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=286';
+} from './validators.js?v=287';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=287';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -832,15 +832,28 @@ export async function getRecipesCatalogLayout() {
     groupLinksByRecipe.get(link.recipeId).push(link.groupId);
   }
   const map = new Map(subCats.map((s) => [s.id, { ...s, recipes: [] }]));
+  const subRecipesByParent = new Map();
+  const enrichRecipeRow = (r) => ({
+    ...r,
+    linkedProductIds: linksByRecipe.get(r.id) || (r.linkedProductId ? [r.linkedProductId] : []),
+    linkedProductCategoryIds: catLinksByRecipe.get(r.id) || (r.linkedProductCategoryId ? [r.linkedProductCategoryId] : []),
+    linkedProductGroupIds: groupLinksByRecipe.get(r.id) || (r.linkedProductGroupId ? [r.linkedProductGroupId] : []),
+  });
   for (const r of allRecipes) {
+    if (r.parentRecipeId) {
+      const parentId = Number(r.parentRecipeId);
+      if (!subRecipesByParent.has(parentId)) subRecipesByParent.set(parentId, []);
+      subRecipesByParent.get(parentId).push(enrichRecipeRow(r));
+    }
+  }
+  for (const r of allRecipes) {
+    if (r.parentRecipeId) continue;
     const sub = map.get(r.categoryId);
     if (sub) {
-      sub.recipes.push({
-        ...r,
-        linkedProductIds: linksByRecipe.get(r.id) || (r.linkedProductId ? [r.linkedProductId] : []),
-        linkedProductCategoryIds: catLinksByRecipe.get(r.id) || (r.linkedProductCategoryId ? [r.linkedProductCategoryId] : []),
-        linkedProductGroupIds: groupLinksByRecipe.get(r.id) || (r.linkedProductGroupId ? [r.linkedProductGroupId] : []),
-      });
+      const entry = enrichRecipeRow(r);
+      entry.subRecipes = (subRecipesByParent.get(r.id) || [])
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+      sub.recipes.push(entry);
     }
   }
   for (const sub of map.values()) {
@@ -852,6 +865,73 @@ export async function getRecipesCatalogLayout() {
     categories: allSubCategories.filter((s) => Number(s.groupId) === Number(group.id)),
   }));
   return { groups: grouped, allSubCategories };
+}
+
+export async function getRecipeSubRecipes(parentRecipeId) {
+  const pid = sanitizeProductId(parentRecipeId);
+  if (!pid || !db.recipes) return [];
+  const rows = await db.recipes.where('parentRecipeId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+async function copyRecipeProductScopeFromParent(childId, parent) {
+  const cid = sanitizeProductId(childId);
+  if (!cid || !parent) return;
+  const pids = parent.linkedProductIds?.length
+    ? parent.linkedProductIds
+    : (parent.linkedProductId ? [parent.linkedProductId] : []);
+  const catIds = parent.linkedProductCategoryIds?.length
+    ? parent.linkedProductCategoryIds
+    : (parent.linkedProductCategoryId ? [parent.linkedProductCategoryId] : []);
+  const groupIds = parent.linkedProductGroupIds?.length
+    ? parent.linkedProductGroupIds
+    : (parent.linkedProductGroupId ? [parent.linkedProductGroupId] : []);
+  if (pids.length) await setRecipeProductLinks(cid, pids);
+  else await setRecipeProductLinks(cid, []);
+  if (catIds.length) await setRecipeProductCategoryLinks(cid, catIds);
+  else await setRecipeProductCategoryLinks(cid, []);
+  if (groupIds.length) await setRecipeProductGroupLinks(cid, groupIds);
+  else await setRecipeProductGroupLinks(cid, []);
+}
+
+export async function syncSubRecipesProductLinks(parentRecipeId) {
+  const parent = await getRecipe(parentRecipeId);
+  if (!parent) return;
+  const subs = await getRecipeSubRecipes(parentRecipeId);
+  for (const sub of subs) {
+    await copyRecipeProductScopeFromParent(sub.id, parent);
+  }
+}
+
+export async function addSubRecipe(parentRecipeId, { name } = {}) {
+  const parent = await getRecipe(parentRecipeId);
+  if (!parent) throw new ValidationError('מתכון לא נמצא');
+  if (parent.parentRecipeId) throw new ValidationError('לא ניתן להוסיף תת מתכון לתת מתכון');
+  const subs = await getRecipeSubRecipes(parentRecipeId);
+  const trimmed = sanitizeName(name, 80) || `${parent.name} — תוספת`;
+  const recipeId = await db.recipes.add({
+    categoryId: parent.categoryId,
+    parentRecipeId: parent.id,
+    name: trimmed,
+    linkedProductId: null,
+    linkedProductCategoryId: null,
+    linkedProductGroupId: null,
+    yieldPortions: DEFAULT_RECIPE_YIELD,
+    portionWeightGrams: null,
+    showTotalAsPortions: false,
+    notes: '',
+    sortOrder: subs.length + 1,
+    hasBaking: false,
+    bakingProfileId: null,
+    bakeTempC: null,
+    bakeTimeMinutes: null,
+    bakeSteamSeconds: null,
+    bakeDryMinutes: null,
+    bakeOvenType: null,
+  });
+  await copyRecipeProductScopeFromParent(recipeId, parent);
+  await syncRecipePortionPresets(recipeId);
+  return recipeId;
 }
 
 export async function getRecipeProductLinks(recipeId) {
@@ -873,6 +953,7 @@ export async function setRecipeProductLinks(recipeId, productIds) {
     await db.recipes.update(rid, { linkedProductId: ids[0] || null });
   });
   await syncRecipePortionPresets(rid);
+  await syncSubRecipesProductLinks(rid);
 }
 
 export async function getRecipeProductCategoryLinks(recipeId) {
@@ -894,6 +975,7 @@ export async function setRecipeProductCategoryLinks(recipeId, categoryIds) {
     await db.recipes.update(rid, { linkedProductCategoryId: null });
   });
   await syncRecipePortionPresets(rid);
+  await syncSubRecipesProductLinks(rid);
 }
 
 export async function getRecipeProductGroupLinks(recipeId) {
@@ -915,6 +997,7 @@ export async function setRecipeProductGroupLinks(recipeId, groupIds) {
     await db.recipes.update(rid, { linkedProductGroupId: null });
   });
   await syncRecipePortionPresets(rid);
+  await syncSubRecipesProductLinks(rid);
 }
 
 export async function getRecipes(categoryId) {
@@ -1413,6 +1496,10 @@ export async function moveRecipesToCategory(recipeIds, categoryId) {
 export async function deleteRecipe(id) {
   const rid = sanitizeProductId(id);
   if (!rid) return;
+  const childRecipes = await getRecipeSubRecipes(rid);
+  for (const child of childRecipes) {
+    await deleteRecipe(child.id);
+  }
   const recipePresets = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
   await db.transaction(
     'rw',
@@ -1714,13 +1801,14 @@ export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   if (totalG <= 0) return null;
   const weightKg = sanitizePortionSize(totalG / 1000);
   const unitG = Number(recipe.portionWeightGrams) || 0;
-  let extra = 'מנה אחת';
+  let extra = recipe.parentRecipeId ? 'תת מתכון' : 'מנה אחת';
   if (unitG > 0) {
     const units = computeRecipeProductUnits(weightKg, 1, unitG);
     const countStr = units
       ? formatRecipeQuantity(units.totalUnits)
       : formatRecipeQuantity(totalG / unitG);
-    extra = `${countStr} יחידות × ${formatSubdivisionWeight(unitG)}`;
+    const unitPart = `${countStr} יחידות × ${formatSubdivisionWeight(unitG)}`;
+    extra = recipe.parentRecipeId ? `תת מתכון · ${unitPart}` : unitPart;
   }
   return {
     name: recipe.name,
