@@ -4369,6 +4369,81 @@ table.report-table tfoot td {
   border-inline-start: 3px solid #fcd34d;
 }
 
+.portion-recipe-split {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.portion-recipe-split-heading {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.portion-recipe-split-heading--sub {
+  margin-top: 4px;
+}
+
+.portion-recipe-split-hint {
+  display: inline;
+  margin-inline-start: 8px;
+  font-weight: 400;
+}
+
+.portion-recipe-split-divider {
+  height: 1px;
+  margin: 8px 0 4px;
+  background: linear-gradient(
+    to left,
+    transparent,
+    color-mix(in srgb, #fcd34d 55%, var(--border)),
+    transparent
+  );
+}
+
+.portion-sub-recipe-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.portion-sub-recipe-card {
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, #fcd34d 45%, var(--border));
+  border-radius: 12px;
+  background: #fffbeb;
+}
+
+.portion-sub-recipe-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.portion-sub-recipe-card-title-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.portion-sub-recipe-card-title {
+  margin: 0 0 4px;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.portion-sub-recipe-card-actions {
+  flex-shrink: 0;
+}
+
+.portion-sub-recipe-table-wrap {
+  margin-top: 2px;
+  background: #fff;
+  border-radius: 10px;
+}
+
 .recipe-sub-link-hint {
   margin: 0;
   padding: 10px 12px;
