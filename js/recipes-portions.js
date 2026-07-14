@@ -1,18 +1,18 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=292';
-import { getRecipe, formatRecipeQuantity } from './kitchen-db.js?v=292';
+} from './db.js?v=293';
+import { getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets } from './kitchen-db.js?v=293';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=292').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=293').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { escapeHtml, showToast } from './utils.js?v=292';
-import { openModal, closeModal } from './modal.js?v=292';
+import { escapeHtml, showToast } from './utils.js?v=293';
+import { openModal, closeModal } from './modal.js?v=293';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
 
@@ -381,6 +381,12 @@ function bindPortionSectionToggles(container) {
 
 export async function renderRecipesPortions(container, { productCatalog }) {
   const rerender = () => renderRecipesPortions(container, { productCatalog });
+  // סנכרון כל המתכונים לקטלוג מנות (כולל כאלה בלי שיוך / בלי משקל)
+  try {
+    await syncAllRecipePortionPresets();
+  } catch (err) {
+    console.warn('syncAllRecipePortionPresets failed', err);
+  }
   const portions = await getPortionPresetsCatalog();
   const recipePortions = portions.filter((p) => p.sourceKind === 'recipe');
   const mainRecipePortions = recipePortions.filter((p) => !p.isSubRecipe);

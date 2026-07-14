@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=292';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=292';
-import { defaultColorForIndex } from './chart.js?v=292';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=292';
+} from './validators.js?v=293';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=293';
+import { defaultColorForIndex } from './chart.js?v=293';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=293';
 
 export { ValidationError };
 
@@ -5595,6 +5595,10 @@ export async function getPortionPresetsCatalog() {
       linkPath = recipe?.parentRecipeId
         ? `תת מתכון: ${recipe.name}${parentRecipe ? ` · ${parentRecipe.name}` : ''}`
         : (recipe?.name ? `מתכון: ${recipe.name}` : '');
+      if (Number(preset.categoryGroupId) === 0) {
+        linkLabel = recipe?.parentRecipeId ? 'תת מתכון · בקטלוג' : 'מתכון · בקטלוג';
+        linkPath = (linkPath ? `${linkPath} · ` : '') + 'עדיין בלי שיוך לקבוצת מוצרים';
+      }
     } else {
       linkLabel = homeGroup?.name ? `כל ${homeGroup.name}` : 'כל הקבוצה';
       linkPath = 'ברירת מחדל — כל המוצרים בקבוצת התזרים';
@@ -5604,7 +5608,9 @@ export async function getPortionPresetsCatalog() {
       recipeName: recipe?.name || null,
       parentRecipeName: parentRecipe?.name || null,
       isSubRecipe: !!recipe?.parentRecipeId,
-      homeGroupName: homeGroup?.name || '',
+      homeGroupName: Number(preset.categoryGroupId) === 0
+        ? 'קטלוג מנות'
+        : (homeGroup?.name || ''),
       sourceKind: preset.sourceRecipeId ? 'recipe' : 'manual',
       sourceLabel: preset.sourceRecipeId
         ? (recipe?.parentRecipeId

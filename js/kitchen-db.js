@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=292';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=293';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=292';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=292';
+} from './validators.js?v=293';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=293';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1760,7 +1760,10 @@ export async function deleteRecipeIngredient(id) {
   await syncRawMaterialsActiveFromRecipes();
 }
 
-/** קבוצות מוצרים (קטגוריות כלליות) המושפעות משיוך מתכון למוצרים */
+/** מנה בקטלוג בלבד — מתכון בלי שיוך לקבוצת מוצרים (לא מופיע בתזרים לפי קבוצה) */
+export const PORTION_CATALOG_ONLY_GROUP_ID = 0;
+
+/** קבוצות מוצרים (קטגוריות כלליות) המושפעות משיוך מתכון למוצרים / קטגוריית מתכון */
 export async function resolveCategoryGroupIdsForRecipe(recipe) {
   if (!recipe) return [];
   const groupIds = new Set();
@@ -1791,18 +1794,37 @@ export async function resolveCategoryGroupIdsForRecipe(recipe) {
     if (cat?.groupId) groupIds.add(Number(cat.groupId));
   }
 
+  // נפילה לקטגוריית המתכון עצמה (קישור לקבוצת מוצרים / קטגוריית מוצר)
+  if (recipe.categoryId) {
+    const recipeCat = await db.recipeCategories.get(Number(recipe.categoryId));
+    if (recipeCat) {
+      if (recipeCat.linkedCategoryId) {
+        const productCat = await db.categories.get(Number(recipeCat.linkedCategoryId));
+        if (productCat?.groupId) groupIds.add(Number(productCat.groupId));
+      }
+      if (recipeCat.groupId) {
+        const recipeGroup = await db.recipeGroups.get(Number(recipeCat.groupId));
+        if (recipeGroup?.linkedCategoryGroupId) {
+          groupIds.add(Number(recipeGroup.linkedCategoryGroupId));
+        }
+      }
+    }
+  }
+
   return [...groupIds];
 }
 
-/** בניית שדות מנה לתזרים ממתכון — המתכון כולו = מנה אחת */
+/** בניית שדות מנה לתזרים ממתכון — המתכון כולו = מנה אחת (גם בלי משקל מחושב) */
 export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   if (!recipe) return null;
   const totalG = recipeTotalWeightGrams(ingredients);
-  if (totalG <= 0) return null;
-  const weightKg = sanitizePortionSize(totalG / 1000);
+  let weightKg = totalG > 0 ? sanitizePortionSize(totalG / 1000) : null;
+  if (weightKg == null) weightKg = 0.001;
   const unitG = Number(recipe.portionWeightGrams) || 0;
   let extra = recipe.parentRecipeId ? 'תת מתכון' : 'מנה אחת';
-  if (unitG > 0) {
+  if (totalG <= 0) {
+    extra = recipe.parentRecipeId ? 'תת מתכון · ללא משקל' : 'ללא משקל מחושב';
+  } else if (unitG > 0) {
     const units = computeRecipeProductUnits(weightKg, 1, unitG);
     const countStr = units
       ? formatRecipeQuantity(units.totalUnits)
@@ -1817,7 +1839,7 @@ export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   };
 }
 
-/** סנכרון מנות מתכון לרשימת המנות בקטגוריה הכללית של התזרים */
+/** סנכרון מנות מתכון לרשימת המנות — כל מתכון מקבל מנה בקטלוג */
 export async function syncRecipePortionPresets(recipeId) {
   const rid = sanitizeProductId(recipeId);
   if (!rid) return;
@@ -1826,25 +1848,30 @@ export async function syncRecipePortionPresets(recipeId) {
 
   const groupIds = await resolveCategoryGroupIdsForRecipe(recipe);
   const presetData = buildRecipePortionPresetFields(recipe, recipe.ingredients);
+  if (!presetData) return;
+
   const existing = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
-  const targetGroups = new Set(groupIds);
+  const targetGroups = groupIds.length
+    ? new Set(groupIds)
+    : new Set([PORTION_CATALOG_ONLY_GROUP_ID]);
 
   for (const row of existing) {
-    if (!targetGroups.has(row.categoryGroupId) || !presetData) {
+    if (!targetGroups.has(Number(row.categoryGroupId))) {
       await deletePortionPresetIngredientSettings(row.id);
       await db.groupPortionPresets.delete(row.id);
     }
   }
 
-  if (!presetData || !groupIds.length) return;
-
   const freshExisting = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
-  for (const gid of groupIds) {
+  for (const gid of targetGroups) {
     const row = freshExisting.find((p) => Number(p.categoryGroupId) === Number(gid));
     if (row) {
       await db.groupPortionPresets.update(row.id, { ...presetData, sourceRecipeId: rid });
     } else {
-      const groupPresets = await db.groupPortionPresets.where('categoryGroupId').equals(gid).toArray();
+      const groupPresets = await db.groupPortionPresets
+        .where('categoryGroupId')
+        .equals(gid)
+        .toArray();
       const maxOrder = groupPresets.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
       await db.groupPortionPresets.add({
         categoryGroupId: gid,

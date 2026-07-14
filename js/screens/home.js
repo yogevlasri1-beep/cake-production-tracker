@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=292';
+} from '../db.js?v=293';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=292';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=292';
+} from '../utils.js?v=293';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=293';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=292';
-import { requestAutoBackupNow } from '../backup-service.js?v=292';
+} from '../calc.js?v=293';
+import { requestAutoBackupNow } from '../backup-service.js?v=293';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -614,13 +614,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=292');
+      const { navigate } = await import('../app.js?v=293');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=292');
+    const { navigate } = await import('../app.js?v=293');
     navigate('backup');
   });
 
