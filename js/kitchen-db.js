@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=310';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=311';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=310';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=310';
+} from './validators.js?v=311';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=311';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -370,15 +370,37 @@ export async function buildProductBakingIndex() {
   for (const link of productLinks) {
     directByProduct.set(Number(link.productId), link);
   }
-  const scopeByKey = new Map();
-  for (const scope of scopes) {
-    scopeByKey.set(`${scope.scopeType}:${Number(scope.scopeId)}`, scope);
-  }
   const catById = new Map(categories.map((c) => [Number(c.id), c]));
   const groupById = new Map(groups.map((g) => [Number(g.id), g]));
 
   const byProductId = new Map();
+  const byCategoryId = new Map();
+  const byGroupId = new Map();
   const countByProfileId = new Map();
+
+  for (const scope of scopes) {
+    const profile = profileMap.get(Number(scope.bakingProfileId));
+    if (!profile) continue;
+    if (scope.scopeType === BAKING_SCOPE_CATEGORY) {
+      const category = catById.get(Number(scope.scopeId));
+      byCategoryId.set(Number(scope.scopeId), {
+        profile,
+        source: 'category',
+        scopeType: BAKING_SCOPE_CATEGORY,
+        scopeId: Number(scope.scopeId),
+        scopeName: category?.name || null,
+      });
+    } else if (scope.scopeType === BAKING_SCOPE_GROUP) {
+      const group = groupById.get(Number(scope.scopeId));
+      byGroupId.set(Number(scope.scopeId), {
+        profile,
+        source: 'group',
+        scopeType: BAKING_SCOPE_GROUP,
+        scopeId: Number(scope.scopeId),
+        scopeName: group?.name || null,
+      });
+    }
+  }
 
   for (const product of products) {
     if (product.active === false) continue;
@@ -399,39 +421,15 @@ export async function buildProductBakingIndex() {
     }
 
     if (!resolved) {
-      const catScope = scopeByKey.get(`${BAKING_SCOPE_CATEGORY}:${Number(product.categoryId)}`);
-      if (catScope) {
-        const profile = profileMap.get(Number(catScope.bakingProfileId));
-        const category = catById.get(Number(product.categoryId));
-        if (profile) {
-          resolved = {
-            profile,
-            source: 'category',
-            scopeType: BAKING_SCOPE_CATEGORY,
-            scopeId: Number(product.categoryId),
-            scopeName: category?.name || null,
-          };
-        }
-      }
+      const catResolved = byCategoryId.get(Number(product.categoryId));
+      if (catResolved) resolved = { ...catResolved };
     }
 
     if (!resolved) {
       const category = catById.get(Number(product.categoryId));
       if (category?.groupId) {
-        const groupScope = scopeByKey.get(`${BAKING_SCOPE_GROUP}:${Number(category.groupId)}`);
-        if (groupScope) {
-          const profile = profileMap.get(Number(groupScope.bakingProfileId));
-          const group = groupById.get(Number(category.groupId));
-          if (profile) {
-            resolved = {
-              profile,
-              source: 'group',
-              scopeType: BAKING_SCOPE_GROUP,
-              scopeId: Number(category.groupId),
-              scopeName: group?.name || null,
-            };
-          }
-        }
+        const groupResolved = byGroupId.get(Number(category.groupId));
+        if (groupResolved) resolved = { ...groupResolved };
       }
     }
 
@@ -441,7 +439,7 @@ export async function buildProductBakingIndex() {
     countByProfileId.set(pid, (countByProfileId.get(pid) || 0) + 1);
   }
 
-  return { byProductId, countByProfileId, profileMap };
+  return { byProductId, byCategoryId, byGroupId, countByProfileId, profileMap };
 }
 
 export async function getBakingProfileScopes(profileId) {

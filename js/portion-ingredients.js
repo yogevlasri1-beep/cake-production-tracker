@@ -1,10 +1,10 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=310';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=310';
-import { openModal, closeModal } from './modal.js?v=310';
-import { requestAutoBackupNow } from './backup-service.js?v=310';
+} from './kitchen-db.js?v=311';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=311';
+import { openModal, closeModal } from './modal.js?v=311';
+import { requestAutoBackupNow } from './backup-service.js?v=311';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;

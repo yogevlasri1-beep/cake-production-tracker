@@ -1,10 +1,10 @@
-import { loadFFlate } from './docx-loader.js?v=310';
+import { loadFFlate } from './docx-loader.js?v=311';
 import {
   formatRecipeIngredientsTotal, formatRecipeQuantity,
   getRecipeProductYieldInfo,
   formatSubdivisionWeight,
   resolveRecipeBaking, formatOvenBakeParamsLine, getRecipeOvenLabel,
-} from './kitchen-db.js?v=310';
+} from './kitchen-db.js?v=311';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
@@ -779,9 +779,19 @@ function renderRecipeBookBakingHTML(recipe, profileMap) {
   if (!baking.hasBaking) return '';
   const rows = [];
   if (baking.profileName) rows.push({ label: 'פרופיל אפייה', value: baking.profileName });
-  if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
-  const paramsLine = formatRecipeBakingParamsLine(recipe, profileMap);
-  if (paramsLine) rows.push({ label: 'פרמטרים', value: paramsLine });
+  if (baking.ovens?.length) {
+    for (const oven of baking.ovens) {
+      rows.push({ label: oven.label, value: formatOvenBakeParamsLine(oven) || 'ללא פרטים' });
+    }
+  } else {
+    if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
+    const parts = [];
+    if (baking.bakeTempC) parts.push(`${baking.bakeTempC}°C`);
+    if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') parts.push(`${baking.bakeTimeMinutes} דק׳`);
+    if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') parts.push(`קיטור ${baking.bakeSteamSeconds} שנ׳`);
+    if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') parts.push(`יבוש ${baking.bakeDryMinutes} דק׳`);
+    if (parts.length) rows.push({ label: 'פרמטרים', value: parts.join(' · ') });
+  }
   if (!rows.length) {
     return '<div class="recipe-book-appendix-block recipe-book-baking"><p class="recipe-book-appendix-line">כולל אפייה</p></div>';
   }
