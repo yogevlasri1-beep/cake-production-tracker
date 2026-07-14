@@ -7151,6 +7151,94 @@ body {
   border-bottom: 2px solid color-mix(in srgb, var(--primary) 35%, var(--border));
 }
 
+.manager-plan-collapse {
+  margin-bottom: 10px;
+}
+
+.manager-plan-collapse > .manager-plan-collapse-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  user-select: none;
+  margin-bottom: 0;
+}
+
+.manager-plan-collapse > .manager-plan-collapse-summary::-webkit-details-marker {
+  display: none;
+}
+
+.manager-plan-collapse-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.manager-plan-collapse-count {
+  font-size: 0.82em;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.manager-plan-collapse-chevron::before {
+  content: '▾';
+  display: inline-block;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.manager-plan-collapse:not([open]) > .manager-plan-collapse-summary .manager-plan-collapse-chevron::before {
+  transform: rotate(-90deg);
+}
+
+.manager-plan-collapse:not([open]) > .manager-plan-collapse-summary {
+  margin-bottom: 0;
+  opacity: 0.92;
+}
+
+.manager-plan-collapse[open] > .manager-plan-collapse-summary {
+  margin-bottom: 10px;
+}
+
+.manager-plan-collapse.card > .manager-plan-collapse-summary.card-title {
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  justify-content: space-between;
+  text-align: start;
+}
+
+.manager-plan-collapse.card[open] > .manager-plan-collapse-summary.card-title {
+  margin-bottom: 12px;
+}
+
+.manager-plan-collapse.manager-plan-product-group > .manager-plan-collapse-summary {
+  margin-bottom: 0;
+  justify-content: space-between;
+  text-align: start;
+}
+
+.manager-plan-collapse.manager-plan-product-group[open] > .manager-plan-collapse-summary {
+  margin-bottom: 8px;
+}
+
+.manager-plan-collapse.manager-plan-flow-page-block {
+  padding: 8px 0;
+  border-top: 1px solid #fde3c7;
+}
+
+.manager-plan-collapse.manager-plan-flow-page-block > .manager-plan-collapse-summary {
+  justify-content: space-between;
+  text-align: start;
+  color: #9a3412;
+  font-weight: 700;
+  border-bottom: none;
+  padding: 0;
+}
+
 .manager-plan-assignee {
   display: inline-flex;
   align-items: center;

@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=304';
+} from '../db.js?v=305';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=304';
-import { openModal, closeModal } from '../modal.js?v=304';
-import { renderTargets } from './targets.js?v=304';
-import { renderPurchasingInManager } from './purchasing.js?v=304';
-import { forceAppUpdate } from '../sw-register.js?v=304';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=304';
+} from '../utils.js?v=305';
+import { openModal, closeModal } from '../modal.js?v=305';
+import { renderTargets } from './targets.js?v=305';
+import { renderPurchasingInManager } from './purchasing.js?v=305';
+import { forceAppUpdate } from '../sw-register.js?v=305';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=305';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=304';
+} from '../daily-plan-export.js?v=305';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -386,6 +386,58 @@ function checklistDedupeKey(item) {
   return `other:${item.id}`;
 }
 
+const PLAN_COLLAPSE_STORAGE = 'manager-daily-plan-collapse-v1';
+
+function getPlanCollapseState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PLAN_COLLAPSE_STORAGE) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function isPlanSectionOpen(key, defaultOpen = true) {
+  const state = getPlanCollapseState();
+  if (state[key] == null) return defaultOpen;
+  return !!state[key];
+}
+
+function setPlanSectionOpen(key, open) {
+  const state = getPlanCollapseState();
+  state[key] = !!open;
+  try {
+    sessionStorage.setItem(PLAN_COLLAPSE_STORAGE, JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+function renderCollapsiblePlanSection(key, titleHtml, bodyHtml, {
+  defaultOpen = true,
+  count = null,
+  className = '',
+  summaryClass = 'manager-plan-section-title manager-plan-collapse-summary',
+} = {}) {
+  const open = isPlanSectionOpen(key, defaultOpen);
+  const countBadge = count != null
+    ? `<span class="manager-plan-collapse-count">(${count})</span>`
+    : '';
+  return `
+    <details class="manager-plan-collapse ${className}" data-plan-collapse="${escapeHtml(key)}" ${open ? 'open' : ''}>
+      <summary class="${summaryClass}">
+        <span class="manager-plan-collapse-label">${titleHtml}${countBadge ? ` ${countBadge}` : ''}</span>
+        <span class="manager-plan-collapse-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="manager-plan-collapse-body">${bodyHtml}</div>
+    </details>`;
+}
+
+function bindPlanCollapse(container) {
+  container.querySelectorAll('details[data-plan-collapse]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      setPlanSectionOpen(el.dataset.planCollapse, el.open);
+    });
+  });
+}
+
 function dedupeChecklistItems(items) {
   const seen = new Set();
   const out = [];
@@ -459,73 +511,112 @@ function renderProductCentricPlanHTML(items, products, {
   let html = '';
 
   if (productsInPlan.length) {
-    html += `
-      <div class="manager-plan-section">
-        <div class="manager-plan-section-title">📦 מוצרים לייצור</div>
-        ${productsInPlan.map((item) => planItemRow(item, { productFlowNamesMap })).join('')}
-      </div>`;
+    html += renderCollapsiblePlanSection(
+      'list-products',
+      '📦 מוצרים לייצור',
+      productsInPlan.map((item) => planItemRow(item, { productFlowNamesMap })).join(''),
+      { count: productsInPlan.length, className: 'manager-plan-section' },
+    );
   }
 
   if (portionItems.length) {
-    html += `
-      <div class="manager-plan-section">
-        <div class="manager-plan-section-title">🍽 מנות להכנה</div>
-        ${portionItems.map((item) => planItemRow(item)).join('')}
-      </div>`;
+    html += renderCollapsiblePlanSection(
+      'list-portions',
+      '🍽 מנות להכנה',
+      portionItems.map((item) => planItemRow(item)).join(''),
+      { count: portionItems.length, className: 'manager-plan-section' },
+    );
   }
 
   const hasTasks = prepGrouped.groups.length || prepGrouped.orphans.length || manualItems.length;
   if (hasTasks) {
-    html += `<div class="manager-plan-section"><div class="manager-plan-section-title">✅ משימות</div>`;
+    let tasksBody = '';
     for (const group of prepGrouped.groups) {
-      html += `
-        <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">${escapeHtml(group.title)}</div>
-          ${group.items.map((item) => planItemRow(item)).join('')}
-        </div>`;
+      tasksBody += renderCollapsiblePlanSection(
+        `list-tasks-flow-${group.flowId}`,
+        escapeHtml(group.title),
+        group.items.map((item) => planItemRow(item)).join(''),
+        {
+          count: group.items.length,
+          className: 'manager-plan-product-group',
+          summaryClass: 'manager-plan-product-heading manager-plan-collapse-summary',
+        },
+      );
     }
     if (prepGrouped.orphans.length) {
-      html += `
-        <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">הכנות</div>
-          ${prepGrouped.orphans.map((item) => planItemRow(item)).join('')}
-        </div>`;
+      tasksBody += renderCollapsiblePlanSection(
+        'list-tasks-orphans',
+        'הכנות',
+        prepGrouped.orphans.map((item) => planItemRow(item)).join(''),
+        {
+          count: prepGrouped.orphans.length,
+          className: 'manager-plan-product-group',
+          summaryClass: 'manager-plan-product-heading manager-plan-collapse-summary',
+        },
+      );
     }
     if (manualItems.length) {
-      html += `
-        <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">משימות ידניות</div>
-          ${manualItems.map((item) => planItemRow(item)).join('')}
-        </div>`;
+      tasksBody += renderCollapsiblePlanSection(
+        'list-tasks-manual',
+        'משימות ידניות',
+        manualItems.map((item) => planItemRow(item)).join(''),
+        {
+          count: manualItems.length,
+          className: 'manager-plan-product-group',
+          summaryClass: 'manager-plan-product-heading manager-plan-collapse-summary',
+        },
+      );
     }
-    html += '</div>';
+    const tasksCount = preparations.length + manualItems.length;
+    html += renderCollapsiblePlanSection(
+      'list-tasks',
+      '✅ משימות',
+      tasksBody,
+      { count: tasksCount, className: 'manager-plan-section' },
+    );
   }
 
   if (cleanGrouped.groups.length || cleanGrouped.orphans.length) {
-    html += `<div class="manager-plan-section"><div class="manager-plan-section-title">🧹 נקיונות</div>`;
+    let cleanBody = '';
     for (const group of cleanGrouped.groups) {
-      html += `
-        <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">${escapeHtml(group.title)}</div>
-          ${group.items.map((item) => planItemRow(item)).join('')}
-        </div>`;
+      cleanBody += renderCollapsiblePlanSection(
+        `list-clean-flow-${group.flowId}`,
+        escapeHtml(group.title),
+        group.items.map((item) => planItemRow(item)).join(''),
+        {
+          count: group.items.length,
+          className: 'manager-plan-product-group',
+          summaryClass: 'manager-plan-product-heading manager-plan-collapse-summary',
+        },
+      );
     }
     if (cleanGrouped.orphans.length) {
-      html += `
-        <div class="manager-plan-product-group">
-          <div class="manager-plan-product-heading">ניקיון</div>
-          ${cleanGrouped.orphans.map((item) => planItemRow(item)).join('')}
-        </div>`;
+      cleanBody += renderCollapsiblePlanSection(
+        'list-clean-orphans',
+        'ניקיון',
+        cleanGrouped.orphans.map((item) => planItemRow(item)).join(''),
+        {
+          count: cleanGrouped.orphans.length,
+          className: 'manager-plan-product-group',
+          summaryClass: 'manager-plan-product-heading manager-plan-collapse-summary',
+        },
+      );
     }
-    html += '</div>';
+    html += renderCollapsiblePlanSection(
+      'list-cleaning',
+      '🧹 נקיונות',
+      cleanBody,
+      { count: cleanings.length, className: 'manager-plan-section' },
+    );
   }
 
   if (legacyItems.length) {
-    html += `
-      <div class="manager-plan-section">
-        <div class="manager-plan-section-title">📋 נוספים</div>
-        ${legacyItems.map((item) => planItemRow(item, { showDay: dayOffset == null })).join('')}
-      </div>`;
+    html += renderCollapsiblePlanSection(
+      'list-legacy',
+      '📋 נוספים',
+      legacyItems.map((item) => planItemRow(item, { showDay: dayOffset == null })).join(''),
+      { count: legacyItems.length, className: 'manager-plan-section' },
+    );
   }
 
   return html;
@@ -776,6 +867,16 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
       return `<option value="${f.id}">${escapeHtml(f.name)}${path ? ` — ${escapeHtml(path)}` : ''}</option>`;
     }).join('')
     : '';
+  const addCard = (key, title, body) => renderCollapsiblePlanSection(
+    key,
+    escapeHtml(title),
+    body,
+    {
+      defaultOpen: false,
+      className: 'card manager-plan-add-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  );
   return `
     ${showDay ? `
     <div class="card manager-plan-add-card">
@@ -786,8 +887,7 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
         </select>
       </div>
     </div>` : ''}
-    <div class="card manager-plan-add-card">
-      <div class="card-title">1 · מוצרים לייצור</div>
+    ${addCard('add-products', '1 · מוצרים לייצור', `
       <p class="form-hint" style="margin-bottom:12px">בחר מוצר — צ׳קליסט ונקיונות מהתזרים המשויך יתווספו אוטומטית</p>
       <div class="form-group">
         <label for="plan-product">מוצר</label>
@@ -800,9 +900,8 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
         <input type="number" id="plan-qty" min="1" step="1" inputmode="numeric" placeholder="כמות (אופציונלי)" style="flex:1" aria-label="כמות">
         <button type="button" class="btn btn-primary btn-sm" id="add-plan-product">+ הוסף</button>
       </div>
-    </div>
-    <div class="card manager-plan-add-card">
-      <div class="card-title">2 · מנות להכנה</div>
+    `)}
+    ${addCard('add-portions', '2 · מנות להכנה', `
       <p class="form-hint" style="margin-bottom:12px">בחר מוצר ואז סמן אילו מנות להכין היום — בנפרד מהייצור</p>
       <div class="form-group">
         <label for="plan-portion-product">מוצר (לשיוך המנה)</label>
@@ -819,9 +918,8 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
         <input type="number" id="plan-portion-qty" min="1" step="1" inputmode="numeric" placeholder="כמות ברירת מחדל" style="flex:1" aria-label="כמות מנות">
         <button type="button" class="btn btn-primary btn-sm" id="add-plan-portion">+ הוסף מנות</button>
       </div>
-    </div>
-    <div class="card manager-plan-add-card">
-      <div class="card-title">3 · תזרימים</div>
+    `)}
+    ${addCard('add-flows', '3 · תזרימים', `
       <p class="form-hint" style="margin-bottom:12px">בחר תזרים — צ׳קליסטים יתווספו למשימות, והתזרים יופיע למטה בדף נפרד</p>
       <div class="filter-row">
         <select id="plan-flow" style="flex:1">
@@ -830,15 +928,14 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
         </select>
         <button type="button" class="btn btn-primary btn-sm" id="add-plan-flow">+ הוסף</button>
       </div>
-    </div>
-    <div class="card manager-plan-add-card">
-      <div class="card-title">4 · משימה ידנית${showHighlights ? ' ודגשים' : ''}</div>
+    `)}
+    ${addCard('add-manual', `4 · משימה ידנית${showHighlights ? ' ודגשים' : ''}`, `
       <div class="filter-row">
         <input type="text" id="plan-text" placeholder="למשל: הזמנה מיוחדת, ניקוי מקרר..." style="flex:1">
         <button type="button" class="btn btn-secondary btn-sm" id="add-plan-text">+</button>
       </div>
       ${showHighlights ? renderPlanHighlightsHTML(plan) : ''}
-    </div>`;
+    `)}`;
 }
 
 function openAssigneeModal(container, { id, currentName = '', employees = [] }) {
@@ -1222,30 +1319,45 @@ async function renderPlanFlowsPageHTML(items, activeRunData, productMap, flowNam
       }).join('')
       : '<p class="form-hint" style="margin:0">אין שלבים</p>';
 
-    planFlowBlocks.push(`
-      <div class="manager-plan-flow-page-block" data-id="${ref.id}">
-        <div class="manager-active-run-head">
-          <div class="manager-active-run-title">🔄 ${escapeHtml(name)}</div>
+    planFlowBlocks.push(renderCollapsiblePlanSection(
+      `plan-flow-ref-${ref.id}`,
+      `🔄 ${escapeHtml(name)}`,
+      `
+        <div class="manager-active-run-head" style="justify-content:flex-end;margin-bottom:6px">
           <button type="button" class="btn btn-danger btn-sm plan-item-del" data-id="${ref.id}" title="הסר תזרים מהתוכנית">🗑</button>
         </div>
         ${linkedRun ? `<p class="form-hint" style="margin:0 0 6px">תזרים פעיל בתוכנית · ${escapeHtml(activeRunTitle(linkedRun.run, productMap))}</p>` : ''}
         <div class="manager-active-run-group">
           <div class="manager-active-run-heading">📋 שלבי התזרים</div>
           ${stepLines}
-        </div>
-      </div>`);
+        </div>`,
+      {
+        className: 'manager-plan-flow-page-block',
+        summaryClass: 'manager-active-run-title manager-plan-collapse-summary',
+      },
+    ));
   }
 
-  return `
-    <div class="card manager-plan-flows-page-card" id="active-runs-anchor">
-      <div class="manager-plan-section-title" style="margin-top:0">🔄 תזרימים — דף נפרד</div>
+  const flowsInner = `
       <p class="form-hint" style="margin-top:0">כאן מופיעים תזרימים שהוספת / ייבאת · המשימות (צ׳קליסט) נשארות ברשימת היום למעלה</p>
       ${planFlowBlocks.length
     ? planFlowBlocks.join('')
     : '<p class="form-hint">עדיין אין תזרימים בתוכנית — בחר תזרים למעלה או ייבא תזרים פעיל</p>'}
       <div class="manager-plan-flows-active-wrap">
         ${renderActiveRunsSectionHTML(activeRunData, productMap)}
-      </div>
+      </div>`;
+
+  return `
+    <div class="card manager-plan-flows-page-card" id="active-runs-anchor">
+      ${renderCollapsiblePlanSection(
+    'flows-page',
+    '🔄 תזרימים — דף נפרד',
+    flowsInner,
+    {
+      summaryClass: 'manager-plan-section-title manager-plan-collapse-summary',
+      count: flowRefs.length || null,
+    },
+  )}
     </div>`;
 }
 
@@ -1311,6 +1423,7 @@ async function renderDailyPlan(container) {
   bindManagerTabs(container);
   bindPlanItems(container, 'daily', date, { employees });
   bindActiveRunsSection(container, { planType: 'daily', anchorDate: date });
+  bindPlanCollapse(container);
 
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;
@@ -1466,6 +1579,7 @@ async function renderWeeklyPlan(container) {
 
   bindManagerTabs(container);
   bindPlanItems(container, 'weekly', weekStart, { employees });
+  bindPlanCollapse(container);
 
   document.getElementById('week-start')?.addEventListener('change', (e) => {
     container.dataset.weekStart = weekStartISO(e.target.value);
