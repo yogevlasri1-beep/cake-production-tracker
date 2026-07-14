@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=303';
+} from '../db.js?v=304';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=303';
-import { openModal, closeModal } from '../modal.js?v=303';
-import { renderTargets } from './targets.js?v=303';
-import { renderPurchasingInManager } from './purchasing.js?v=303';
-import { forceAppUpdate } from '../sw-register.js?v=303';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=303';
+} from '../utils.js?v=304';
+import { openModal, closeModal } from '../modal.js?v=304';
+import { renderTargets } from './targets.js?v=304';
+import { renderPurchasingInManager } from './purchasing.js?v=304';
+import { forceAppUpdate } from '../sw-register.js?v=304';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=304';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=303';
+} from '../daily-plan-export.js?v=304';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -422,8 +422,8 @@ function groupChecklistByFlow(items, { flowNames } = {}) {
 
 function renderPlanHighlightsHTML(plan) {
   return `
-    <div class="manager-plan-section manager-plan-highlights-section">
-      <div class="manager-plan-section-title">📝 דגשים ליום</div>
+    <div class="form-group" style="margin-top:12px;margin-bottom:0">
+      <label for="plan-notes">📝 דגשים ליום</label>
       <textarea id="plan-notes" rows="2" placeholder="הערות משמרת, הזמנות מיוחדות, דגשים לייצור...">${escapeHtml(plan?.notes || '')}</textarea>
       <button type="button" class="btn btn-secondary btn-sm" id="save-plan-notes" style="margin-top:8px">שמור דגשים</button>
     </div>`;
@@ -442,9 +442,6 @@ function renderProductCentricPlanHTML(items, products, {
     filtered = items.filter((i) => (i.dayOffset ?? 0) === dayOffset);
   }
   if (!filtered.length) {
-    if (showHighlights) {
-      return `${renderPlanHighlightsHTML(plan)}<p class="form-hint manager-plan-empty">עדיין אין פריטים — הוסף מוצרים או מנות למעלה</p>`;
-    }
     return '<p class="form-hint manager-plan-empty">עדיין אין פריטים — הוסף מוצרים או מנות למעלה</p>';
   }
 
@@ -502,10 +499,6 @@ function renderProductCentricPlanHTML(items, products, {
         </div>`;
     }
     html += '</div>';
-  }
-
-  if (showHighlights) {
-    html += renderPlanHighlightsHTML(plan);
   }
 
   if (cleanGrouped.groups.length || cleanGrouped.orphans.length) {
@@ -775,7 +768,7 @@ function getSelectedPlanPortions(rootSelector, defaultQty) {
   });
 }
 
-function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [] } = {}) {
+function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [], plan = null, showHighlights = false } = {}) {
   const dayLabels = weekDayLabels();
   const flowOptions = flows.length
     ? flows.map((f) => {
@@ -839,11 +832,12 @@ function renderPlanAddProductHTML(products, layout, { showDay = false, flows = [
       </div>
     </div>
     <div class="card manager-plan-add-card">
-      <div class="card-title">4 · משימה ידנית</div>
+      <div class="card-title">4 · משימה ידנית${showHighlights ? ' ודגשים' : ''}</div>
       <div class="filter-row">
         <input type="text" id="plan-text" placeholder="למשל: הזמנה מיוחדת, ניקוי מקרר..." style="flex:1">
         <button type="button" class="btn btn-secondary btn-sm" id="add-plan-text">+</button>
       </div>
+      ${showHighlights ? renderPlanHighlightsHTML(plan) : ''}
     </div>`;
 }
 
@@ -1301,13 +1295,11 @@ async function renderDailyPlan(container) {
       </div>
     </div>
 
-    ${renderPlanAddProductHTML(products, layout, { flows })}
+    ${renderPlanAddProductHTML(products, layout, { flows, plan, showHighlights: true })}
 
     <div class="card manager-plan-list-card">
       <div class="card-title">רשימת היום</div>
       ${renderProductCentricPlanHTML(items, products, {
-    plan,
-    showHighlights: true,
     productFlowMap,
     productFlowNamesMap,
     flowNames,
