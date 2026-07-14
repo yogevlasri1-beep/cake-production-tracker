@@ -4515,6 +4515,30 @@ table.report-table tfoot td {
   border: 1px solid #fde68a;
 }
 
+.recipe-placement-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 560px) {
+  .recipe-placement-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.recipe-placement-field select {
+  width: 100%;
+}
+
+.recipe-new-next-hint {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 8%, #fff);
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border));
+}
+
 .recipe-product-yield-section {
   margin-bottom: 20px;
   padding: 16px;
