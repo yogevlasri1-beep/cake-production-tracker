@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=312';
-import { RECIPE_OVEN_TYPES } from './kitchen-db.js?v=312';
+import { escapeHtml } from './utils.js?v=313';
+import { RECIPE_OVEN_TYPES } from './kitchen-db.js?v=313';
 
 const BAKING_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -244,16 +244,40 @@ export function buildBakingPrintHtml({
 </html>`;
 }
 
-export function printBakingHtml(html) {
-  const win = window.open('', '_blank', 'noopener,noreferrer');
-  if (!win) return false;
-  win.document.write(html);
-  win.document.close();
-  const trigger = () => {
-    win.focus();
-    win.print();
-  };
-  if (win.document.readyState === 'complete') trigger();
-  else win.addEventListener('load', trigger, { once: true });
-  return true;
+export async function shareBakingHtml(html, {
+  viewMode = 'category',
+  filename,
+  shareText,
+} = {}) {
+  const modeLabel = viewMode === 'product' ? 'מוצרים' : 'קטגוריות';
+  const datePart = new Date().toISOString().slice(0, 10);
+  const safeName = (filename && filename.endsWith('.html'))
+    ? filename
+    : (filename || `apiyot-${modeLabel}-${datePart}.html`);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const file = new File([blob], safeName, { type: 'text/html' });
+  const text = shareText || `רשימת אפיות · ${modeLabel}`;
+
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: safeName, text });
+      return 'share';
+    } catch (err) {
+      if (err?.name === 'AbortError') return 'cancelled';
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = safeName;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 2000);
+  return 'download';
 }
