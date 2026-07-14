@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=301';
-import { APP_VERSION } from './version.js?v=301';
-import { defaultColorForIndex } from './chart.js?v=301';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=301';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=301';
-import { ValidationError } from './validators.js?v=301';
+import { exportAllData, importAllData } from './db.js?v=302';
+import { APP_VERSION } from './version.js?v=302';
+import { defaultColorForIndex } from './chart.js?v=302';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=302';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=302';
+import { ValidationError } from './validators.js?v=302';
 
 export const BACKUP_VERSION = 3;
 

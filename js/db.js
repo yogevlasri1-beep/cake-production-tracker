@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=301';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=301';
-import { defaultColorForIndex } from './chart.js?v=301';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=301';
+} from './validators.js?v=302';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=302';
+import { defaultColorForIndex } from './chart.js?v=302';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=302';
 
 export { ValidationError };
 
@@ -7375,7 +7375,7 @@ export async function addManagerPlanItem({
   });
 }
 
-/** תזרימים ייחודיים למוצרים בתוכנית — לפי סדר הופעה, ללא כפילות תזרים */
+/** תזרימים לתוכנית — ממוצרים + משורות flow_ref / צ׳קליסטים */
 export async function collectPlanProductFlowsForExport(items) {
   const productItems = items
     .filter((i) => i.itemKind === 'product' && i.productId)
@@ -7384,20 +7384,36 @@ export async function collectPlanProductFlowsForExport(items) {
   const flowOrder = [];
   const flowData = new Map();
 
+  const ensureFlow = async (flow) => {
+    if (!flow || flowData.has(flow.id)) return;
+    const steps = await getFlowStepsForFlow(flow.id);
+    flowData.set(flow.id, { flow, steps, products: [] });
+    flowOrder.push(flow.id);
+  };
+
   for (const item of productItems) {
     const flows = await resolveFlowsForProduct(item.productId);
     for (const flow of flows) {
-      if (!flow) continue;
-      if (!flowData.has(flow.id)) {
-        const steps = await getFlowStepsForFlow(flow.id);
-        flowData.set(flow.id, { flow, steps, products: [] });
-        flowOrder.push(flow.id);
-      }
+      await ensureFlow(flow);
       flowData.get(flow.id).products.push({
         label: item.label,
         quantity: item.quantity,
       });
     }
+  }
+
+  const refFlowIds = [
+    ...new Set(
+      items
+        .filter((i) => (i.itemKind === 'flow_ref' || i.itemKind === 'flow_preparation'
+          || i.itemKind === 'flow_cleaning' || i.itemKind === 'flow_step') && i.flowId)
+        .map((i) => Number(i.flowId)),
+    ),
+  ];
+  for (const fid of refFlowIds) {
+    if (flowData.has(fid)) continue;
+    const flow = await db.flows.get(fid);
+    await ensureFlow(flow);
   }
 
   return flowOrder.map((id) => flowData.get(id)).filter(Boolean);
@@ -7861,6 +7877,18 @@ export async function updateManagerPlanItem(id, patch) {
 export async function deleteManagerPlanItem(id) {
   const row = await db.managerPlanItems.get(Number(id));
   if (!row) return;
+  if (row.itemKind === 'flow_ref' && row.flowId) {
+    const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
+    const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
+    const linked = sameDay.filter((i) => i.id !== row.id
+      && i.flowId === row.flowId
+      && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
+    await db.transaction('rw', db.managerPlanItems, async () => {
+      for (const l of linked) await db.managerPlanItems.delete(l.id);
+      await db.managerPlanItems.delete(row.id);
+    });
+    return;
+  }
   if (row.itemKind === 'product' && row.productId) {
     const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
     const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
@@ -7907,131 +7935,148 @@ export async function clearManagerPlanItems(planType, anchorDate) {
 }
 
 /**
- * ייבוא תזרים פעיל לתוכנית עבודה יומית:
- * מוצר (אם יש) + צ׳קליסט/נקיונות + מנות שנרשמו בתהליך
+ * הוספת צ׳קליסטים (הכנות + נקיונות) מתזרים לתוכנית,
+ * ובנוסף שורת «תזרים» (flow_ref) שמוצגת בסקשן נפרד למטה.
+ */
+export async function addManagerPlanFlowChecklists({
+  planType = 'daily',
+  anchorDate,
+  dayOffset = 0,
+  flowId,
+  productionRunId = null,
+  includeFlowRef = true,
+} = {}) {
+  if (!isValidISODate(anchorDate)) throw new ValidationError('תאריך לא תקין');
+  const fid = Number(flowId);
+  if (!fid) throw new ValidationError('בחר תזרים');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים לא נמצא');
+
+  const offset = Number(dayOffset) || 0;
+  const [preps, cleaningTasks, existing] = await Promise.all([
+    getFlowPreparations(fid),
+    getFlowCleaningTasks(fid),
+    getManagerPlanItems(planType, anchorDate),
+  ]);
+  const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === offset);
+  const existingPrep = new Set(
+    sameDay.filter((i) => i.itemKind === 'flow_preparation' && i.flowId === fid)
+      .map((i) => i.flowPreparationId),
+  );
+  const existingClean = new Set(
+    sameDay.filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === fid)
+      .map((i) => i.flowCleaningTaskId),
+  );
+  const hasFlowRef = sameDay.some((i) => i.itemKind === 'flow_ref' && i.flowId === fid);
+
+  let categoryId = flow.categoryId || null;
+  let categoryGroupId = flow.categoryGroupId || null;
+  if (categoryId && !categoryGroupId) {
+    const cat = await db.categories.get(categoryId);
+    categoryGroupId = cat?.groupId || null;
+  }
+
+  let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+  const rows = [];
+
+  for (const prep of preps) {
+    if (existingPrep.has(prep.checklistTaskId)) continue;
+    rows.push({
+      planType,
+      anchorDate,
+      dayOffset: offset,
+      itemKind: 'flow_preparation',
+      flowId: fid,
+      flowPreparationId: prep.checklistTaskId,
+      productId: null,
+      categoryId,
+      categoryGroupId,
+      label: prep.name,
+      quantity: null,
+      done: false,
+      sortOrder: sortOrder++,
+    });
+  }
+  for (const task of cleaningTasks) {
+    if (existingClean.has(task.id)) continue;
+    rows.push({
+      planType,
+      anchorDate,
+      dayOffset: offset,
+      itemKind: 'flow_cleaning',
+      flowId: fid,
+      flowCleaningTaskId: task.id,
+      productId: null,
+      categoryId,
+      categoryGroupId,
+      label: task.name,
+      quantity: null,
+      done: false,
+      sortOrder: sortOrder++,
+    });
+  }
+
+  let flowRefAdded = false;
+  if (includeFlowRef && !hasFlowRef) {
+    rows.push({
+      planType,
+      anchorDate,
+      dayOffset: offset,
+      itemKind: 'flow_ref',
+      flowId: fid,
+      productionRunId: productionRunId ? Number(productionRunId) : null,
+      productId: null,
+      categoryId,
+      categoryGroupId,
+      label: flow.name,
+      quantity: null,
+      done: false,
+      sortOrder: sortOrder++,
+    });
+    flowRefAdded = true;
+  } else if (includeFlowRef && hasFlowRef && productionRunId) {
+    const ref = sameDay.find((i) => i.itemKind === 'flow_ref' && i.flowId === fid);
+    if (ref && !ref.productionRunId) {
+      await db.managerPlanItems.update(ref.id, { productionRunId: Number(productionRunId) });
+    }
+  }
+
+  if (rows.length) await db.managerPlanItems.bulkAdd(rows);
+
+  return {
+    checklistsAdded: rows.length - (flowRefAdded ? 1 : 0),
+    flowRefAdded,
+    flowName: flow.name,
+    flowId: fid,
+  };
+}
+
+/**
+ * ייבוא תזרים פעיל לתוכנית — רק צ׳קליסטים (הכנות + נקיונות) + שורת תזרים.
+ * לא מייבא מוצרים / מנות.
  */
 export async function importActiveRunToDailyPlan(runId, { planType = 'daily', anchorDate } = {}) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (run.status !== 'active') throw new ValidationError('ניתן לייבא רק תזרים פעיל');
+  if (!run.flowId) throw new ValidationError('לתהליך אין תזרים משויך');
   const date = anchorDate && isValidISODate(anchorDate) ? anchorDate : (run.date || todayISOFromDate());
 
-  let productsAdded = 0;
-  let checklistsAdded = 0;
-  let portionsAdded = 0;
-  const flowName = run.flowName || '';
-
-  if (run.productId) {
-    const res = await addManagerPlanProductWithChecklists({
-      planType,
-      anchorDate: date,
-      dayOffset: 0,
-      productId: run.productId,
-      quantity: null,
-      portions: null,
-    });
-    productsAdded += res.productsAdded || 0;
-    checklistsAdded += res.checklistsAdded || 0;
-  } else if (run.flowId) {
-    // בלי מוצר — מייבאים צ׳קליסט וניקיון ישירות מהתזרים
-    const [preps, cleaningTasks, existing] = await Promise.all([
-      getFlowPreparations(run.flowId),
-      getFlowCleaningTasks(run.flowId),
-      getManagerPlanItems(planType, date),
-    ]);
-    const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === 0);
-    const existingPrep = new Set(
-      sameDay.filter((i) => i.itemKind === 'flow_preparation' && i.flowId === run.flowId)
-        .map((i) => i.flowPreparationId),
-    );
-    const existingClean = new Set(
-      sameDay.filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === run.flowId)
-        .map((i) => i.flowCleaningTaskId),
-    );
-    let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
-    const rows = [];
-    for (const prep of preps) {
-      if (existingPrep.has(prep.checklistTaskId)) continue;
-      rows.push({
-        planType,
-        anchorDate: date,
-        dayOffset: 0,
-        itemKind: 'flow_preparation',
-        flowId: run.flowId,
-        flowPreparationId: prep.checklistTaskId,
-        productId: null,
-        categoryId: run.categoryId || null,
-        categoryGroupId: run.categoryGroupId || null,
-        label: prep.name,
-        quantity: null,
-        done: false,
-        sortOrder: sortOrder++,
-      });
-    }
-    for (const task of cleaningTasks) {
-      if (existingClean.has(task.id)) continue;
-      rows.push({
-        planType,
-        anchorDate: date,
-        dayOffset: 0,
-        itemKind: 'flow_cleaning',
-        flowId: run.flowId,
-        flowCleaningTaskId: task.id,
-        productId: null,
-        categoryId: run.categoryId || null,
-        categoryGroupId: run.categoryGroupId || null,
-        label: task.name,
-        quantity: null,
-        done: false,
-        sortOrder: sortOrder++,
-      });
-    }
-    if (rows.length) {
-      await db.managerPlanItems.bulkAdd(rows);
-      checklistsAdded += rows.length;
-    }
-  }
-
-  // מנות שנרשמו בתהליך → פריטי מנה בתוכנית
-  const existingAfter = await getManagerPlanItems(planType, date);
-  const seenPortionKeys = new Set(
-    existingAfter
-      .filter((i) => i.itemKind === 'portion' && i.portionPresetId)
-      .map((i) => `${i.portionPresetId}:${i.productId || ''}:${i.categoryId || ''}`),
-  );
-  for (const step of run.steps || []) {
-    if (!step.tracksPortions) continue;
-    for (const batch of getStepPortionBatches(step)) {
-      if (!batch.presetId || !batch.count) continue;
-      if (!run.productId && !run.categoryId) continue;
-      const portionKey = `${batch.presetId}:${run.productId || ''}:${run.productId ? '' : (run.categoryId || '')}`;
-      if (seenPortionKeys.has(portionKey)) continue;
-      const preset = await db.groupPortionPresets.get(Number(batch.presetId));
-      if (!preset) continue;
-      try {
-        await addManagerPlanItem({
-          planType,
-          anchorDate: date,
-          dayOffset: 0,
-          itemKind: 'portion',
-          productId: run.productId || null,
-          categoryId: run.productId ? null : (run.categoryId || null),
-          portionPresetId: preset.id,
-          quantity: batch.count,
-        });
-        seenPortionKeys.add(portionKey);
-        portionsAdded += 1;
-      } catch {
-        /* skip invalid rows */
-      }
-    }
-  }
+  const res = await addManagerPlanFlowChecklists({
+    planType,
+    anchorDate: date,
+    dayOffset: 0,
+    flowId: run.flowId,
+    productionRunId: run.id,
+    includeFlowRef: true,
+  });
 
   return {
-    productsAdded,
-    checklistsAdded,
-    portionsAdded,
-    flowName,
+    productsAdded: 0,
+    checklistsAdded: res.checklistsAdded,
+    portionsAdded: 0,
+    flowRefAdded: res.flowRefAdded,
+    flowName: res.flowName || run.flowName || '',
     date,
   };
 }

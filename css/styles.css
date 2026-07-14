@@ -6961,9 +6961,33 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.manager-active-runs-card {
+.manager-plan-flows-page-card {
+  margin-top: 12px;
   border: 1px solid #fed7aa;
-  background: #fff7ed;
+  background: #fffaf5;
+}
+
+.manager-plan-flow-page-block {
+  padding: 10px 0;
+  border-top: 1px solid #fde3c7;
+}
+
+.manager-plan-flow-page-block:first-of-type {
+  border-top: none;
+}
+
+.manager-plan-flows-active-wrap {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 2px dashed #fdba74;
+}
+
+.manager-plan-flows-active-wrap .manager-active-runs-card {
+  margin: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 .manager-active-run {
