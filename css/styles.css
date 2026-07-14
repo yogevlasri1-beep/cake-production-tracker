@@ -5641,6 +5641,37 @@ button.flow-metrics-stat--btn:hover {
   border-top: 1px solid var(--border);
 }
 
+.flow-metrics-portion-block {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 94%, var(--primary) 6%);
+}
+
+.flow-metrics-portion-block:last-of-type {
+  margin-bottom: 8px;
+}
+
+.flow-metrics-portion-title {
+  margin: 0 0 4px;
+  font-size: 1.02rem;
+  font-weight: 800;
+  text-align: center;
+  color: var(--text);
+}
+
+.flow-metrics-portion-meta {
+  margin: 0 0 10px;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.flow-metrics-portion-block .flow-metrics-detail-list {
+  margin: 0;
+}
+
 .flow-metrics-detail-row--step {
   flex-direction: column;
   gap: 6px;
