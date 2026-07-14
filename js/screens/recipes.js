@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=300';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=300';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=300';
-import { renderRecipesMachines } from '../recipes-machines.js?v=300';
-import { renderRecipesPortions } from '../recipes-portions.js?v=300';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=300';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=300';
-import { openModal, closeModal } from '../modal.js?v=300';
+} from '../kitchen-db.js?v=301';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=301';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=301';
+import { renderRecipesMachines } from '../recipes-machines.js?v=301';
+import { renderRecipesPortions } from '../recipes-portions.js?v=301';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=301';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=301';
+import { openModal, closeModal } from '../modal.js?v=301';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=300';
-import { defaultColorForIndex } from '../chart.js?v=300';
+} from '../product-drag.js?v=301';
+import { defaultColorForIndex } from '../chart.js?v=301';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
