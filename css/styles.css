@@ -330,6 +330,70 @@ body {
   white-space: nowrap;
 }
 
+.baking-oven-section {
+  margin: 8px 0 20px;
+}
+
+.baking-oven-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+  border: 1px solid #fed7aa;
+}
+
+.baking-oven-section--small .baking-oven-section-header {
+  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+  border-color: #bae6fd;
+}
+
+.baking-oven-section-title {
+  margin: 0;
+  font-size: 1.05rem;
+  color: #9a3412;
+}
+
+.baking-oven-section--small .baking-oven-section-title {
+  color: #0369a1;
+}
+
+.baking-oven-section-count {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.baking-oven-section-empty {
+  margin: 0 4px 8px;
+}
+
+.baking-oven-divider {
+  height: 1px;
+  margin: 8px 0 16px;
+  background: linear-gradient(90deg, transparent, #cbd5e1, transparent);
+}
+
+.baking-profile-oven-block {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.baking-profile-oven-toggle {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.baking-profile-oven-fields {
+  margin-top: 8px;
+}
+
 .baking-table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

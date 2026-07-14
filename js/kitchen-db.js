@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=309';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=310';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=309';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=309';
+} from './validators.js?v=310';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=310';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -51,21 +51,191 @@ export function getRecipeOvenLabel(type) {
   return RECIPE_OVEN_TYPES[type] || type;
 }
 
+function sanitizeBakeParamTemp(raw) {
+  return raw != null && raw !== ''
+    ? sanitizeQuantity(raw, { min: 1, max: 500 })
+    : null;
+}
+
+function sanitizeBakeParamMinutes(raw) {
+  return raw != null && raw !== ''
+    ? sanitizeQuantity(raw, { allowZero: true, max: 10_000 })
+    : null;
+}
+
+function sanitizeBakeParamSeconds(raw) {
+  return raw != null && raw !== ''
+    ? sanitizeQuantity(raw, { allowZero: true, max: 86_400 })
+    : null;
+}
+
+function readOvenBakeParams(raw, prefix, useLegacyFallback = false) {
+  const pick = (field, legacyField) => {
+    const dualKey = `${prefix}${field}`;
+    if (raw[dualKey] != null && raw[dualKey] !== '') return raw[dualKey];
+    if (useLegacyFallback && legacyField && raw[legacyField] != null && raw[legacyField] !== '') {
+      return raw[legacyField];
+    }
+    return null;
+  };
+  return {
+    bakeTempC: sanitizeBakeParamTemp(pick('BakeTempC', 'bakeTempC')),
+    bakeTimeMinutes: sanitizeBakeParamMinutes(pick('BakeTimeMinutes', 'bakeTimeMinutes')),
+    bakeSteamSeconds: sanitizeBakeParamSeconds(pick('BakeSteamSeconds', 'bakeSteamSeconds')),
+    bakeDryMinutes: sanitizeBakeParamMinutes(pick('BakeDryMinutes', 'bakeDryMinutes')),
+  };
+}
+
+function profileHasDualOvenFields(raw) {
+  if (!raw) return false;
+  return raw.ovenLargeEnabled != null
+    || raw.ovenSmallEnabled != null
+    || raw.largeBakeTempC != null
+    || raw.smallBakeTempC != null
+    || raw.largeBakeTimeMinutes != null
+    || raw.smallBakeTimeMinutes != null;
+}
+
+/** Normalize profile storage: optional large + small ovens with separate params. */
+export function normalizeBakingProfileFields(raw) {
+  const name = sanitizeName(raw.name, 60);
+  if (!name) throw new ValidationError('שם פרופיל לא תקין');
+
+  let ovenLargeEnabled;
+  let ovenSmallEnabled;
+  let legacyFallbackLarge = false;
+  let legacyFallbackSmall = false;
+
+  if (profileHasDualOvenFields(raw)) {
+    ovenLargeEnabled = !!raw.ovenLargeEnabled;
+    ovenSmallEnabled = !!raw.ovenSmallEnabled;
+  } else {
+    // Migrate legacy single-oven profile
+    if (raw.bakeOvenType === 'small') {
+      ovenLargeEnabled = false;
+      ovenSmallEnabled = true;
+      legacyFallbackSmall = true;
+    } else {
+      ovenLargeEnabled = true;
+      ovenSmallEnabled = false;
+      legacyFallbackLarge = true;
+    }
+  }
+
+  if (!ovenLargeEnabled && !ovenSmallEnabled) {
+    throw new ValidationError('יש לבחור לפחות תנור אחד (גדול או קטן)');
+  }
+
+  const large = ovenLargeEnabled
+    ? readOvenBakeParams(raw, 'large', legacyFallbackLarge)
+    : { bakeTempC: null, bakeTimeMinutes: null, bakeSteamSeconds: null, bakeDryMinutes: null };
+  const small = ovenSmallEnabled
+    ? readOvenBakeParams(raw, 'small', legacyFallbackSmall)
+    : { bakeTempC: null, bakeTimeMinutes: null, bakeSteamSeconds: null, bakeDryMinutes: null };
+
+  // Legacy flat fields for older UI paths — prefer large when both enabled
+  const primary = ovenLargeEnabled ? { ovenType: 'large', ...large } : { ovenType: 'small', ...small };
+
+  return {
+    name,
+    notes: String(raw.notes || '').trim().slice(0, 500),
+    ovenLargeEnabled,
+    ovenSmallEnabled,
+    largeBakeTempC: large.bakeTempC,
+    largeBakeTimeMinutes: large.bakeTimeMinutes,
+    largeBakeSteamSeconds: large.bakeSteamSeconds,
+    largeBakeDryMinutes: large.bakeDryMinutes,
+    smallBakeTempC: small.bakeTempC,
+    smallBakeTimeMinutes: small.bakeTimeMinutes,
+    smallBakeSteamSeconds: small.bakeSteamSeconds,
+    smallBakeDryMinutes: small.bakeDryMinutes,
+    bakeOvenType: primary.ovenType,
+    bakeTempC: primary.bakeTempC,
+    bakeTimeMinutes: primary.bakeTimeMinutes,
+    bakeSteamSeconds: primary.bakeSteamSeconds,
+    bakeDryMinutes: primary.bakeDryMinutes,
+  };
+}
+
+/** Hydrate a stored profile (incl. legacy) into dual-oven shape without writing. */
+export function ensureDualOvenProfile(profile) {
+  if (!profile) return null;
+  try {
+    const normalized = normalizeBakingProfileFields(profile);
+    return { ...profile, ...normalized };
+  } catch {
+    return {
+      ...profile,
+      ovenLargeEnabled: true,
+      ovenSmallEnabled: false,
+      largeBakeTempC: profile.bakeTempC ?? null,
+      largeBakeTimeMinutes: profile.bakeTimeMinutes ?? null,
+      largeBakeSteamSeconds: profile.bakeSteamSeconds ?? null,
+      largeBakeDryMinutes: profile.bakeDryMinutes ?? null,
+      smallBakeTempC: null,
+      smallBakeTimeMinutes: null,
+      smallBakeSteamSeconds: null,
+      smallBakeDryMinutes: null,
+    };
+  }
+}
+
+export function getEnabledBakingOvens(profile) {
+  const p = ensureDualOvenProfile(profile);
+  if (!p) return [];
+  const ovens = [];
+  if (p.ovenLargeEnabled) {
+    ovens.push({
+      ovenType: 'large',
+      label: RECIPE_OVEN_TYPES.large,
+      bakeTempC: p.largeBakeTempC,
+      bakeTimeMinutes: p.largeBakeTimeMinutes,
+      bakeSteamSeconds: p.largeBakeSteamSeconds,
+      bakeDryMinutes: p.largeBakeDryMinutes,
+    });
+  }
+  if (p.ovenSmallEnabled) {
+    ovens.push({
+      ovenType: 'small',
+      label: RECIPE_OVEN_TYPES.small,
+      bakeTempC: p.smallBakeTempC,
+      bakeTimeMinutes: p.smallBakeTimeMinutes,
+      bakeSteamSeconds: p.smallBakeSteamSeconds,
+      bakeDryMinutes: p.smallBakeDryMinutes,
+    });
+  }
+  return ovens;
+}
+
+export function formatOvenBakeParamsLine(oven) {
+  if (!oven) return '';
+  const parts = [];
+  if (oven.bakeTempC) parts.push(`${oven.bakeTempC}°C`);
+  if (oven.bakeTimeMinutes != null && oven.bakeTimeMinutes !== '') {
+    parts.push(`${oven.bakeTimeMinutes} דק׳`);
+  }
+  if (oven.bakeSteamSeconds != null && oven.bakeSteamSeconds !== '') {
+    parts.push(`קיטור ${oven.bakeSteamSeconds} שנ׳`);
+  }
+  if (oven.bakeDryMinutes != null && oven.bakeDryMinutes !== '') {
+    parts.push(`יבוש ${oven.bakeDryMinutes} דק׳`);
+  }
+  return parts.join(' · ') || 'ללא פרטים';
+}
+
+export function formatBakingProfileOvensSummary(profile) {
+  const ovens = getEnabledBakingOvens(profile);
+  if (!ovens.length) return 'ללא תנור';
+  return ovens.map((o) => `${o.label}: ${formatOvenBakeParamsLine(o)}`).join(' · ');
+}
+
 export function formatRecipeBakingParamsLine(recipe, profileOrMap) {
   const baking = resolveRecipeBaking(recipe, profileOrMap);
   if (!baking.hasBaking) return '';
-  const parts = [];
-  if (baking.bakeTempC) parts.push(`${baking.bakeTempC}°C`);
-  if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') {
-    parts.push(`${baking.bakeTimeMinutes} דק׳`);
+  if (baking.ovens?.length) {
+    return baking.ovens.map((o) => `${o.label}: ${formatOvenBakeParamsLine(o)}`).join(' · ');
   }
-  if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') {
-    parts.push(`קיטור ${baking.bakeSteamSeconds} שנ׳`);
-  }
-  if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
-    parts.push(`יבוש ${baking.bakeDryMinutes} דק׳`);
-  }
-  return parts.join(' · ') || 'ללא פרטים';
+  return formatOvenBakeParamsLine(baking) || 'ללא פרטים';
 }
 
 export function resolveRecipeBaking(recipe, profileOrMap) {
@@ -81,37 +251,29 @@ export function resolveRecipeBaking(recipe, profileOrMap) {
   }
 
   if (profile) {
+    const hydrated = ensureDualOvenProfile(profile);
+    const ovens = getEnabledBakingOvens(hydrated);
+    const primary = ovens[0] || {};
     return {
       hasBaking: true,
       bakingProfileId: Number(recipe.bakingProfileId) || null,
-      profileName: profile.name,
-      bakeOvenType: profile.bakeOvenType ?? null,
-      bakeTempC: profile.bakeTempC ?? null,
-      bakeTimeMinutes: profile.bakeTimeMinutes ?? null,
-      bakeSteamSeconds: profile.bakeSteamSeconds ?? null,
-      bakeDryMinutes: profile.bakeDryMinutes ?? null,
-      profileNotes: profile.notes || '',
+      profileName: hydrated.name,
+      bakeOvenType: primary.ovenType ?? hydrated.bakeOvenType ?? null,
+      bakeTempC: primary.bakeTempC ?? null,
+      bakeTimeMinutes: primary.bakeTimeMinutes ?? null,
+      bakeSteamSeconds: primary.bakeSteamSeconds ?? null,
+      bakeDryMinutes: primary.bakeDryMinutes ?? null,
+      profileNotes: hydrated.notes || '',
+      ovens,
+      ovenLargeEnabled: !!hydrated.ovenLargeEnabled,
+      ovenSmallEnabled: !!hydrated.ovenSmallEnabled,
     };
   }
 
   return {
     ...normalizeRecipeBakingFields(recipe),
     bakingProfileId: recipe.bakingProfileId ? Number(recipe.bakingProfileId) : null,
-  };
-}
-
-export function normalizeBakingProfileFields(raw) {
-  const name = sanitizeName(raw.name, 60);
-  if (!name) throw new ValidationError('שם פרופיל לא תקין');
-  const baking = normalizeRecipeBakingFields({ hasBaking: true, ...raw });
-  return {
-    name,
-    bakeOvenType: baking.bakeOvenType,
-    bakeTempC: baking.bakeTempC,
-    bakeTimeMinutes: baking.bakeTimeMinutes,
-    bakeSteamSeconds: baking.bakeSteamSeconds,
-    bakeDryMinutes: baking.bakeDryMinutes,
-    notes: String(raw.notes || '').trim().slice(0, 500),
+    ovens: [],
   };
 }
 
@@ -121,13 +283,14 @@ export const BAKING_SCOPE_CATEGORY = 'category';
 export async function getBakingProfiles() {
   const rows = await db.bakingProfiles.toArray();
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-  return rows;
+  return rows.map((p) => ensureDualOvenProfile(p));
 }
 
 export async function getBakingProfile(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return null;
-  return db.bakingProfiles.get(pid);
+  const row = await db.bakingProfiles.get(pid);
+  return row ? ensureDualOvenProfile(row) : null;
 }
 
 export async function addBakingProfile(fields) {
@@ -199,7 +362,10 @@ export async function buildProductBakingIndex() {
     db.categories.toArray(),
     db.categoryGroups.toArray(),
   ]);
-  const profileMap = new Map(profiles.map((p) => [Number(p.id), p]));
+  const profileMap = new Map(profiles.map((p) => {
+    const hydrated = ensureDualOvenProfile(p);
+    return [Number(hydrated.id), hydrated];
+  }));
   const directByProduct = new Map();
   for (const link of productLinks) {
     directByProduct.set(Number(link.productId), link);

@@ -17,7 +17,8 @@ import {
   scaleIngredientsToTargetGrams, recipeTotalWeightGrams,
   RECIPE_WEIGHT_UNITS, normalizeRecipeUnitKind, RECIPE_SORT_GROUP_DEFAULT,
   RECIPE_OVEN_TYPES, normalizeRecipeBakingFields, resolveRecipeBaking,
-  getRecipeOvenLabel, formatRecipeBakingParamsLine,
+  getRecipeOvenLabel,
+  formatBakingProfileOvensSummary, formatOvenBakeParamsLine, getEnabledBakingOvens,
   getBakingProfiles, getBakingProfile, addBakingProfile, updateBakingProfile, deleteBakingProfile,
   getProductsForBakingProfile, getRecipesForBakingProfile, getBakingProfileScopes,
   linkProductToBakingProfile, unlinkProductFromBakingProfile,
@@ -28,18 +29,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=309';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=309';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=309';
-import { renderRecipesMachines } from '../recipes-machines.js?v=309';
-import { renderRecipesPortions } from '../recipes-portions.js?v=309';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=309';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=309';
-import { openModal, closeModal } from '../modal.js?v=309';
+} from '../kitchen-db.js?v=310';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=310';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=310';
+import { renderRecipesMachines } from '../recipes-machines.js?v=310';
+import { renderRecipesPortions } from '../recipes-portions.js?v=310';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=310';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=310';
+import { openModal, closeModal } from '../modal.js?v=310';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=309';
-import { defaultColorForIndex } from '../chart.js?v=309';
+} from '../product-drag.js?v=310';
+import { defaultColorForIndex } from '../chart.js?v=310';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -789,26 +790,32 @@ function collectBakingProductItems(productCatalog, bakingIndex) {
         const resolved = bakingIndex.byProductId.get(Number(product.id));
         if (!resolved) continue;
         const profile = resolved.profile;
-        items.push({
-          product,
-          productId: product.id,
-          productName: product.name,
-          categoryPath,
-          categoryId: cat.id,
-          profile,
-          profileId: profile.id,
-          baking: {
-            hasBaking: true,
-            bakeTempC: profile.bakeTempC,
-            bakeTimeMinutes: profile.bakeTimeMinutes,
-            bakeSteamSeconds: profile.bakeSteamSeconds,
-            bakeDryMinutes: profile.bakeDryMinutes,
-            bakeOvenType: profile.bakeOvenType,
-            profileName: profile.name,
-          },
-          source: resolved.source,
-          scopeName: resolved.scopeName,
-        });
+        const ovens = getEnabledBakingOvens(profile);
+        if (!ovens.length) continue;
+        for (const oven of ovens) {
+          items.push({
+            product,
+            productId: product.id,
+            productName: product.name,
+            categoryPath,
+            categoryId: cat.id,
+            profile,
+            profileId: profile.id,
+            ovenType: oven.ovenType,
+            ovenLabel: oven.label,
+            baking: {
+              hasBaking: true,
+              bakeTempC: oven.bakeTempC,
+              bakeTimeMinutes: oven.bakeTimeMinutes,
+              bakeSteamSeconds: oven.bakeSteamSeconds,
+              bakeDryMinutes: oven.bakeDryMinutes,
+              bakeOvenType: oven.ovenType,
+              profileName: profile.name,
+            },
+            source: resolved.source,
+            scopeName: resolved.scopeName,
+          });
+        }
       }
     }
   };
@@ -817,6 +824,13 @@ function collectBakingProductItems(productCatalog, bakingIndex) {
   }
   walk(productCatalog?.ungrouped || [], '');
   return items;
+}
+
+function splitBakingItemsByOven(items) {
+  return {
+    large: items.filter((i) => i.ovenType === 'large'),
+    small: items.filter((i) => i.ovenType === 'small'),
+  };
 }
 
 function getBakingViewMode(container) {
@@ -866,8 +880,10 @@ function renderBakingParamsCells(baking) {
 }
 
 function renderBakingProfileCatalogRow(profile, productCount, recipeCount, scopeCounts = {}) {
-  const oven = profile.bakeOvenType ? getRecipeOvenLabel(profile.bakeOvenType) : '—';
-  const params = formatRecipeBakingParamsLine({}, profile) || '—';
+  const ovens = getEnabledBakingOvens(profile);
+  const ovenMeta = ovens.length
+    ? ovens.map((o) => `${o.label}: ${formatOvenBakeParamsLine(o)}`).join(' · ')
+    : '—';
   const scopeParts = [];
   if (scopeCounts.groups) scopeParts.push(`${scopeCounts.groups} קבוצות`);
   if (scopeCounts.categories) scopeParts.push(`${scopeCounts.categories} קטגוריות`);
@@ -876,7 +892,7 @@ function renderBakingProfileCatalogRow(profile, productCount, recipeCount, scope
     <div class="baking-profile-row baking-profile-row--clickable" data-profile-id="${profile.id}" role="button" tabindex="0">
       <div class="baking-profile-row-main">
         <strong class="baking-profile-name">${escapeHtml(profile.name)}</strong>
-        <span class="baking-profile-meta">${escapeHtml(oven)} · ${escapeHtml(params)}</span>
+        <span class="baking-profile-meta">${escapeHtml(ovenMeta)}</span>
         ${profile.notes ? `<span class="baking-profile-notes">${escapeHtml(profile.notes)}</span>` : ''}
       </div>
       <div class="baking-profile-row-side">
@@ -930,6 +946,30 @@ function renderBakingListGroupCard(group, viewMode = 'category') {
     </div>`;
 }
 
+function renderBakingOvenSection(ovenType, label, items, viewMode) {
+  if (!items.length) {
+    return `
+    <section class="baking-oven-section baking-oven-section--${ovenType} baking-oven-section--empty">
+      <div class="baking-oven-section-header">
+        <h2 class="baking-oven-section-title">${escapeHtml(label)}</h2>
+        <span class="baking-oven-section-count">0 מוצרים</span>
+      </div>
+      <p class="form-hint baking-oven-section-empty">אין מוצרים משויכים לתנור זה</p>
+    </section>`;
+  }
+  const groups = viewMode === 'product'
+    ? groupBakingProductsDetailed(items)
+    : groupBakingProductsByCategory(items);
+  return `
+    <section class="baking-oven-section baking-oven-section--${ovenType}">
+      <div class="baking-oven-section-header">
+        <h2 class="baking-oven-section-title">${escapeHtml(label)}</h2>
+        <span class="baking-oven-section-count">${items.length} מוצרים</span>
+      </div>
+      ${groups.map((g) => renderBakingListGroupCard(g, viewMode)).join('')}
+    </section>`;
+}
+
 async function loadFreshBakingContext() {
   const [layout, productCatalog] = await Promise.all([
     getRecipesCatalogLayout(),
@@ -950,9 +990,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     buildProductBakingIndex(),
   ]);
   const allItems = collectBakingProductItems(productCatalog, bakingIndex);
-  const groups = viewMode === 'product'
-    ? groupBakingProductsDetailed(allItems)
-    : groupBakingProductsByCategory(allItems);
+  const byOven = splitBakingItemsByOven(allItems);
 
   const recipeCounts = new Map();
   const scopeCounts = new Map();
@@ -971,10 +1009,32 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     )).join('')
     : '<p class="form-hint baking-profile-empty">אין פרופילי אפייה — צור פרופיל ראשון</p>';
 
+  const hasList = allItems.length > 0 || profiles.length > 0;
+  const listHTML = hasList ? `
+    <div class="section-header baking-recipes-header">
+      <div class="baking-recipes-header-main">
+        <h2>${viewMode === 'product' ? 'אפיות — מפורט למוצרים' : 'אפיות לפי קטגוריות מוצרים'}</h2>
+        <span class="baking-total-count">${allItems.length} שורות אפייה</span>
+      </div>
+      <div class="flow-scope-tabs baking-view-tabs">
+        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'category' ? ' active' : ''}" data-baking-view="category">לפי קטגוריות</button>
+        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'product' ? ' active' : ''}" data-baking-view="product">מפורט למוצרים</button>
+      </div>
+    </div>
+    ${renderBakingOvenSection('large', RECIPE_OVEN_TYPES.large, byOven.large, viewMode)}
+    <div class="baking-oven-divider" aria-hidden="true"></div>
+    ${renderBakingOvenSection('small', RECIPE_OVEN_TYPES.small, byOven.small, viewMode)}`
+    : `
+    <div class="empty-state">
+      <div class="empty-state-icon">🔥</div>
+      <p>אין מוצרים עם אפייה עדיין</p>
+      <p class="form-hint">צור פרופיל עם תנור גדול ו/או קטן, ושייך קבוצה / קטגוריה / מוצרים</p>
+    </div>`;
+
   container.innerHTML = `
     <div class="card baking-station-intro">
       <div class="card-title">רשימת אפיות</div>
-      <p class="form-hint" style="margin:0">מוצרים לפי קטגוריות · לחץ על פרופיל לניהול שיוכים · <strong>+</strong> לשיוך קבוצה / קטגוריה / מוצר</p>
+      <p class="form-hint" style="margin:0">לכל פרופיל אפשר להגדיר תנור גדול, תנור קטן, או את שניהם · הרשימה מחולקת לפי סוג תנור</p>
     </div>
     <div class="card baking-profiles-card">
       <div class="section-header baking-profiles-header">
@@ -983,23 +1043,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
       </div>
       <div class="baking-profile-list">${profileCatalog}</div>
     </div>
-    ${allItems.length ? `
-    <div class="section-header baking-recipes-header">
-      <div class="baking-recipes-header-main">
-        <h2>${viewMode === 'product' ? 'אפיות — מפורט למוצרים' : 'אפיות לפי קטגוריות מוצרים'}</h2>
-        <span class="baking-total-count">${allItems.length} מוצרים</span>
-      </div>
-      <div class="flow-scope-tabs baking-view-tabs">
-        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'category' ? ' active' : ''}" data-baking-view="category">לפי קטגוריות</button>
-        <button type="button" class="flow-scope-tab baking-view-tab${viewMode === 'product' ? ' active' : ''}" data-baking-view="product">מפורט למוצרים</button>
-      </div>
-    </div>
-    ${groups.map((g) => renderBakingListGroupCard(g, viewMode)).join('')}` : `
-    <div class="empty-state">
-      <div class="empty-state-icon">🔥</div>
-      <p>אין מוצרים עם אפייה עדיין</p>
-      <p class="form-hint">צור פרופיל ושייך קבוצת מוצרים, קטגוריה או מוצרים ספציפיים</p>
-    </div>`}`;
+    ${listHTML}`;
 
   container.querySelectorAll('.baking-view-tab').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -2788,13 +2832,94 @@ function buildBakingParamsFieldsHTML(values, { idPrefix = 'recipe' } = {}) {
         </div>`;
 }
 
+function buildBakingProfileOvenBlockHTML(prefix, label, enabled, values) {
+  return `
+    <div class="baking-profile-oven-block" data-oven="${prefix}">
+      <label class="checkbox-label baking-profile-oven-toggle">
+        <input type="checkbox" id="baking-profile-oven-${prefix}" ${enabled ? 'checked' : ''}>
+        <span>${escapeHtml(label)}</span>
+      </label>
+      <div class="recipe-baking-grid baking-profile-oven-fields${enabled ? '' : ' hidden'}" id="baking-profile-oven-${prefix}-fields">
+        <div class="form-group">
+          <label>טמפ׳ אפייה (°C)</label>
+          <input type="number" id="baking-profile-${prefix}-temp" min="1" max="500" step="1" placeholder="180" value="${values?.bakeTempC ?? ''}">
+        </div>
+        <div class="form-group">
+          <label>זמן אפייה (דק׳)</label>
+          <input type="number" id="baking-profile-${prefix}-time" min="0" step="1" placeholder="25" value="${values?.bakeTimeMinutes ?? ''}">
+        </div>
+        <div class="form-group">
+          <label>קיטור (שניות)</label>
+          <input type="number" id="baking-profile-${prefix}-steam" min="0" step="1" placeholder="30" value="${values?.bakeSteamSeconds ?? ''}">
+        </div>
+        <div class="form-group">
+          <label>יבוש (דק׳)</label>
+          <input type="number" id="baking-profile-${prefix}-dry" min="0" step="1" placeholder="10" value="${values?.bakeDryMinutes ?? ''}">
+        </div>
+      </div>
+    </div>`;
+}
+
+function buildBakingProfileFormFieldsHTML(profile) {
+  const p = profile || {};
+  const largeEnabled = profile ? !!p.ovenLargeEnabled : true;
+  const smallEnabled = profile ? !!p.ovenSmallEnabled : false;
+  return `
+    <p class="form-hint" style="margin-top:0">סמן תנור גדול, תנור קטן, או את שניהם — לכל תנור נתונים נפרדים</p>
+    ${buildBakingProfileOvenBlockHTML('large', RECIPE_OVEN_TYPES.large, largeEnabled, {
+    bakeTempC: p.largeBakeTempC,
+    bakeTimeMinutes: p.largeBakeTimeMinutes,
+    bakeSteamSeconds: p.largeBakeSteamSeconds,
+    bakeDryMinutes: p.largeBakeDryMinutes,
+  })}
+    ${buildBakingProfileOvenBlockHTML('small', RECIPE_OVEN_TYPES.small, smallEnabled, {
+    bakeTempC: p.smallBakeTempC,
+    bakeTimeMinutes: p.smallBakeTimeMinutes,
+    bakeSteamSeconds: p.smallBakeSteamSeconds,
+    bakeDryMinutes: p.smallBakeDryMinutes,
+  })}`;
+}
+
+function bindBakingProfileOvenToggles() {
+  ['large', 'small'].forEach((prefix) => {
+    const cb = document.getElementById(`baking-profile-oven-${prefix}`);
+    const fields = document.getElementById(`baking-profile-oven-${prefix}-fields`);
+    cb?.addEventListener('change', () => {
+      fields?.classList.toggle('hidden', !cb.checked);
+    });
+  });
+}
+
+function readBakingProfileOvensFromForm() {
+  const readOven = (prefix) => ({
+    bakeTempC: document.getElementById(`baking-profile-${prefix}-temp`)?.value,
+    bakeTimeMinutes: document.getElementById(`baking-profile-${prefix}-time`)?.value,
+    bakeSteamSeconds: document.getElementById(`baking-profile-${prefix}-steam`)?.value,
+    bakeDryMinutes: document.getElementById(`baking-profile-${prefix}-dry`)?.value,
+  });
+  const largeOn = !!document.getElementById('baking-profile-oven-large')?.checked;
+  const smallOn = !!document.getElementById('baking-profile-oven-small')?.checked;
+  const large = readOven('large');
+  const small = readOven('small');
+  return {
+    ovenLargeEnabled: largeOn,
+    ovenSmallEnabled: smallOn,
+    largeBakeTempC: large.bakeTempC,
+    largeBakeTimeMinutes: large.bakeTimeMinutes,
+    largeBakeSteamSeconds: large.bakeSteamSeconds,
+    largeBakeDryMinutes: large.bakeDryMinutes,
+    smallBakeTempC: small.bakeTempC,
+    smallBakeTimeMinutes: small.bakeTimeMinutes,
+    smallBakeSteamSeconds: small.bakeSteamSeconds,
+    smallBakeDryMinutes: small.bakeDryMinutes,
+  };
+}
+
 function buildBakingProfileSelectOptions(profiles, selectedId) {
   const parts = ['<option value="">— הגדרות ידניות —</option>'];
   for (const p of profiles) {
     const sel = Number(selectedId) === p.id ? ' selected' : '';
-    const oven = p.bakeOvenType ? getRecipeOvenLabel(p.bakeOvenType) : '';
-    const params = formatRecipeBakingParamsLine({}, p);
-    const hint = [oven, params].filter(Boolean).join(' · ');
+    const hint = formatBakingProfileOvensSummary(p);
     parts.push(`<option value="${p.id}"${sel}>${escapeHtml(p.name)}${hint ? ` (${escapeHtml(hint)})` : ''}</option>`);
   }
   return parts.join('');
@@ -2871,17 +2996,10 @@ function bindRecipeBakingFormToggle(profiles = []) {
       preview.innerHTML = '';
       return;
     }
+    const ovens = getEnabledBakingOvens(profile);
     const rows = [];
-    if (profile.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(profile.bakeOvenType) });
-    if (profile.bakeTempC) rows.push({ label: 'טמפ׳', value: `${profile.bakeTempC}°C` });
-    if (profile.bakeTimeMinutes != null && profile.bakeTimeMinutes !== '') {
-      rows.push({ label: 'זמן', value: `${profile.bakeTimeMinutes} דק׳` });
-    }
-    if (profile.bakeSteamSeconds != null && profile.bakeSteamSeconds !== '') {
-      rows.push({ label: 'קיטור', value: `${profile.bakeSteamSeconds} שנ׳` });
-    }
-    if (profile.bakeDryMinutes != null && profile.bakeDryMinutes !== '') {
-      rows.push({ label: 'יבוש', value: `${profile.bakeDryMinutes} דק׳` });
+    for (const oven of ovens) {
+      rows.push({ label: oven.label, value: formatOvenBakeParamsLine(oven) || 'ללא פרטים' });
     }
     preview.innerHTML = `
       <p class="form-hint" style="margin-bottom:8px">פרטים מפרופיל «${escapeHtml(profile.name)}»</p>
@@ -2922,16 +3040,22 @@ function buildRecipeBakingViewHTML(recipe, profileMap) {
   if (!baking.hasBaking) return '';
   const rows = [];
   if (baking.profileName) rows.push({ label: 'פרופיל', value: baking.profileName });
-  if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
-  if (baking.bakeTempC) rows.push({ label: 'טמפ׳ אפייה', value: `${baking.bakeTempC}°C` });
-  if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') {
-    rows.push({ label: 'זמן אפייה', value: `${baking.bakeTimeMinutes} דק׳` });
-  }
-  if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') {
-    rows.push({ label: 'קיטור', value: `${baking.bakeSteamSeconds} שניות` });
-  }
-  if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
-    rows.push({ label: 'יבוש', value: `${baking.bakeDryMinutes} דק׳` });
+  if (baking.ovens?.length) {
+    for (const oven of baking.ovens) {
+      rows.push({ label: oven.label, value: formatOvenBakeParamsLine(oven) || 'ללא פרטים' });
+    }
+  } else {
+    if (baking.bakeOvenType) rows.push({ label: 'תנור', value: getRecipeOvenLabel(baking.bakeOvenType) });
+    if (baking.bakeTempC) rows.push({ label: 'טמפ׳ אפייה', value: `${baking.bakeTempC}°C` });
+    if (baking.bakeTimeMinutes != null && baking.bakeTimeMinutes !== '') {
+      rows.push({ label: 'זמן אפייה', value: `${baking.bakeTimeMinutes} דק׳` });
+    }
+    if (baking.bakeSteamSeconds != null && baking.bakeSteamSeconds !== '') {
+      rows.push({ label: 'קיטור', value: `${baking.bakeSteamSeconds} שניות` });
+    }
+    if (baking.bakeDryMinutes != null && baking.bakeDryMinutes !== '') {
+      rows.push({ label: 'יבוש', value: `${baking.bakeDryMinutes} דק׳` });
+    }
   }
   if (!rows.length) {
     return `
@@ -3085,7 +3209,7 @@ async function openBakingProfileLinksModal(container, profileId, { layout, produ
     ? availableRecipes.map(({ recipe, path }) => `<option value="${recipe.id}">${escapeHtml(recipe.name)} (${escapeHtml(path)})</option>`).join('')
     : '<option value="">אין מתכונים לשיוך</option>';
 
-  const paramsLine = formatRecipeBakingParamsLine({}, profile);
+  const paramsLine = formatBakingProfileOvensSummary(profile);
 
   openModal({
     title: `שיוך · ${escapeHtml(profile.name)}`,
@@ -3301,9 +3425,9 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
     bodyHTML: `
       <div class="form-group">
         <label>שם פרופיל</label>
-        <input type="text" id="baking-profile-name" maxlength="60" placeholder="למשל: בצק חמאה — תנור גדול" value="${profile ? escapeHtml(profile.name) : ''}">
+        <input type="text" id="baking-profile-name" maxlength="60" placeholder="למשל: בצק חמאה" value="${profile ? escapeHtml(profile.name) : ''}">
       </div>
-      ${buildBakingParamsFieldsHTML(profile, { idPrefix: 'baking-profile' })}
+      ${buildBakingProfileFormFieldsHTML(profile)}
       <div class="form-group">
         <label>הערות (אופציונלי)</label>
         <textarea id="baking-profile-notes" rows="2">${profile ? escapeHtml(profile.notes || '') : ''}</textarea>
@@ -3313,11 +3437,11 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
       <button class="btn btn-primary" id="save-baking-profile">שמור</button>`,
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  bindBakingParamsFormToggle('baking-profile');
+  bindBakingProfileOvenToggles();
   document.getElementById('save-baking-profile')?.addEventListener('click', async () => {
     const name = document.getElementById('baking-profile-name')?.value.trim();
     const notes = document.getElementById('baking-profile-notes')?.value || '';
-    const data = { name, notes, ...readBakingParamsFromForm('baking-profile') };
+    const data = { name, notes, ...readBakingProfileOvensFromForm() };
     try {
       if (isEdit) await updateBakingProfile(profile.id, data);
       else await addBakingProfile(data);
