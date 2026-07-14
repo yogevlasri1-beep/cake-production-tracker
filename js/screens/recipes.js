@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=305';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=305';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=305';
-import { renderRecipesMachines } from '../recipes-machines.js?v=305';
-import { renderRecipesPortions } from '../recipes-portions.js?v=305';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=305';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=305';
-import { openModal, closeModal } from '../modal.js?v=305';
+} from '../kitchen-db.js?v=306';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=306';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=306';
+import { renderRecipesMachines } from '../recipes-machines.js?v=306';
+import { renderRecipesPortions } from '../recipes-portions.js?v=306';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=306';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=306';
+import { openModal, closeModal } from '../modal.js?v=306';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=305';
-import { defaultColorForIndex } from '../chart.js?v=305';
+} from '../product-drag.js?v=306';
+import { defaultColorForIndex } from '../chart.js?v=306';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -464,13 +464,16 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
     <div class="card">
       <div class="filter-row" style="margin-bottom:8px">
         <div class="card-title" style="margin:0;flex:1">עריכה ובניית מתכונים</div>
-        <button type="button" class="btn btn-primary btn-sm" id="new-recipe-btn">+ מתכון חדש</button>
+        <button type="button" class="btn-new-recipe" id="new-recipe-btn" title="מתכון חדש" aria-label="מתכון חדש">
+          <span class="btn-new-recipe-icon" aria-hidden="true">📒</span>
+          <span class="btn-new-recipe-plus" aria-hidden="true">+</span>
+        </button>
         <label class="btn btn-secondary btn-sm backup-file-label" for="recipe-word-file">📄 Word
           <input type="file" id="recipe-word-file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
         </label>
         <button type="button" class="btn btn-secondary btn-sm" id="manage-recipe-cats">⚙️</button>
       </div>
-      <p class="form-hint" style="margin:0">צור מתכון חדש עם שיוך לקטגוריה ולמוצר — אחר כך הוסף חומרי גלם.</p>
+      <p class="form-hint" style="margin:0">לחץ על כפתור המתכון ליצירת מתכון חדש — עם שיוך לקטגוריה ולמוצר.</p>
     </div>
     <div class="recipe-browse-toolbar">
       <input type="search" class="recipe-browse-search" id="recipe-edit-search" placeholder="חיפוש מתכון..." value="${escapeHtml(savedSearch)}" autocomplete="off">
@@ -478,7 +481,6 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
     <div class="section-header products-toolbar">
       <h2>קטגוריות ומתכונים</h2>
       <div class="products-toolbar-actions">
-        <button type="button" class="btn btn-primary btn-sm" id="new-recipe-btn-toolbar">+ מתכון חדש</button>
         <button type="button" class="btn btn-secondary btn-sm" id="add-recipe-group-btn">+ קבוצת סידור</button>
         <button type="button" class="btn btn-secondary btn-sm" id="add-recipe-sub-btn">+ קטגוריה</button>
       </div>
