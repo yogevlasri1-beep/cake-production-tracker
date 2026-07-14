@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=296';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=296';
-import { defaultColorForIndex } from './chart.js?v=296';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=296';
+} from './validators.js?v=297';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=297';
+import { defaultColorForIndex } from './chart.js?v=297';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=297';
 
 export { ValidationError };
 
@@ -6513,9 +6513,11 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
 
   const batchDate = date && isValidISODate(date) ? date : todayISOFromDate();
   const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  // נרמול מנות ישנות בלי batches — רק אם אין כבר רשומות
   if (!batches.length && step.portionCount != null) {
     batches.push({
       count: step.portionCount,
+      name: 'מנה',
       date: step.completedAt ? String(step.completedAt).slice(0, 10) : batchDate,
       recordedAt: step.completedAt || managerNowISO(),
       note: '',
@@ -6524,6 +6526,7 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
 
   const entry = {
     count: pCount,
+    name: 'מנה',
     date: batchDate,
     recordedAt: managerNowISO(),
     note: String(note || '').trim().slice(0, 200),
@@ -6533,10 +6536,13 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
     const preset = flowPresets.find((p) => p.id === pid) || await db.groupPortionPresets.get(pid);
     if (!preset) throw new ValidationError('מנה לא נמצאה');
     entry.presetId = preset.id;
-    entry.name = preset.name;
+    entry.name = preset.name || 'מנה';
     entry.weight = preset.weight;
     entry.extra = preset.extra || '';
-    if (preset.sourceRecipeId) entry.fromRecipe = true;
+    if (preset.sourceRecipeId) {
+      entry.fromRecipe = true;
+      entry.sourceRecipeId = Number(preset.sourceRecipeId);
+    }
   }
 
   batches.push(entry);
@@ -6723,20 +6729,25 @@ export async function completeRunStep(runId, stepIndex, {
         stepPatch.portionSize = pSize;
       }
       const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
-      if (pCount != null) {
-        batches.push({
-          count: pCount,
-          date: String(stepPatch.completedAt).slice(0, 10),
-          recordedAt: stepPatch.completedAt,
-          note: '',
-        });
-      } else if (!batches.length && step.portionCount != null) {
-        batches.push({
-          count: step.portionCount,
-          date: String(stepPatch.completedAt).slice(0, 10),
-          recordedAt: stepPatch.completedAt,
-          note: '',
-        });
+      // לא מוסיפים מנה נוספת אם כבר יש רשומות batches (מונע כפילות)
+      if (!batches.length) {
+        if (pCount != null) {
+          batches.push({
+            count: pCount,
+            name: 'מנה',
+            date: String(stepPatch.completedAt).slice(0, 10),
+            recordedAt: stepPatch.completedAt,
+            note: '',
+          });
+        } else if (step.portionCount != null) {
+          batches.push({
+            count: step.portionCount,
+            name: 'מנה',
+            date: String(stepPatch.completedAt).slice(0, 10),
+            recordedAt: stepPatch.completedAt,
+            note: '',
+          });
+        }
       }
       if (batches.length) {
         stepPatch.portionBatches = batches;

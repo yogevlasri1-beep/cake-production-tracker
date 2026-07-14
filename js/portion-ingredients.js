@@ -1,10 +1,10 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=296';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=296';
-import { openModal, closeModal } from './modal.js?v=296';
-import { requestAutoBackupNow } from './backup-service.js?v=296';
+} from './kitchen-db.js?v=297';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=297';
+import { openModal, closeModal } from './modal.js?v=297';
+import { requestAutoBackupNow } from './backup-service.js?v=297';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
@@ -31,7 +31,7 @@ function supplierFieldHTML(row, index) {
     </label>`;
 }
 
-/** רשימת חומרי גלם — שם + מספר מנות על האריזה */
+/** רשימת חומרי גלם — שם + מספר מנה על האריזה */
 function buildPackagingListHTML(rows) {
   return `
     <ul class="portion-packaging-list">
@@ -43,11 +43,11 @@ function buildPackagingListHTML(rows) {
             <span class="form-hint portion-packaging-recipe-qty">${formatDecimal(row.quantity)} ${escapeHtml(row.unit || '')}</span>
           </div>
           <label class="portion-packaging-count-field">
-            <span class="portion-packaging-count-label">מנות על האריזה</span>
+            <span class="portion-packaging-count-label">מספר מנה</span>
             <input type="number" class="portion-ing-packaging" data-index="${index}"
               min="0.1" step="0.1" inputmode="decimal" placeholder="למשל 10"
               value="${row.packagingPortionCount !== '' && row.packagingPortionCount != null ? escapeHtml(String(row.packagingPortionCount)) : ''}"
-              aria-label="מספר מנות על האריזה — ${escapeHtml(row.name)}">
+              aria-label="מספר מנה — ${escapeHtml(row.name)}">
           </label>
         </div>
         ${supplierFieldHTML(row, index)}
@@ -82,7 +82,7 @@ export async function openPortionIngredientsModal({ portionPresetId, portionName
     title: escapeHtml(title),
     modalClass: 'modal-portion-ingredients',
     bodyHTML: `
-      <p class="form-hint" style="margin-top:0">לכל חומר גלם — רשום כמה מנות כתוב על האריזה (המספר שעל האריזה).</p>
+      <p class="form-hint" style="margin-top:0">לכל חומר גלם — רשום את <strong>מספר המנה</strong> שכתוב על האריזה.</p>
       ${buildPackagingListHTML(rows)}`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
