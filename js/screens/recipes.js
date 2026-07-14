@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=306';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=306';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=306';
-import { renderRecipesMachines } from '../recipes-machines.js?v=306';
-import { renderRecipesPortions } from '../recipes-portions.js?v=306';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=306';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=306';
-import { openModal, closeModal } from '../modal.js?v=306';
+} from '../kitchen-db.js?v=307';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=307';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=307';
+import { renderRecipesMachines } from '../recipes-machines.js?v=307';
+import { renderRecipesPortions } from '../recipes-portions.js?v=307';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=307';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=307';
+import { openModal, closeModal } from '../modal.js?v=307';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=306';
-import { defaultColorForIndex } from '../chart.js?v=306';
+} from '../product-drag.js?v=307';
+import { defaultColorForIndex } from '../chart.js?v=307';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -543,7 +543,6 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
 
   const openNewRecipe = () => openNewRecipeBuilder(container, { layout, productCatalog });
   document.getElementById('new-recipe-btn')?.addEventListener('click', openNewRecipe);
-  document.getElementById('new-recipe-btn-toolbar')?.addEventListener('click', openNewRecipe);
 
   document.getElementById('add-recipe-group-btn')?.addEventListener('click', () => {
     const name = prompt('שם קבוצת סידור:', RECIPE_SORT_GROUP_DEFAULT);

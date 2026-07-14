@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=306';
+} from '../db.js?v=307';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=306';
-import { openModal, closeModal } from '../modal.js?v=306';
-import { renderTargets } from './targets.js?v=306';
-import { renderPurchasingInManager } from './purchasing.js?v=306';
-import { forceAppUpdate } from '../sw-register.js?v=306';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=306';
+} from '../utils.js?v=307';
+import { openModal, closeModal } from '../modal.js?v=307';
+import { renderTargets } from './targets.js?v=307';
+import { renderPurchasingInManager } from './purchasing.js?v=307';
+import { forceAppUpdate } from '../sw-register.js?v=307';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=307';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=306';
+} from '../daily-plan-export.js?v=307';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -387,6 +387,7 @@ function checklistDedupeKey(item) {
 }
 
 const PLAN_COLLAPSE_STORAGE = 'manager-daily-plan-collapse-v1';
+const PLAN_DAILY_MODE_KEY = 'manager-daily-plan-mode';
 
 function getPlanCollapseState() {
   try {
@@ -408,6 +409,36 @@ function setPlanSectionOpen(key, open) {
   try {
     sessionStorage.setItem(PLAN_COLLAPSE_STORAGE, JSON.stringify(state));
   } catch { /* ignore */ }
+}
+
+function getDailyPlanMode(container, { hasItems = false } = {}) {
+  const fromDom = container.dataset.dailyPlanMode;
+  if (fromDom === 'build' || fromDom === 'ready') return fromDom;
+  try {
+    const saved = sessionStorage.getItem(PLAN_DAILY_MODE_KEY);
+    if (saved === 'build' || saved === 'ready') return saved;
+  } catch { /* ignore */ }
+  return hasItems ? 'ready' : 'build';
+}
+
+function setDailyPlanMode(container, mode) {
+  const next = mode === 'ready' ? 'ready' : 'build';
+  container.dataset.dailyPlanMode = next;
+  try {
+    sessionStorage.setItem(PLAN_DAILY_MODE_KEY, next);
+  } catch { /* ignore */ }
+}
+
+function renderDailyPlanModeTabs(mode, { itemCount = 0 } = {}) {
+  return `
+    <div class="manager-daily-mode-tabs">
+      <button type="button" class="manager-daily-mode-tab${mode === 'build' ? ' is-active' : ''}" data-daily-mode="build">
+        🛠️ בניית תוכנית
+      </button>
+      <button type="button" class="manager-daily-mode-tab${mode === 'ready' ? ' is-active' : ''}" data-daily-mode="ready">
+        📋 תוכנית מוכנה${itemCount ? ` (${itemCount})` : ''}
+      </button>
+    </div>`;
 }
 
 function renderCollapsiblePlanSection(key, titleHtml, bodyHtml, {
@@ -658,13 +689,17 @@ function renderActiveRunsSectionHTML(runData, productMap) {
   const toggleBtn = `<button type="button" class="btn btn-secondary btn-sm" id="toggle-active-runs">${hidden ? '👁 הצג' : '🙈 הסתר'}</button>`;
 
   if (hidden) {
-    return `
-      <div class="card manager-active-runs-card">
-        <div class="filter-row" style="margin:0">
-          <div class="card-title" style="margin:0;flex:1">🔥 תזרימים פעילים${runData.length ? ` (${runData.length})` : ''}</div>
-          ${toggleBtn}
-        </div>
-      </div>`;
+    return renderCollapsiblePlanSection(
+      'active-runs',
+      `🔥 תזרימים פעילים${runData.length ? ` (${runData.length})` : ''}`,
+      `<div class="filter-row" style="margin:0;justify-content:flex-end">${toggleBtn}</div>
+       <p class="form-hint" style="margin:8px 0 0">מוסתר — לחץ «הצג» כדי לראות</p>`,
+      {
+        defaultOpen: false,
+        className: 'card manager-active-runs-card',
+        summaryClass: 'card-title manager-plan-collapse-summary',
+      },
+    );
   }
 
   const cards = visible.map(({ run, prep, clean }) => {
@@ -675,14 +710,10 @@ function renderActiveRunsSectionHTML(runData, productMap) {
     const nothing = !remainingSteps.length && !remainingPrep.length && !remainingClean.length;
     const stepItem = (s) => `<div class="manager-active-run-item${s.status === 'active' ? ' is-active' : ''}">${s.status === 'active' ? '● ' : '○ '}${escapeHtml(s.stepName || 'שלב')}</div>`;
     const checkItem = (c) => `<div class="manager-active-run-item">○ ${escapeHtml(c.name)}</div>`;
-    return `
-      <div class="manager-active-run">
-        <div class="manager-active-run-head">
-          <div class="manager-active-run-title">🔥 ${escapeHtml(title)}</div>
-          <div class="manager-active-run-actions">
-            <button type="button" class="btn btn-primary btn-sm manager-active-run-import" data-run-id="${run.id}" title="ייבא לתוכנית">📥 ייבא</button>
-            <button type="button" class="btn btn-secondary btn-sm btn-icon manager-active-run-remove" data-run-id="${run.id}" title="הסר מהרשימה" aria-label="הסר מהרשימה">✕</button>
-          </div>
+    const body = `
+        <div class="manager-active-run-actions" style="margin-bottom:8px">
+          <button type="button" class="btn btn-primary btn-sm manager-active-run-import" data-run-id="${run.id}" title="ייבא לתוכנית">📥 ייבא צ׳קליסט</button>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon manager-active-run-remove" data-run-id="${run.id}" title="הסר מהרשימה" aria-label="הסר מהרשימה">✕</button>
         </div>
         ${nothing ? '<p class="form-hint" style="margin:0">כל השלבים והמשימות בוצעו — ממתין לסגירת התהליך</p>' : `
           ${remainingSteps.length ? `
@@ -700,23 +731,39 @@ function renderActiveRunsSectionHTML(runData, productMap) {
             <div class="manager-active-run-heading">🧹 ניקיון</div>
             ${remainingClean.map(checkItem).join('')}
           </div>` : ''}
-        `}
-      </div>`;
+        `}`;
+    return renderCollapsiblePlanSection(
+      `active-run-${run.id}`,
+      `🔥 ${escapeHtml(title)}`,
+      body,
+      {
+        defaultOpen: false,
+        className: 'manager-active-run',
+        summaryClass: 'manager-active-run-title manager-plan-collapse-summary',
+      },
+    );
   }).join('');
 
-  return `
-    <div class="card manager-active-runs-card">
-      <div class="filter-row" style="margin-bottom:6px">
-        <div class="card-title" style="margin:0;flex:1">🔥 תזרימים פעילים</div>
-        ${toggleBtn}
-      </div>
+  const body = `
+      <div class="filter-row" style="margin-bottom:8px;justify-content:flex-end">${toggleBtn}</div>
       ${runData.length
-    ? '<p class="form-hint" style="margin-bottom:10px">ייבוא מוסיף רק צ׳קליסטים (משימות + נקיונות) לפי תזרים — התזרים יופיע כאן למטה בנפרד מהמשימות</p>'
-    : '<p class="form-hint" style="margin:0">אין תזרימים פעילים כרגע. התחל תהליך בעמדת התהליך והוא יופיע כאן.</p>'}
+    ? '<p class="form-hint" style="margin-bottom:10px">ייבוא מוסיף רק צ׳קליסטים (משימות + נקיונות) לפי תזרים</p>'
+    : '<p class="form-hint" style="margin:0">אין תזרימים פעילים כרגע.</p>'}
       ${cards}
       ${dismissedActive.length ? `
-      <button type="button" class="btn btn-secondary btn-sm" id="restore-active-runs" style="margin-top:8px">➕ החזר תזרימים שהוסרו (${dismissedActive.length})</button>` : ''}
-    </div>`;
+      <button type="button" class="btn btn-secondary btn-sm" id="restore-active-runs" style="margin-top:8px">➕ החזר תזרימים שהוסרו (${dismissedActive.length})</button>` : ''}`;
+
+  return renderCollapsiblePlanSection(
+    'active-runs',
+    `🔥 תזרימים פעילים${runData.length ? ` (${runData.length})` : ''}`,
+    body,
+    {
+      defaultOpen: true,
+      count: runData.length || null,
+      className: 'card manager-active-runs-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  );
 }
 
 function bindActiveRunsSection(container, { planType = 'daily', anchorDate } = {}) {
@@ -1379,13 +1426,38 @@ async function renderDailyPlan(container) {
   const countable = items.filter((i) => i.itemKind !== 'flow_ref');
   const progressPct = countable.length ? Math.round((done / countable.length) * 100) : 0;
   const activeCount = activeRunData.length;
+  const mode = getDailyPlanMode(container, { hasItems: countable.length > 0 });
+  setDailyPlanMode(container, mode);
+
   const flowsPageHtml = await renderPlanFlowsPageHTML(
     items, activeRunData, activeRunsProductMap, flowNames,
   );
 
-  container.innerHTML = `
-    ${managerTabsHTML('daily')}
-    <div class="card manager-plan-header-card">
+  const headerBuild = renderCollapsiblePlanSection(
+    'header-build',
+    '🗓️ תאריך וכלים לבנייה',
+    `
+      <div class="form-group" style="margin-bottom:8px">
+        <label for="plan-date">תאריך</label>
+        <input type="date" id="plan-date" value="${date}">
+      </div>
+      <p class="form-hint" style="margin-bottom:8px">${formatDateHebrew(date)}</p>
+      <div class="filter-row" style="margin:0;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" id="jump-active-runs" style="flex:1">🔥 תזרימים${activeCount ? ` (${activeCount})` : ''}</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="clear-daily-plan" style="flex:1" ${items.length ? '' : 'disabled'}>🗑 נקה תוכנית</button>
+      </div>
+      <p class="form-hint" style="margin-top:10px;margin-bottom:0">כאן בונים את היום — מוצרים, מנות, תזרימים ודגשים. אחר כך עבור ל«תוכנית מוכנה».</p>`,
+    {
+      defaultOpen: true,
+      className: 'card manager-plan-header-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  );
+
+  const headerReady = renderCollapsiblePlanSection(
+    'header-ready',
+    '📋 סיכום היום',
+    `
       <div class="form-group" style="margin-bottom:8px">
         <label for="plan-date">תאריך</label>
         <input type="date" id="plan-date" value="${date}">
@@ -1396,34 +1468,92 @@ async function renderDailyPlan(container) {
         <div class="manager-plan-progress-bar" style="width:${progressPct}%"></div>
       </div>
       <p class="form-hint manager-plan-progress-label">${done}/${countable.length} הושלמו (${progressPct}%)</p>` : `
-      <p class="form-hint">בנה את תוכנית היום מחדש — מוצרים, מנות ותזרימים</p>`}
-      <div class="filter-row" style="margin-top:10px;margin-bottom:0;flex-wrap:wrap">
-        <button type="button" class="btn btn-secondary btn-sm" id="jump-active-runs" style="flex:1">🔥 תזרימים${activeCount ? ` (${activeCount})` : ''}</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="clear-daily-plan" style="flex:1" ${items.length ? '' : 'disabled'}>🗑 נקה תוכנית</button>
-      </div>
-      <div class="filter-row" style="margin-top:8px;margin-bottom:0">
+      <p class="form-hint">התוכנית ריקה — עבור לבנייה כדי להוסיף פריטים</p>`}
+      <div class="filter-row" style="margin-top:10px;margin-bottom:0">
         <button type="button" class="btn btn-secondary btn-sm" id="export-daily-plan" style="flex:1">⬇️ ייצוא לקובץ</button>
         <button type="button" class="btn btn-secondary btn-sm" id="print-daily-plan" style="flex:1">🖨️ הדפס</button>
       </div>
-    </div>
+      <div class="filter-row" style="margin-top:8px;margin-bottom:0">
+        <button type="button" class="btn btn-secondary btn-sm" id="jump-active-runs" style="flex:1">🔥 תזרימים${activeCount ? ` (${activeCount})` : ''}</button>
+        <button type="button" class="btn btn-primary btn-sm" id="goto-daily-build" style="flex:1">🛠️ חזרה לבנייה</button>
+      </div>`,
+    {
+      defaultOpen: true,
+      className: 'card manager-plan-header-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  );
 
-    ${renderPlanAddProductHTML(products, layout, { flows, plan, showHighlights: true })}
-
-    <div class="card manager-plan-list-card">
-      <div class="card-title">רשימת היום</div>
-      ${renderProductCentricPlanHTML(items, products, {
+  const listHtml = renderProductCentricPlanHTML(items, products, {
     productFlowMap,
     productFlowNamesMap,
     flowNames,
-  })}
-    </div>
+  });
 
+  const readyListCard = renderCollapsiblePlanSection(
+    'ready-list',
+    'רשימת היום',
+    listHtml,
+    {
+      defaultOpen: true,
+      count: countable.length || null,
+      className: 'card manager-plan-list-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  );
+
+  const buildBody = `
+    ${headerBuild}
+    ${renderCollapsiblePlanSection(
+    'build-tools',
+    '➕ הוספה לתוכנית',
+    renderPlanAddProductHTML(products, layout, { flows, plan, showHighlights: true }),
+    {
+      defaultOpen: true,
+      className: 'card manager-plan-build-tools-card',
+      summaryClass: 'card-title manager-plan-collapse-summary',
+    },
+  )}
+    <div id="active-runs-anchor">
+      ${renderActiveRunsSectionHTML(activeRunData, activeRunsProductMap)}
+    </div>
+    <div class="card manager-plan-goto-ready-card">
+      <button type="button" class="btn btn-primary" id="goto-daily-ready" style="width:100%">
+        📋 עבור לתוכנית המוכנה${countable.length ? ` (${countable.length} פריטים)` : ''}
+      </button>
+    </div>`;
+
+  const readyBody = `
+    ${headerReady}
+    ${readyListCard}
     ${flowsPageHtml}`;
+
+  container.innerHTML = `
+    ${managerTabsHTML('daily')}
+    ${renderDailyPlanModeTabs(mode, { itemCount: countable.length })}
+    <div class="manager-daily-mode-panel manager-daily-mode-panel--${mode}">
+      ${mode === 'build' ? buildBody : readyBody}
+    </div>`;
 
   bindManagerTabs(container);
   bindPlanItems(container, 'daily', date, { employees });
   bindActiveRunsSection(container, { planType: 'daily', anchorDate: date });
   bindPlanCollapse(container);
+
+  container.querySelectorAll('[data-daily-mode]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setDailyPlanMode(container, btn.dataset.dailyMode);
+      renderManager(container);
+    });
+  });
+  document.getElementById('goto-daily-ready')?.addEventListener('click', () => {
+    setDailyPlanMode(container, 'ready');
+    renderManager(container);
+  });
+  document.getElementById('goto-daily-build')?.addEventListener('click', () => {
+    setDailyPlanMode(container, 'build');
+    renderManager(container);
+  });
 
   document.getElementById('plan-date')?.addEventListener('change', (e) => {
     container.dataset.planDate = e.target.value;
@@ -1431,6 +1561,14 @@ async function renderDailyPlan(container) {
   });
 
   document.getElementById('jump-active-runs')?.addEventListener('click', () => {
+    if (mode !== 'build') {
+      setDailyPlanMode(container, 'build');
+      renderManager(container);
+      requestAnimationFrame(() => {
+        document.getElementById('active-runs-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+      return;
+    }
     if (getActiveRunsHidden()) {
       setActiveRunsHidden(false);
       renderManager(container);
