@@ -1,38 +1,38 @@
 import {
   getCategories, getProducts, getEntriesForDate, getEntriesForMonth,
   getEntriesInRange, getProductionTotals, getProcessLogsInRange,
-  getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange,
+  getProcessLogsForDate, getProcessLogsForMonth, getProductionRunsInRange, getAllProductionRuns,
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
   computeRunMetrics, aggregateRunsMetrics, getProductsCatalogLayout,
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=302';
+} from '../db.js?v=303';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=302';
+} from '../utils.js?v=303';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=302';
-import { openModal, closeModal } from '../modal.js?v=302';
+} from '../export.js?v=303';
+import { openModal, closeModal } from '../modal.js?v=303';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=302';
-import { isSheetsConfigured } from '../google-sheets.js?v=302';
+} from '../sheets-flow.js?v=303';
+import { isSheetsConfigured } from '../google-sheets.js?v=303';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=302';
-import { defaultColorForIndex } from '../chart.js?v=302';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=302';
+} from '../calc.js?v=303';
+import { defaultColorForIndex } from '../chart.js?v=303';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=303';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=302';
+} from '../purchasing-db.js?v=303';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -438,6 +438,7 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     historyScope: container.dataset.historyScope || 'product',
     historyScopeId: container.dataset.historyScopeId || '',
     historyAllTime: container.dataset.historyAllTime !== '0',
+    batchSearch: String(container.dataset.batchSearch || '').trim(),
   };
 }
 
@@ -485,7 +486,9 @@ async function fetchReportData(ctx) {
     }
   }
 
-  let productionRuns = await getProductionRunsInRange(ctx.from, ctx.to, { includeActiveOutsideRange: true });
+  let productionRuns = ctx.batchSearch
+    ? await getAllProductionRuns()
+    : await getProductionRunsInRange(ctx.from, ctx.to, { includeActiveOutsideRange: true });
 
   return { entries, processLogs, productionRuns };
 }
@@ -504,8 +507,23 @@ function runMatchesCategory(run, catId, productMap, categories) {
   return false;
 }
 
+function normalizeBatchSearch(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function runMatchesBatchSearch(run, batchSearch) {
+  const q = normalizeBatchSearch(batchSearch);
+  if (!q) return true;
+  const batch = normalizeBatchSearch(run?.batchNumber);
+  if (!batch) return false;
+  return batch === q || batch.includes(q);
+}
+
 function filterProductionRuns(runs, ctx, categories) {
   let filtered = runs;
+  if (ctx.batchSearch) {
+    filtered = filtered.filter((r) => runMatchesBatchSearch(r, ctx.batchSearch));
+  }
   if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
     const catId = Number(ctx.selectedCategoryId);
     filtered = filtered.filter((r) => runMatchesCategory(r, catId, ctx.productMap, categories));
@@ -1565,17 +1583,29 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
 }
 
 function renderFlowsFiltersHTML(ctx, today, defaultMonth) {
+  const batchVal = escapeHtml(ctx.batchSearch || '');
   return `
     <div class="report-filter-grid">
       <div class="form-group">
         <label for="report-from">מתאריך</label>
-        <input type="date" id="report-from" value="${ctx.from}">
+        <input type="date" id="report-from" value="${ctx.from}" ${ctx.batchSearch ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label for="report-to">עד תאריך</label>
-        <input type="date" id="report-to" value="${ctx.to}">
+        <input type="date" id="report-to" value="${ctx.to}" ${ctx.batchSearch ? 'disabled' : ''}>
       </div>
-    </div>`;
+      <div class="form-group report-batch-search-group">
+        <label for="report-batch-search">חיפוש לפי מספר אצווה</label>
+        <div class="filter-row" style="margin:0;gap:6px">
+          <input type="search" id="report-batch-search" value="${batchVal}" placeholder="למשל: 42 או A-105" inputmode="search" autocomplete="off" style="flex:1">
+          <button type="button" class="btn btn-primary btn-sm" id="report-batch-search-btn">חפש</button>
+          ${ctx.batchSearch ? '<button type="button" class="btn btn-secondary btn-sm" id="report-batch-clear-btn">נקה</button>' : ''}
+        </div>
+      </div>
+    </div>
+    <p class="form-hint" style="margin-top:8px;margin-bottom:0">${ctx.batchSearch
+    ? `מציג תהליכים עם אצווה «${escapeHtml(ctx.batchSearch)}» מכל התקופות`
+    : 'אפשר לחפש תזרים לפי מספר אצווה — החיפוש עובר על כל ההיסטוריה'}</p>`;
 }
 
 function renderManagerFiltersHTML(ctx) {
@@ -1684,6 +1714,24 @@ function bindFilterEvents(container) {
     renderReports(container);
   });
 
+  const applyBatchSearch = () => {
+    const raw = document.getElementById('report-batch-search')?.value?.trim() || '';
+    if (raw) container.dataset.batchSearch = raw;
+    else delete container.dataset.batchSearch;
+    renderReports(container);
+  };
+  document.getElementById('report-batch-search-btn')?.addEventListener('click', applyBatchSearch);
+  document.getElementById('report-batch-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyBatchSearch();
+    }
+  });
+  document.getElementById('report-batch-clear-btn')?.addEventListener('click', () => {
+    delete container.dataset.batchSearch;
+    renderReports(container);
+  });
+
   document.getElementById('report-category')?.addEventListener('change', (e) => {
     container.dataset.selectedCategory = e.target.value;
     renderReports(container);
@@ -1743,6 +1791,10 @@ export async function renderReports(container) {
   const ctx = resolveReportContext(container, today, curYear, curMonth, catMap, productMap);
   ctx.productMap = productMap;
   ctx.defaultMonth = container.dataset.selectedMonth || defaultMonth;
+  if (ctx.batchSearch && isFlowsReportType(ctx.reportType)) {
+    ctx.filterLabel = `אצווה ${ctx.batchSearch}`;
+    ctx.label = `אצווה ${ctx.batchSearch}`;
+  }
 
   if (ctx.reportType === 'production-history' && ctx.historyScopeId) {
     if (ctx.historyScope === 'group') {
