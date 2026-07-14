@@ -1,10 +1,10 @@
-import { loadFFlate } from './docx-loader.js?v=307';
+import { loadFFlate } from './docx-loader.js?v=308';
 import {
   formatRecipeIngredientsTotal, formatRecipeQuantity,
   getRecipeProductYieldInfo,
   formatSubdivisionWeight,
   resolveRecipeBaking, formatRecipeBakingParamsLine, getRecipeOvenLabel,
-} from './kitchen-db.js?v=307';
+} from './kitchen-db.js?v=308';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;
@@ -848,8 +848,11 @@ export function renderRecipeBookItemHTML(recipe, detail, options = {}) {
   if (productLine) {
     appendixParts.push(`<p class="recipe-book-appendix-line recipe-book-product-links">${escapeHtml(productLine)}</p>`);
   }
-  if (r?.notes) {
-    appendixParts.push(`<p class="recipe-book-appendix-line recipe-book-notes">${escapeHtml(r.notes)}</p>`);
+  if (r?.notes?.trim()) {
+    appendixParts.push(
+      `<p class="recipe-book-appendix-line recipe-book-notes-label"><strong>הערות / דרך הכנה</strong></p>`
+      + `<p class="recipe-book-appendix-line recipe-book-notes">${escapeHtml(r.notes.trim())}</p>`,
+    );
   }
   if (ingredients.length) {
     const weightHtml = renderRecipeBookWeightSummaryHTML(ingredients, r);
@@ -889,7 +892,8 @@ const RECIPE_BOOK_EXPORT_STYLES = `
     .recipe-book-table-total { font-weight: 600; border-top: 2px solid #2563eb; padding-top: 8px; }
     .recipe-book-appendix { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #cbd5e1; font-size: 1.1rem; color: #475569; }
     .recipe-book-appendix-line { margin: 0 0 6px; }
-    .recipe-book-notes { font-style: italic; color: #64748b; }
+    .recipe-book-notes { font-style: italic; color: #64748b; white-space: pre-wrap; }
+    .recipe-book-notes-label { margin-bottom: 2px !important; color: #334155; font-style: normal; }
     .recipe-book-appendix-block { margin-bottom: 8px; }
     .recipe-book-appendix-row { margin-bottom: 4px; }
     @media print { body { padding: 12px; } .recipe-book-group-title { page-break-before: always; } .recipe-book-group-title:first-of-type { page-break-before: avoid; } }

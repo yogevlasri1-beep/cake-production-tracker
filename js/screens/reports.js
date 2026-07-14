@@ -8,31 +8,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=307';
+} from '../db.js?v=308';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=307';
+} from '../utils.js?v=308';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=307';
-import { openModal, closeModal } from '../modal.js?v=307';
+} from '../export.js?v=308';
+import { openModal, closeModal } from '../modal.js?v=308';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=307';
-import { isSheetsConfigured } from '../google-sheets.js?v=307';
+} from '../sheets-flow.js?v=308';
+import { isSheetsConfigured } from '../google-sheets.js?v=308';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=307';
-import { defaultColorForIndex } from '../chart.js?v=307';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=307';
+} from '../calc.js?v=308';
+import { defaultColorForIndex } from '../chart.js?v=308';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=308';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=307';
+} from '../purchasing-db.js?v=308';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };

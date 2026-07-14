@@ -28,18 +28,18 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=307';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=307';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=307';
-import { renderRecipesMachines } from '../recipes-machines.js?v=307';
-import { renderRecipesPortions } from '../recipes-portions.js?v=307';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=307';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=307';
-import { openModal, closeModal } from '../modal.js?v=307';
+} from '../kitchen-db.js?v=308';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=308';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=308';
+import { renderRecipesMachines } from '../recipes-machines.js?v=308';
+import { renderRecipesPortions } from '../recipes-portions.js?v=308';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=308';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=308';
+import { openModal, closeModal } from '../modal.js?v=308';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=307';
-import { defaultColorForIndex } from '../chart.js?v=307';
+} from '../product-drag.js?v=308';
+import { defaultColorForIndex } from '../chart.js?v=308';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -143,7 +143,19 @@ function recipeListMetaText(r) {
   if (r.portionWeightGrams) {
     meta += ` · חלוקה: ${formatSubdivisionWeight(r.portionWeightGrams)}`;
   }
+  if (String(r.notes || '').trim()) {
+    meta += ' · 📝 הערות';
+  }
   return meta;
+}
+
+function recipeNotesFieldHTML(notes = '') {
+  return `
+      <div class="form-group recipe-notes-form-group">
+        <label for="recipe-notes">הערות / דרך הכנה <span class="field-optional">(אופציונלי)</span></label>
+        <textarea id="recipe-notes" class="recipe-notes-input" rows="6" maxlength="4000" placeholder="למשל: ללוש 8 דק׳, להניח לנוח במשך שעה, לאפות ב-180° עד זהב…">${escapeHtml(notes || '')}</textarea>
+        <p class="form-hint">טקסט חופשי למתכון — לא חובה. נשמר עם המתכון ומופיע בתצוגה ובספר המתכונים.</p>
+      </div>`;
 }
 
 function renderSubRecipeItem(r, index, mode = 'edit') {
@@ -3387,11 +3399,12 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
       </section>
       ${buildRecipeBakingViewHTML(recipe, profileMap)}
-      ${recipe.notes?.trim() ? `
       <section class="recipe-sheet-section recipe-sheet-notes-block">
-        <h2 class="recipe-sheet-section-title">הערות</h2>
-        <p class="recipe-sheet-notes">${escapeHtml(recipe.notes.trim())}</p>
-      </section>` : ''}
+        <h2 class="recipe-sheet-section-title">הערות / דרך הכנה</h2>
+        ${recipe.notes?.trim()
+          ? `<p class="recipe-sheet-notes">${escapeHtml(recipe.notes.trim())}</p>`
+          : `<p class="recipe-sheet-notes-empty">אין הערות עדיין — אפשר להוסיף דרך הכנה, טיפים או הערות (אופציונלי).</p>`}
+      </section>
     </article>
     ${subRecipes.map((sub) => buildRecipeViewHTML(sub, {
       categoryPath, linkedNames, productCategoryName, profileMap, matCtx, subRecipes: [],
@@ -3420,12 +3433,16 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
     }),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-secondary" id="recipe-view-notes">📝 הערות / הכנה</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
       ${!recipe.parentRecipeId ? '<button type="button" class="btn btn-secondary" id="recipe-add-sub">+ תת מתכון</button>' : ''}
       <button type="button" class="btn btn-primary" id="recipe-view-edit">✏️ עריכה</button>`,
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('recipe-view-notes')?.addEventListener('click', () => {
+    openRecipeNotesEditor(container, recipe, { productCatalog, layout });
+  });
   document.getElementById('recipe-view-edit')?.addEventListener('click', () => {
     closeModal();
     openRecipeForm(container, { recipe, productCatalog, layout, returnToView: true });
@@ -3449,7 +3466,35 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
     switchRecipeTab('ratio');
   });
 
-  bindRecipeProductionCalculator(recipe, ingredients, matCtx);
+  bindRecipeProductionCalculator(recipe, recipe.ingredients || [], matCtx);
+}
+
+function openRecipeNotesEditor(container, recipe, { productCatalog, layout }) {
+  openModal({
+    title: `הערות / דרך הכנה — ${recipe.name}`,
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0">אופציונלי — דרך הכנה, טיפים או הערות למתכון זה.</p>
+      ${recipeNotesFieldHTML(recipe.notes)}`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+      <button type="button" class="btn btn-primary" id="recipe-notes-save">שמור</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', () => {
+    closeModal();
+    openRecipeView(container, recipe, { productCatalog, layout });
+  });
+  document.getElementById('recipe-notes-save')?.addEventListener('click', async () => {
+    const notes = document.getElementById('recipe-notes')?.value?.trim() || '';
+    try {
+      await updateRecipe(recipe.id, { notes });
+      const updated = await getRecipe(recipe.id);
+      closeModal();
+      showToast('הערות נשמרו ✓');
+      openRecipeView(container, updated || { ...recipe, notes }, { productCatalog, layout });
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשמירה');
+    }
+  });
 }
 
 function openRatioCalculatorPicker(layout) {
@@ -3587,10 +3632,6 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     ? '<p class="form-hint recipe-sub-link-hint">שיוך מוצר יורש מהמתכון הראשי — יופיע באותן מנות</p>'
     : buildOptionalProductLinkerHTML(catalog, recipe)}
       </div>
-      <div class="form-group">
-        <label>הערות</label>
-        <textarea id="recipe-notes" rows="2">${recipe ? escapeHtml(recipe.notes || '') : ''}</textarea>
-      </div>
       ${buildRecipeBakingFormHTML(recipe, bakingProfiles)}
       ${isEdit ? `
       <div class="form-group">
@@ -3613,7 +3654,9 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <button type="button" class="btn btn-secondary btn-sm" id="sync-product-cost" style="width:100%;margin-top:8px">
           🔄 עדכן מחיר חומרי גלם במוצרים המקושרים (אוטומטי בשמירה)
         </button>
-      </div>` : `
+      </div>
+      ${recipeNotesFieldHTML(recipe?.notes)}` : `
+      ${recipeNotesFieldHTML()}
       <p class="form-hint recipe-new-next-hint">אחרי שמירה ייפתח עורך המתכון — שם תוכל להוסיף חומרי גלם ולבנות את המנה.</p>`}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>

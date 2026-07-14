@@ -5006,6 +5006,29 @@ table.report-table tfoot td {
   white-space: pre-wrap;
 }
 
+.recipe-sheet-notes-empty {
+  margin: 0;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px dashed var(--border, #cbd5e1);
+  border-radius: 12px;
+  line-height: 1.5;
+  font-size: 0.9rem;
+  color: #64748b;
+}
+
+.recipe-notes-form-group .field-optional {
+  font-weight: 400;
+  color: #64748b;
+  font-size: 0.9em;
+}
+
+.recipe-notes-input {
+  min-height: 7.5rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
 .recipe-mgr-heading {
   font-size: 0.95rem;
   font-weight: 700;

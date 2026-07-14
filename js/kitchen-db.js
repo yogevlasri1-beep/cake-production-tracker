@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=307';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=308';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=307';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=307';
+} from './validators.js?v=308';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=308';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1065,7 +1065,7 @@ export async function addRecipe({
     yieldPortions: DEFAULT_RECIPE_YIELD,
     portionWeightGrams: portionG,
     showTotalAsPortions: false,
-    notes: String(notes || '').trim().slice(0, 2000),
+    notes: String(notes || '').trim().slice(0, 4000),
     sortOrder: maxOrder + 1,
     ...baking,
   });
@@ -1132,7 +1132,7 @@ export async function updateRecipe(id, patch) {
   if ('hasBaking' in data || 'bakingProfileId' in data) {
     Object.assign(data, normalizeRecipeBakingFields(data));
   }
-  if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 2000);
+  if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 4000);
   if (Object.keys(data).length) await db.recipes.update(rid, data);
   await syncRecipePortionPresets(rid);
 }
