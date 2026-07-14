@@ -1,20 +1,20 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=295';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=295';
-import { openModal, closeModal } from './modal.js?v=295';
-import { requestAutoBackupNow } from './backup-service.js?v=295';
+} from './kitchen-db.js?v=296';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=296';
+import { openModal, closeModal } from './modal.js?v=296';
+import { requestAutoBackupNow } from './backup-service.js?v=296';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
   if (!supplierOptions.length) {
-    return '<span class="form-hint">אין ספק</span>';
+    return '';
   }
   if (supplierOptions.length === 1) {
     const opt = supplierOptions[0];
     return `
-      <span class="portion-ing-supplier-label">${escapeHtml(opt.supplierName)}</span>
+      <p class="portion-ing-supplier-one form-hint">ספק: ${escapeHtml(opt.supplierName)}</p>
       <input type="hidden" class="portion-ing-supplier" data-index="${index}" value="${opt.id}">`;
   }
   const options = supplierOptions.map((opt) => `
@@ -22,40 +22,37 @@ function supplierFieldHTML(row, index) {
       ${escapeHtml(opt.label)}
     </option>`).join('');
   return `
-    <select class="portion-ing-supplier" data-index="${index}">
-      <option value="">בחר ספק...</option>
-      ${options}
-    </select>`;
+    <label class="portion-ing-supplier-label-wrap">
+      <span class="form-hint">ספק</span>
+      <select class="portion-ing-supplier" data-index="${index}">
+        <option value="">בחר ספק...</option>
+        ${options}
+      </select>
+    </label>`;
 }
 
-function buildIngredientsTableHTML(rows) {
+/** רשימת חומרי גלם — שם + מספר מנות על האריזה */
+function buildPackagingListHTML(rows) {
   return `
-    <div class="portion-ingredients-table-wrap">
-      <table class="portion-ingredients-table">
-        <thead>
-          <tr>
-            <th>רכיב</th>
-            <th>במתכון</th>
-            <th>מנות על האריזה</th>
-            <th>ספק</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map((row, index) => `
-          <tr data-ingredient-id="${row.recipeIngredientId}">
-            <td><strong>${escapeHtml(row.name)}</strong></td>
-            <td>${formatDecimal(row.quantity)} ${escapeHtml(row.unit || '')}</td>
-            <td>
-              <input type="number" class="portion-ing-packaging" data-index="${index}"
-                min="0.1" step="0.1" inputmode="decimal" placeholder="למשל 10"
-                value="${row.packagingPortionCount !== '' && row.packagingPortionCount != null ? escapeHtml(String(row.packagingPortionCount)) : ''}"
-                aria-label="מספר מנות על האריזה — ${escapeHtml(row.name)}">
-            </td>
-            <td>${supplierFieldHTML(row, index)}</td>
-          </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`;
+    <ul class="portion-packaging-list">
+      ${rows.map((row, index) => `
+      <li class="portion-packaging-item" data-ingredient-id="${row.recipeIngredientId}">
+        <div class="portion-packaging-item-main">
+          <div class="portion-packaging-item-name">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span class="form-hint portion-packaging-recipe-qty">${formatDecimal(row.quantity)} ${escapeHtml(row.unit || '')}</span>
+          </div>
+          <label class="portion-packaging-count-field">
+            <span class="portion-packaging-count-label">מנות על האריזה</span>
+            <input type="number" class="portion-ing-packaging" data-index="${index}"
+              min="0.1" step="0.1" inputmode="decimal" placeholder="למשל 10"
+              value="${row.packagingPortionCount !== '' && row.packagingPortionCount != null ? escapeHtml(String(row.packagingPortionCount)) : ''}"
+              aria-label="מספר מנות על האריזה — ${escapeHtml(row.name)}">
+          </label>
+        </div>
+        ${supplierFieldHTML(row, index)}
+      </li>`).join('')}
+    </ul>`;
 }
 
 export async function openPortionIngredientsModal({ portionPresetId, portionName = '', onSaved } = {}) {
@@ -73,23 +70,23 @@ export async function openPortionIngredientsModal({ portionPresetId, portionName
     return;
   }
   if (!rows.length) {
-    showToast('אין רכיבים במתכון');
+    showToast('אין חומרי גלם במתכון של המנה');
     return;
   }
 
   const title = presetName
-    ? `רכיבי מתכון · ${presetName}`
-    : 'רכיבי מתכון';
+    ? `רשימת חומרי גלם · ${presetName}`
+    : 'רשימת חומרי גלם';
 
   openModal({
     title: escapeHtml(title),
     modalClass: 'modal-portion-ingredients',
     bodyHTML: `
-      <p class="form-hint" style="margin-top:0">רשום כמה מנות מופיע על אריזת כל חומר גלם, ובחר ספק כשיש יותר מאחד.</p>
-      ${buildIngredientsTableHTML(rows)}`,
+      <p class="form-hint" style="margin-top:0">לכל חומר גלם — רשום כמה מנות כתוב על האריזה (המספר שעל האריזה).</p>
+      ${buildPackagingListHTML(rows)}`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="save-portion-ingredients">שמור</button>`,
+      <button type="button" class="btn btn-primary" id="save-portion-ingredients">שמור רשימה</button>`,
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
@@ -107,7 +104,7 @@ export async function openPortionIngredientsModal({ portionPresetId, portionName
       await savePortionPresetIngredientSettings(pid, payload);
       requestAutoBackupNow().catch(() => {});
       closeModal();
-      showToast('נשמר ✓');
+      showToast('רשימה נשמרה ✓');
       onSaved?.();
     } catch (err) {
       showToast(err.message || 'שגיאה');
@@ -120,7 +117,10 @@ export function bindPortionIngredientsButtons(root, { onSaved } = {}) {
   root.querySelectorAll('.portion-ingredients-btn, .flow-portion-ingredients-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = Number(btn.dataset.presetId || btn.dataset.id);
-      if (!id) return;
+      if (!id) {
+        showToast('בחר קודם מנה ממתכון');
+        return;
+      }
       openPortionIngredientsModal({
         portionPresetId: id,
         portionName: btn.dataset.portionName || '',

@@ -8799,6 +8799,90 @@ body.supplier-drag-active {
   white-space: nowrap;
 }
 
+.flow-portion-packaging-actions {
+  margin: 4px 0 10px;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 6%, #fff);
+}
+
+.flow-portion-packaging-list-btn {
+  width: 100%;
+}
+
+.portion-packaging-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.portion-packaging-item {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.portion-packaging-item-main {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.portion-packaging-item-name {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.portion-packaging-recipe-qty {
+  margin: 0;
+}
+
+.portion-packaging-count-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.portion-packaging-count-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.portion-packaging-count-field input {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.portion-ing-supplier-label-wrap,
+.portion-ing-supplier-one {
+  display: block;
+  margin-top: 8px;
+}
+
+.portion-ing-supplier-label-wrap select {
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
 .catalog-intro {
   margin-bottom: 0;
 }

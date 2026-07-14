@@ -24,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=295';
+} from '../db.js?v=296';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=295').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=296').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=295';
-import { openModal, closeModal } from '../modal.js?v=295';
-import { requestAutoBackupNow } from '../backup-service.js?v=295';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=295';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=295';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=296';
+import { openModal, closeModal } from '../modal.js?v=296';
+import { requestAutoBackupNow } from '../backup-service.js?v=296';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=296';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=296';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -562,6 +562,10 @@ function portionPresetOptionLabel(p) {
   return `${star}${p.name} (${p.weight} ק"ג${extra})`;
 }
 
+function portionPresetHasRecipe(p) {
+  return !!p?.sourceRecipeId;
+}
+
 function renderChecklistLibraryHTML(tasks, { categoryLabel = '' } = {}) {
   if (!tasks.length) return '';
   const scopeHint = categoryLabel
@@ -589,6 +593,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
   const total = getStepPortionTotal(step);
   const hasPresets = presets.length > 0;
   const editable = canEdit || canAdd;
+  const recipePresets = presets.filter(portionPresetHasRecipe);
 
   return `
     <div class="flow-portion-batches" data-step-batches="${stepIndex}">
@@ -616,9 +621,10 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
                 <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
               `}
               ${b.note ? `<span class="flow-portion-batch-note">${escapeHtml(b.note)}</span>` : ''}
-              ${b.presetId && b.fromRecipe ? `
+              ${b.presetId && (b.fromRecipe || recipePresets.some((p) => Number(p.id) === Number(b.presetId))) ? `
                 <button type="button" class="btn btn-secondary btn-sm flow-portion-ingredients-btn"
-                  data-preset-id="${b.presetId}" title="רכיבי מתכון">📋 רכיבים</button>` : ''}
+                  data-preset-id="${b.presetId}" data-portion-name="${escapeHtml(b.name || '')}"
+                  title="רשימת חומרי גלם ומנות על האריזה">📋 רשימה</button>` : ''}
             </li>`).join('')}
         </ul>
         ${total != null ? `<p class="flow-portion-batch-total">סה"כ: <strong>${formatPortionCount(total)}</strong> מנות</p>` : ''}
@@ -633,8 +639,16 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
               <label>בחר מנה</label>
               <select class="flow-portion-add-preset">
                 <option value="">בחר מנה...</option>
-                ${presets.map((p) => `<option value="${p.id}">${escapeHtml(portionPresetOptionLabel(p))}</option>`).join('')}
+                ${presets.map((p) => `<option value="${p.id}" data-from-recipe="${p.sourceRecipeId ? '1' : '0'}">${escapeHtml(portionPresetOptionLabel(p))}</option>`).join('')}
               </select>
+            </div>
+            <div class="flow-portion-packaging-actions" hidden>
+              <button type="button" class="btn btn-secondary btn-sm flow-portion-ingredients-btn flow-portion-packaging-list-btn"
+                data-preset-id="" data-portion-name=""
+                title="רשום כמה מנות על אריזת כל חומר גלם">
+                📋 רשימת חומרי גלם — מנות על האריזה
+              </button>
+              <p class="form-hint" style="margin:6px 0 0">לכל חומר גלם במתכון — רשום את מספר המנות שכתוב על האריזה</p>
             </div>` : ''}
           <div class="form-group" style="margin:8px 0 6px">
             <label>כמה מנות השתמשת?</label>
@@ -2172,6 +2186,23 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  container.querySelectorAll('.flow-portion-add-preset').forEach((sel) => {
+    const syncPackagingBtn = () => {
+      const form = sel.closest('.flow-portion-add-form');
+      const wrap = form?.querySelector('.flow-portion-packaging-actions');
+      const listBtn = form?.querySelector('.flow-portion-packaging-list-btn');
+      if (!wrap || !listBtn) return;
+      const opt = sel.selectedOptions?.[0];
+      const fromRecipe = opt?.dataset.fromRecipe === '1';
+      const presetId = sel.value;
+      wrap.hidden = !(fromRecipe && presetId);
+      listBtn.dataset.presetId = fromRecipe ? presetId : '';
+      listBtn.dataset.portionName = fromRecipe ? (opt?.textContent || '').replace(/^★\s*/, '').trim() : '';
+    };
+    sel.addEventListener('change', syncPackagingBtn);
+    syncPackagingBtn();
+  });
+
   container.querySelectorAll('.flow-portion-add-save').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const stepIndex = Number(btn.dataset.step);
@@ -2690,7 +2721,7 @@ async function renderManageView(container, ctx) {
                   ${p.sourceRecipeId ? `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn"
-                      data-id="${p.id}" title="רכיבי מתכון">📋 רכיבים</button>
+                      data-id="${p.id}" title="רשימת חומרי גלם ומנות על האריזה">📋 רשימה</button>
                   </div>` : `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm edit-preset"
