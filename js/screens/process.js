@@ -24,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=298';
+} from '../db.js?v=299';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=298').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=299').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=298';
-import { openModal, closeModal } from '../modal.js?v=298';
-import { requestAutoBackupNow } from '../backup-service.js?v=298';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=298';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=298';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=299';
+import { openModal, closeModal } from '../modal.js?v=299';
+import { requestAutoBackupNow } from '../backup-service.js?v=299';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=299';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=299';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1417,72 +1417,74 @@ function openRunPortionsQuantityModal(run) {
 async function openRunPortionsWeightModal(run) {
   const rows = collectRunPortionTypeRows(run);
   const totalKg = rows.reduce((s, r) => s + (r.weightKg || 0), 0);
-  const ingredientTotals = new Map();
-  let ingredientSection = '<p class="form-hint">אין חומרי גלם ממנות ממתכונים</p>';
+  let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=298');
-    const { db } = await import('../db.js?v=298');
+    const { getRecipe } = await import('../kitchen-db.js?v=299');
+    const { db } = await import('../db.js?v=299');
+    const blocks = [];
+
     for (const row of rows) {
       if (!row.count) continue;
+
       let recipeId = row.sourceRecipeId ? Number(row.sourceRecipeId) : null;
       if (!recipeId && row.presetId) {
         const preset = await db.groupPortionPresets.get(Number(row.presetId));
         recipeId = preset?.sourceRecipeId ? Number(preset.sourceRecipeId) : null;
       }
-      if (!recipeId) continue;
-      const recipe = await getRecipe(recipeId);
-      if (!recipe?.ingredients?.length) continue;
-      for (const ing of recipe.ingredients) {
-        const key = `${String(ing.name || '').trim().toLowerCase()}|${ing.unit || ''}`;
-        const qty = (Number(ing.quantity) || 0) * row.count;
-        if (!qty) continue;
-        const prev = ingredientTotals.get(key) || {
-          name: ing.name || 'רכיב',
-          unit: ing.unit || '',
-          quantity: 0,
-        };
-        prev.quantity += qty;
-        ingredientTotals.set(key, prev);
+
+      let ingredientsHtml = '';
+      if (recipeId) {
+        const recipe = await getRecipe(recipeId);
+        // getRecipe כבר ממיין לפי sortOrder של המתכון
+        const ings = (recipe?.ingredients || [])
+          .map((ing) => ({
+            name: String(ing.name || '').trim() || 'רכיב',
+            unit: ing.unit || '',
+            quantity: Math.round((Number(ing.quantity) || 0) * row.count * 1000) / 1000,
+          }))
+          .filter((ing) => ing.quantity > 0);
+
+        ingredientsHtml = ings.length
+          ? `<ul class="flow-metrics-detail-list">
+              ${ings.map((ing) => `
+                <li class="flow-metrics-detail-row">
+                  <span class="flow-metrics-detail-name">${escapeHtml(ing.name)}</span>
+                  <span class="flow-metrics-detail-value">${formatDecimal(ing.quantity)} ${escapeHtml(ing.unit)}</span>
+                </li>`).join('')}
+            </ul>`
+          : '<p class="form-hint">אין חומרי גלם במתכון</p>';
+      } else {
+        ingredientsHtml = '<p class="form-hint">מנה ללא מתכון מקושר — אין פירוט חומרי גלם</p>';
       }
+
+      const weightLabel = row.weightKg != null ? formatPortionWeightKg(row.weightKg) : '—';
+      blocks.push(`
+        <div class="flow-metrics-portion-block">
+          <h4 class="flow-metrics-portion-title">
+            ${row.fromRecipe ? '★ ' : ''}${escapeHtml(row.name)}
+          </h4>
+          <p class="flow-metrics-portion-meta">
+            ${formatPortionCount(row.count)} מנות · משקל: ${weightLabel}
+          </p>
+          ${ingredientsHtml}
+        </div>`);
     }
-    const ingRows = [...ingredientTotals.values()]
-      .map((r) => ({ ...r, quantity: Math.round(r.quantity * 1000) / 1000 }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'he'));
-    if (ingRows.length) {
-      ingredientSection = `
-        <ul class="flow-metrics-detail-list">
-          ${ingRows.map((r) => `
-            <li class="flow-metrics-detail-row">
-              <span class="flow-metrics-detail-name">${escapeHtml(r.name)}</span>
-              <span class="flow-metrics-detail-value">${formatDecimal(r.quantity)} ${escapeHtml(r.unit)}</span>
-            </li>`).join('')}
-        </ul>`;
-    }
+
+    portionSections = blocks.length
+      ? blocks.join('')
+      : '<p class="form-hint">אין מנות מתועדות</p>';
   } catch (err) {
-    ingredientSection = `<p class="form-hint">${escapeHtml(err.message || 'שגיאה בחישוב חומרי גלם')}</p>`;
+    portionSections = `<p class="form-hint">${escapeHtml(err.message || 'שגיאה בחישוב חומרי גלם')}</p>`;
   }
 
   openModal({
     title: 'פירוט מנות — משקל',
     modalClass: 'modal-metrics-detail',
     bodyHTML: `
-      <h3 class="flow-metrics-detail-heading">משקל לפי סוג מנה</h3>
-      ${rows.length ? `
-        <ul class="flow-metrics-detail-list">
-          ${rows.map((r) => `
-            <li class="flow-metrics-detail-row">
-              <span class="flow-metrics-detail-name">${r.fromRecipe ? '★ ' : ''}${escapeHtml(r.name)}
-                <span class="form-hint"> · ${formatPortionCount(r.count)} מנות</span>
-              </span>
-              <span class="flow-metrics-detail-value">${r.weightKg != null ? formatPortionWeightKg(r.weightKg) : '—'}</span>
-            </li>`).join('')}
-        </ul>
-        <p class="flow-metrics-detail-total"><strong>סה״כ משקל מנות:</strong> ${formatPortionWeightKg(Math.round(totalKg * 1000) / 1000)}</p>`
-    : '<p class="form-hint">אין משקלי מנות מתועדים</p>'}
-      <h3 class="flow-metrics-detail-heading">חומרי גלם (מנות ממתכונים)</h3>
-      <p class="form-hint" style="margin-top:0">כמות לכל חומר גלם לפי מספר המנות × המתכון</p>
-      ${ingredientSection}`,
+      <p class="form-hint" style="margin-top:0">לכל סוג מנה — חומרי הגלם בסדר של המתכון × מספר המנות</p>
+      ${portionSections}
+      ${rows.length ? `<p class="flow-metrics-detail-total"><strong>סה״כ משקל מנות:</strong> ${formatPortionWeightKg(Math.round(totalKg * 1000) / 1000)}</p>` : ''}`,
     footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">סגור</button>',
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
