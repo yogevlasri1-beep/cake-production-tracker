@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=297';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=297';
-import { defaultColorForIndex } from './chart.js?v=297';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=297';
+} from './validators.js?v=298';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=298';
+import { defaultColorForIndex } from './chart.js?v=298';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=298';
 
 export { ValidationError };
 
@@ -7845,6 +7845,11 @@ export async function updateManagerPlanItem(id, patch) {
     }
   }
   if (patch.done !== undefined) next.done = !!patch.done;
+  if (patch.assigneeName !== undefined) {
+    next.assigneeName = patch.assigneeName == null || patch.assigneeName === ''
+      ? null
+      : sanitizeName(String(patch.assigneeName), 40);
+  }
   if (patch.dayOffset !== undefined) next.dayOffset = Number(patch.dayOffset) || 0;
   if (patch.anchorDate !== undefined && patch.anchorDate && /^\d{4}-\d{2}-\d{2}$/.test(patch.anchorDate)) {
     next.anchorDate = patch.anchorDate;
@@ -7888,6 +7893,147 @@ export async function deleteManagerPlanItem(id) {
     return;
   }
   await db.managerPlanItems.delete(Number(id));
+}
+
+/** מחיקת כל פריטי תוכנית ליום/שבוע מסוים — לבנייה מחדש */
+export async function clearManagerPlanItems(planType, anchorDate) {
+  if (!isValidISODate(anchorDate)) throw new ValidationError('תאריך לא תקין');
+  const rows = await getManagerPlanItems(planType, anchorDate);
+  if (!rows.length) return 0;
+  await db.transaction('rw', db.managerPlanItems, async () => {
+    for (const row of rows) await db.managerPlanItems.delete(row.id);
+  });
+  return rows.length;
+}
+
+/**
+ * ייבוא תזרים פעיל לתוכנית עבודה יומית:
+ * מוצר (אם יש) + צ׳קליסט/נקיונות + מנות שנרשמו בתהליך
+ */
+export async function importActiveRunToDailyPlan(runId, { planType = 'daily', anchorDate } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status !== 'active') throw new ValidationError('ניתן לייבא רק תזרים פעיל');
+  const date = anchorDate && isValidISODate(anchorDate) ? anchorDate : (run.date || todayISOFromDate());
+
+  let productsAdded = 0;
+  let checklistsAdded = 0;
+  let portionsAdded = 0;
+  const flowName = run.flowName || '';
+
+  if (run.productId) {
+    const res = await addManagerPlanProductWithChecklists({
+      planType,
+      anchorDate: date,
+      dayOffset: 0,
+      productId: run.productId,
+      quantity: null,
+      portions: null,
+    });
+    productsAdded += res.productsAdded || 0;
+    checklistsAdded += res.checklistsAdded || 0;
+  } else if (run.flowId) {
+    // בלי מוצר — מייבאים צ׳קליסט וניקיון ישירות מהתזרים
+    const [preps, cleaningTasks, existing] = await Promise.all([
+      getFlowPreparations(run.flowId),
+      getFlowCleaningTasks(run.flowId),
+      getManagerPlanItems(planType, date),
+    ]);
+    const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === 0);
+    const existingPrep = new Set(
+      sameDay.filter((i) => i.itemKind === 'flow_preparation' && i.flowId === run.flowId)
+        .map((i) => i.flowPreparationId),
+    );
+    const existingClean = new Set(
+      sameDay.filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === run.flowId)
+        .map((i) => i.flowCleaningTaskId),
+    );
+    let sortOrder = existing.length ? Math.max(...existing.map((i) => i.sortOrder ?? 0)) + 1 : 1;
+    const rows = [];
+    for (const prep of preps) {
+      if (existingPrep.has(prep.checklistTaskId)) continue;
+      rows.push({
+        planType,
+        anchorDate: date,
+        dayOffset: 0,
+        itemKind: 'flow_preparation',
+        flowId: run.flowId,
+        flowPreparationId: prep.checklistTaskId,
+        productId: null,
+        categoryId: run.categoryId || null,
+        categoryGroupId: run.categoryGroupId || null,
+        label: prep.name,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+    }
+    for (const task of cleaningTasks) {
+      if (existingClean.has(task.id)) continue;
+      rows.push({
+        planType,
+        anchorDate: date,
+        dayOffset: 0,
+        itemKind: 'flow_cleaning',
+        flowId: run.flowId,
+        flowCleaningTaskId: task.id,
+        productId: null,
+        categoryId: run.categoryId || null,
+        categoryGroupId: run.categoryGroupId || null,
+        label: task.name,
+        quantity: null,
+        done: false,
+        sortOrder: sortOrder++,
+      });
+    }
+    if (rows.length) {
+      await db.managerPlanItems.bulkAdd(rows);
+      checklistsAdded += rows.length;
+    }
+  }
+
+  // מנות שנרשמו בתהליך → פריטי מנה בתוכנית
+  const existingAfter = await getManagerPlanItems(planType, date);
+  const seenPortionKeys = new Set(
+    existingAfter
+      .filter((i) => i.itemKind === 'portion' && i.portionPresetId)
+      .map((i) => `${i.portionPresetId}:${i.productId || ''}:${i.categoryId || ''}`),
+  );
+  for (const step of run.steps || []) {
+    if (!step.tracksPortions) continue;
+    for (const batch of getStepPortionBatches(step)) {
+      if (!batch.presetId || !batch.count) continue;
+      if (!run.productId && !run.categoryId) continue;
+      const portionKey = `${batch.presetId}:${run.productId || ''}:${run.productId ? '' : (run.categoryId || '')}`;
+      if (seenPortionKeys.has(portionKey)) continue;
+      const preset = await db.groupPortionPresets.get(Number(batch.presetId));
+      if (!preset) continue;
+      try {
+        await addManagerPlanItem({
+          planType,
+          anchorDate: date,
+          dayOffset: 0,
+          itemKind: 'portion',
+          productId: run.productId || null,
+          categoryId: run.productId ? null : (run.categoryId || null),
+          portionPresetId: preset.id,
+          quantity: batch.count,
+        });
+        seenPortionKeys.add(portionKey);
+        portionsAdded += 1;
+      } catch {
+        /* skip invalid rows */
+      }
+    }
+  }
+
+  return {
+    productsAdded,
+    checklistsAdded,
+    portionsAdded,
+    flowName,
+    date,
+  };
 }
 
 export async function getManagerTasks({ department, kind, status } = {}) {

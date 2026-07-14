@@ -24,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=297';
+} from '../db.js?v=298';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=297').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=298').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=297';
-import { openModal, closeModal } from '../modal.js?v=297';
-import { requestAutoBackupNow } from '../backup-service.js?v=297';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=297';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=297';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=298';
+import { openModal, closeModal } from '../modal.js?v=298';
+import { requestAutoBackupNow } from '../backup-service.js?v=298';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=298';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=298';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1421,8 +1421,8 @@ async function openRunPortionsWeightModal(run) {
   let ingredientSection = '<p class="form-hint">אין חומרי גלם ממנות ממתכונים</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=297');
-    const { db } = await import('../db.js?v=297');
+    const { getRecipe } = await import('../kitchen-db.js?v=298');
+    const { db } = await import('../db.js?v=298');
     for (const row of rows) {
       if (!row.count) continue;
       let recipeId = row.sourceRecipeId ? Number(row.sourceRecipeId) : null;

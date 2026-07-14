@@ -6947,7 +6947,22 @@ body {
 .manager-active-run-title {
   font-weight: 700;
   color: #9a3412;
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.manager-active-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 6px;
+}
+
+.manager-active-run-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .manager-active-run-group {
@@ -7071,10 +7086,32 @@ body {
 }
 
 .manager-plan-section-title {
+  font-weight: 800;
+  font-size: 1.12rem;
+  margin-bottom: 12px;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: 0.02em;
+  padding: 6px 8px;
+  border-bottom: 2px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+
+.manager-plan-assignee {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.78rem;
   font-weight: 700;
-  font-size: 0.88rem;
-  margin-bottom: 8px;
-  color: var(--text-muted);
+  color: #1d4ed8;
+  background: #dbeafe;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.manager-plan-assignee-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .manager-plan-product-group {
@@ -7087,8 +7124,10 @@ body {
 
 .manager-plan-product-heading {
   font-weight: 700;
-  font-size: 0.85rem;
-  margin-bottom: 6px;
+  font-size: 0.95rem;
+  margin-bottom: 8px;
+  text-align: center;
+  color: var(--text);
 }
 
 .manager-plan-header-card {

@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=297';
+import { escapeHtml } from './utils.js?v=298';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -229,6 +229,7 @@ function dedupeChecklistItems(items) {
 function groupChecklistForExport(items, flowNames) {
   const byFlow = new Map();
   const orphans = [];
+  const labelOf = (i) => (i.assigneeName ? `${i.label} · 👤 ${i.assigneeName}` : i.label);
   for (const item of dedupeChecklistItems(items)) {
     const fid = item.flowId || null;
     if (fid) {
@@ -240,7 +241,7 @@ function groupChecklistForExport(items, flowNames) {
   }
   const groups = [...byFlow.entries()].map(([flowId, groupItems]) => ({
     title: flowNames?.get(flowId) || 'תזרים',
-    items: groupItems.map((i) => i.label),
+    items: groupItems.map(labelOf),
   }));
   return { groups, orphans };
 }
@@ -254,10 +255,13 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
   filtered = filtered.slice().sort(sortByOrder);
 
   const productsInPlan = filtered.filter((i) => i.itemKind === 'product');
+  const portionItems = filtered.filter((i) => i.itemKind === 'portion');
   const preparations = filtered.filter((i) => i.itemKind === 'flow_preparation');
   const cleanings = filtered.filter((i) => i.itemKind === 'flow_cleaning');
   const manualTasks = filtered.filter((i) => i.itemKind === 'text');
-  const extraTasks = filtered.filter((i) => ['flow_step', 'portion'].includes(i.itemKind));
+  const extraTasks = filtered.filter((i) => i.itemKind === 'flow_step');
+
+  const withAssignee = (label, item) => (item.assigneeName ? `${label} · 👤 ${item.assigneeName}` : label);
 
   const prepGrouped = groupChecklistForExport(preparations, flowNames);
   const cleanGrouped = groupChecklistForExport(cleanings, flowNames);
@@ -265,26 +269,22 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
   return {
     highlights: (plan?.notes || '').trim(),
     products: productsInPlan.map((item) => {
-      const portionPart = item.portionName
-        ? ` · ${item.portionName}${item.portionWeight != null ? ` (${item.portionWeight} ק"ג)` : ''}`
-        : '';
-      const qtyPart = item.quantity
-        ? (item.portionPresetId ? ` × ${item.quantity} מנות` : ` × ${item.quantity}`)
-        : '';
+      const qtyPart = item.quantity ? ` × ${item.quantity}` : '';
       return {
-        label: `${item.label}${portionPart}${qtyPart}`,
+        label: withAssignee(`${item.label}${qtyPart}`, item),
         quantity: null,
       };
     }),
     taskGroups: [
       ...prepGrouped.groups,
-      ...(prepGrouped.orphans.length ? [{ title: 'הכנות', items: prepGrouped.orphans.map((i) => i.label) }] : []),
-      ...(manualTasks.length ? [{ title: 'ידני', items: manualTasks.map((i) => i.label) }] : []),
-      ...(extraTasks.length ? [{ title: 'נוסף', items: extraTasks.map((i) => i.label) }] : []),
+      ...(prepGrouped.orphans.length ? [{ title: 'הכנות', items: prepGrouped.orphans.map((i) => withAssignee(i.label, i)) }] : []),
+      ...(manualTasks.length ? [{ title: 'ידני', items: manualTasks.map((i) => withAssignee(i.label, i)) }] : []),
+      ...(portionItems.length ? [{ title: 'מנות להכנה', items: portionItems.map((i) => withAssignee(i.label, i)) }] : []),
+      ...(extraTasks.length ? [{ title: 'נוסף', items: extraTasks.map((i) => withAssignee(i.label, i)) }] : []),
     ],
     cleaningGroups: [
       ...cleanGrouped.groups,
-      ...(cleanGrouped.orphans.length ? [{ title: 'כללי', items: cleanGrouped.orphans.map((i) => i.label) }] : []),
+      ...(cleanGrouped.orphans.length ? [{ title: 'כללי', items: cleanGrouped.orphans.map((i) => withAssignee(i.label, i)) }] : []),
     ],
   };
 }
