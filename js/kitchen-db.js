@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=308';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=309';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=308';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=308';
+} from './validators.js?v=309';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=309';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -185,13 +185,97 @@ export async function countRecipesUsingBakingProfile(profileId) {
 export async function countProductsUsingBakingProfile(profileId) {
   const pid = sanitizeProductId(profileId);
   if (!pid) return 0;
-  const products = await db.products.toArray();
-  let count = 0;
-  for (const product of products) {
-    const resolved = await resolveBakingProfileForProduct(product.id);
-    if (resolved?.profile?.id === pid) count++;
+  const { countByProfileId } = await buildProductBakingIndex();
+  return countByProfileId.get(pid) || 0;
+}
+
+/** Resolve baking for all active products in one pass (product → category → group). */
+export async function buildProductBakingIndex() {
+  const [products, profiles, productLinks, scopes, categories, groups] = await Promise.all([
+    db.products.toArray(),
+    db.bakingProfiles.toArray(),
+    db.bakingProfileProducts.toArray(),
+    db.bakingProfileScopes.toArray(),
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
+  ]);
+  const profileMap = new Map(profiles.map((p) => [Number(p.id), p]));
+  const directByProduct = new Map();
+  for (const link of productLinks) {
+    directByProduct.set(Number(link.productId), link);
   }
-  return count;
+  const scopeByKey = new Map();
+  for (const scope of scopes) {
+    scopeByKey.set(`${scope.scopeType}:${Number(scope.scopeId)}`, scope);
+  }
+  const catById = new Map(categories.map((c) => [Number(c.id), c]));
+  const groupById = new Map(groups.map((g) => [Number(g.id), g]));
+
+  const byProductId = new Map();
+  const countByProfileId = new Map();
+
+  for (const product of products) {
+    if (product.active === false) continue;
+    let resolved = null;
+
+    const direct = directByProduct.get(Number(product.id));
+    if (direct) {
+      const profile = profileMap.get(Number(direct.bakingProfileId));
+      if (profile) {
+        resolved = {
+          profile,
+          source: 'product',
+          scopeType: null,
+          scopeId: null,
+          scopeName: null,
+        };
+      }
+    }
+
+    if (!resolved) {
+      const catScope = scopeByKey.get(`${BAKING_SCOPE_CATEGORY}:${Number(product.categoryId)}`);
+      if (catScope) {
+        const profile = profileMap.get(Number(catScope.bakingProfileId));
+        const category = catById.get(Number(product.categoryId));
+        if (profile) {
+          resolved = {
+            profile,
+            source: 'category',
+            scopeType: BAKING_SCOPE_CATEGORY,
+            scopeId: Number(product.categoryId),
+            scopeName: category?.name || null,
+          };
+        }
+      }
+    }
+
+    if (!resolved) {
+      const category = catById.get(Number(product.categoryId));
+      if (category?.groupId) {
+        const groupScope = scopeByKey.get(`${BAKING_SCOPE_GROUP}:${Number(category.groupId)}`);
+        if (groupScope) {
+          const profile = profileMap.get(Number(groupScope.bakingProfileId));
+          const group = groupById.get(Number(category.groupId));
+          if (profile) {
+            resolved = {
+              profile,
+              source: 'group',
+              scopeType: BAKING_SCOPE_GROUP,
+              scopeId: Number(category.groupId),
+              scopeName: group?.name || null,
+            };
+          }
+        }
+      }
+    }
+
+    if (!resolved) continue;
+    byProductId.set(Number(product.id), { product, ...resolved });
+    const pid = Number(resolved.profile.id);
+    countByProfileId.set(pid, (countByProfileId.get(pid) || 0) + 1);
+  }
+
+  return { byProductId, countByProfileId, profileMap };
 }
 
 export async function getBakingProfileScopes(profileId) {
