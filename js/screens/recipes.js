@@ -29,18 +29,19 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=311';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=311';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=311';
-import { renderRecipesMachines } from '../recipes-machines.js?v=311';
-import { renderRecipesPortions } from '../recipes-portions.js?v=311';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=311';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=311';
-import { openModal, closeModal } from '../modal.js?v=311';
+} from '../kitchen-db.js?v=312';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=312';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=312';
+import { renderRecipesMachines } from '../recipes-machines.js?v=312';
+import { renderRecipesPortions } from '../recipes-portions.js?v=312';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=312';
+import { buildBakingPrintHtml, printBakingHtml } from '../baking-print.js?v=312';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=312';
+import { openModal, closeModal } from '../modal.js?v=312';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=311';
-import { defaultColorForIndex } from '../chart.js?v=311';
+} from '../product-drag.js?v=312';
+import { defaultColorForIndex } from '../chart.js?v=312';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1024,6 +1025,56 @@ function renderBakingOvenSection(ovenType, label, items, viewMode) {
     </section>`;
 }
 
+function openBakingPrintChooser(productCatalog, { defaultMode = 'category' } = {}) {
+  openModal({
+    title: 'הדפסת אפיות',
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0">בחרו איך להדפיס · תנור גדול ותנור קטן ייצאו בעמודים נפרדים</p>
+      <div class="form-group">
+        <label>סוג רשימה</label>
+        <div class="baking-scope-type-row" role="radiogroup" aria-label="סוג הדפסה">
+          <label class="baking-scope-type-option">
+            <input type="radio" name="baking-print-mode" value="category"${defaultMode === 'category' ? ' checked' : ''}>
+            לפי קטגוריות
+          </label>
+          <label class="baking-scope-type-option">
+            <input type="radio" name="baking-print-mode" value="product"${defaultMode === 'product' ? ' checked' : ''}>
+            מפורט למוצרים
+          </label>
+        </div>
+      </div>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+      <button type="button" class="btn btn-primary" id="baking-print-confirm">🖨️ הדפס</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('baking-print-confirm')?.addEventListener('click', async () => {
+    const mode = document.querySelector('input[name="baking-print-mode"]:checked')?.value || 'category';
+    closeModal();
+    try {
+      const bakingIndex = await buildProductBakingIndex();
+      const allItems = mode === 'category'
+        ? collectBakingCategoryItems(productCatalog, bakingIndex)
+        : collectBakingProductItems(productCatalog, bakingIndex);
+      const byOven = splitBakingItemsByOven(allItems);
+      if (!byOven.large.length && !byOven.small.length) {
+        showToast(mode === 'category' ? 'אין קטגוריות להדפסה' : 'אין מוצרים להדפסה');
+        return;
+      }
+      const printedAt = new Date().toLocaleString('he-IL');
+      const html = buildBakingPrintHtml({
+        viewMode: mode,
+        largeItems: byOven.large,
+        smallItems: byOven.small,
+        printedAt,
+      });
+      if (!printBakingHtml(html)) showToast('יש לאפשר חלונות קופצים להדפסה');
+    } catch (err) {
+      showToast(err.message || 'שגיאה בהדפסה');
+    }
+  });
+}
+
 async function loadFreshBakingContext() {
   const [layout, productCatalog] = await Promise.all([
     getRecipesCatalogLayout(),
@@ -1098,7 +1149,10 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     <div class="card baking-profiles-card">
       <div class="section-header baking-profiles-header">
         <h2>פרופילי אפייה</h2>
-        <button type="button" class="btn btn-primary btn-sm" id="add-baking-profile-btn">+ פרופיל</button>
+        <div class="baking-profiles-header-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="baking-print-btn" title="הדפסת אפיות">🖨️ הדפס</button>
+          <button type="button" class="btn btn-primary btn-sm" id="add-baking-profile-btn">+ פרופיל</button>
+        </div>
       </div>
       <div class="baking-profile-list">${profileCatalog}</div>
     </div>
@@ -1111,6 +1165,10 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
       setBakingViewMode(container, mode);
       reloadBakingTab(container);
     });
+  });
+
+  document.getElementById('baking-print-btn')?.addEventListener('click', () => {
+    openBakingPrintChooser(productCatalog, { defaultMode: viewMode });
   });
 
   document.getElementById('add-baking-profile-btn')?.addEventListener('click', () => {

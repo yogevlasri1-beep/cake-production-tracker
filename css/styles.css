@@ -461,6 +461,13 @@ body {
   margin-bottom: 10px;
 }
 
+.baking-profiles-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .baking-profiles-header h2 {
   margin: 0;
   font-size: 1rem;
