@@ -4375,6 +4375,69 @@ table.report-table tfoot td {
   gap: 10px;
 }
 
+.portion-recipe-order-hint {
+  margin: 0 0 10px;
+}
+
+.portion-recipe-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.portion-recipe-group-card .category-group-header {
+  align-items: center;
+  gap: 8px;
+}
+
+.portion-recipe-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+
+.portion-recipe-category-card {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.portion-recipe-category-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
+}
+
+.portion-recipe-category-order {
+  margin-inline-start: auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.portion-recipe-category-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.portion-recipe-block + .portion-sub-recipe-list {
+  margin-top: -2px;
+}
+
+.portion-recipe-orphans .portion-recipe-category-header {
+  background: #f1f5f9;
+}
+
 .portion-recipe-split-heading {
   margin: 0;
   font-size: 0.92rem;

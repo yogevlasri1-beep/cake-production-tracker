@@ -1,20 +1,24 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=293';
-import { getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets } from './kitchen-db.js?v=293';
+} from './db.js?v=294';
+import {
+  getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
+} from './kitchen-db.js?v=294';
+import { defaultColorForIndex } from './chart.js?v=294';
+import { escapeHtml, showToast } from './utils.js?v=294';
+import { openModal, closeModal } from './modal.js?v=294';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=293').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=294').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { escapeHtml, showToast } from './utils.js?v=293';
-import { openModal, closeModal } from './modal.js?v=293';
 
 const PORTION_SECTIONS_KEY = 'yitzurPortionSectionsOpen';
+const PORTION_RECIPE_GROUPS_KEY = 'yitzurPortionRecipeGroupsOpen';
 
 function getPortionSectionsOpen() {
   try {
@@ -32,6 +36,26 @@ function setPortionSectionOpen(id, open) {
   const state = getPortionSectionsOpen();
   state[id] = open;
   sessionStorage.setItem(PORTION_SECTIONS_KEY, JSON.stringify(state));
+}
+
+function getPortionRecipeGroupsOpen(defaultIds = []) {
+  const raw = sessionStorage.getItem(PORTION_RECIPE_GROUPS_KEY);
+  if (raw == null) return new Set(defaultIds.map(Number).filter(Boolean));
+  try {
+    const parsed = JSON.parse(raw);
+    return new Set((Array.isArray(parsed) ? parsed : []).map(Number).filter(Boolean));
+  } catch {
+    return new Set(defaultIds.map(Number).filter(Boolean));
+  }
+}
+
+function setPortionRecipeGroupsOpen(ids) {
+  sessionStorage.setItem(PORTION_RECIPE_GROUPS_KEY, JSON.stringify([...ids]));
+}
+
+function categoryChipStyle(color) {
+  const c = color || '#2563eb';
+  return `background:${c}22;border-color:${c};color:${c}`;
 }
 
 function portionPresetLabel(p) {
@@ -122,60 +146,50 @@ function readSelectedPortionLinks() {
   const productIds = [];
   const categoryIds = [];
   const groupIds = [];
-  document.querySelectorAll('.portion-link-cb:checked').forEach((cb) => {
-    const id = Number(cb.value);
+  document.querySelectorAll('.portion-link-cb:checked').forEach((el) => {
+    const id = Number(el.value);
     if (!id) return;
-    const type = cb.dataset.linkType;
-    if (type === PORTION_LINK_PRODUCT) productIds.push(id);
-    else if (type === PORTION_LINK_CATEGORY) categoryIds.push(id);
-    else if (type === PORTION_LINK_GROUP) groupIds.push(id);
+    if (el.dataset.linkType === PORTION_LINK_PRODUCT) productIds.push(id);
+    else if (el.dataset.linkType === PORTION_LINK_CATEGORY) categoryIds.push(id);
+    else if (el.dataset.linkType === PORTION_LINK_GROUP) groupIds.push(id);
   });
   return { productIds, categoryIds, groupIds };
 }
 
 function openPortionLinkForm({ portion, productCatalog, onSaved }) {
-  const linkMode = portion.hasCustomLinks ? 'custom' : 'default';
+  const hasCustom = !!portion.hasCustomLinks;
+  const getLinkMode = () => document.querySelector('input[name="portion-link-mode"]:checked')?.value || 'default';
+
   openModal({
-    title: `שיוך מנה · ${escapeHtml(portion.name)}`,
+    title: 'שיוך מנה',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0">${escapeHtml(portionPresetLabel(portion))}</p>
-      <p class="form-hint">מקור: ${escapeHtml(portion.sourceLabel)}</p>
       <div class="form-group">
-        <label>שיוך לתוכנית יומית</label>
-        <div class="baking-scope-type-row">
-          <label class="baking-scope-type-option">
-            <input type="radio" name="portion-link-mode" value="default"${linkMode === 'default' ? ' checked' : ''}>
+        <label>סוג שיוך</label>
+        <div class="machine-measure-row">
+          <label class="checkbox-label">
+            <input type="radio" name="portion-link-mode" value="default" ${!hasCustom ? 'checked' : ''}>
             ברירת מחדל
           </label>
-          <label class="baking-scope-type-option">
-            <input type="radio" name="portion-link-mode" value="custom"${linkMode === 'custom' ? ' checked' : ''}>
+          <label class="checkbox-label">
+            <input type="radio" name="portion-link-mode" value="custom" ${hasCustom ? 'checked' : ''}>
             שיוך מותאם
           </label>
         </div>
       </div>
-      <div id="portion-link-pick">${linkMode === 'custom'
-    ? buildCustomLinkPickHTML(productCatalog, portion)
-    : `<p class="form-hint">${portion.sourceRecipeId
-      ? 'המנה תוצג לפי שיוך המתכון למוצרים (במסך עריכת מתכון)'
-      : `המנה תוצג לכל המוצרים בקבוצת התזרים «${escapeHtml(portion.homeGroupName || '')}»`}</p>`}</div>
-      <div id="portion-link-hint" class="form-hint"></div>`,
+      <div id="portion-link-pick"></div>
+      <p class="form-hint" id="portion-link-hint"></p>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-portion-link-form">שמור</button>`,
   });
 
-  const getLinkMode = () =>
-    document.querySelector('input[name="portion-link-mode"]:checked')?.value || 'default';
-
   const updateHint = () => {
-    const mode = getLinkMode();
     const hint = document.getElementById('portion-link-hint');
     if (!hint) return;
-    if (mode === 'custom') {
-      hint.textContent = 'ניתן לבחור כמה קטגוריות וכמה מוצרים — המנה תופיע אם המוצר מתאים לאחד מהיעדים';
-    } else {
-      hint.textContent = '';
-    }
+    hint.textContent = getLinkMode() === 'custom'
+      ? 'ניתן לבחור כמה קטגוריות וכמה מוצרים — המנה תופיע אם המוצר מתאים לאחד מהיעדים'
+      : '';
   };
 
   const syncPick = () => {
@@ -193,7 +207,7 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
   document.querySelectorAll('input[name="portion-link-mode"]').forEach((el) => {
     el.addEventListener('change', syncPick);
   });
-  updateHint();
+  syncPick();
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('save-portion-link-form')?.addEventListener('click', async () => {
@@ -214,7 +228,21 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
   });
 }
 
-function renderPortionRow(portion, index, total) {
+/** מנה אחת לכל מתכון (אם יש כמה מפות לקבוצות — לוקחים את הראשונה בסדר) */
+function indexPortionsByRecipeId(portions) {
+  const map = new Map();
+  const sorted = portions.slice().sort((a, b) =>
+    (a.catalogSortOrder ?? a.sortOrder ?? 0) - (b.catalogSortOrder ?? b.sortOrder ?? 0)
+    || a.id - b.id);
+  for (const p of sorted) {
+    const rid = Number(p.sourceRecipeId);
+    if (!rid || map.has(rid)) continue;
+    map.set(rid, p);
+  }
+  return map;
+}
+
+function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } = {}) {
   const scopeBadge = portion.hasCustomLinks
     ? '<span class="machine-assignment-scope">שיוך מותאם</span>'
     : '<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>';
@@ -222,12 +250,15 @@ function renderPortionRow(portion, index, total) {
     ? escapeHtml(portion.recipeName || portion.sourceLabel)
     : escapeHtml(portion.homeGroupName || portion.sourceLabel);
   const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תת מתכון</span> ' : '';
-  return `
-    <div class="portion-catalog-row list-item${portion.isSubRecipe ? ' portion-catalog-row--sub-recipe' : ''}" data-portion-id="${portion.id}">
-      <div class="portion-order-actions">
+  const orderHtml = showOrder
+    ? `<div class="portion-order-actions">
         <button type="button" class="btn btn-secondary btn-sm portion-move-up" data-id="${portion.id}" title="העלה"${index === 0 ? ' disabled' : ''}>↑</button>
         <button type="button" class="btn btn-secondary btn-sm portion-move-down" data-id="${portion.id}" title="הורד"${index >= total - 1 ? ' disabled' : ''}>↓</button>
-      </div>
+      </div>`
+    : '';
+  return `
+    <div class="portion-catalog-row list-item${portion.isSubRecipe ? ' portion-catalog-row--sub-recipe' : ''}" data-portion-id="${portion.id}">
+      ${orderHtml}
       <div class="list-item-info">
         <div class="list-item-name">${subBadge}🍽 ${escapeHtml(portionPresetLabel(portion))}</div>
         <div class="list-item-meta">${metaLine}</div>
@@ -274,7 +305,7 @@ function renderSubRecipeIngredientsTable(ingredients) {
     </div>`;
 }
 
-function renderSubRecipePortionCard(portion, recipe, index, total) {
+function renderSubRecipePortionCard(portion, recipe) {
   const scopeBadge = portion.hasCustomLinks
     ? '<span class="machine-assignment-scope">שיוך מותאם</span>'
     : '<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>';
@@ -285,10 +316,6 @@ function renderSubRecipePortionCard(portion, recipe, index, total) {
   return `
     <article class="portion-sub-recipe-card" data-portion-id="${portion.id}">
       <div class="portion-sub-recipe-card-header">
-        <div class="portion-order-actions">
-          <button type="button" class="btn btn-secondary btn-sm portion-move-up" data-id="${portion.id}" title="העלה"${index === 0 ? ' disabled' : ''}>↑</button>
-          <button type="button" class="btn btn-secondary btn-sm portion-move-down" data-id="${portion.id}" title="הורד"${index >= total - 1 ? ' disabled' : ''}>↓</button>
-        </div>
         <div class="portion-sub-recipe-card-title-block">
           <h3 class="portion-sub-recipe-card-title">
             <span class="recipe-sub-badge">תת מתכון</span>
@@ -311,46 +338,127 @@ function renderSubRecipePortionCard(portion, recipe, index, total) {
     </article>`;
 }
 
-function renderRecipePortionSection(mainPortions, subPortions, subRecipeMap, open) {
-  const mainBody = mainPortions.length
-    ? `<div class="portion-catalog-list" data-portion-list="main">${mainPortions.map((p, i) => renderPortionRow(p, i, mainPortions.length)).join('')}</div>`
-    : '<p class="form-hint portion-empty">אין מנות ממתכונים ראשיים</p>';
-  const subBody = subPortions.length
-    ? `<div class="portion-sub-recipe-list" data-portion-list="sub">${subPortions.map((p, i) => {
-      const recipe = subRecipeMap.get(p.sourceRecipeId) || null;
-      return renderSubRecipePortionCard(p, recipe, i, subPortions.length);
-    }).join('')}</div>`
-    : '<p class="form-hint portion-empty">אין תתי מתכון</p>';
-  const totalCount = mainPortions.length + subPortions.length;
+function renderRecipeBlock(recipe, portionByRecipeId, subRecipeMap, usedIds) {
+  const parts = [];
+  const mainPortion = portionByRecipeId.get(Number(recipe.id));
+  if (mainPortion) {
+    usedIds.add(Number(mainPortion.sourceRecipeId));
+    parts.push(`
+      <div class="portion-recipe-block">
+        ${renderPortionRow(mainPortion)}
+      </div>`);
+  }
+  const subs = recipe.subRecipes || [];
+  const subCards = [];
+  for (const sub of subs) {
+    const subPortion = portionByRecipeId.get(Number(sub.id));
+    if (!subPortion) continue;
+    usedIds.add(Number(subPortion.sourceRecipeId));
+    const fullRecipe = subRecipeMap.get(sub.id) || null;
+    subCards.push(renderSubRecipePortionCard(subPortion, fullRecipe));
+  }
+  if (subCards.length) {
+    parts.push(`<div class="portion-sub-recipe-list">${subCards.join('')}</div>`);
+  }
+  return parts.join('');
+}
+
+function countPortionsInCategory(cat, portionByRecipeId) {
+  let n = 0;
+  for (const recipe of cat.recipes || []) {
+    if (portionByRecipeId.has(Number(recipe.id))) n += 1;
+    for (const sub of recipe.subRecipes || []) {
+      if (portionByRecipeId.has(Number(sub.id))) n += 1;
+    }
+  }
+  return n;
+}
+
+function renderPortionCategoryCard(cat, catIndex, portionByRecipeId, subRecipeMap, usedIds) {
+  const count = countPortionsInCategory(cat, portionByRecipeId);
+  if (!count) return '';
+  const color = defaultColorForIndex(cat.id);
+  const body = (cat.recipes || []).map((recipe) =>
+    renderRecipeBlock(recipe, portionByRecipeId, subRecipeMap, usedIds)).join('');
+  return `
+    <div class="card portion-recipe-category-card" data-portion-recipe-cat="${cat.id}">
+      <div class="portion-recipe-category-header">
+        <span class="category-chip cat-chip" style="${categoryChipStyle(color)}">${escapeHtml(cat.name)}</span>
+        <span class="category-summary">${count} מנות</span>
+        <span class="portion-recipe-category-order" aria-hidden="true">${catIndex + 1}</span>
+      </div>
+      <div class="portion-recipe-category-body">
+        ${body}
+      </div>
+    </div>`;
+}
+
+function renderPortionRecipeGroupCard(group, groupIndex, portionByRecipeId, subRecipeMap, usedIds, openGroups) {
+  const catsHtml = (group.categories || []).map((cat, i) =>
+    renderPortionCategoryCard(cat, i, portionByRecipeId, subRecipeMap, usedIds)).join('');
+  if (!catsHtml.trim()) return '';
+  const total = (group.categories || []).reduce(
+    (s, c) => s + countPortionsInCategory(c, portionByRecipeId),
+    0,
+  );
+  const isExpanded = openGroups.has(group.id);
+  const color = defaultColorForIndex(group.id);
+  return `
+    <div class="card category-group-card portion-recipe-group-card${isExpanded ? ' is-expanded' : ''}" data-portion-recipe-group="${group.id}">
+      <div class="section-header category-group-header">
+        <button type="button" class="category-toggle category-group-toggle portion-recipe-group-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+          <span class="category-chevron" aria-hidden="true"></span>
+          <span class="category-group-chip" style="${categoryChipStyle(color)}">📂 ${escapeHtml(group.name)}</span>
+          <span class="category-summary">${group.categories.length} קטגוריות · ${total} מנות</span>
+        </button>
+        <span class="portion-recipe-category-order" aria-hidden="true">${groupIndex + 1}</span>
+      </div>
+      <div class="category-group-body">
+        <div class="portion-recipe-category-list">
+          ${catsHtml}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderOrphanRecipePortions(orphanPortions, subRecipeMap) {
+  if (!orphanPortions.length) return '';
+  const main = orphanPortions.filter((p) => !p.isSubRecipe);
+  const subs = orphanPortions.filter((p) => p.isSubRecipe);
+  return `
+    <div class="card portion-recipe-category-card portion-recipe-orphans">
+      <div class="portion-recipe-category-header">
+        <span class="category-chip cat-chip" style="${categoryChipStyle('#94a3b8')}">אחר</span>
+        <span class="category-summary">${orphanPortions.length} מנות ללא קטגוריה פעילה</span>
+      </div>
+      <div class="portion-recipe-category-body">
+        ${main.map((p) => renderPortionRow(p)).join('')}
+        ${subs.length ? `<div class="portion-sub-recipe-list">${subs.map((p) =>
+    renderSubRecipePortionCard(p, subRecipeMap.get(p.sourceRecipeId) || null)).join('')}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderRecipePortionSection(layout, portionByRecipeId, subRecipeMap, open, openGroups) {
+  const usedIds = new Set();
+  const groupsHtml = (layout.groups || []).map((g, i) =>
+    renderPortionRecipeGroupCard(g, i, portionByRecipeId, subRecipeMap, usedIds, openGroups)).join('');
+  const orphans = [...portionByRecipeId.entries()]
+    .filter(([rid]) => !usedIds.has(rid))
+    .map(([, p]) => p);
+  const totalCount = portionByRecipeId.size;
+  const body = `
+    <div class="portion-recipe-catalog">
+      <p class="form-hint portion-recipe-order-hint">הסדר והקטגוריות זהים למסך המתכונים — לשינוי סדר ערוך במתכונים.</p>
+      <div class="category-group-list portion-recipe-group-list">
+        ${groupsHtml || '<p class="form-hint portion-empty">אין מנות ממתכונים</p>'}
+        ${renderOrphanRecipePortions(orphans, subRecipeMap)}
+      </div>
+    </div>`;
   return `
     <section class="card backup-section portion-source-section portion-source-section--recipe${open ? '' : ' is-collapsed'}" data-portion-section="recipe">
       <button type="button" class="backup-section-header" aria-expanded="${open}">
         <span class="backup-section-title">📖 מנות ממתכונים <span class="portion-section-count">(${totalCount})</span></span>
-      </button>
-      <div class="backup-section-body">
-        <div class="portion-recipe-split">
-          <h4 class="portion-recipe-split-heading">מנות</h4>
-          ${mainBody}
-          <div class="portion-recipe-split-divider" role="separator" aria-label="תתי מתכון"></div>
-          <h4 class="portion-recipe-split-heading portion-recipe-split-heading--sub">
-            תתי מתכון
-            <span class="form-hint portion-recipe-split-hint">טבלת רכיבים כמו במסך מתכון</span>
-          </h4>
-          ${subBody}
-        </div>
-      </div>
-    </section>`;
-}
-
-function renderPortionSection(id, title, sectionPortions, open) {
-  const body = sectionPortions.length
-    ? `<div class="portion-catalog-list">${sectionPortions.map((p, i) => renderPortionRow(p, i, sectionPortions.length)).join('')}</div>`
-    : '<p class="form-hint portion-empty">אין מנות בקטגוריה זו</p>';
-  const extraClass = id === 'recipe' ? 'portion-source-section--recipe' : 'portion-source-section--flow';
-  return `
-    <section class="card backup-section portion-source-section ${extraClass}${open ? '' : ' is-collapsed'}" data-portion-section="${id}">
-      <button type="button" class="backup-section-header" aria-expanded="${open}">
-        <span class="backup-section-title">${title} <span class="portion-section-count">(${sectionPortions.length})</span></span>
       </button>
       <div class="backup-section-body">
         ${body}
@@ -358,11 +466,20 @@ function renderPortionSection(id, title, sectionPortions, open) {
     </section>`;
 }
 
-function resolvePortionMoveSection(btn) {
-  const listKind = btn.closest('[data-portion-list]')?.dataset.portionList;
-  if (listKind === 'main') return 'recipe-main';
-  if (listKind === 'sub') return 'recipe-sub';
-  return btn.closest('[data-portion-section]')?.dataset.portionSection || 'flow';
+function renderPortionSection(id, title, sectionPortions, open) {
+  const body = sectionPortions.length
+    ? `<div class="portion-catalog-list" data-portion-list="flow">${sectionPortions.map((p, i) =>
+      renderPortionRow(p, { showOrder: true, index: i, total: sectionPortions.length })).join('')}</div>`
+    : '<p class="form-hint portion-empty">אין מנות בקטגוריה זו</p>';
+  return `
+    <section class="card backup-section portion-source-section portion-source-section--flow${open ? '' : ' is-collapsed'}" data-portion-section="${id}">
+      <button type="button" class="backup-section-header" aria-expanded="${open}">
+        <span class="backup-section-title">${title} <span class="portion-section-count">(${sectionPortions.length})</span></span>
+      </button>
+      <div class="backup-section-body">
+        ${body}
+      </div>
+    </section>`;
 }
 
 function bindPortionSectionToggles(container) {
@@ -379,54 +496,70 @@ function bindPortionSectionToggles(container) {
   });
 }
 
+function bindPortionRecipeGroupToggles(container) {
+  const openGroups = getPortionRecipeGroupsOpen();
+  container.querySelectorAll('.portion-recipe-group-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const card = btn.closest('[data-portion-recipe-group]');
+      const id = Number(card?.dataset.portionRecipeGroup);
+      if (!id) return;
+      const opening = !card.classList.contains('is-expanded');
+      card.classList.toggle('is-expanded', opening);
+      btn.setAttribute('aria-expanded', String(opening));
+      if (opening) openGroups.add(id);
+      else openGroups.delete(id);
+      setPortionRecipeGroupsOpen(openGroups);
+    });
+  });
+}
+
 export async function renderRecipesPortions(container, { productCatalog }) {
   const rerender = () => renderRecipesPortions(container, { productCatalog });
-  // סנכרון כל המתכונים לקטלוג מנות (כולל כאלה בלי שיוך / בלי משקל)
   try {
     await syncAllRecipePortionPresets();
   } catch (err) {
     console.warn('syncAllRecipePortionPresets failed', err);
   }
-  const portions = await getPortionPresetsCatalog();
+
+  const [portions, layout] = await Promise.all([
+    getPortionPresetsCatalog(),
+    getRecipesCatalogLayout(),
+  ]);
+
   const recipePortions = portions.filter((p) => p.sourceKind === 'recipe');
-  const mainRecipePortions = recipePortions.filter((p) => !p.isSubRecipe);
-  const subRecipePortions = recipePortions.filter((p) => p.isSubRecipe);
   const flowPortions = portions.filter((p) => p.sourceKind !== 'recipe');
+  const portionByRecipeId = indexPortionsByRecipeId(recipePortions);
   const sectionsOpen = getPortionSectionsOpen();
+  const openGroups = getPortionRecipeGroupsOpen((layout.groups || []).map((g) => g.id));
 
   const subRecipeMap = new Map();
-  await Promise.all(subRecipePortions.map(async (p) => {
-    if (!p.sourceRecipeId || subRecipeMap.has(p.sourceRecipeId)) return;
-    const recipe = await getRecipe(p.sourceRecipeId);
-    if (recipe) subRecipeMap.set(p.sourceRecipeId, recipe);
+  const subIds = [...portionByRecipeId.values()]
+    .filter((p) => p.isSubRecipe)
+    .map((p) => p.sourceRecipeId);
+  await Promise.all(subIds.map(async (rid) => {
+    if (!rid || subRecipeMap.has(rid)) return;
+    const recipe = await getRecipe(rid);
+    if (recipe) subRecipeMap.set(rid, recipe);
   }));
 
   container.innerHTML = `
     <div class="card portion-station-intro">
       <div class="card-title">מנות לייצור</div>
-      <p class="form-hint" style="margin:0">מנות מחולקות לפי מקור — מתכונים או תזרים. מנות ראשיות למעלה, תתי מתכון עם טבלת רכיבים למטה.</p>
+      <p class="form-hint" style="margin:0">מנות ממתכונים מסודרות כמו בקטלוג המתכונים (קבוצה → קטגוריה → מתכון). מנות מתזרים נשארות נפרדות.</p>
     </div>
-    ${renderRecipePortionSection(mainRecipePortions, subRecipePortions, subRecipeMap, sectionsOpen.recipe)}
+    ${renderRecipePortionSection(layout, portionByRecipeId, subRecipeMap, sectionsOpen.recipe, openGroups)}
     ${renderPortionSection('flow', '🔄 מנות מתזרים', flowPortions, sectionsOpen.flow)}`;
 
-  const movePortion = async (id, direction, sectionKind) => {
-    const pools = {
-      'recipe-main': mainRecipePortions,
-      'recipe-sub': subRecipePortions,
-      flow: flowPortions,
-    };
-    const sectionPortions = pools[sectionKind] || [];
-    const ids = sectionPortions.map((p) => p.id);
+  const movePortion = async (id, direction) => {
+    const ids = flowPortions.map((p) => p.id);
     const idx = ids.indexOf(Number(id));
     if (idx < 0) return;
     const swap = idx + direction;
     if (swap < 0 || swap >= ids.length) return;
     [ids[idx], ids[swap]] = [ids[swap], ids[idx]];
-    const mainIds = sectionKind === 'recipe-main' ? ids : mainRecipePortions.map((p) => p.id);
-    const subIds = sectionKind === 'recipe-sub' ? ids : subRecipePortions.map((p) => p.id);
-    const flowIds = sectionKind === 'flow' ? ids : flowPortions.map((p) => p.id);
+    const recipeIds = [...portionByRecipeId.values()].map((p) => p.id);
     try {
-      await setPortionPresetCatalogOrder([...mainIds, ...subIds, ...flowIds]);
+      await setPortionPresetCatalogOrder([...recipeIds, ...ids]);
       showToast('סדר עודכן ✓');
       rerender();
     } catch (err) {
@@ -435,12 +568,13 @@ export async function renderRecipesPortions(container, { productCatalog }) {
   };
 
   bindPortionSectionToggles(container);
+  bindPortionRecipeGroupToggles(container);
 
   container.querySelectorAll('.portion-move-up').forEach((btn) => {
-    btn.addEventListener('click', () => movePortion(Number(btn.dataset.id), -1, resolvePortionMoveSection(btn)));
+    btn.addEventListener('click', () => movePortion(Number(btn.dataset.id), -1));
   });
   container.querySelectorAll('.portion-move-down').forEach((btn) => {
-    btn.addEventListener('click', () => movePortion(Number(btn.dataset.id), 1, resolvePortionMoveSection(btn)));
+    btn.addEventListener('click', () => movePortion(Number(btn.dataset.id), 1));
   });
   container.querySelectorAll('.portion-edit-link').forEach((btn) => {
     btn.addEventListener('click', () => {
