@@ -29,19 +29,19 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=313';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=313';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=313';
-import { renderRecipesMachines } from '../recipes-machines.js?v=313';
-import { renderRecipesPortions } from '../recipes-portions.js?v=313';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=313';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=313';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=313';
-import { openModal, closeModal } from '../modal.js?v=313';
+} from '../kitchen-db.js?v=314';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=314';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=314';
+import { renderRecipesMachines } from '../recipes-machines.js?v=314';
+import { renderRecipesPortions } from '../recipes-portions.js?v=314';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=314';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=314';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=314';
+import { openModal, closeModal } from '../modal.js?v=314';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=313';
-import { defaultColorForIndex } from '../chart.js?v=313';
+} from '../product-drag.js?v=314';
+import { defaultColorForIndex } from '../chart.js?v=314';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1025,14 +1025,14 @@ function renderBakingOvenSection(ovenType, label, items, viewMode) {
     </section>`;
 }
 
-function openBakingPrintChooser(productCatalog, { defaultMode = 'category' } = {}) {
+function openBakingShareChooser(productCatalog, { defaultMode = 'category' } = {}) {
   openModal({
-    title: 'הדפסת אפיות',
+    title: 'שיתוף אפיות',
     bodyHTML: `
-      <p class="form-hint" style="margin-top:0">בחרו איך להדפיס · תנור גדול ותנור קטן ייצאו בעמודים נפרדים</p>
+      <p class="form-hint" style="margin-top:0">בחרו סוג רשימה · ייפתח Share (אפשר לשלוח או להדפיס) · תנור גדול ותנור קטן בעמודים נפרדים</p>
       <div class="form-group">
         <label>סוג רשימה</label>
-        <div class="baking-scope-type-row" role="radiogroup" aria-label="סוג הדפסה">
+        <div class="baking-scope-type-row" role="radiogroup" aria-label="סוג שיתוף">
           <label class="baking-scope-type-option">
             <input type="radio" name="baking-print-mode" value="category"${defaultMode === 'category' ? ' checked' : ''}>
             לפי קטגוריות
@@ -1045,10 +1045,10 @@ function openBakingPrintChooser(productCatalog, { defaultMode = 'category' } = {
       </div>`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="baking-print-confirm">🖨️ הדפס</button>`,
+      <button type="button" class="btn btn-primary" id="baking-share-confirm">📤 שתף</button>`,
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('baking-print-confirm')?.addEventListener('click', async () => {
+  document.getElementById('baking-share-confirm')?.addEventListener('click', async () => {
     const mode = document.querySelector('input[name="baking-print-mode"]:checked')?.value || 'category';
     closeModal();
     try {
@@ -1058,7 +1058,7 @@ function openBakingPrintChooser(productCatalog, { defaultMode = 'category' } = {
         : collectBakingProductItems(productCatalog, bakingIndex);
       const byOven = splitBakingItemsByOven(allItems);
       if (!byOven.large.length && !byOven.small.length) {
-        showToast(mode === 'category' ? 'אין קטגוריות להדפסה' : 'אין מוצרים להדפסה');
+        showToast(mode === 'category' ? 'אין קטגוריות לשיתוף' : 'אין מוצרים לשיתוף');
         return;
       }
       const printedAt = new Date().toLocaleString('he-IL');
@@ -1068,9 +1068,12 @@ function openBakingPrintChooser(productCatalog, { defaultMode = 'category' } = {
         smallItems: byOven.small,
         printedAt,
       });
-      if (!printBakingHtml(html)) showToast('יש לאפשר חלונות קופצים להדפסה');
+      const method = await shareBakingHtml(html, { viewMode: mode });
+      if (method === 'cancelled') return;
+      if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
+      else showToast('הקובץ הורד');
     } catch (err) {
-      showToast(err.message || 'שגיאה בהדפסה');
+      showToast(err.message || 'שגיאה בשיתוף');
     }
   });
 }
@@ -1150,7 +1153,7 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
       <div class="section-header baking-profiles-header">
         <h2>פרופילי אפייה</h2>
         <div class="baking-profiles-header-actions">
-          <button type="button" class="btn btn-secondary btn-sm" id="baking-print-btn" title="הדפסת אפיות">🖨️ הדפס</button>
+          <button type="button" class="btn btn-secondary btn-sm btn-icon" id="baking-share-btn" title="שתף קובץ אפיות">📤</button>
           <button type="button" class="btn btn-primary btn-sm" id="add-baking-profile-btn">+ פרופיל</button>
         </div>
       </div>
@@ -1167,8 +1170,8 @@ async function renderRecipesBaking(container, { layout, productCatalog }) {
     });
   });
 
-  document.getElementById('baking-print-btn')?.addEventListener('click', () => {
-    openBakingPrintChooser(productCatalog, { defaultMode: viewMode });
+  document.getElementById('baking-share-btn')?.addEventListener('click', () => {
+    openBakingShareChooser(productCatalog, { defaultMode: viewMode });
   });
 
   document.getElementById('add-baking-profile-btn')?.addEventListener('click', () => {

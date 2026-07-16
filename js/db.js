@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=313';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=313';
-import { defaultColorForIndex } from './chart.js?v=313';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=313';
+} from './validators.js?v=314';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=314';
+import { defaultColorForIndex } from './chart.js?v=314';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=314';
 
 export { ValidationError };
 
@@ -5717,10 +5717,121 @@ export async function getPortionPresetsForProduct(productId) {
   return applicable;
 }
 
+/**
+ * מזהי מוצרים / קטגוריות של מתכון — בלי הרחבת «קטגוריה כללית» לכל המוצרים.
+ * לתזרים: מנות מקטגוריה כללית לא נכנסות אוטומטית.
+ */
+async function resolveRecipeStrictProductAndCategoryIds(recipe) {
+  if (!recipe) return { productIds: [], categoryIds: [], isGroupOnly: false };
+  const { inferRecipeProductLinkScope } = await import('./kitchen-db.js');
+  const scope = inferRecipeProductLinkScope(recipe);
+  if (scope === 'group') return { productIds: [], categoryIds: [], isGroupOnly: true };
+
+  const productIds = (recipe.linkedProductIds?.length
+    ? recipe.linkedProductIds
+    : (recipe.linkedProductId ? [recipe.linkedProductId] : [])).map(Number).filter(Boolean);
+
+  const categoryIds = (recipe.linkedProductCategoryIds?.length
+    ? recipe.linkedProductCategoryIds
+    : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : [])).map(Number).filter(Boolean);
+
+  return { productIds, categoryIds, isGroupOnly: false };
+}
+
+/**
+ * האם מנה רלוונטית לתזרים — רק שיוך למוצר/קטגוריה של מוצרים בתזרים,
+ * לא שיוך לקטגוריה כללית בלבד.
+ */
+async function portionPresetAppliesToFlowProducts(preset, flowProducts, links = []) {
+  if (!flowProducts?.length) return false;
+  const flowProductIds = new Set(flowProducts.map((p) => Number(p.id)));
+  const flowCategoryIds = new Set(flowProducts.map((p) => Number(p.categoryId)).filter(Boolean));
+
+  if (links.length) {
+    for (const link of links) {
+      const targetId = Number(link.targetId);
+      if (!targetId) continue;
+      if (link.linkType === PORTION_LINK_PRODUCT && flowProductIds.has(targetId)) return true;
+      if (link.linkType === PORTION_LINK_CATEGORY && flowCategoryIds.has(targetId)) return true;
+      // PORTION_LINK_GROUP — לא נכלל בתזרים (מנות של קטגוריה כללית)
+    }
+    return false;
+  }
+
+  const linkType = preset.linkTargetType;
+  if (linkType === PORTION_LINK_PRODUCT) {
+    return flowProductIds.has(Number(preset.linkProductId));
+  }
+  if (linkType === PORTION_LINK_CATEGORY) {
+    return flowCategoryIds.has(Number(preset.linkCategoryId));
+  }
+  if (linkType === PORTION_LINK_GROUP) {
+    return false;
+  }
+
+  if (preset.sourceRecipeId) {
+    const { getProductRecipeComponents } = await import('./kitchen-db.js');
+    for (const product of flowProducts) {
+      const componentRecipeIds = new Set(
+        (await getProductRecipeComponents(product.id)).map((c) => c.recipeId),
+      );
+      if (componentRecipeIds.has(preset.sourceRecipeId)) return true;
+    }
+
+    const recipe = await db.recipes.get(preset.sourceRecipeId);
+    if (!recipe) return false;
+    const { productIds, categoryIds, isGroupOnly } = await resolveRecipeStrictProductAndCategoryIds(recipe);
+    if (isGroupOnly) return false;
+    if (productIds.some((id) => flowProductIds.has(Number(id)))) return true;
+    if (categoryIds.some((id) => flowCategoryIds.has(Number(id)))) return true;
+    return false;
+  }
+
+  // מנה ידנית בלי שיוך מותאם = ברירת מחדל לכל הקבוצה — לא בתזרים
+  return false;
+}
+
+/** מוצרים שרלוונטיים לתזרים לצורך סינון מנות */
+async function resolveFlowProductsForPortions(flowId) {
+  const fid = Number(flowId);
+  if (!fid) return [];
+  const linked = await getLinkedProductsForFlow(fid);
+  if (linked.length) {
+    return linked.map((row) => row.product).filter((p) => p && p.active !== false);
+  }
+  return getCandidateProductsForFlow(fid);
+}
+
+/** מנות לתזרים — רק כאלה שמשויכות למוצר/קטגוריה של מוצרים שבתזרים */
 export async function getFlowPortionPresets(flowId) {
-  const gid = await resolveCategoryGroupIdForFlow(flowId);
-  if (!gid) return [];
-  return getGroupPortionPresets(gid);
+  const fid = Number(flowId);
+  if (!fid) return [];
+  const flowProducts = await resolveFlowProductsForPortions(fid);
+  if (!flowProducts.length) return [];
+
+  const gid = await resolveCategoryGroupIdForFlow(fid);
+  const candidates = gid
+    ? await getGroupPortionPresets(gid)
+    : (await db.groupPortionPresets.toArray()).sort(comparePortionPresets);
+
+  // גם מנות בקטלוג (categoryGroupId=0) שמשויכות למוצר בתזרים
+  const catalogPresets = gid
+    ? (await db.groupPortionPresets.where('categoryGroupId').equals(0).toArray())
+    : [];
+  const byId = new Map();
+  for (const p of [...candidates, ...catalogPresets]) byId.set(p.id, p);
+  const pool = [...byId.values()];
+
+  const linksMap = await getPortionPresetLinksMap(pool.map((p) => p.id));
+  const applicable = [];
+  for (const preset of pool) {
+    const links = linksMap.get(preset.id) || [];
+    if (await portionPresetAppliesToFlowProducts(preset, flowProducts, links)) {
+      applicable.push(preset);
+    }
+  }
+  applicable.sort(comparePortionPresets);
+  return applicable;
 }
 
 export async function addGroupPortionPreset(categoryGroupId, { name, weight, extra } = {}) {
