@@ -1245,12 +1245,102 @@ body {
   border-radius: 2px;
 }
 
-.flow-step {
-  position: relative;
+.flow-step--compact .flow-step-header {
   display: flex;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.flow-step-collapse-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flow-step-collapse-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.flow-step-collapse-chevron::before {
+  content: '▾';
+  display: inline-block;
+  font-size: 0.85rem;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.flow-step.is-collapsed .flow-step-collapse-chevron::before {
+  transform: rotate(-90deg);
+}
+
+.flow-step.is-collapsed .flow-step-collapse-body {
+  display: none;
+}
+
+.flow-step-collapse-body {
+  margin-top: 6px;
+}
+
+.flow-run-collapse {
+  margin-bottom: 12px;
+}
+
+.flow-run-collapse > .flow-run-collapse-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  user-select: none;
+  margin: 0;
+  padding: 2px 0;
+}
+
+.flow-run-collapse > .flow-run-collapse-summary::-webkit-details-marker {
+  display: none;
+}
+
+.flow-run-collapse-label {
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.flow-run-collapse-chevron::before {
+  content: '▾';
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+}
+
+.flow-run-collapse:not([open]) > .flow-run-collapse-summary .flow-run-collapse-chevron::before {
+  content: '◂';
+}
+
+.flow-run-collapse-body {
+  margin-top: 10px;
+}
+
+.flow-run-collapse--production .flow-production-always-hint {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted, #64748b);
+}
+
+.flow-metrics-meta-only {
+  font-size: 0.82rem;
+  color: var(--text-muted, #64748b);
   margin-bottom: 8px;
-  padding-right: 4px;
 }
 
 .flow-step--compact .flow-step-marker {

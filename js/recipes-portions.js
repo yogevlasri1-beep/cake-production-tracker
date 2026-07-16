@@ -1,16 +1,16 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=314';
+} from './db.js?v=315';
 import {
   getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
-} from './kitchen-db.js?v=314';
-import { defaultColorForIndex } from './chart.js?v=314';
-import { escapeHtml, showToast } from './utils.js?v=314';
-import { openModal, closeModal } from './modal.js?v=314';
+} from './kitchen-db.js?v=315';
+import { defaultColorForIndex } from './chart.js?v=315';
+import { escapeHtml, showToast } from './utils.js?v=315';
+import { openModal, closeModal } from './modal.js?v=315';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=314').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=315').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);

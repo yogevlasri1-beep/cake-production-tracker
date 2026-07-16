@@ -24,22 +24,86 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=314';
+} from '../db.js?v=315';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=314').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=315').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=314';
-import { openModal, closeModal } from '../modal.js?v=314';
-import { requestAutoBackupNow } from '../backup-service.js?v=314';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=314';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=314';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=315';
+import { openModal, closeModal } from '../modal.js?v=315';
+import { requestAutoBackupNow } from '../backup-service.js?v=315';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=315';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=315';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
+
+const RUN_COLLAPSE_STORAGE = 'yitzur-run-collapse-v1';
+
+function getRunCollapseMap(runId) {
+  try {
+    return JSON.parse(sessionStorage.getItem(`${RUN_COLLAPSE_STORAGE}-${runId}`) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function isRunSectionOpen(runId, key, defaultOpen = true) {
+  const map = getRunCollapseMap(runId);
+  if (Object.prototype.hasOwnProperty.call(map, key)) return !!map[key];
+  return defaultOpen;
+}
+
+function setRunSectionOpen(runId, key, open) {
+  const map = getRunCollapseMap(runId);
+  map[key] = !!open;
+  sessionStorage.setItem(`${RUN_COLLAPSE_STORAGE}-${runId}`, JSON.stringify(map));
+}
+
+function renderCollapsibleRunCard(runId, key, titleHtml, bodyHtml, {
+  defaultOpen = true,
+  hintHtml = '',
+  className = '',
+  id = '',
+} = {}) {
+  const open = isRunSectionOpen(runId, key, defaultOpen);
+  return `
+    <details class="card flow-run-collapse ${className}" data-run-collapse="${escapeHtml(key)}"${id ? ` id="${escapeHtml(id)}"` : ''}${open ? ' open' : ''}>
+      <summary class="flow-run-collapse-summary">
+        <span class="flow-run-collapse-label">${titleHtml}</span>
+        <span class="flow-run-collapse-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="flow-run-collapse-body">
+        ${hintHtml}
+        ${bodyHtml}
+      </div>
+    </details>`;
+}
+
+function bindRunCollapse(container, runId) {
+  container.querySelectorAll('details[data-run-collapse]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      setRunSectionOpen(runId, el.dataset.runCollapse, el.open);
+    });
+  });
+  container.querySelectorAll('.flow-step-collapse-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const step = btn.closest('.flow-step');
+      if (!step) return;
+      const key = btn.dataset.collapseKey;
+      const collapsed = !step.classList.contains('is-collapsed');
+      step.classList.toggle('is-collapsed', collapsed);
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? 'הרחב סעיף' : 'מזער סעיף';
+      if (key) setRunSectionOpen(runId, key, !collapsed);
+    });
+  });
+}
 
 function parseIdList(str) {
   try {
@@ -1015,6 +1079,10 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const showTimingFields = canEditFields;
   const defaultStartNow = isActive && !step.startedAt;
   const defaultEndNow = isActive && !step.completedAt;
+  const collapseKey = `step-${stepIndex}`;
+  const defaultOpen = isActive || isStepActive;
+  const sectionOpen = isRunSectionOpen(run?.id, collapseKey, defaultOpen);
+  const isCollapsed = !sectionOpen;
 
   let prodPanel = '';
   if (step.tracksProduction && productionCtx) {
@@ -1070,10 +1138,13 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const metaHTML = metaInner ? `<div class="flow-step-meta">${metaInner}</div>` : '';
 
   return `
-    <div class="flow-step flow-step--compact flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}" data-step-index="${stepIndex}">
+    <div class="flow-step flow-step--compact flow-step--${visual}${step.tracksProduction ? ' flow-step--production' : ''}${isCollapsed ? ' is-collapsed' : ''}" data-step-index="${stepIndex}">
       <div class="flow-step-marker" aria-hidden="true"></div>
       <div class="flow-step-body">
         <div class="flow-step-header">
+          <button type="button" class="flow-step-collapse-btn" data-collapse-key="${collapseKey}" aria-expanded="${isCollapsed ? 'false' : 'true'}" title="${isCollapsed ? 'הרחב סעיף' : 'מזער סעיף'}">
+            <span class="flow-step-collapse-chevron" aria-hidden="true"></span>
+          </button>
           <div class="flow-step-title-block">
             <div class="flow-step-title-row">
               <span class="flow-step-num">${stepIndex + 1}</span>
@@ -1094,15 +1165,17 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
             ${isStepActive && runActive && editAllMode ? `<button type="button" class="btn btn-primary btn-sm flow-step-complete-btn" data-step="${stepIndex}">✓ השלם</button>` : ''}
           </div>
         </div>
-        ${prodPanel}
-        ${timingPanelHTML ? `<div class="flow-step-timing-panel hidden" data-step-timing-panel="${stepIndex}">${timingPanelHTML}</div>` : ''}
-        ${portionsPanelHTML ? `<div class="flow-step-portions-panel hidden" data-step-portions-panel="${stepIndex}">${portionsPanelHTML}</div>` : ''}
-        ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true }) : ''}
-        ${(canEditCompleted || (isDone && canEditFields)) ? `
-        <div class="flow-step-actions">
-          ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור</button>` : ''}
-          ${isDone && canEditFields ? `<button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור</button>` : ''}
-        </div>` : ''}
+        <div class="flow-step-collapse-body">
+          ${prodPanel}
+          ${timingPanelHTML ? `<div class="flow-step-timing-panel hidden" data-step-timing-panel="${stepIndex}">${timingPanelHTML}</div>` : ''}
+          ${portionsPanelHTML ? `<div class="flow-step-portions-panel hidden" data-step-portions-panel="${stepIndex}">${portionsPanelHTML}</div>` : ''}
+          ${canEditFields ? stepNotesPanelHTML(step, stepIndex, { hidden: true }) : ''}
+          ${(canEditCompleted || (isDone && canEditFields)) ? `
+          <div class="flow-step-actions">
+            ${canEditCompleted ? `<button type="button" class="btn btn-secondary btn-sm flow-step-reopen-btn" data-step="${stepIndex}">↩ חזור</button>` : ''}
+            ${isDone && canEditFields ? `<button type="button" class="btn btn-secondary btn-sm flow-step-save-btn" data-step="${stepIndex}">שמור</button>` : ''}
+          </div>` : ''}
+        </div>
       </div>
     </div>`;
 }
@@ -1311,7 +1384,7 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
 
   return `
     <div class="flow-metrics-card${compact ? ' flow-metrics-card--compact' : ''}${clickable ? ' flow-metrics-card--interactive' : ''}">
-      <div class="flow-metrics-title">${escapeHtml(title)}${meta ? `<span class="flow-metrics-meta">${escapeHtml(meta)}</span>` : ''}</div>
+      ${title ? `<div class="flow-metrics-title">${escapeHtml(title)}${meta ? `<span class="flow-metrics-meta">${escapeHtml(meta)}</span>` : ''}</div>` : (meta ? `<div class="flow-metrics-meta-only">${escapeHtml(meta.replace(/^ · /, ''))}</div>` : '')}
       <div class="flow-metrics-products">
         <div class="flow-metrics-products-label">ייצור</div>
         ${renderMetricsProductionRowsHTML(metrics, productMap, { compact })}
@@ -1420,8 +1493,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=314');
-    const { db } = await import('../db.js?v=314');
+    const { getRecipe } = await import('../kitchen-db.js?v=315');
+    const { db } = await import('../db.js?v=315');
     const blocks = [];
 
     for (const row of rows) {
@@ -2004,18 +2077,26 @@ async function renderRunView(container, runId, ctx) {
       </div>
     </div>
 
-    <div class="card">
-      ${renderFlowMetricsCard(runMetrics, productionCtx.productMap, { title: 'סיכום תהליך', interactive: true })}
-    </div>
+    ${runMetrics ? renderCollapsibleRunCard(
+    run.id,
+    'metrics',
+    '📊 סיכום תהליך',
+    renderFlowMetricsCard(runMetrics, productionCtx?.productMap || productMap, { title: '', interactive: true }),
+    { defaultOpen: true, className: 'flow-run-collapse--metrics' },
+  ) : ''}
 
-    ${showTopProduction ? `
-    <div class="card flow-production-always-card" id="flow-production-anchor">
-      <div class="flow-production-always-header">
-        <span class="flow-production-always-title">📦 תיעוד ייצור${run.status === 'active' ? ' — זמין תמיד' : ''}</span>
-        <span class="flow-production-always-hint">${run.status === 'active' ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב' : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'}</span>
-      </div>
-      ${topProductionHTML}
-    </div>` : ''}
+    ${showTopProduction ? renderCollapsibleRunCard(
+    run.id,
+    'production',
+    `📦 תיעוד ייצור${run.status === 'active' ? ' — זמין תמיד' : ''}`,
+    topProductionHTML,
+    {
+      defaultOpen: true,
+      id: 'flow-production-anchor',
+      className: 'flow-production-always-card flow-run-collapse--production',
+      hintHtml: `<p class="flow-production-always-hint">${run.status === 'active' ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב' : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'}</p>`,
+    },
+  ) : ''}
 
     <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
       ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx, productionStepIdx)).join('')}
@@ -2041,6 +2122,7 @@ async function renderRunView(container, runId, ctx) {
 
   bindFlowChecklistPopover(container, 'flow-prep', ['flow-clean']);
   bindFlowChecklistPopover(container, 'flow-clean', ['flow-prep']);
+  bindRunCollapse(container, run.id);
 
   document.getElementById('toggle-edit-all')?.addEventListener('click', () => {
     container.dataset.runEditAll = editAllMode ? '' : '1';
@@ -2281,9 +2363,23 @@ async function renderRunView(container, runId, ctx) {
     });
   });
 
+  function expandFlowStepIfCollapsed(stepEl) {
+    if (!stepEl?.classList.contains('is-collapsed')) return;
+    stepEl.classList.remove('is-collapsed');
+    const collapseBtn = stepEl.querySelector('.flow-step-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.setAttribute('aria-expanded', 'true');
+      collapseBtn.title = 'מזער סעיף';
+      const key = collapseBtn.dataset.collapseKey;
+      if (key) setRunSectionOpen(run.id, key, true);
+    }
+  }
+
   function bindFlowStepPanelToggle(btn, panelSelector, { onOpen } = {}) {
     btn.addEventListener('click', () => {
       const stepIndex = Number(btn.dataset.step);
+      const stepEl = btn.closest('.flow-step');
+      expandFlowStepIfCollapsed(stepEl);
       const panel = container.querySelector(`${panelSelector}="${stepIndex}"]`);
       if (!panel) return;
       const opening = panel.classList.contains('hidden');
