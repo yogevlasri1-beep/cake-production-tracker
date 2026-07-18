@@ -1,19 +1,19 @@
-import { initDB } from './db.js?v=325';
-import { renderHome, homeMeta } from './screens/home.js?v=325';
-import { renderProducts, productsMeta } from './screens/products.js?v=325';
-import { renderManager, managerMeta } from './screens/manager.js?v=325';
-import { renderProcess, processMeta } from './screens/process.js?v=325';
-import { renderReports, reportsMeta } from './screens/reports.js?v=325';
-import { renderBackup, backupMeta } from './screens/backup.js?v=325';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=325';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=325';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=325';
-import { initIOSInstallPrompt } from './ios-install.js?v=325';
-import { initNetworkCheck } from './network.js?v=325';
-import { registerServiceWorker } from './sw-register.js?v=325';
-import { APP_VERSION } from './version.js?v=325';
-import { showToast } from './utils.js?v=325';
-import './modal.js?v=325';
+import { initDB } from './db.js?v=326';
+import { renderHome, homeMeta } from './screens/home.js?v=326';
+import { renderProducts, productsMeta } from './screens/products.js?v=326';
+import { renderManager, managerMeta } from './screens/manager.js?v=326';
+import { renderProcess, processMeta } from './screens/process.js?v=326';
+import { renderReports, reportsMeta } from './screens/reports.js?v=326';
+import { renderBackup, backupMeta } from './screens/backup.js?v=326';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=326';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=326';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=326';
+import { initIOSInstallPrompt } from './ios-install.js?v=326';
+import { initNetworkCheck } from './network.js?v=326';
+import { registerServiceWorker } from './sw-register.js?v=326';
+import { APP_VERSION } from './version.js?v=326';
+import { showToast } from './utils.js?v=326';
+import './modal.js?v=326';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -193,11 +193,11 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=325');
+        const { forceAppUpdate } = await import('./sw-register.js?v=326');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=325').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=326').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -214,7 +214,7 @@ async function boot() {
 
     await initDB();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=325');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=326');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 

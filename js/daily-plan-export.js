@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=325';
+import { escapeHtml } from './utils.js?v=326';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -229,7 +229,6 @@ function dedupeChecklistItems(items) {
 function groupChecklistForExport(items, flowNames) {
   const byFlow = new Map();
   const orphans = [];
-  const labelOf = (i) => (i.assigneeName ? `${i.label} · 👤 ${i.assigneeName}` : i.label);
   for (const item of dedupeChecklistItems(items)) {
     const fid = item.flowId || null;
     if (fid) {
@@ -240,13 +239,25 @@ function groupChecklistForExport(items, flowNames) {
     }
   }
   const groups = [...byFlow.entries()].map(([flowId, groupItems]) => ({
-    title: flowNames?.get(flowId) || 'תזרים',
-    items: groupItems.map(labelOf),
+    flowId,
+    title: flowNames?.get(flowId) || groupItems[0]?.label?.split(' · ')[0] || 'תזרים',
+    items: groupItems,
   }));
   return { groups, orphans };
 }
 
-/** מפרק פריטי תוכנית לסקשנים להדפסה */
+function exportTaskName(item, flowTitle = '') {
+  let label = String(item?.label || '').trim();
+  if (!label) return 'משימה';
+  if (flowTitle && label.startsWith(flowTitle)) {
+    label = label.slice(flowTitle.length).replace(/^[\s·\-:]+/, '').trim();
+  } else if (label.includes(' · ')) {
+    label = label.split(' · ').slice(1).join(' · ').trim();
+  }
+  return label || item.label || 'משימה';
+}
+
+/** מפרק פריטי תוכנית לסקשנים להדפסה / ייצוא */
 export function organizeDailyPlanForExport(items, products, plan, { dayOffset = null, flowNames = null } = {}) {
   let filtered = items;
   if (dayOffset != null) {
@@ -261,83 +272,179 @@ export function organizeDailyPlanForExport(items, products, plan, { dayOffset = 
   const manualTasks = filtered.filter((i) => i.itemKind === 'text');
   const extraTasks = filtered.filter((i) => i.itemKind === 'flow_step');
 
-  const withAssignee = (label, item) => (item.assigneeName ? `${label} · 👤 ${item.assigneeName}` : label);
-
   const prepGrouped = groupChecklistForExport(preparations, flowNames);
   const cleanGrouped = groupChecklistForExport(cleanings, flowNames);
 
+  const flowTaskRows = [];
+  for (const group of prepGrouped.groups) {
+    for (const item of group.items) {
+      flowTaskRows.push({
+        flowName: group.title,
+        taskName: exportTaskName(item, group.title),
+        done: !!item.done,
+        assigneeName: item.assigneeName || '',
+      });
+    }
+  }
+  for (const item of prepGrouped.orphans) {
+    flowTaskRows.push({
+      flowName: 'הכנות',
+      taskName: exportTaskName(item),
+      done: !!item.done,
+      assigneeName: item.assigneeName || '',
+    });
+  }
+
+  const flowCleanRows = [];
+  for (const group of cleanGrouped.groups) {
+    for (const item of group.items) {
+      flowCleanRows.push({
+        flowName: group.title,
+        taskName: exportTaskName(item, group.title),
+        done: !!item.done,
+        assigneeName: item.assigneeName || '',
+      });
+    }
+  }
+  for (const item of cleanGrouped.orphans) {
+    flowCleanRows.push({
+      flowName: 'ניקיון',
+      taskName: exportTaskName(item),
+      done: !!item.done,
+      assigneeName: item.assigneeName || '',
+    });
+  }
+
   return {
     highlights: (plan?.notes || '').trim(),
-    products: productsInPlan.map((item) => {
-      const qtyPart = item.quantity ? ` × ${item.quantity}` : '';
-      return {
-        label: withAssignee(`${item.label}${qtyPart}`, item),
-        quantity: null,
-      };
-    }),
-    taskGroups: [
-      ...prepGrouped.groups,
-      ...(prepGrouped.orphans.length ? [{ title: 'הכנות', items: prepGrouped.orphans.map((i) => withAssignee(i.label, i)) }] : []),
-      ...(manualTasks.length ? [{ title: 'ידני', items: manualTasks.map((i) => withAssignee(i.label, i)) }] : []),
-      ...(portionItems.length ? [{ title: 'מנות להכנה', items: portionItems.map((i) => withAssignee(i.label, i)) }] : []),
-      ...(extraTasks.length ? [{ title: 'נוסף', items: extraTasks.map((i) => withAssignee(i.label, i)) }] : []),
-    ],
-    cleaningGroups: [
-      ...cleanGrouped.groups,
-      ...(cleanGrouped.orphans.length ? [{ title: 'כללי', items: cleanGrouped.orphans.map((i) => withAssignee(i.label, i)) }] : []),
-    ],
+    products: productsInPlan.map((item) => ({
+      name: item.label || 'מוצר',
+      quantity: item.quantity ?? null,
+      assigneeName: item.assigneeName || '',
+    })),
+    portions: portionItems.map((item) => ({
+      name: item.portionName || item.label || 'מנה',
+      quantity: item.quantity ?? null,
+      assigneeName: item.assigneeName || '',
+    })),
+    flowTasks: flowTaskRows,
+    flowCleaning: flowCleanRows,
+    manualTasks: manualTasks.map((item) => ({
+      name: item.label || 'משימה',
+      done: !!item.done,
+      assigneeName: item.assigneeName || '',
+    })),
+    extras: extraTasks.map((item) => ({
+      name: item.label || 'פריט',
+      quantity: item.quantity ?? null,
+      done: !!item.done,
+    })),
   };
 }
 
-function renderPlanList(items, { qtyField = false } = {}) {
-  if (!items?.length) return '<p class="plan-empty">—</p>';
-  return `<ul class="plan-list">${items.map((item) => {
-    const label = typeof item === 'string' ? item : item.label;
-    const qty = typeof item === 'object' && item.quantity ? item.quantity : null;
-    return `<li>${qty ? `<span class="plan-qty">×${escapeHtml(String(qty))}</span>` : ''}${escapeHtml(label)}</li>`;
-  }).join('')}</ul>`;
+function renderExportTable(headers, rowsHtml) {
+  if (!rowsHtml) return '<p class="plan-empty">—</p>';
+  return `
+    <table class="plan-table">
+      <thead>
+        <tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
 }
 
-function renderGroupedList(groups) {
-  if (!groups?.length) return '<p class="plan-empty">—</p>';
-  return groups.map((group) => `
-    <div class="plan-group">
-      <div class="plan-group-title">${escapeHtml(group.title)}</div>
-      ${renderPlanList(group.items)}
-    </div>`).join('');
+function doneCell(done) {
+  return done ? '✓' : '☐';
 }
 
 export function buildDailyPlanBodyHtml(organized) {
-  const { products, taskGroups, cleaningGroups, highlights } = organized;
-  const allTasks = taskGroups.flatMap((g) => g.items);
-  const allClean = cleaningGroups.flatMap((g) => g.items);
+  const {
+    products = [],
+    portions = [],
+    flowTasks = [],
+    flowCleaning = [],
+    manualTasks = [],
+    extras = [],
+    highlights = '',
+  } = organized;
+
+  const productRows = products.map((p) => `
+    <tr>
+      <td>${escapeHtml(p.name)}${p.assigneeName ? ` · 👤 ${escapeHtml(p.assigneeName)}` : ''}</td>
+      <td class="plan-td-qty">${p.quantity != null ? escapeHtml(String(p.quantity)) : '—'}</td>
+    </tr>`).join('');
+
+  const portionRows = portions.map((p) => `
+    <tr>
+      <td>${escapeHtml(p.name)}${p.assigneeName ? ` · 👤 ${escapeHtml(p.assigneeName)}` : ''}</td>
+      <td class="plan-td-qty">${p.quantity != null ? escapeHtml(String(p.quantity)) : '—'}</td>
+    </tr>`).join('');
+
+  const flowTaskRowsHtml = flowTasks.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.flowName)}</td>
+      <td>${escapeHtml(r.taskName)}${r.assigneeName ? ` · 👤 ${escapeHtml(r.assigneeName)}` : ''}</td>
+      <td class="plan-td-done">${doneCell(r.done)}</td>
+    </tr>`).join('');
+
+  const flowCleanRowsHtml = flowCleaning.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.flowName)}</td>
+      <td>${escapeHtml(r.taskName)}${r.assigneeName ? ` · 👤 ${escapeHtml(r.assigneeName)}` : ''}</td>
+      <td class="plan-td-done">${doneCell(r.done)}</td>
+    </tr>`).join('');
+
+  const manualRows = manualTasks.map((r) => `
+    <tr>
+      <td>${escapeHtml(r.name)}${r.assigneeName ? ` · 👤 ${escapeHtml(r.assigneeName)}` : ''}</td>
+      <td class="plan-td-done">${doneCell(r.done)}</td>
+    </tr>`).join('');
+
+  const highlightLines = highlights
+    ? highlights.split(/\n+/).map((l) => l.trim()).filter(Boolean)
+    : [];
 
   return `
-    <div class="plan-grid">
+    <div class="plan-sections">
       <section class="plan-section plan-section--full">
-        <h2 class="plan-section-title">📦 מוצרים לייצור היום</h2>
-        ${renderPlanList(products, { qtyField: true })}
-      </section>
-      <section class="plan-section">
-        <h2 class="plan-section-title">✅ משימות</h2>
-        ${allTasks.length
-    ? (taskGroups.length > 1 || taskGroups[0]?.title !== 'ידני'
-      ? renderGroupedList(taskGroups)
-      : renderPlanList(allTasks))
-    : '<p class="plan-empty">—</p>'}
+        <h2 class="plan-section-title">📦 מוצרים לייצור</h2>
+        ${renderExportTable(['שם מוצר', 'כמות'], productRows)}
       </section>
       <section class="plan-section plan-section--full">
-        <h2 class="plan-section-title">📝 הדגשים</h2>
-        ${highlights
-    ? `<div class="plan-highlights">${escapeHtml(highlights)}</div>`
-    : '<p class="plan-empty">—</p>'}
+        <h2 class="plan-section-title">🍽 מנות להכנה</h2>
+        ${renderExportTable(['שם מנה', 'כמות'], portionRows)}
       </section>
-      <section class="plan-section">
-        <h2 class="plan-section-title">🧹 נקיונות</h2>
-        ${allClean.length
-    ? (cleaningGroups.length > 1 ? renderGroupedList(cleaningGroups) : renderPlanList(allClean))
-    : '<p class="plan-empty">—</p>'}
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">✅ תזרימים · משימות</h2>
+        ${renderExportTable(['שם תזרים', 'משימה', 'בוצע'], flowTaskRowsHtml)}
       </section>
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">🧹 תזרימים · נקיונות</h2>
+        ${renderExportTable(['שם תזרים', 'משימה', 'בוצע'], flowCleanRowsHtml)}
+      </section>
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">📝 משימות ידני</h2>
+        ${renderExportTable(['שם המשימה', 'בוצע'], manualRows)}
+        <div class="plan-highlights-block">
+          <h3 class="plan-highlights-title">דגשים</h3>
+          ${highlightLines.length
+    ? `<ul class="plan-highlights-list">${highlightLines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`
+    : '<p class="plan-empty">—</p>'}
+        </div>
+      </section>
+      ${extras.length ? `
+      <section class="plan-section plan-section--full">
+        <h2 class="plan-section-title">📋 נוספים</h2>
+        ${renderExportTable(
+    ['שם', 'כמות', 'בוצע'],
+    extras.map((r) => `
+          <tr>
+            <td>${escapeHtml(r.name)}</td>
+            <td class="plan-td-qty">${r.quantity != null ? escapeHtml(String(r.quantity)) : '—'}</td>
+            <td class="plan-td-done">${doneCell(r.done)}</td>
+          </tr>`).join(''),
+  )}
+      </section>` : ''}
     </div>`;
 }
 
