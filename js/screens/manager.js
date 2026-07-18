@@ -3,7 +3,7 @@ import {
   getProducts, getProductsCatalogLayout,
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
   addManagerPlanItem, addManagerPlanProductWithChecklists, addManagerPlanFlowChecklists,
-  updateManagerPlanItem, deleteManagerPlanItem, clearManagerPlanItems,
+  updateManagerPlanItem, deleteManagerPlanItem, clearManagerPlanItems, deleteManagerPlanItemsByKind,
   importActiveRunToDailyPlan, resolveFlowsForProduct,
   getPortionPresetsForProduct, getAllFlowsOverview, getFlowStepsForFlow,
   collectPlanProductFlowsForExport,
@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=327';
+} from '../db.js?v=328';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=327';
-import { openModal, closeModal } from '../modal.js?v=327';
-import { renderTargets } from './targets.js?v=327';
-import { renderPurchasingInManager } from './purchasing.js?v=327';
-import { forceAppUpdate } from '../sw-register.js?v=327';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=327';
+} from '../utils.js?v=328';
+import { openModal, closeModal } from '../modal.js?v=328';
+import { renderTargets } from './targets.js?v=328';
+import { renderPurchasingInManager } from './purchasing.js?v=328';
+import { forceAppUpdate } from '../sw-register.js?v=328';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=328';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=327';
+} from '../daily-plan-export.js?v=328';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -540,7 +540,7 @@ function planTableActionsHTML(item) {
     <td class="manager-plan-td-actions">
       <button type="button" class="btn btn-secondary btn-sm btn-icon plan-item-assignee" title="${item.assigneeName ? `אחראי: ${escapeHtml(item.assigneeName)}` : 'שיוך עובד'}">👤</button>
       <button type="button" class="btn btn-secondary btn-sm plan-item-edit" title="ערוך">✏️</button>
-      <button type="button" class="btn btn-danger btn-sm plan-item-del" title="הסר">🗑</button>
+      <button type="button" class="btn btn-danger btn-sm plan-item-del" title="הסר מהתוכנית בלבד">🗑</button>
     </td>`;
 }
 
@@ -613,9 +613,20 @@ function planSimpleTableRow(item, { showDay = false } = {}) {
     </tr>`;
 }
 
-function wrapPlanTable(headers, bodyRows) {
+function wrapPlanTable(headers, bodyRows, { clearKinds = null, clearLabel = '', dayOffset = null } = {}) {
   if (!bodyRows) return '<p class="form-hint" style="margin:0">אין פריטים</p>';
+  const clearBtn = clearKinds?.length
+    ? `<div class="manager-plan-table-toolbar">
+        <button type="button" class="btn btn-secondary btn-sm plan-section-clear"
+          data-clear-kinds="${escapeHtml(clearKinds.join(','))}"
+          ${dayOffset != null ? `data-day-offset="${Number(dayOffset)}"` : ''}
+          title="הסרה מהתוכנית בלבד — לא משנה תזרים או ייצור">
+          🗑 ${escapeHtml(clearLabel || 'הסר הכל מהתוכנית')}
+        </button>
+      </div>`
+    : '';
   return `
+    ${clearBtn}
     <div class="manager-plan-table-wrap">
       <table class="manager-plan-table">
         <thead>
@@ -662,6 +673,7 @@ function renderProductCentricPlanHTML(items, products, {
       wrapPlanTable(
         ['שם מוצר', 'כמות', ''],
         productsInPlan.map((item) => planProductTableRow(item)).join(''),
+        { clearKinds: ['product'], clearLabel: 'הסר מוצרים מהתוכנית', dayOffset },
       ),
       { count: productsInPlan.length, className: 'manager-plan-section', defaultOpen: true },
     );
@@ -674,6 +686,7 @@ function renderProductCentricPlanHTML(items, products, {
       wrapPlanTable(
         ['שם מנה', 'כמות', ''],
         portionItems.map((item) => planPortionTableRow(item)).join(''),
+        { clearKinds: ['portion'], clearLabel: 'הסר מנות מהתוכנית', dayOffset },
       ),
       { count: portionItems.length, className: 'manager-plan-section', defaultOpen: true },
     );
@@ -693,6 +706,7 @@ function renderProductCentricPlanHTML(items, products, {
       wrapPlanTable(
         ['שם תזרים', 'משימה', 'בוצע', ''],
         prepRows.join(''),
+        { clearKinds: ['flow_preparation'], clearLabel: 'הסר משימות מהתוכנית', dayOffset },
       ),
       { count: preparations.length, className: 'manager-plan-section', defaultOpen: true },
     );
@@ -712,6 +726,7 @@ function renderProductCentricPlanHTML(items, products, {
       wrapPlanTable(
         ['שם תזרים', 'משימה', 'בוצע', ''],
         cleanRows.join(''),
+        { clearKinds: ['flow_cleaning'], clearLabel: 'הסר נקיונות מהתוכנית', dayOffset },
       ),
       { count: cleanings.length, className: 'manager-plan-section', defaultOpen: true },
     );
@@ -725,6 +740,7 @@ function renderProductCentricPlanHTML(items, products, {
     ? wrapPlanTable(
       ['שם המשימה', 'בוצע', ''],
       manualItems.map((item) => planManualTaskTableRow(item)).join(''),
+      { clearKinds: ['text'], clearLabel: 'הסר משימות ידני מהתוכנית', dayOffset },
     )
     : '<p class="form-hint" style="margin:0 0 8px">אין משימות ידניות</p>'}
       ${showHighlights ? `
@@ -821,7 +837,7 @@ function renderActiveRunsSectionHTML(runData, productMap) {
     const checkItem = (c) => `<div class="manager-active-run-item">○ ${escapeHtml(c.name)}</div>`;
     const body = `
         <div class="manager-active-run-actions" style="margin-bottom:8px">
-          <button type="button" class="btn btn-primary btn-sm manager-active-run-import" data-run-id="${run.id}" title="ייבא לתוכנית">📥 ייבא צ׳קליסט</button>
+          <button type="button" class="btn btn-primary btn-sm manager-active-run-import" data-run-id="${run.id}" title="ייבא לתוכנית בלבד — לא משנה ייצור">📥 ייבא לתוכנית</button>
           <button type="button" class="btn btn-secondary btn-sm btn-icon manager-active-run-remove" data-run-id="${run.id}" title="הסר מהרשימה" aria-label="הסר מהרשימה">✕</button>
         </div>
         ${nothing ? '<p class="form-hint" style="margin:0">כל השלבים והמשימות בוצעו — ממתין לסגירת התהליך</p>' : `
@@ -856,7 +872,7 @@ function renderActiveRunsSectionHTML(runData, productMap) {
   const body = `
       <div class="filter-row" style="margin-bottom:8px;justify-content:flex-end">${toggleBtn}</div>
       ${runData.length
-    ? '<p class="form-hint" style="margin-bottom:10px">ייבוא מוסיף רק צ׳קליסטים (משימות + נקיונות) לפי תזרים</p>'
+    ? '<p class="form-hint" style="margin-bottom:10px">«ייבא לתוכנית» מוסיף צ׳קליסטים לתוכנית בלבד — לא משנה תזרים או ייצור · רק בלחיצה שלך</p>'
     : '<p class="form-hint" style="margin:0">אין תזרימים פעילים כרגע.</p>'}
       ${cards}
       ${dismissedActive.length ? `
@@ -896,6 +912,7 @@ function bindActiveRunsSection(container, { planType = 'daily', anchorDate } = {
   });
   container.querySelectorAll('.manager-active-run-import').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (!confirm('לייבא צ׳קליסט לתוכנית?\n\nרק לתוכנית — לא משנה את התזרים הפעיל או הייצור.')) return;
       try {
         btn.disabled = true;
         const res = await importActiveRunToDailyPlan(Number(btn.dataset.runId), {
@@ -906,7 +923,7 @@ function bindActiveRunsSection(container, { planType = 'daily', anchorDate } = {
         if (res.checklistsAdded) parts.push(`${res.checklistsAdded} משימות צ׳קליסט`);
         if (res.flowRefAdded) parts.push('תזרים לדף התזרימים');
         showToast(parts.length
-          ? `יובא ✓ · ${parts.join(' · ')}${res.flowName ? ` · ${res.flowName}` : ''}`
+          ? `נוסף לתוכנית ✓ · ${parts.join(' · ')}${res.flowName ? ` · ${res.flowName}` : ''}`
           : 'כבר בתוכנית ✓');
         renderManager(container);
       } catch (err) {
@@ -1036,9 +1053,10 @@ function renderPlanBuildAddedListHTML(items, {
             ? `<span class="manager-plan-build-added-qty">× ${formatDecimal(item.quantity)}</span>`
             : '';
           return `
-            <li class="manager-plan-build-added-item">
+            <li class="manager-plan-build-added-item" data-id="${item.id}">
               <span class="manager-plan-build-added-name">${escapeHtml(name)}</span>
               ${qty}
+              <button type="button" class="btn btn-danger btn-sm plan-item-del" data-id="${item.id}" title="הסר מהתוכנית בלבד">🗑</button>
             </li>`;
         }).join('')}
       </ul>
@@ -1080,7 +1098,7 @@ function renderPlanAddProductHTML(products, layout, {
       </div>
     </div>` : ''}
     ${addCard('add-products', '1 · מוצרים לייצור', `
-      <p class="form-hint" style="margin-bottom:12px">בחר מוצר — צ׳קליסט ונקיונות מהתזרים המשויך יתווספו אוטומטית</p>
+      <p class="form-hint" style="margin-bottom:12px">מוסיף רק את המוצר לתוכנית — לא משנה תזרים או ייצור</p>
       <div class="form-group">
         <label for="plan-product">מוצר</label>
         <select id="plan-product">
@@ -1092,6 +1110,10 @@ function renderPlanAddProductHTML(products, layout, {
         <input type="number" id="plan-qty" min="1" step="1" inputmode="numeric" placeholder="כמות (אופציונלי)" style="flex:1" aria-label="כמות">
         <button type="button" class="btn btn-primary btn-sm" id="add-plan-product">+ הוסף</button>
       </div>
+      <label class="manager-plan-opt-check" style="display:flex;gap:8px;align-items:flex-start;margin-top:10px">
+        <input type="checkbox" id="plan-product-include-checklists">
+        <span>הוסף גם משימות מהתזרים המשויך (הכנות + נקיונות) — רק לתוכנית</span>
+      </label>
       ${renderPlanBuildAddedListHTML(planItems, {
         itemKind: 'product',
         emptyHint: 'עדיין לא נוספו מוצרים',
@@ -1122,7 +1144,7 @@ function renderPlanAddProductHTML(products, layout, {
       })}
     `)}
     ${addCard('add-flows', '3 · תזרימים', `
-      <p class="form-hint" style="margin-bottom:12px">בחר תזרים — צ׳קליסטים יתווספו למשימות, והתזרים יופיע למטה בדף נפרד</p>
+      <p class="form-hint" style="margin-bottom:12px">רק אם תבחר ותלחץ «הוסף» — צ׳קליסטים יופיעו בתוכנית (לא משנה את התזרים עצמו)</p>
       <div class="filter-row">
         <select id="plan-flow" style="flex:1">
           <option value="">בחר תזרים...</option>
@@ -1270,13 +1292,32 @@ function bindPlanItems(container, planType, anchorDate, { employees = [] } = {})
   });
   container.querySelectorAll('.plan-item-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const row = btn.closest('.manager-plan-item');
+      const row = btn.closest('.manager-plan-item') || btn.closest('[data-id]');
       const id = row?.dataset.id || btn.dataset.id;
       if (!id) return;
-      if (!confirm('למחוק פריט?')) return;
+      if (!confirm('להסיר מהתוכנית?\n\nזה מסיר רק מהתוכנית — לא משנה תזרים או ייצור.')) return;
       await deleteManagerPlanItem(id);
-      showToast('נמחק');
+      showToast('הוסר מהתוכנית ✓');
       renderManager(container);
+    });
+  });
+
+  container.querySelectorAll('.plan-section-clear').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const kinds = String(btn.dataset.clearKinds || '').split(',').map((k) => k.trim()).filter(Boolean);
+      if (!kinds.length) return;
+      if (!confirm('להסיר את כל הפריטים בסעיף זה מהתוכנית?\n\nרק מהתוכנית — לא משנה תזרים או ייצור.')) return;
+      try {
+        const opts = {};
+        if (btn.dataset.dayOffset != null && btn.dataset.dayOffset !== '') {
+          opts.dayOffset = Number(btn.dataset.dayOffset);
+        }
+        const n = await deleteManagerPlanItemsByKind(planType, anchorDate, kinds, opts);
+        showToast(n ? `הוסרו ${n} מהתוכנית ✓` : 'אין פריטים להסרה');
+        renderManager(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
     });
   });
 
@@ -1364,6 +1405,7 @@ function bindPlanItems(container, planType, anchorDate, { employees = [] } = {})
     const productId = document.getElementById('plan-product').value;
     const qty = document.getElementById('plan-qty').value;
     const dayOffset = document.getElementById('plan-day')?.value ?? 0;
+    const includeChecklists = !!document.getElementById('plan-product-include-checklists')?.checked;
     if (!productId) return showToast('בחר מוצר');
     try {
       const res = await addManagerPlanProductWithChecklists({
@@ -1371,14 +1413,11 @@ function bindPlanItems(container, planType, anchorDate, { employees = [] } = {})
         productId,
         quantity: qty || null,
         portions: null,
+        includeChecklists,
       });
       const msg = res.checklistsAdded
-        ? `מוצר נוסף ✓ · ${res.checklistsAdded} משימות מהצ׳קליסט`
-        : res.hasFlow === false
-          ? 'מוצר נוסף ✓ · אין תזרים משויך'
-          : res.hasFlow
-            ? `מוצר נוסף ✓${res.flowName ? ` · ${res.flowName}` : ''}`
-            : 'מוצר נוסף ✓';
+        ? `מוצר נוסף לתוכנית ✓ · ${res.checklistsAdded} משימות מהצ׳קליסט`
+        : 'מוצר נוסף לתוכנית ✓';
       showToast(msg);
       renderManager(container);
     } catch (err) {
@@ -1547,7 +1586,7 @@ async function renderPlanFlowsPageHTML(items, activeRunData, productMap, flowNam
   }
 
   const flowsInner = `
-      <p class="form-hint" style="margin-top:0">כאן מופיעים תזרימים שהוספת / ייבאת · המשימות (צ׳קליסט) נשארות ברשימת היום למעלה</p>
+      <p class="form-hint" style="margin-top:0">כאן מופיעים תזרימים שהוספת / ייבאת במפורש · המשימות נשארות ברשימת היום · הסרה מכאן לא משנה תזרים או ייצור</p>
       ${planFlowBlocks.length
     ? planFlowBlocks.join('')
     : '<p class="form-hint">עדיין אין תזרימים בתוכנית — בחר תזרים למעלה או ייבא תזרים פעיל</p>'}
@@ -1607,7 +1646,7 @@ async function renderDailyPlan(container) {
         <button type="button" class="btn btn-secondary btn-sm" id="jump-active-runs" style="flex:1">🔥 תזרימים${activeCount ? ` (${activeCount})` : ''}</button>
         <button type="button" class="btn btn-secondary btn-sm" id="clear-daily-plan" style="flex:1" ${items.length ? '' : 'disabled'}>🗑 נקה תוכנית</button>
       </div>
-      <p class="form-hint" style="margin-top:10px;margin-bottom:0">כאן בונים את היום — מוצרים, מנות, תזרימים ודגשים. אחר כך עבור ל«תוכנית מוכנה».</p>`,
+      <p class="form-hint" style="margin-top:10px;margin-bottom:0">כאן בונים את היום — מוצרים, מנות, תזרימים ודגשים. התוכנית פורמלית בלבד: מה שמוסיפים/מסירים כאן לא משנה תזרים או ייצור.</p>`,
     {
       defaultOpen: true,
       className: 'card manager-plan-header-card',
@@ -1745,7 +1784,7 @@ async function renderDailyPlan(container) {
 
   document.getElementById('clear-daily-plan')?.addEventListener('click', async () => {
     if (!items.length) return;
-    if (!confirm('לנקות את כל תוכנית היום ולבנות מחדש?')) return;
+    if (!confirm('לנקות את כל תוכנית היום?\n\nרק התוכנית — לא משנה תזרים או ייצור.')) return;
     try {
       await clearManagerPlanItems('daily', date);
       showToast('התוכנית נוקתה ✓');

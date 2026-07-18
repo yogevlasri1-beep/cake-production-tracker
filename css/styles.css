@@ -7662,6 +7662,12 @@ body {
   font-weight: 700;
 }
 
+.manager-plan-table-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
 .manager-plan-table-wrap {
   overflow-x: auto;
   margin: 0;
@@ -7729,7 +7735,7 @@ body {
 
 .manager-plan-build-added-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px;
@@ -7737,6 +7743,11 @@ body {
   background: var(--surface-alt, #f8fafc);
   border: 1px solid var(--border);
   font-size: 0.84rem;
+}
+
+.manager-plan-build-added-item .plan-item-del {
+  margin-inline-start: auto;
+  flex-shrink: 0;
 }
 
 .manager-plan-build-added-name {

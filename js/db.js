@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=327';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=327';
-import { defaultColorForIndex } from './chart.js?v=327';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=327';
+} from './validators.js?v=328';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=328';
+import { defaultColorForIndex } from './chart.js?v=328';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=328';
 
 export { ValidationError };
 
@@ -6264,7 +6264,7 @@ export async function startProductionRun({
     return runId;
   });
 
-  syncDailyPlanFromFlows({ planType: 'daily', anchorDate: date }).catch(() => {});
+  // תוכנית עבודה יומית עצמאית — לא מסנכרנים אוטומטית מתזרימים/ייצור
   return runId;
 }
 
@@ -7903,9 +7903,10 @@ export async function resolveDedicatedFlowForProduct(productId) {
   return flows.find((f) => f.isDefault) || flows[0];
 }
 
-/** הוספת מוצר לתוכנית + משימות צ׳קליסט (הכנות + ניקיון) מהתזרim */
+/** הוספת מוצר לתוכנית — משימות מהתזרים רק אם includeChecklists=true (לא משנה תזרים/ייצור) */
 export async function addManagerPlanProductWithChecklists({
   planType, anchorDate, dayOffset = 0, productId, quantity = null, portionPresetId = null, portions = null,
+  includeChecklists = false,
 } = {}) {
   const pid = Number(productId);
   if (!pid) throw new ValidationError('בחר מוצר');
@@ -7970,6 +7971,10 @@ export async function addManagerPlanProductWithChecklists({
       });
       productsAdded += 1;
     }
+  }
+
+  if (!includeChecklists) {
+    return { checklistsAdded: 0, hasFlow: false, productsAdded, skippedChecklists: true };
   }
 
   const flows = await resolveFlowsForProduct(pid);
@@ -8214,50 +8219,35 @@ export async function updateManagerPlanItem(id, patch) {
 export async function deleteManagerPlanItem(id) {
   const row = await db.managerPlanItems.get(Number(id));
   if (!row) return;
+  // מחיקה מהתוכנית בלבד — לא נוגעים בתזרים / ייצור / צ׳קליסטים אמיתיים
   if (row.itemKind === 'flow_ref' && row.flowId) {
     const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
     const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
     const linked = sameDay.filter((i) => i.id !== row.id
       && i.flowId === row.flowId
-      && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
+      && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning' || i.itemKind === 'flow_step'));
     await db.transaction('rw', db.managerPlanItems, async () => {
       for (const l of linked) await db.managerPlanItems.delete(l.id);
       await db.managerPlanItems.delete(row.id);
     });
     return;
   }
-  if (row.itemKind === 'product' && row.productId) {
-    const siblings = await getManagerPlanItems(row.planType, row.anchorDate);
-    const sameDay = siblings.filter((i) => (i.dayOffset ?? 0) === (row.dayOffset ?? 0));
-    const hasOtherSameProduct = sameDay.some((p) => p.id !== row.id
-      && p.itemKind === 'product' && p.productId === row.productId);
-    const flow = await resolveDedicatedFlowForProduct(row.productId);
-    const flowId = flow?.id || null;
-
-    let linked = [];
-    if (!hasOtherSameProduct) {
-      if (flowId) {
-        linked = sameDay.filter((i) => i.id !== row.id
-          && i.flowId === flowId
-          && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
-      } else {
-        linked = sameDay.filter((i) => i.id !== row.id
-          && i.productId === row.productId
-          && (i.itemKind === 'flow_preparation' || i.itemKind === 'flow_cleaning'));
-      }
-    }
-
-    if (linked.length) {
-      await db.transaction('rw', db.managerPlanItems, async () => {
-        for (const l of linked) await db.managerPlanItems.delete(l.id);
-        await db.managerPlanItems.delete(row.id);
-      });
-      return;
-    }
-    await db.managerPlanItems.delete(row.id);
-    return;
-  }
   await db.managerPlanItems.delete(Number(id));
+}
+
+/** מחיקת קבוצת פריטים מהתוכנית לפי סוג — רק תוכנית */
+export async function deleteManagerPlanItemsByKind(planType, anchorDate, itemKinds, { dayOffset = null, flowId = null } = {}) {
+  if (!isValidISODate(anchorDate)) throw new ValidationError('תאריך לא תקין');
+  const kinds = new Set(Array.isArray(itemKinds) ? itemKinds : [itemKinds]);
+  let rows = await getManagerPlanItems(planType, anchorDate);
+  if (dayOffset != null) rows = rows.filter((i) => (i.dayOffset ?? 0) === Number(dayOffset));
+  if (flowId) rows = rows.filter((i) => Number(i.flowId) === Number(flowId));
+  const toDelete = rows.filter((i) => kinds.has(i.itemKind));
+  if (!toDelete.length) return 0;
+  await db.transaction('rw', db.managerPlanItems, async () => {
+    for (const row of toDelete) await db.managerPlanItems.delete(row.id);
+  });
+  return toDelete.length;
 }
 
 /** מחיקת כל פריטי תוכנית ליום/שבוע מסוים — לבנייה מחדש */
