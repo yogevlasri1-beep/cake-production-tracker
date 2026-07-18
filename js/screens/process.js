@@ -27,20 +27,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=320';
+} from '../db.js?v=321';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=320').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=321').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=320';
-import { openModal, closeModal } from '../modal.js?v=320';
-import { requestAutoBackupNow } from '../backup-service.js?v=320';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=320';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=320';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=321';
+import { openModal, closeModal } from '../modal.js?v=321';
+import { requestAutoBackupNow } from '../backup-service.js?v=321';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=321';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=321';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1636,8 +1636,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=320');
-    const { db } = await import('../db.js?v=320');
+    const { getRecipe } = await import('../kitchen-db.js?v=321');
+    const { db } = await import('../db.js?v=321');
     const blocks = [];
 
     for (const row of rows) {
@@ -2123,7 +2123,6 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
   const processing = getRunMaterialProcessingLogs(run);
   const hasPresets = presets.length > 0;
   const recipePresets = presets.filter(portionPresetHasRecipe);
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
   const activeMaterials = materials.filter((m) => m.active !== false);
 
   const portionListHTML = logs.length ? `
@@ -2197,22 +2196,18 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
         </li>`).join('')}
     </ul>` : '<p class="form-hint" style="margin:0">אין תיעוד עיבוד חומר גלם</p>';
 
-  const materialOptions = activeMaterials.map((m) => {
-    const supplier = m.supplierId ? (supMap.get(m.supplierId) || '') : '';
-    const label = supplier ? `${m.name} · ${supplier}` : m.name;
-    return `<option value="${m.id}" data-name="${escapeHtml(m.name)}" data-supplier-id="${m.supplierId || ''}" data-supplier-name="${escapeHtml(supplier)}">${escapeHtml(label)}</option>`;
-  }).join('');
-
   const processingFormHTML = canEdit ? `
     <button type="button" class="btn btn-secondary btn-sm" id="run-processing-add-toggle">+ הוסף עיבוד</button>
     <div class="flow-portion-add-form hidden" id="run-processing-add-form">
       <div class="form-group" style="margin:8px 0 6px">
-        <label for="run-processing-material">חומר גלם (מספקים)</label>
+        <label for="run-processing-mat-search">חומר גלם (מספקים)</label>
         ${activeMaterials.length ? `
-          <select id="run-processing-material">
-            <option value="">בחר חומר גלם...</option>
-            ${materialOptions}
-          </select>` : '<p class="form-hint">אין חומרי גלם בספקים — הוסף במסך ספקים</p>'}
+          <div class="mat-search-wrap" style="position:relative">
+            <input type="text" id="run-processing-mat-search" placeholder="חפש חומר גלם..." autocomplete="off">
+            <input type="hidden" id="run-processing-material" value="">
+            <ul class="mat-search-list hidden" id="run-processing-mat-list"></ul>
+          </div>
+          <p class="form-hint" style="margin-top:4px">הקלד לחיפוש לפי שם או ספק, ואז בחר מהרשימה</p>` : '<p class="form-hint">אין חומרי גלם בספקים — הוסף במסך ספקים</p>'}
       </div>
       <div class="form-group" style="margin:8px 0 6px">
         <label for="run-processing-before">משקל לפני עיבוד (ק״ג)</label>
@@ -2226,7 +2221,7 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
         <label for="run-processing-date">תאריך</label>
         <input type="date" id="run-processing-date" value="${todayISO()}">
       </div>
-      <p class="form-hint" style="margin-bottom:8px">משקלי עיבוד נפרדים ממשקל המנות</p>
+      <p class="form-hint" style="margin-bottom:8px">משקלי עיבוד נפרדים ממשקל מנות</p>
       <button type="button" class="btn btn-primary btn-sm" id="run-processing-add-save" style="width:100%">שמור עיבוד</button>
     </div>` : '';
 
@@ -2242,6 +2237,62 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
         ${processingFormHTML}
       </div>
     </div>`;
+}
+
+function bindRunProcessingMaterialSearch(materials, suppliers) {
+  const input = document.getElementById('run-processing-mat-search');
+  const hidden = document.getElementById('run-processing-material');
+  const list = document.getElementById('run-processing-mat-list');
+  if (!input || !hidden || !list) return;
+
+  const mats = (materials || []).filter((m) => m.active !== false);
+  const supMap = new Map((suppliers || []).map((s) => [s.id, s.name]));
+
+  const renderList = (filter = '') => {
+    const q = filter.trim().toLowerCase();
+    const filtered = (q
+      ? mats.filter((m) => {
+        const name = (m.name || '').toLowerCase();
+        const sup = (supMap.get(m.supplierId) || '').toLowerCase();
+        return name.includes(q) || sup.includes(q);
+      })
+      : mats.slice(0, 40)
+    ).slice(0, 40);
+
+    list.innerHTML = filtered.map((m) => {
+      const sup = supMap.get(m.supplierId) || '';
+      return `
+      <li>
+        <button type="button" class="mat-search-option mat-search-option-rich" data-id="${m.id}">
+          <span class="mat-search-option-name">${escapeHtml(m.name)}</span>
+          <span class="mat-search-option-meta">${sup ? escapeHtml(sup) : 'ללא ספק'}</span>
+        </button>
+      </li>`;
+    }).join('');
+    list.classList.toggle('hidden', filtered.length === 0);
+  };
+
+  const pick = (mat) => {
+    if (!mat) return;
+    hidden.value = String(mat.id);
+    input.value = mat.name;
+    list.classList.add('hidden');
+  };
+
+  input.addEventListener('input', () => {
+    hidden.value = '';
+    renderList(input.value);
+  });
+  input.addEventListener('focus', () => renderList(input.value));
+  list.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('.mat-search-option');
+    if (!btn) return;
+    e.preventDefault();
+    pick(mats.find((m) => m.id === Number(btn.dataset.id)));
+  });
+  input.addEventListener('blur', () => {
+    setTimeout(() => list.classList.add('hidden'), 150);
+  });
 }
 
 async function renderRunView(container, runId, ctx) {
@@ -2293,7 +2344,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=320');
+    const kitchen = await import('../kitchen-db.js?v=321');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3021,18 +3072,28 @@ async function renderRunView(container, runId, ctx) {
   document.getElementById('run-processing-add-save')?.addEventListener('click', async () => {
     const btn = document.getElementById('run-processing-add-save');
     if (btn?.dataset.saving === '1') return;
-    const sel = document.getElementById('run-processing-material');
-    const opt = sel?.selectedOptions?.[0];
+    const hidden = document.getElementById('run-processing-material');
+    const matId = Number(hidden?.value) || null;
+    const mat = matId
+      ? kitchenMaterials.find((m) => Number(m.id) === matId)
+      : null;
+    if (!matId || !mat) {
+      showToast('בחר חומר גלם מהרשימה');
+      return;
+    }
+    const supplierName = mat.supplierId
+      ? (kitchenSuppliers.find((s) => Number(s.id) === Number(mat.supplierId))?.name || '')
+      : '';
     if (btn) {
       btn.dataset.saving = '1';
       btn.disabled = true;
     }
     try {
       await addRunMaterialProcessingLog(run.id, {
-        rawMaterialId: sel?.value || null,
-        materialName: opt?.dataset.name || opt?.textContent || '',
-        supplierId: opt?.dataset.supplierId || null,
-        supplierName: opt?.dataset.supplierName || '',
+        rawMaterialId: mat.id,
+        materialName: mat.name || '',
+        supplierId: mat.supplierId || null,
+        supplierName,
         weightBeforeKg: document.getElementById('run-processing-before')?.value,
         weightAfterKg: document.getElementById('run-processing-after')?.value,
         date: document.getElementById('run-processing-date')?.value,
@@ -3048,6 +3109,8 @@ async function renderRunView(container, runId, ctx) {
       showToast(err.message || 'שגיאה');
     }
   });
+
+  bindRunProcessingMaterialSearch(kitchenMaterials, kitchenSuppliers);
 
   container.querySelectorAll('.run-processing-del').forEach((btn) => {
     btn.addEventListener('click', async () => {
