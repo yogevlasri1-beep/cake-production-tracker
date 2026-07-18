@@ -2178,6 +2178,76 @@ body {
   color: var(--text-muted, #64748b);
 }
 
+.mat-synonyms-add-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mat-synonyms-add-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mat-synonym-add-btn {
+  flex-shrink: 0;
+  min-width: 36px;
+  padding-inline: 10px;
+  font-weight: 700;
+}
+
+.mat-synonyms-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mat-synonyms-empty {
+  width: 100%;
+  margin: 0;
+}
+
+.mat-synonym-item {
+  margin: 0;
+}
+
+.mat-synonym-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-alt, #f8fafc);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mat-synonym-chip:hover {
+  border-color: color-mix(in srgb, var(--danger, #dc2626) 35%, var(--border));
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, white);
+}
+
+.mat-synonym-chip-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mat-synonym-chip-x {
+  color: var(--text-muted);
+  font-weight: 700;
+  line-height: 1;
+}
+
 .ingredient-edit-intro {
   margin-bottom: 12px;
 }

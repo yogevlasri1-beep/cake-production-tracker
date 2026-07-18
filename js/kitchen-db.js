@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=321';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=322';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=321';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=321';
+} from './validators.js?v=322';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=322';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2825,6 +2825,7 @@ export async function addRawMaterial({
   supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
   processedPricePerKg,
   packagingKind, packUnitsCount, packProductsPerUnit,
+  synonyms,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -2850,6 +2851,7 @@ export async function addRawMaterial({
     processedPricePerKg: isPackagingSupplierCategory(category)
       ? null
       : sanitizeProcessedPricePerKg(processedPricePerKg),
+    synonyms: sanitizeMaterialSynonyms(synonyms),
     ...packaging,
     active: false,
     sortOrder: maxOrder + 1,
@@ -2887,6 +2889,7 @@ export async function updateRawMaterial(id, patch) {
   if ('processedPricePerKg' in data) {
     data.processedPricePerKg = sanitizeProcessedPricePerKg(data.processedPricePerKg);
   }
+  if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data) {
     const current = await db.rawMaterials.get(mid);
     const category = current
@@ -2914,6 +2917,37 @@ export async function deleteRawMaterial(id) {
   await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
   await db.rawMaterials.delete(mid);
   await syncRawMaterialsActiveFromRecipes();
+}
+
+export function sanitizeMaterialSynonyms(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const s = sanitizeName(String(item || ''), 80);
+    if (!s) continue;
+    const key = s.toLocaleLowerCase('he');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+export function getMaterialSynonyms(material) {
+  return sanitizeMaterialSynonyms(material?.synonyms);
+}
+
+/** חיפוש חומר גלם לפי שם, מילים נרדפות או שם ספק */
+export function materialMatchesSearch(material, query, { supplierName = '' } = {}) {
+  const q = String(query || '').trim().toLocaleLowerCase('he');
+  if (!q) return true;
+  const name = String(material?.name || '').toLocaleLowerCase('he');
+  if (name.includes(q)) return true;
+  const sup = String(supplierName || '').toLocaleLowerCase('he');
+  if (sup && sup.includes(q)) return true;
+  return getMaterialSynonyms(material).some((s) => s.toLocaleLowerCase('he').includes(q));
 }
 
 export function normalizeMaterialKey(name) {

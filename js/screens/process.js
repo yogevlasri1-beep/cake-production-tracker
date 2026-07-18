@@ -27,20 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=321';
+} from '../db.js?v=322';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=321').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=322').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=321';
-import { openModal, closeModal } from '../modal.js?v=321';
-import { requestAutoBackupNow } from '../backup-service.js?v=321';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=321';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=321';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=322';
+import { openModal, closeModal } from '../modal.js?v=322';
+import { requestAutoBackupNow } from '../backup-service.js?v=322';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=322';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=322';
+import { materialMatchesSearch } from '../kitchen-db.js?v=322';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1636,8 +1637,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=321');
-    const { db } = await import('../db.js?v=321');
+    const { getRecipe } = await import('../kitchen-db.js?v=322');
+    const { db } = await import('../db.js?v=322');
     const blocks = [];
 
     for (const row of rows) {
@@ -2249,23 +2250,23 @@ function bindRunProcessingMaterialSearch(materials, suppliers) {
   const supMap = new Map((suppliers || []).map((s) => [s.id, s.name]));
 
   const renderList = (filter = '') => {
-    const q = filter.trim().toLowerCase();
+    const q = filter.trim();
     const filtered = (q
-      ? mats.filter((m) => {
-        const name = (m.name || '').toLowerCase();
-        const sup = (supMap.get(m.supplierId) || '').toLowerCase();
-        return name.includes(q) || sup.includes(q);
-      })
+      ? mats.filter((m) => materialMatchesSearch(m, q, {
+        supplierName: supMap.get(m.supplierId) || '',
+      }))
       : mats.slice(0, 40)
     ).slice(0, 40);
 
     list.innerHTML = filtered.map((m) => {
       const sup = supMap.get(m.supplierId) || '';
+      const synonyms = (m.synonyms || []).filter(Boolean).slice(0, 2);
+      const synonymHint = synonyms.length ? ` · גם: ${synonyms.join(', ')}` : '';
       return `
       <li>
         <button type="button" class="mat-search-option mat-search-option-rich" data-id="${m.id}">
           <span class="mat-search-option-name">${escapeHtml(m.name)}</span>
-          <span class="mat-search-option-meta">${sup ? escapeHtml(sup) : 'ללא ספק'}</span>
+          <span class="mat-search-option-meta">${sup ? escapeHtml(sup) : 'ללא ספק'}${escapeHtml(synonymHint)}</span>
         </button>
       </li>`;
     }).join('');
@@ -2344,7 +2345,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=321');
+    const kitchen = await import('../kitchen-db.js?v=322');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),

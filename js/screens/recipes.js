@@ -29,19 +29,20 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial,
-} from '../kitchen-db.js?v=321';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=321';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=321';
-import { renderRecipesMachines } from '../recipes-machines.js?v=321';
-import { renderRecipesPortions } from '../recipes-portions.js?v=321';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=321';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=321';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=321';
-import { openModal, closeModal } from '../modal.js?v=321';
+  materialMatchesSearch, getMaterialSynonyms,
+} from '../kitchen-db.js?v=322';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=322';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=322';
+import { renderRecipesMachines } from '../recipes-machines.js?v=322';
+import { renderRecipesPortions } from '../recipes-portions.js?v=322';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=322';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=322';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=322';
+import { openModal, closeModal } from '../modal.js?v=322';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=321';
-import { defaultColorForIndex } from '../chart.js?v=321';
+} from '../product-drag.js?v=322';
+import { defaultColorForIndex } from '../chart.js?v=322';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -3767,15 +3768,17 @@ function bindMaterialSearchRich(mats, suppliers, input, hidden, list, { onPick }
   const supMap = new Map((suppliers || []).map((s) => [s.id, s.name]));
 
   const renderList = (filter = '') => {
-    const q = filter.trim().toLowerCase();
+    const q = filter.trim();
     const filtered = q
-      ? mats.filter((m) => m.name.toLowerCase().includes(q))
+      ? mats.filter((m) => materialMatchesSearch(m, q, { supplierName: supMap.get(m.supplierId) || '' }))
       : mats.slice(0, 50);
     list.innerHTML = filtered.map((m) => {
       const sup = supMap.get(m.supplierId) || '';
+      const synonyms = getMaterialSynonyms(m);
+      const synonymHint = synonyms.length ? ` · גם: ${synonyms.slice(0, 2).join(', ')}` : '';
       const meta = sup
-        ? `${escapeHtml(sup)} · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit || '')}`
-        : formatMoney(m.unitPrice);
+        ? `${escapeHtml(sup)} · ${formatMoney(m.unitPrice)}/${escapeHtml(m.unit || '')}${escapeHtml(synonymHint)}`
+        : `${formatMoney(m.unitPrice)}${escapeHtml(synonymHint)}`;
       return `
       <li>
         <button type="button" class="mat-search-option mat-search-option-rich" data-id="${m.id}">

@@ -15,13 +15,14 @@ import {
   clearDoneSupplierShortages, formatSupplierShortagesText,
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
-} from '../kitchen-db.js?v=321';
-import { getProducts } from '../db.js?v=321';
-import { parseSupplierFile } from '../supplier-import.js?v=321';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=321';
-import { openModal, closeModal } from '../modal.js?v=321';
-import { requestAutoBackupNow } from '../backup-service.js?v=321';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=321';
+  getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
+} from '../kitchen-db.js?v=322';
+import { getProducts } from '../db.js?v=322';
+import { parseSupplierFile } from '../supplier-import.js?v=322';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=322';
+import { openModal, closeModal } from '../modal.js?v=322';
+import { requestAutoBackupNow } from '../backup-service.js?v=322';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=322';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -122,7 +123,10 @@ function renderPackagingMetaLine(material) {
 
 function filterCatalogItems(catalog, search) {
   if (!search) return catalog;
-  return catalog.filter((item) => item.name.toLocaleLowerCase('he').includes(search));
+  return catalog.filter((item) => {
+    if (String(item.name || '').toLocaleLowerCase('he').includes(search)) return true;
+    return (item.offers || []).some((o) => materialMatchesSearch(o, search));
+  });
 }
 
 function renderCatalogResultsHTML(items) {
@@ -630,7 +634,7 @@ function filterBrowseLayout(layout, search) {
           const supMatch = browseSearchMatch(sup.name, search);
           const materials = supMatch
             ? sup.materials
-            : sup.materials.filter((m) => browseSearchMatch(m.name, search));
+            : sup.materials.filter((m) => materialMatchesSearch(m, search));
           if (!supMatch && !materials.length) return null;
           return { ...sup, materials, autoExpand: true };
         })
@@ -1277,7 +1281,10 @@ function openEditMaterialModal(container, mat) {
         <div id="mat-history-host"></div>`,
       footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
     });
-    bindMaterialForm(container, mat.supplierCategoryId, mat.id, { isPackaging });
+    bindMaterialForm(container, mat.supplierCategoryId, mat.id, {
+      isPackaging,
+      synonyms: getMaterialSynonyms(mat),
+    });
     loadMaterialHistory(mat.id);
   });
 }
@@ -1301,6 +1308,15 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
   const packageWeightKg = mat ? (packageWeightKgFromGrams(mat.packageWeightGrams) ?? '') : '';
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+    <div class="form-group mat-synonyms-group">
+      <label>מילים נרדפות</label>
+      <div class="mat-synonyms-add-row">
+        <input type="text" id="mat-synonym-input" placeholder="הוסף מילה נרדפת..." autocomplete="off">
+        <button type="button" class="btn btn-secondary btn-sm mat-synonym-add-btn" id="mat-synonym-add" title="הוסף מילה נרדפת">+</button>
+      </div>
+      <ul class="mat-synonyms-list" id="mat-synonyms-list"></ul>
+      <p class="form-hint">חיפוש לפי מילה נרדפת ימצא את החומר גלם</p>
+    </div>
     ${isPackaging ? `
     <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
     <div class="form-group"><label>מחיר לחבילה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
@@ -1334,10 +1350,83 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
     </div>`;
 }
 
-function bindMaterialForm(container, categoryId, materialId, { isPackaging = false } = {}) {
+function readMaterialSynonymsFromForm() {
+  const list = document.getElementById('mat-synonyms-list');
+  if (!list) return [];
+  try {
+    return sanitizeMaterialSynonyms(JSON.parse(list.dataset.synonyms || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+function renderMaterialSynonymsList() {
+  const list = document.getElementById('mat-synonyms-list');
+  if (!list) return;
+  const synonyms = readMaterialSynonymsFromForm();
+  list.dataset.synonyms = JSON.stringify(synonyms);
+  if (!synonyms.length) {
+    list.innerHTML = '<li class="mat-synonyms-empty form-hint">אין מילים נרדפות עדיין</li>';
+    return;
+  }
+  list.innerHTML = synonyms.map((s, index) => `
+    <li class="mat-synonym-item">
+      <button type="button" class="mat-synonym-chip" data-index="${index}" title="הסר">
+        <span class="mat-synonym-chip-text">${escapeHtml(s)}</span>
+        <span class="mat-synonym-chip-x" aria-hidden="true">×</span>
+      </button>
+    </li>`).join('');
+}
+
+function bindMaterialSynonymsUI(initialSynonyms = []) {
+  const list = document.getElementById('mat-synonyms-list');
+  const input = document.getElementById('mat-synonym-input');
+  const addBtn = document.getElementById('mat-synonym-add');
+  if (!list || !input || !addBtn) return;
+
+  list.dataset.synonyms = JSON.stringify(sanitizeMaterialSynonyms(initialSynonyms));
+  renderMaterialSynonymsList();
+
+  const addSynonym = () => {
+    const next = String(input.value || '').trim();
+    if (!next) return;
+    const synonyms = readMaterialSynonymsFromForm();
+    const key = next.toLocaleLowerCase('he');
+    if (synonyms.some((s) => s.toLocaleLowerCase('he') === key)) {
+      showToast('המילה כבר ברשימה');
+      return;
+    }
+    synonyms.push(next);
+    list.dataset.synonyms = JSON.stringify(sanitizeMaterialSynonyms(synonyms));
+    input.value = '';
+    renderMaterialSynonymsList();
+    input.focus();
+  };
+
+  addBtn.addEventListener('click', addSynonym);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addSynonym();
+    }
+  });
+  list.addEventListener('click', (e) => {
+    const chip = e.target.closest('.mat-synonym-chip');
+    if (!chip) return;
+    const index = Number(chip.dataset.index);
+    const synonyms = readMaterialSynonymsFromForm();
+    if (index < 0 || index >= synonyms.length) return;
+    synonyms.splice(index, 1);
+    list.dataset.synonyms = JSON.stringify(synonyms);
+    renderMaterialSynonymsList();
+  });
+}
+
+function bindMaterialForm(container, categoryId, materialId, { isPackaging = false, synonyms = [] } = {}) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   if (isPackaging) bindPackagingFormFields();
   else bindMaterialPricePreviewFields();
+  bindMaterialSynonymsUI(synonyms);
   document.getElementById('save-mat')?.addEventListener('click', async () => {
     try {
       const pricing = isPackaging
@@ -1349,6 +1438,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         supplierId: document.getElementById('mat-supplier')?.value || null,
         packageWeightGrams: isPackaging ? null : pricing.packageWeightGrams,
         processedPricePerKg: isPackaging ? null : document.getElementById('mat-processed-price')?.value,
+        synonyms: readMaterialSynonymsFromForm(),
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       if (materialId) {
@@ -1422,6 +1512,7 @@ function openDuplicateMaterialModal(container, mat, categoryId) {
           packagingKind: mat.packagingKind,
           packUnitsCount: mat.packUnitsCount,
           packProductsPerUnit: mat.packProductsPerUnit,
+          synonyms: getMaterialSynonyms(mat),
         });
         const pricePerKg = document.getElementById('dup-price-per-kg')?.value;
         if (pricePerKg !== '') {
