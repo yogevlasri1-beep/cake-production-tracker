@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=324';
+} from '../db.js?v=325';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=324';
-import { openModal, closeModal } from '../modal.js?v=324';
-import { renderTargets } from './targets.js?v=324';
-import { renderPurchasingInManager } from './purchasing.js?v=324';
-import { forceAppUpdate } from '../sw-register.js?v=324';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=324';
+} from '../utils.js?v=325';
+import { openModal, closeModal } from '../modal.js?v=325';
+import { renderTargets } from './targets.js?v=325';
+import { renderPurchasingInManager } from './purchasing.js?v=325';
+import { forceAppUpdate } from '../sw-register.js?v=325';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=325';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=324';
+} from '../daily-plan-export.js?v=325';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -690,12 +690,27 @@ function renderProductCentricPlanHTML(items, products, {
   let html = '';
 
   if (productsInPlan.length) {
+    const shownProductExtras = new Set();
     html += renderCollapsiblePlanSection(
       'list-products',
       '📦 מוצרים לייצור',
       wrapPlanTable(
         ['שם מוצר', 'כמות', ''],
-        productsInPlan.map((item) => planProductTableRow(item)).join(''),
+        productsInPlan.map((item) => {
+          const pid = Number(item.productId) || 0;
+          const showExtras = pid && !shownProductExtras.has(pid);
+          if (showExtras) shownProductExtras.add(pid);
+          const relatedPortions = showExtras
+            ? portionItems.filter((p) => Number(p.productId) === pid)
+            : [];
+          const relatedTasks = showExtras
+            ? [
+              ...preparations.filter((t) => Number(t.productId) === pid),
+              ...cleanings.filter((t) => Number(t.productId) === pid),
+            ]
+            : [];
+          return planProductTableRow(item, { relatedPortions, relatedTasks });
+        }).join(''),
       ),
       { count: productsInPlan.length, className: 'manager-plan-section', defaultOpen: true },
     );
