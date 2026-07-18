@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=318';
+} from '../db.js?v=319';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=318';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=318';
+} from '../utils.js?v=319';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=319';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=318';
-import { requestAutoBackupNow } from '../backup-service.js?v=318';
+} from '../calc.js?v=319';
+import { requestAutoBackupNow } from '../backup-service.js?v=319';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -566,27 +566,33 @@ export async function renderHome(container) {
 
     ${processSection}
 
-    <div class="card home-charts-card">
-      <div class="card-title">גרף ייצור מוצרים · ${periodLabel}</div>
-      <div class="tabs tabs-wrap" id="chart-tabs">
-        <button type="button" class="tab ${chartPeriod === 'day' ? 'active' : ''}" data-period="day">יום</button>
-        <button type="button" class="tab ${chartPeriod === 'week' ? 'active' : ''}" data-period="week">שבוע</button>
-        <button type="button" class="tab ${chartPeriod === 'month' ? 'active' : ''}" data-period="month">חודש</button>
-        <button type="button" class="tab ${chartPeriod === 'year' ? 'active' : ''}" data-period="year">שנה</button>
+    <details class="card home-charts-collapse"${container.dataset.homeChartsOpen === '1' ? ' open' : ''}>
+      <summary class="home-charts-summary">
+        <span class="home-charts-summary-title">גרפים</span>
+      </summary>
+      <div class="home-charts-body">
+        <div class="home-charts-block">
+          <div class="card-title">גרף ייצור מוצרים · ${periodLabel}</div>
+          <div class="tabs tabs-wrap" id="chart-tabs">
+            <button type="button" class="tab ${chartPeriod === 'day' ? 'active' : ''}" data-period="day">יום</button>
+            <button type="button" class="tab ${chartPeriod === 'week' ? 'active' : ''}" data-period="week">שבוע</button>
+            <button type="button" class="tab ${chartPeriod === 'month' ? 'active' : ''}" data-period="month">חודש</button>
+            <button type="button" class="tab ${chartPeriod === 'year' ? 'active' : ''}" data-period="year">שנה</button>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="production-chart"></canvas>
+          </div>
+          <p id="chart-summary" class="chart-summary"></p>
+        </div>
+        <div class="home-charts-block">
+          <div class="card-title">דיאגרמת עוגה · ${periodLabel}</div>
+          <div class="chart-wrap chart-wrap-pie">
+            <canvas id="category-pie-chart"></canvas>
+          </div>
+          <p id="pie-chart-summary" class="chart-summary"></p>
+        </div>
       </div>
-      <div class="chart-wrap">
-        <canvas id="production-chart"></canvas>
-      </div>
-      <p id="chart-summary" class="chart-summary"></p>
-    </div>
-
-    <div class="card home-charts-card">
-      <div class="card-title">דיאגרמת עוגה · ${periodLabel}</div>
-      <div class="chart-wrap chart-wrap-pie">
-        <canvas id="category-pie-chart"></canvas>
-      </div>
-      <p id="pie-chart-summary" class="chart-summary"></p>
-    </div>
+    </details>
 
     <div class="card home-backup-card">
       <div class="home-backup-row">
@@ -618,13 +624,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=318');
+      const { navigate } = await import('../app.js?v=319');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=318');
+    const { navigate } = await import('../app.js?v=319');
     navigate('backup');
   });
 

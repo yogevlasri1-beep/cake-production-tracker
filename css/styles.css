@@ -3045,6 +3045,61 @@ body.flow-checklist-drag-active {
   margin-bottom: 0;
 }
 
+.home-charts-collapse {
+  margin-bottom: 16px;
+}
+
+.home-charts-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  user-select: none;
+}
+
+.home-charts-summary::-webkit-details-marker {
+  display: none;
+}
+
+.home-charts-summary::after {
+  content: '‹';
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.home-charts-collapse[open] > .home-charts-summary::after {
+  transform: rotate(90deg);
+}
+
+.home-charts-summary-title {
+  min-width: 0;
+}
+
+.home-charts-body {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.home-charts-block {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.home-charts-block:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
 .process-list-mode-tabs {
   margin-bottom: 12px;
 }
