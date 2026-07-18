@@ -3104,6 +3104,70 @@ body.flow-checklist-drag-active {
   margin-bottom: 12px;
 }
 
+.flow-run-collapse--portions .flow-run-collapse-body,
+.flow-run-collapse--steps .flow-run-collapse-body {
+  padding-top: 4px;
+}
+
+.run-processing-subsection {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.run-processing-subsection-title {
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin-bottom: 6px;
+}
+
+.flow-metrics-batch-track,
+.flow-metrics-processing-track {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-soft) 55%, white);
+  border: 1px solid color-mix(in srgb, var(--primary) 12%, var(--border));
+}
+
+.flow-metrics-batch-track-title {
+  font-weight: 700;
+  font-size: 0.88rem;
+  margin-bottom: 8px;
+}
+
+.flow-metrics-batch-track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.flow-metrics-batch-track-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  font-size: 0.84rem;
+}
+
+.flow-metrics-batch-track-ing {
+  font-weight: 650;
+}
+
+.flow-metrics-batch-track-num {
+  font-weight: 800;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-metrics-batch-track-meta {
+  grid-column: 1 / -1;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .home-flow-card {
   margin-bottom: 12px;
 }
@@ -5556,7 +5620,7 @@ table.report-table tfoot td {
   text-align: center;
 }
 
-.home-screen .home-charts-card .card-title,
+.home-screen .home-charts-block .card-title,
 .home-screen .history-card .card-title {
   text-align: center;
 }

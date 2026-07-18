@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=319';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=319';
-import { defaultColorForIndex } from './chart.js?v=319';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=319';
+} from './validators.js?v=320';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=320';
+import { defaultColorForIndex } from './chart.js?v=320';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=320';
 
 export { ValidationError };
 
@@ -6211,6 +6211,8 @@ export async function startProductionRun({
       currentStepIndex: 0,
       startedAt,
       completedAt: null,
+      runPortionLogs: [],
+      materialProcessingLogs: [],
     });
     for (let i = 0; i < steps.length; i++) {
       const fs = steps[i];
@@ -6539,6 +6541,19 @@ export function computeRunMetrics(run, entries = []) {
     }
   }
 
+  for (const log of getRunPortionLogs(run)) {
+    const c = Number(log.count) || 0;
+    if (c > 0) {
+      hasPortions = true;
+      portionCount += c;
+    }
+    const w = log.weight != null ? Number(log.weight) : null;
+    if (w != null && Number.isFinite(w) && c > 0) {
+      hasPortionWeight = true;
+      portionWeightKg += w * c;
+    }
+  }
+
   return {
     productionQty: Math.round(productionQty * 1000) / 1000,
     productionByProduct,
@@ -6548,6 +6563,8 @@ export function computeRunMetrics(run, entries = []) {
     runCount: 1,
     activeCount: run?.status === 'active' ? 1 : 0,
     completedCount: run?.status === 'completed' ? 1 : 0,
+    ingredientBatchTracking: collectRunIngredientBatchTracking(run),
+    materialProcessingLogs: getRunMaterialProcessingLogs(run),
   };
 }
 
@@ -6707,6 +6724,215 @@ export async function deleteRunStepPortionBatch(runId, stepIndex, batchIndex) {
     portionBatches: batches,
     portionCount: batches.length ? sumPortionBatches(batches) : null,
   });
+}
+
+function nextEmbeddedLogId(items = []) {
+  let max = 0;
+  for (const item of items) {
+    const n = Number(item?.id);
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max + 1;
+}
+
+export function getRunPortionLogs(run) {
+  return Array.isArray(run?.runPortionLogs) ? run.runPortionLogs : [];
+}
+
+export function getRunMaterialProcessingLogs(run) {
+  return Array.isArray(run?.materialProcessingLogs) ? run.materialProcessingLogs : [];
+}
+
+/** רשימת מספרי מנה (אריזה) לסיכום מעקב חומרי גלם */
+export function collectRunIngredientBatchTracking(run) {
+  const rows = [];
+  for (const log of getRunPortionLogs(run)) {
+    for (const bat of log.ingredientBatches || []) {
+      const num = String(bat.packagingBatchNumber || '').trim();
+      if (!num) continue;
+      rows.push({
+        portionName: log.name || 'מנה',
+        portionLogId: log.id,
+        ingredientName: bat.name || 'חומר גלם',
+        packagingBatchNumber: num,
+        supplierName: bat.supplierName || '',
+        rawMaterialId: bat.rawMaterialId || null,
+      });
+    }
+  }
+  return rows;
+}
+
+export async function addRunPortionLog(runId, { presetId, count, date, note } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+
+  const pCount = sanitizePortionCount(count);
+  if (pCount == null) throw new ValidationError('הזן מספר מנות תקין (מ-0.1 ומעלה)');
+
+  const flowPresets = run.flowId ? await getFlowPortionPresets(run.flowId) : [];
+  const pid = presetId ? Number(presetId) : null;
+  if (flowPresets.length && !pid) throw new ValidationError('בחר מנה מהרשימה');
+
+  const batchDate = date && isValidISODate(date) ? date : todayISOFromDate();
+  const logs = [...getRunPortionLogs(run)];
+  const entry = {
+    id: nextEmbeddedLogId(logs),
+    count: pCount,
+    name: 'מנה',
+    date: batchDate,
+    recordedAt: managerNowISO(),
+    note: String(note || '').trim().slice(0, 200),
+    ingredientBatches: [],
+  };
+
+  if (pid) {
+    const preset = flowPresets.find((p) => p.id === pid) || await db.groupPortionPresets.get(pid);
+    if (!preset) throw new ValidationError('מנה לא נמצאה');
+    entry.presetId = preset.id;
+    entry.name = preset.name || 'מנה';
+    entry.weight = preset.weight;
+    entry.extra = preset.extra || '';
+    if (preset.sourceRecipeId) {
+      entry.fromRecipe = true;
+      entry.sourceRecipeId = Number(preset.sourceRecipeId);
+    }
+  }
+
+  logs.push(entry);
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+  return entry.id;
+}
+
+export async function updateRunPortionLog(runId, logId, { count, date, note } = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = [...getRunPortionLogs(run)];
+  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
+  if (idx < 0) throw new ValidationError('רשומת מנה לא נמצאה');
+
+  const next = { ...logs[idx] };
+  if (count !== undefined) {
+    const pCount = sanitizePortionCount(count);
+    if (pCount == null) throw new ValidationError('הזן מספר מנות תקין (מ-0.1 ומעלה)');
+    next.count = pCount;
+  }
+  if (date !== undefined) {
+    next.date = date && isValidISODate(date) ? date : next.date;
+  }
+  if (note !== undefined) {
+    next.note = String(note || '').trim().slice(0, 200);
+  }
+  logs[idx] = next;
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+}
+
+export async function deleteRunPortionLog(runId, logId) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = getRunPortionLogs(run).filter((l) => Number(l.id) !== Number(logId));
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+}
+
+export async function saveRunPortionIngredientBatches(runId, logId, batches = []) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = [...getRunPortionLogs(run)];
+  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
+  if (idx < 0) throw new ValidationError('רשומת מנה לא נמצאה');
+
+  const cleaned = [];
+  for (const row of batches || []) {
+    const recipeIngredientId = Number(row.recipeIngredientId) || null;
+    const name = String(row.name || '').trim().slice(0, 120);
+    const packagingBatchNumber = String(row.packagingBatchNumber || '').trim().slice(0, 60);
+    const rawMaterialId = row.rawMaterialId ? Number(row.rawMaterialId) : null;
+    const supplierName = String(row.supplierName || '').trim().slice(0, 80);
+    if (!name && !packagingBatchNumber && !rawMaterialId) continue;
+    if (!packagingBatchNumber && !rawMaterialId) continue;
+    cleaned.push({
+      recipeIngredientId,
+      name: name || 'חומר גלם',
+      packagingBatchNumber,
+      rawMaterialId,
+      supplierName,
+    });
+  }
+
+  logs[idx] = { ...logs[idx], ingredientBatches: cleaned };
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+}
+
+function sanitizeKgWeight(val) {
+  if (val == null || val === '') return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 1000) / 1000;
+}
+
+export async function addRunMaterialProcessingLog(runId, {
+  rawMaterialId, materialName, supplierId, supplierName,
+  weightBeforeKg, weightAfterKg, date, note,
+} = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+
+  const before = sanitizeKgWeight(weightBeforeKg);
+  const after = sanitizeKgWeight(weightAfterKg);
+  if (before == null && after == null) {
+    throw new ValidationError('הזן משקל לפני ו/או אחרי עיבוד');
+  }
+
+  const name = String(materialName || '').trim().slice(0, 120);
+  const matId = rawMaterialId ? Number(rawMaterialId) : null;
+  if (!name && !matId) throw new ValidationError('בחר או הזן חומר גלם');
+
+  const logs = [...getRunMaterialProcessingLogs(run)];
+  const entry = {
+    id: nextEmbeddedLogId(logs),
+    rawMaterialId: matId,
+    materialName: name || 'חומר גלם',
+    supplierId: supplierId ? Number(supplierId) : null,
+    supplierName: String(supplierName || '').trim().slice(0, 80),
+    weightBeforeKg: before,
+    weightAfterKg: after,
+    date: date && isValidISODate(date) ? date : todayISOFromDate(),
+    recordedAt: managerNowISO(),
+    note: String(note || '').trim().slice(0, 200),
+  };
+  logs.push(entry);
+  await db.productionRuns.update(runId, { materialProcessingLogs: logs });
+  return entry.id;
+}
+
+export async function updateRunMaterialProcessingLog(runId, logId, patch = {}) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = [...getRunMaterialProcessingLogs(run)];
+  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
+  if (idx < 0) throw new ValidationError('רשומת עיבוד לא נמצאה');
+
+  const next = { ...logs[idx] };
+  if (patch.weightBeforeKg !== undefined) next.weightBeforeKg = sanitizeKgWeight(patch.weightBeforeKg);
+  if (patch.weightAfterKg !== undefined) next.weightAfterKg = sanitizeKgWeight(patch.weightAfterKg);
+  if (patch.date !== undefined && patch.date && isValidISODate(patch.date)) next.date = patch.date;
+  if (patch.note !== undefined) next.note = String(patch.note || '').trim().slice(0, 200);
+  if (patch.materialName !== undefined) {
+    const name = String(patch.materialName || '').trim().slice(0, 120);
+    if (name) next.materialName = name;
+  }
+  if (next.weightBeforeKg == null && next.weightAfterKg == null) {
+    throw new ValidationError('הזן משקל לפני ו/או אחרי עיבוד');
+  }
+  logs[idx] = next;
+  await db.productionRuns.update(runId, { materialProcessingLogs: logs });
+}
+
+export async function deleteRunMaterialProcessingLog(runId, logId) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = getRunMaterialProcessingLogs(run).filter((l) => Number(l.id) !== Number(logId));
+  await db.productionRuns.update(runId, { materialProcessingLogs: logs });
 }
 
 export async function activateRunStep(runId, stepIndex) {

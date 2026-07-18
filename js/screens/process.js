@@ -17,6 +17,9 @@ import {
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal, portionBatchLineWeightKg,
+  getRunPortionLogs, getRunMaterialProcessingLogs,
+  addRunPortionLog, updateRunPortionLog, deleteRunPortionLog,
+  addRunMaterialProcessingLog, deleteRunMaterialProcessingLog,
   computeRunMetrics, aggregateRunsMetrics,
   getRunSettings, setRunSettings,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
@@ -24,24 +27,24 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=319';
+} from '../db.js?v=320';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=319').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=320').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=319';
-import { openModal, closeModal } from '../modal.js?v=319';
-import { requestAutoBackupNow } from '../backup-service.js?v=319';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=319';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=319';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=320';
+import { openModal, closeModal } from '../modal.js?v=320';
+import { requestAutoBackupNow } from '../backup-service.js?v=320';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=320';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=320';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
-const RUN_COLLAPSE_STORAGE = 'yitzur-run-collapse-v1';
+const RUN_COLLAPSE_STORAGE = 'yitzur-run-collapse-v2';
 
 function getRunCollapseMap(runId) {
   try {
@@ -1465,6 +1468,8 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
   if (metrics.completedCount && metrics.runCount > 1) metaParts.push(`${metrics.completedCount} הושלמו`);
   const meta = metaParts.length ? ` · ${metaParts.join(' · ')}` : '';
   const clickable = interactive;
+  const batchRows = metrics.ingredientBatchTracking || [];
+  const processingRows = metrics.materialProcessingLogs || [];
 
   return `
     <div class="flow-metrics-card${compact ? ' flow-metrics-card--compact' : ''}${clickable ? ' flow-metrics-card--interactive' : ''}">
@@ -1497,6 +1502,36 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
         ${clickable ? '</button>' : '</div>'}
       </div>
       ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מנות / משקל / זמן לפירוט</p>' : ''}
+      <div class="flow-metrics-batch-track">
+        <div class="flow-metrics-batch-track-title">📦 מעקב מנות חומרי גלם</div>
+        ${batchRows.length ? `
+          <ul class="flow-metrics-batch-track-list">
+            ${batchRows.map((r) => `
+              <li class="flow-metrics-batch-track-item">
+                <span class="flow-metrics-batch-track-ing">${escapeHtml(r.ingredientName)}</span>
+                <span class="flow-metrics-batch-track-num">${escapeHtml(r.packagingBatchNumber)}</span>
+                <span class="flow-metrics-batch-track-meta">
+                  ${escapeHtml(r.portionName)}${r.supplierName ? ` · ${escapeHtml(r.supplierName)}` : ''}
+                </span>
+              </li>`).join('')}
+          </ul>` : '<p class="form-hint" style="margin:0">עדיין לא תועדו מספרי מנה על אריזות — בסעיף מנות</p>'}
+      </div>
+      ${processingRows.length ? `
+      <div class="flow-metrics-processing-track">
+        <div class="flow-metrics-batch-track-title">⚙️ עיבוד חומר גלם</div>
+        <ul class="flow-metrics-batch-track-list">
+          ${processingRows.map((r) => `
+            <li class="flow-metrics-batch-track-item">
+              <span class="flow-metrics-batch-track-ing">${escapeHtml(r.materialName || 'חומר גלם')}</span>
+              <span class="flow-metrics-batch-track-num">
+                ${r.weightBeforeKg != null ? `${formatDecimal(r.weightBeforeKg)}` : '—'}
+                →
+                ${r.weightAfterKg != null ? `${formatDecimal(r.weightAfterKg)}` : '—'} ק״ג
+              </span>
+              ${r.supplierName ? `<span class="flow-metrics-batch-track-meta">${escapeHtml(r.supplierName)}</span>` : ''}
+            </li>`).join('')}
+        </ul>
+      </div>` : ''}
     </div>`;
 }
 
@@ -1526,6 +1561,30 @@ function collectRunPortionTypeRows(run) {
       if (batch.sourceRecipeId) prev.sourceRecipeId = Number(batch.sourceRecipeId);
       byKey.set(key, prev);
     }
+  }
+  for (const log of getRunPortionLogs(run)) {
+    const name = (log.name || 'מנה').trim() || 'מנה';
+    const key = log.presetId != null ? `p:${log.presetId}` : `n:${name}`;
+    const c = Number(log.count) || 0;
+    const w = log.weight != null ? Number(log.weight) : null;
+    const lineKg = w != null && Number.isFinite(w) && c > 0 ? w * c : null;
+    const prev = byKey.get(key) || {
+      name,
+      presetId: log.presetId || null,
+      count: 0,
+      weightKg: 0,
+      hasWeight: false,
+      fromRecipe: !!log.fromRecipe,
+      sourceRecipeId: log.sourceRecipeId || null,
+    };
+    prev.count += c;
+    if (lineKg != null) {
+      prev.hasWeight = true;
+      prev.weightKg += lineKg;
+    }
+    if (log.fromRecipe) prev.fromRecipe = true;
+    if (log.sourceRecipeId) prev.sourceRecipeId = Number(log.sourceRecipeId);
+    byKey.set(key, prev);
   }
   return [...byKey.values()]
     .map((r) => ({
@@ -1577,8 +1636,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=319');
-    const { db } = await import('../db.js?v=319');
+    const { getRecipe } = await import('../kitchen-db.js?v=320');
+    const { db } = await import('../db.js?v=320');
     const blocks = [];
 
     for (const row of rows) {
@@ -2059,6 +2118,132 @@ function flowCleaningCompactButtonHTML({ checks, flowLabel }) {
   });
 }
 
+function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, materials = [], suppliers = [] } = {}) {
+  const logs = getRunPortionLogs(run);
+  const processing = getRunMaterialProcessingLogs(run);
+  const hasPresets = presets.length > 0;
+  const recipePresets = presets.filter(portionPresetHasRecipe);
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const activeMaterials = materials.filter((m) => m.active !== false);
+
+  const portionListHTML = logs.length ? `
+    <ul class="flow-portion-batch-list run-portion-log-list">
+      ${logs.map((b) => {
+        const batchCount = (b.ingredientBatches || []).filter((x) => String(x.packagingBatchNumber || '').trim()).length;
+        return `
+        <li class="flow-portion-batch-item run-portion-log-item" data-log-id="${b.id}">
+          <span class="flow-portion-batch-name">${b.fromRecipe ? '<span class="flow-preset-recipe-star" title="ממתכון">★</span> ' : ''}${escapeHtml(b.name || 'מנה')}</span>
+          ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
+          ${canEdit ? `
+            <label class="flow-portion-batch-count-edit">
+              × <input type="number" class="run-portion-log-count" min="0.1" step="0.1" inputmode="decimal"
+                value="${b.count}" data-log-id="${b.id}" aria-label="מספר מנות">
+            </label>
+            <label class="flow-portion-batch-date-edit">
+              <input type="date" class="run-portion-log-date" value="${b.date || ''}"
+                data-log-id="${b.id}" aria-label="תאריך">
+            </label>
+            <button type="button" class="btn btn-danger btn-sm run-portion-log-del" data-log-id="${b.id}" title="הסר">🗑</button>
+          ` : `
+            <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
+            <span class="flow-portion-batch-date">${formatDate(b.date)}</span>
+          `}
+          ${b.presetId && (b.fromRecipe || recipePresets.some((p) => Number(p.id) === Number(b.presetId))) ? `
+            <button type="button" class="btn btn-secondary btn-sm run-portion-batch-list-btn"
+              data-run-id="${run.id}" data-log-id="${b.id}" data-preset-id="${b.presetId}"
+              data-portion-name="${escapeHtml(b.name || '')}"
+              title="רשימת חומרי גלם ומספר מנה על האריזה">
+              📋 רשימה${batchCount ? ` (${batchCount})` : ''}
+            </button>` : ''}
+        </li>`;
+      }).join('')}
+    </ul>` : `<p class="form-hint" style="margin:0">${hasPresets ? 'טרם נרשמו מנות — בחר מנה מהרשימה' : 'טרם נרשמו מנות'}</p>`;
+
+  const addFormHTML = canEdit ? `
+    <button type="button" class="btn btn-secondary btn-sm" id="run-portion-add-toggle">+ הוסף מנה</button>
+    <div class="flow-portion-add-form hidden" id="run-portion-add-form">
+      ${hasPresets ? `
+        <div class="form-group" style="margin:8px 0 6px">
+          <label for="run-portion-add-preset">בחר מנה</label>
+          <select id="run-portion-add-preset">
+            <option value="">בחר מנה...</option>
+            ${presets.map((p) => `<option value="${p.id}" data-from-recipe="${p.sourceRecipeId ? '1' : '0'}">${escapeHtml(portionPresetOptionLabel(p))}</option>`).join('')}
+          </select>
+        </div>` : ''}
+      <div class="form-group" style="margin:8px 0 6px">
+        <label for="run-portion-add-count">כמה מנות?</label>
+        <input type="number" id="run-portion-add-count" min="0.1" step="0.1" inputmode="decimal" placeholder="5 או 0.3">
+      </div>
+      <div class="form-group" style="margin-bottom:8px">
+        <label for="run-portion-add-date">תאריך</label>
+        <input type="date" id="run-portion-add-date" value="${todayISO()}">
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="run-portion-add-save" style="width:100%">שמור מנה</button>
+    </div>` : '';
+
+  const processingListHTML = processing.length ? `
+    <ul class="flow-portion-batch-list run-processing-list">
+      ${processing.map((p) => `
+        <li class="flow-portion-batch-item run-processing-item" data-proc-id="${p.id}">
+          <span class="flow-portion-batch-name">${escapeHtml(p.materialName || 'חומר גלם')}</span>
+          ${p.supplierName ? `<span class="flow-portion-batch-extra">${escapeHtml(p.supplierName)}</span>` : ''}
+          <span class="flow-portion-batch-weight">
+            לפני: ${p.weightBeforeKg != null ? formatDecimal(p.weightBeforeKg) : '—'} ק״ג
+            · אחרי: ${p.weightAfterKg != null ? formatDecimal(p.weightAfterKg) : '—'} ק״ג
+          </span>
+          ${canEdit ? `
+            <button type="button" class="btn btn-danger btn-sm run-processing-del" data-proc-id="${p.id}" title="הסר">🗑</button>
+          ` : ''}
+        </li>`).join('')}
+    </ul>` : '<p class="form-hint" style="margin:0">אין תיעוד עיבוד חומר גלם</p>';
+
+  const materialOptions = activeMaterials.map((m) => {
+    const supplier = m.supplierId ? (supMap.get(m.supplierId) || '') : '';
+    const label = supplier ? `${m.name} · ${supplier}` : m.name;
+    return `<option value="${m.id}" data-name="${escapeHtml(m.name)}" data-supplier-id="${m.supplierId || ''}" data-supplier-name="${escapeHtml(supplier)}">${escapeHtml(label)}</option>`;
+  }).join('');
+
+  const processingFormHTML = canEdit ? `
+    <button type="button" class="btn btn-secondary btn-sm" id="run-processing-add-toggle">+ הוסף עיבוד</button>
+    <div class="flow-portion-add-form hidden" id="run-processing-add-form">
+      <div class="form-group" style="margin:8px 0 6px">
+        <label for="run-processing-material">חומר גלם (מספקים)</label>
+        ${activeMaterials.length ? `
+          <select id="run-processing-material">
+            <option value="">בחר חומר גלם...</option>
+            ${materialOptions}
+          </select>` : '<p class="form-hint">אין חומרי גלם בספקים — הוסף במסך ספקים</p>'}
+      </div>
+      <div class="form-group" style="margin:8px 0 6px">
+        <label for="run-processing-before">משקל לפני עיבוד (ק״ג)</label>
+        <input type="number" id="run-processing-before" min="0" step="0.001" inputmode="decimal" placeholder="0">
+      </div>
+      <div class="form-group" style="margin:8px 0 6px">
+        <label for="run-processing-after">משקל אחרי עיבוד (ק״ג)</label>
+        <input type="number" id="run-processing-after" min="0" step="0.001" inputmode="decimal" placeholder="0">
+      </div>
+      <div class="form-group" style="margin-bottom:8px">
+        <label for="run-processing-date">תאריך</label>
+        <input type="date" id="run-processing-date" value="${todayISO()}">
+      </div>
+      <p class="form-hint" style="margin-bottom:8px">משקלי עיבוד נפרדים ממשקל המנות</p>
+      <button type="button" class="btn btn-primary btn-sm" id="run-processing-add-save" style="width:100%">שמור עיבוד</button>
+    </div>` : '';
+
+  return `
+    <div class="run-portions-section">
+      <p class="form-hint" style="margin-top:0">תעד מנות מהמתכון כאן — לכל מנה ניתן לפתוח רשימה למספרי מנה על האריזה</p>
+      ${portionListHTML}
+      ${addFormHTML}
+      <div class="run-processing-subsection">
+        <div class="run-processing-subsection-title">⚙️ עיבוד חומר גלם</div>
+        <p class="form-hint">חומר גלם שעבר תהליך עיבוד — משקל לפני ואחרי (ק״ג), בנפרד ממשקל מנות</p>
+        ${processingListHTML}
+        ${processingFormHTML}
+      </div>
+    </div>`;
+}
+
 async function renderRunView(container, runId, ctx) {
   if (container._runTimerInterval) {
     clearInterval(container._runTimerInterval);
@@ -2105,6 +2290,18 @@ async function renderRunView(container, runId, ctx) {
   let runEntries = [];
 
   const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
+  let kitchenMaterials = [];
+  let kitchenSuppliers = [];
+  try {
+    const kitchen = await import('../kitchen-db.js?v=320');
+    [kitchenMaterials, kitchenSuppliers] = await Promise.all([
+      kitchen.getRawMaterials(),
+      kitchen.getSuppliers(),
+    ]);
+  } catch {
+    kitchenMaterials = [];
+    kitchenSuppliers = [];
+  }
   runEntries = await getRunProductionEntries(runId);
   const productionStepIdx = resolveProductionStepIndex(run, runEntries);
   const hasProductionSteps = productionStepIdx >= 0;
@@ -2239,16 +2436,40 @@ async function renderRunView(container, runId, ctx) {
     `📦 תיעוד ייצור${run.status === 'active' ? ' — זמין תמיד' : ''}`,
     topProductionHTML,
     {
-      defaultOpen: true,
+      defaultOpen: false,
       id: 'flow-production-anchor',
       className: 'flow-production-always-card flow-run-collapse--production',
       hintHtml: `<p class="flow-production-always-hint">${run.status === 'active' ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב' : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'}</p>`,
     },
   ) : ''}
 
-    <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
+    ${renderCollapsibleRunCard(
+    run.id,
+    'portions',
+    `🍽 מנות${getRunPortionLogs(run).length ? ` (${getRunPortionLogs(run).length})` : ''}`,
+    renderRunPortionsSectionHTML(run, portionPresets, {
+      canEdit: run.status === 'active' || run.status === 'completed',
+      materials: kitchenMaterials,
+      suppliers: kitchenSuppliers,
+    }),
+    {
+      defaultOpen: false,
+      className: 'flow-run-collapse--portions',
+    },
+  )}
+
+    ${renderCollapsibleRunCard(
+    run.id,
+    'steps',
+    `📋 שלבי התזרים (${run.steps.length})`,
+    `<div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
       ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx, productionStepIdx)).join('')}
-    </div>
+    </div>`,
+    {
+      defaultOpen: false,
+      className: 'flow-run-collapse--steps',
+    },
+  )}
 
     ${editAllMode ? `
       <div class="card">
@@ -2703,6 +2924,139 @@ async function renderRunView(container, runId, ctx) {
         container.dataset.runId = String(run.id);
         container.dataset.view = 'run';
         renderProcess(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  const refreshRunView = () => {
+    container.dataset.runId = String(run.id);
+    container.dataset.view = 'run';
+    renderProcess(container);
+  };
+
+  document.getElementById('run-portion-add-toggle')?.addEventListener('click', () => {
+    const form = document.getElementById('run-portion-add-form');
+    const btn = document.getElementById('run-portion-add-toggle');
+    if (!form || !btn) return;
+    const opening = form.classList.contains('hidden');
+    form.classList.toggle('hidden');
+    btn.textContent = opening ? '− ביטול' : '+ הוסף מנה';
+    if (opening) document.getElementById('run-portion-add-count')?.focus();
+  });
+
+  document.getElementById('run-portion-add-save')?.addEventListener('click', async () => {
+    const btn = document.getElementById('run-portion-add-save');
+    if (btn?.dataset.saving === '1') return;
+    if (btn) {
+      btn.dataset.saving = '1';
+      btn.disabled = true;
+    }
+    try {
+      await addRunPortionLog(run.id, {
+        presetId: document.getElementById('run-portion-add-preset')?.value || null,
+        count: document.getElementById('run-portion-add-count')?.value,
+        date: document.getElementById('run-portion-add-date')?.value,
+      });
+      requestAutoBackupNow().catch(() => {});
+      showToast('מנה נוספה ✓');
+      refreshRunView();
+    } catch (err) {
+      if (btn) {
+        btn.dataset.saving = '';
+        btn.disabled = false;
+      }
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.run-portion-log-count').forEach((input) => {
+    input.addEventListener('change', async () => {
+      try {
+        await updateRunPortionLog(run.id, input.dataset.logId, { count: input.value });
+        requestAutoBackupNow().catch(() => {});
+        showToast('כמות עודכנה ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.run-portion-log-date').forEach((input) => {
+    input.addEventListener('change', async () => {
+      try {
+        await updateRunPortionLog(run.id, input.dataset.logId, { date: input.value });
+        requestAutoBackupNow().catch(() => {});
+        showToast('תאריך עודכן ✓');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.run-portion-log-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('להסיר מנה זו?')) return;
+      try {
+        await deleteRunPortionLog(run.id, btn.dataset.logId);
+        requestAutoBackupNow().catch(() => {});
+        showToast('הוסר ✓');
+        refreshRunView();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  document.getElementById('run-processing-add-toggle')?.addEventListener('click', () => {
+    const form = document.getElementById('run-processing-add-form');
+    const btn = document.getElementById('run-processing-add-toggle');
+    if (!form || !btn) return;
+    const opening = form.classList.contains('hidden');
+    form.classList.toggle('hidden');
+    btn.textContent = opening ? '− ביטול' : '+ הוסף עיבוד';
+  });
+
+  document.getElementById('run-processing-add-save')?.addEventListener('click', async () => {
+    const btn = document.getElementById('run-processing-add-save');
+    if (btn?.dataset.saving === '1') return;
+    const sel = document.getElementById('run-processing-material');
+    const opt = sel?.selectedOptions?.[0];
+    if (btn) {
+      btn.dataset.saving = '1';
+      btn.disabled = true;
+    }
+    try {
+      await addRunMaterialProcessingLog(run.id, {
+        rawMaterialId: sel?.value || null,
+        materialName: opt?.dataset.name || opt?.textContent || '',
+        supplierId: opt?.dataset.supplierId || null,
+        supplierName: opt?.dataset.supplierName || '',
+        weightBeforeKg: document.getElementById('run-processing-before')?.value,
+        weightAfterKg: document.getElementById('run-processing-after')?.value,
+        date: document.getElementById('run-processing-date')?.value,
+      });
+      requestAutoBackupNow().catch(() => {});
+      showToast('עיבוד נשמר ✓');
+      refreshRunView();
+    } catch (err) {
+      if (btn) {
+        btn.dataset.saving = '';
+        btn.disabled = false;
+      }
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.run-processing-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('להסיר רשומת עיבוד?')) return;
+      try {
+        await deleteRunMaterialProcessingLog(run.id, btn.dataset.procId);
+        requestAutoBackupNow().catch(() => {});
+        showToast('הוסר ✓');
+        refreshRunView();
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }

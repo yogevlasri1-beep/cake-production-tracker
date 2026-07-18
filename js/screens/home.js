@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=319';
+} from '../db.js?v=320';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=319';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=319';
+} from '../utils.js?v=320';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=320';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=319';
-import { requestAutoBackupNow } from '../backup-service.js?v=319';
+} from '../calc.js?v=320';
+import { requestAutoBackupNow } from '../backup-service.js?v=320';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -624,13 +624,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=319');
+      const { navigate } = await import('../app.js?v=320');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=319');
+    const { navigate } = await import('../app.js?v=320');
     navigate('backup');
   });
 
@@ -690,26 +690,36 @@ export async function renderHome(container) {
 
   const chartEntries = await getEntriesInRange(chartFrom, chartTo);
 
-  await renderProductionChart(
-    document.getElementById('production-chart'),
-    document.getElementById('chart-summary'),
-    chartPeriod,
-    chartEntries,
-    productMap,
-    categories,
-    anchorDate
-  );
+  const paintCharts = async () => {
+    await renderProductionChart(
+      document.getElementById('production-chart'),
+      document.getElementById('chart-summary'),
+      chartPeriod,
+      chartEntries,
+      productMap,
+      categories,
+      anchorDate
+    );
 
-  await renderCategoryPieChart(
-    document.getElementById('category-pie-chart'),
-    document.getElementById('pie-chart-summary'),
-    totals,
-    categories
-  );
+    await renderCategoryPieChart(
+      document.getElementById('category-pie-chart'),
+      document.getElementById('pie-chart-summary'),
+      totals,
+      categories
+    );
+  };
+
+  const chartsCollapse = container.querySelector('.home-charts-collapse');
+  chartsCollapse?.addEventListener('toggle', () => {
+    container.dataset.homeChartsOpen = chartsCollapse.open ? '1' : '0';
+    if (chartsCollapse.open) paintCharts();
+  });
+  if (chartsCollapse?.open) await paintCharts();
 
   container.querySelectorAll('#chart-tabs .tab').forEach((tab) => {
     tab.addEventListener('click', () => {
       container.dataset.chartPeriod = tab.dataset.period;
+      container.dataset.homeChartsOpen = '1';
       renderHome(container);
     });
   });

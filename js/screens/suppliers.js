@@ -15,13 +15,13 @@ import {
   clearDoneSupplierShortages, formatSupplierShortagesText,
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
-} from '../kitchen-db.js?v=319';
-import { getProducts } from '../db.js?v=319';
-import { parseSupplierFile } from '../supplier-import.js?v=319';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=319';
-import { openModal, closeModal } from '../modal.js?v=319';
-import { requestAutoBackupNow } from '../backup-service.js?v=319';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=319';
+} from '../kitchen-db.js?v=320';
+import { getProducts } from '../db.js?v=320';
+import { parseSupplierFile } from '../supplier-import.js?v=320';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=320';
+import { openModal, closeModal } from '../modal.js?v=320';
+import { requestAutoBackupNow } from '../backup-service.js?v=320';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=320';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
