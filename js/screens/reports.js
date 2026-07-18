@@ -8,31 +8,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=330';
+} from '../db.js?v=331';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=330';
+} from '../utils.js?v=331';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=330';
-import { openModal, closeModal } from '../modal.js?v=330';
+} from '../export.js?v=331';
+import { openModal, closeModal } from '../modal.js?v=331';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=330';
-import { isSheetsConfigured } from '../google-sheets.js?v=330';
+} from '../sheets-flow.js?v=331';
+import { isSheetsConfigured } from '../google-sheets.js?v=331';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=330';
-import { defaultColorForIndex } from '../chart.js?v=330';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=330';
+} from '../calc.js?v=331';
+import { defaultColorForIndex } from '../chart.js?v=331';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=331';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=330';
+} from '../purchasing-db.js?v=331';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -49,9 +49,97 @@ export function isManagerReportType(type) {
   return type === 'manager';
 }
 
+export function isProductsReportType(type) {
+  return String(type || '').startsWith('products-');
+}
+
+export function isPortionsReportType(type) {
+  return type === 'portions' || type === 'portions-type';
+}
+
+export function isPnlReportType(type) {
+  return String(type || '').startsWith('pnl');
+}
+
 export function normalizeReportType(type) {
   if (type === 'flows') return 'flows-summary';
   return type || 'day';
+}
+
+function reportSectionForType(type) {
+  const t = normalizeReportType(type);
+  if (isFlowsReportType(t)) return 'flows';
+  if (isProductsReportType(t)) return 'products';
+  if (isPortionsReportType(t)) return 'portions';
+  if (isManagerReportType(t)) return 'manager';
+  if (isPnlReportType(t)) return 'pnl';
+  return 'production';
+}
+
+const REPORT_COLLAPSE_STORAGE = 'yitzur-reports-collapse-v1';
+
+function getReportCollapseState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(REPORT_COLLAPSE_STORAGE) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function isReportSectionOpen(key, defaultOpen = false) {
+  const state = getReportCollapseState();
+  if (state[key] == null) return defaultOpen;
+  return !!state[key];
+}
+
+function setReportSectionOpen(key, open) {
+  const state = getReportCollapseState();
+  state[key] = !!open;
+  try {
+    sessionStorage.setItem(REPORT_COLLAPSE_STORAGE, JSON.stringify(state));
+  } catch { /* ignore */ }
+}
+
+function renderCollapsibleReportSection(key, titleHtml, bodyHtml, { defaultOpen = false, className = '' } = {}) {
+  const open = isReportSectionOpen(key, defaultOpen);
+  return `
+    <details class="card report-section-collapse ${className}" data-report-collapse="${escapeHtml(key)}" ${open ? 'open' : ''}>
+      <summary class="card-title report-section-collapse-summary">
+        <span class="report-section-collapse-label">${titleHtml}</span>
+        <span class="report-section-collapse-chevron" aria-hidden="true"></span>
+      </summary>
+      <div class="report-section-collapse-body">${bodyHtml}</div>
+    </details>`;
+}
+
+function bindReportCollapse(container) {
+  container.querySelectorAll('details[data-report-collapse]').forEach((el) => {
+    el.addEventListener('toggle', () => {
+      setReportSectionOpen(el.dataset.reportCollapse, el.open);
+    });
+  });
+}
+
+/** סוגי דוח מוצרים → לוגיקת נתונים קיימת */
+function productsReportDataAlias(type) {
+  if (type === 'products-general' || type === 'products-period') return 'range';
+  if (type === 'products-product') return 'product';
+  if (type === 'products-category') return 'category';
+  if (type === 'products-group') return 'products-group';
+  return type;
+}
+
+function effectiveDataReportType(type) {
+  const t = normalizeReportType(type);
+  if (isProductsReportType(t)) return productsReportDataAlias(t);
+  if (isPortionsReportType(t)) return 'portions';
+  if (isPnlReportType(t)) {
+    if (t === 'pnl-daily') return 'pnl-daily';
+    if (t === 'pnl-monthly') return 'pnl-monthly';
+    if (t === 'pnl-product') return 'pnl-product';
+    return 'range';
+  }
+  return t;
 }
 
 export const PRODUCTION_HISTORY_SCOPES = ['product', 'category', 'group'];
@@ -332,8 +420,9 @@ function monthStartIso(year, month) {
   return `${year}-${String(month).padStart(2, '0')}-01`;
 }
 
-function resolveReportContext(container, today, curYear, curMonth, catMap, productMap) {
+function resolveReportContext(container, today, curYear, curMonth, catMap, productMap, groupMap = new Map()) {
   const reportType = normalizeReportType(container.dataset.reportType);
+  const dataType = effectiveDataReportType(reportType);
   const defaultMonth = `${curYear}-${String(curMonth).padStart(2, '0')}`;
 
   let from = today;
@@ -343,61 +432,73 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
   let filterLabel = '';
   let selectedCategoryId = container.dataset.selectedCategory || '';
   let selectedProductId = container.dataset.selectedProduct || '';
+  let selectedGroupId = container.dataset.selectedGroup || '';
+  let selectedFlowId = container.dataset.selectedFlowId || '';
+  let selectedPortionName = container.dataset.selectedPortionName || '';
   let weekDates = null;
   let weekAnchor = null;
 
-  if (reportType === 'day') {
+  const applyRangeDefaults = () => {
+    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
+    to = container.dataset.rangeTo || today;
+    if (from > to) [from, to] = [to, from];
+    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+  };
+
+  if (reportType === 'day' || (reportType === 'products-period' && container.dataset.productsPeriodMode === 'day')) {
     from = container.dataset.selectedDay || today;
     to = from;
     label = formatDate(from);
-    reportTitle = 'דוח יומי';
-  } else if (reportType === 'month') {
+    reportTitle = reportType.startsWith('products') ? 'דוח מוצרים · יומי' : 'דוח יומי';
+  } else if (reportType === 'month' || reportType === 'pnl-monthly'
+    || (reportType === 'products-period' && (container.dataset.productsPeriodMode || 'month') === 'month')) {
     const selectedMonth = parseMonthValue(container.dataset.selectedMonth, curYear, curMonth);
     const mr = monthRange(selectedMonth.year, selectedMonth.month);
     from = mr.from;
     to = mr.to;
     label = mr.label;
-    reportTitle = 'דוח חודשי';
-  } else if (reportType === 'week') {
+    reportTitle = reportType === 'pnl-monthly' ? 'רווח והפסד · חודשי'
+      : reportType.startsWith('products') ? 'דוח מוצרים · חודשי' : 'דוח חודשי';
+  } else if (reportType === 'week'
+    || (reportType === 'products-period' && container.dataset.productsPeriodMode === 'week')) {
     const anchor = container.dataset.selectedWeekDate || container.dataset.selectedWeekEnd || today;
     const wr = weekRange(anchor);
     from = wr.from;
     to = wr.to;
     weekDates = wr.dates;
     label = `${formatDate(from)} – ${formatDate(to)}`;
-    reportTitle = 'דוח שבועי מפורט';
+    reportTitle = reportType.startsWith('products') ? 'דוח מוצרים · שבועי' : 'דוח שבועי מפורט';
     weekAnchor = anchor;
-  } else if (reportType === 'range') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
-    reportTitle = 'דוח טווח תאריכים';
-  } else if (reportType === 'category') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
-    reportTitle = 'דוח לפי קטגוריה';
+  } else if (reportType === 'range' || reportType === 'products-general' || reportType === 'products-period'
+    || reportType === 'portions' || reportType === 'portions-type'
+    || reportType === 'pnl' || reportType === 'pnl-period' || reportType === 'pnl-daily' || reportType === 'pnl-product') {
+    applyRangeDefaults();
+    if (reportType === 'products-general') reportTitle = 'דוח מוצרים · כללי';
+    else if (reportType === 'products-period') reportTitle = 'דוח מוצרים · תקופה';
+    else if (reportType === 'portions') reportTitle = 'דוח מנות · כללי';
+    else if (reportType === 'portions-type') reportTitle = 'דוח מנות · לפי סוג';
+    else if (reportType === 'pnl') reportTitle = 'רווח והפסד · כללי מפורט';
+    else if (reportType === 'pnl-period') reportTitle = 'רווח והפסד · תקופה';
+    else if (reportType === 'pnl-daily') reportTitle = 'רווח והפסד · יומי';
+    else if (reportType === 'pnl-product') reportTitle = 'רווח והפסד · לפי מוצר';
+    else reportTitle = 'דוח טווח תאריכים';
+  } else if (reportType === 'category' || reportType === 'products-category') {
+    applyRangeDefaults();
+    reportTitle = reportType === 'products-category' ? 'דוח מוצרים · לפי קטגוריה' : 'דוח לפי קטגוריה';
     filterLabel = catMap.get(Number(selectedCategoryId)) || '';
-  } else if (reportType === 'product') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
-    reportTitle = 'דוח לפי מוצר';
+  } else if (reportType === 'product' || reportType === 'products-product') {
+    applyRangeDefaults();
+    reportTitle = reportType === 'products-product' ? 'דוח מוצרים · לפי סוג/מוצר' : 'דוח לפי מוצר';
     filterLabel = mapGetById(productMap, selectedProductId)?.name || '';
+  } else if (reportType === 'products-group') {
+    applyRangeDefaults();
+    reportTitle = 'דוח מוצרים · קטגוריה כללית';
+    filterLabel = groupMap.get(Number(selectedGroupId)) || '';
   } else if (reportType === 'flows-detail') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    applyRangeDefaults();
     reportTitle = 'תזרימים מפורט';
   } else if (reportType === 'flows-summary') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+    applyRangeDefaults();
     reportTitle = 'סיכום תזרימים';
   } else if (reportType === 'production-history') {
     const allTime = container.dataset.historyAllTime !== '0';
@@ -413,18 +514,23 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     } else if (scopeType === 'category' && scopeId) {
       filterLabel = catMap.get(Number(scopeId)) || '';
     } else if (scopeType === 'group' && scopeId) {
-      filterLabel = container.dataset.historyGroupName || '';
+      filterLabel = groupMap.get(Number(scopeId)) || container.dataset.historyGroupName || '';
     }
   } else if (reportType === 'manager') {
-    from = container.dataset.rangeFrom || monthStartIso(curYear, curMonth);
-    to = container.dataset.rangeTo || today;
-    if (from > to) [from, to] = [to, from];
-    label = from === to ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
-    reportTitle = 'דוח עמדת מנהל';
+    applyRangeDefaults();
+    reportTitle = 'דוח מנהל מפורט';
+  }
+
+  if (selectedFlowId && isFlowsReportType(reportType)) {
+    filterLabel = [filterLabel, container.dataset.selectedFlowName || `תזרים #${selectedFlowId}`].filter(Boolean).join(' · ');
+  }
+  if (selectedPortionName && reportType === 'portions-type') {
+    filterLabel = selectedPortionName;
   }
 
   return {
     reportType,
+    dataType,
     from,
     to,
     label,
@@ -432,6 +538,9 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     filterLabel,
     selectedCategoryId,
     selectedProductId,
+    selectedGroupId,
+    selectedFlowId,
+    selectedPortionName,
     defaultMonth,
     weekDates,
     weekAnchor,
@@ -439,12 +548,14 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     historyScopeId: container.dataset.historyScopeId || '',
     historyAllTime: container.dataset.historyAllTime !== '0',
     batchSearch: String(container.dataset.batchSearch || '').trim(),
+    productsPeriodMode: container.dataset.productsPeriodMode || 'month',
   };
 }
 
 async function fetchReportData(ctx) {
   let entries;
   let processLogs;
+  const dataType = ctx.dataType || effectiveDataReportType(ctx.reportType);
 
   if (ctx.reportType === 'production-history' || ctx.reportType === 'manager') {
     entries = ctx.reportType === 'production-history'
@@ -454,11 +565,13 @@ async function fetchReportData(ctx) {
     return { entries, processLogs, productionRuns: [] };
   }
 
-  if (ctx.reportType === 'day') {
+  if (dataType === 'day' || ctx.reportType === 'day') {
     entries = await getEntriesForDate(ctx.from);
     processLogs = await getProcessLogsForDate(ctx.from);
-  } else if (ctx.reportType === 'month') {
-    const [year, month] = ctx.monthIso.split('-').map(Number);
+  } else if (dataType === 'month' || ctx.reportType === 'month' || ctx.reportType === 'pnl-monthly'
+    || (ctx.reportType === 'products-period' && ctx.productsPeriodMode === 'month')) {
+    const monthIso = ctx.monthIso || `${ctx.from.slice(0, 7)}`;
+    const [year, month] = monthIso.split('-').map(Number);
     entries = await getEntriesForMonth(year, month);
     processLogs = await getProcessLogsForMonth(year, month);
   } else {
@@ -466,7 +579,7 @@ async function fetchReportData(ctx) {
     processLogs = await getProcessLogsInRange(ctx.from, ctx.to);
   }
 
-  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+  if ((ctx.reportType === 'category' || ctx.reportType === 'products-category') && ctx.selectedCategoryId) {
     const catId = Number(ctx.selectedCategoryId);
     entries = entries.filter((e) => {
       const p = mapGetById(ctx.productMap, e.productId);
@@ -475,7 +588,8 @@ async function fetchReportData(ctx) {
     processLogs = processLogs.filter((log) => log.categoryId === catId);
   }
 
-  if (ctx.reportType === 'product' && ctx.selectedProductId) {
+  if ((ctx.reportType === 'product' || ctx.reportType === 'products-product' || ctx.reportType === 'pnl-product')
+    && ctx.selectedProductId) {
     const prodId = Number(ctx.selectedProductId);
     entries = entries.filter((e) => e.productId === prodId);
     const product = mapGetById(ctx.productMap, prodId);
@@ -524,13 +638,33 @@ function filterProductionRuns(runs, ctx, categories) {
   if (ctx.batchSearch) {
     filtered = filtered.filter((r) => runMatchesBatchSearch(r, ctx.batchSearch));
   }
-  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+  if (ctx.selectedFlowId && isFlowsReportType(ctx.reportType)) {
+    const fid = Number(ctx.selectedFlowId);
+    filtered = filtered.filter((r) => Number(r.flowId) === fid);
+  }
+  if ((ctx.reportType === 'category' || ctx.reportType === 'products-category') && ctx.selectedCategoryId) {
     const catId = Number(ctx.selectedCategoryId);
     filtered = filtered.filter((r) => runMatchesCategory(r, catId, ctx.productMap, categories));
   }
-  if (ctx.reportType === 'product' && ctx.selectedProductId) {
+  if ((ctx.reportType === 'product' || ctx.reportType === 'products-product') && ctx.selectedProductId) {
     const prodId = Number(ctx.selectedProductId);
     filtered = filtered.filter((r) => r.productId === prodId);
+  }
+  if (ctx.reportType === 'products-group' && ctx.selectedGroupId) {
+    const gid = Number(ctx.selectedGroupId);
+    filtered = filtered.filter((r) => {
+      if (Number(r.categoryGroupId) === gid) return true;
+      if (r.productId) {
+        const p = mapGetById(ctx.productMap, r.productId);
+        const cat = categories.find((c) => c.id === p?.categoryId);
+        return cat && Number(cat.groupId) === gid;
+      }
+      if (r.categoryId) {
+        const cat = categories.find((c) => c.id === r.categoryId);
+        return cat && Number(cat.groupId) === gid;
+      }
+      return false;
+    });
   }
   return filtered;
 }
@@ -859,12 +993,13 @@ function aggregatePortionDocumentation(rows) {
     .sort((a, b) => a.name.localeCompare(b.name, 'he') || (a.weight ?? 0) - (b.weight ?? 0));
 }
 
-function renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap) {
+function renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap, { portionName = '' } = {}) {
   const rows = [];
   for (const run of productionRuns) {
     for (const step of run.steps || []) {
       if (!step.tracksPortions) continue;
       for (const batch of getStepPortionBatches(step)) {
+        if (portionName && String(batch.name || '').trim() !== portionName) continue;
         rows.push({ run, step, batch });
       }
     }
@@ -934,6 +1069,170 @@ function renderPortionDocumentationHTML(productionRuns, catMap, productMap, grou
           }).join('')}
         </tbody>
       </table>
+    </div>`;
+}
+
+function collectPortionNamesFromRuns(productionRuns) {
+  const names = new Set();
+  for (const run of productionRuns || []) {
+    for (const step of run.steps || []) {
+      if (!step.tracksPortions) continue;
+      for (const batch of getStepPortionBatches(step)) {
+        const n = String(batch.name || '').trim();
+        if (n) names.add(n);
+      }
+    }
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+function buildPnlProductRows(rows) {
+  return rows.map((r) => ({
+    ...r,
+    margin: (Number(r.value) || 0) - (Number(r.cost) || 0),
+  }));
+}
+
+function renderPnlTableHTML(rows, totals) {
+  if (!rows.length) return '<p class="report-empty">אין נתונים לתקופה זו</p>';
+  const withMargin = buildPnlProductRows(rows);
+  const totalMargin = (Number(totals.totalValue) || 0) - (Number(totals.totalCost) || 0);
+  return `
+    <div class="report-table-wrap">
+    <table class="report-table report-cost-table">
+      <thead><tr>
+        <th>מוצר</th><th>כמות</th><th>עלות</th><th>ערך ללקוח</th><th>רווח / הפסד</th>
+      </tr></thead>
+      <tbody>
+        ${withMargin.map((r) => `
+          <tr>
+            <td class="report-cell-text">${escapeHtml(r.product.name)}</td>
+            <td class="report-cell-num">${formatDecimal(r.qty)}</td>
+            <td class="report-cell-num">${r.cost > 0 ? formatMoney(r.cost) : '—'}</td>
+            <td class="report-cell-num">${formatMoney(r.value)}</td>
+            <td class="report-cell-num ${r.margin >= 0 ? 'report-pnl-positive' : 'report-pnl-negative'}">${formatMoney(r.margin)}</td>
+          </tr>`).join('')}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="2">סה"כ</td>
+        <td>${totals.totalCost > 0 ? formatMoney(totals.totalCost) : '—'}</td>
+        <td>${formatMoney(totals.totalValue)}</td>
+        <td class="${totalMargin >= 0 ? 'report-pnl-positive' : 'report-pnl-negative'}"><strong>${formatMoney(totalMargin)}</strong></td>
+      </tr></tfoot>
+    </table>
+    </div>`;
+}
+
+function unitProductCost(product) {
+  return (Number(product?.rawMaterialsCost) || 0)
+    + (Number(product?.packagingCost) || 0)
+    + (Number(product?.additionalCosts) || 0);
+}
+
+function unitProductValue(product) {
+  return Number(product?.unitPrice) || 0;
+}
+
+function buildPnlDailyRows(entries, productMap) {
+  const byDate = new Map();
+  for (const e of entries || []) {
+    if (!byDate.has(e.date)) byDate.set(e.date, []);
+    byDate.get(e.date).push(e);
+  }
+  const dates = [...byDate.keys()].sort((a, b) => b.localeCompare(a));
+  return dates.map((date) => {
+    let qty = 0;
+    let cost = 0;
+    let value = 0;
+    for (const e of byDate.get(date)) {
+      const p = mapGetById(productMap, e.productId);
+      if (!p) continue;
+      const q = Number(e.quantity) || 0;
+      qty += q;
+      cost += unitProductCost(p) * q;
+      value += unitProductValue(p) * q;
+    }
+    return { date, qty, cost, value, margin: value - cost };
+  });
+}
+
+function buildPnlMonthlyRows(entries, productMap) {
+  const byMonth = new Map();
+  for (const e of entries || []) {
+    const m = String(e.date || '').slice(0, 7);
+    if (!m) continue;
+    if (!byMonth.has(m)) byMonth.set(m, []);
+    byMonth.get(m).push(e);
+  }
+  const months = [...byMonth.keys()].sort((a, b) => b.localeCompare(a));
+  return months.map((month) => {
+    let qty = 0;
+    let cost = 0;
+    let value = 0;
+    for (const e of byMonth.get(month)) {
+      const p = mapGetById(productMap, e.productId);
+      if (!p) continue;
+      const q = Number(e.quantity) || 0;
+      qty += q;
+      cost += unitProductCost(p) * q;
+      value += unitProductValue(p) * q;
+    }
+    return { month, qty, cost, value, margin: value - cost };
+  });
+}
+
+function renderPnlPeriodBreakdownHTML(rows, { mode = 'daily' } = {}) {
+  if (!rows.length) return '<p class="report-empty">אין נתונים לתקופה זו</p>';
+  const isDaily = mode === 'daily';
+  return `
+    <div class="report-table-wrap">
+    <table class="report-table report-cost-table">
+      <thead><tr>
+        <th>${isDaily ? 'תאריך' : 'חודש'}</th><th>כמות</th><th>עלות</th><th>ערך ללקוח</th><th>רווח / הפסד</th>
+      </tr></thead>
+      <tbody>
+        ${rows.map((r) => `
+          <tr>
+            <td class="report-cell-text">${isDaily ? formatDate(r.date) : escapeHtml(r.month)}</td>
+            <td class="report-cell-num">${formatDecimal(r.qty)}</td>
+            <td class="report-cell-num">${r.cost > 0 ? formatMoney(r.cost) : '—'}</td>
+            <td class="report-cell-num">${formatMoney(r.value)}</td>
+            <td class="report-cell-num ${r.margin >= 0 ? 'report-pnl-positive' : 'report-pnl-negative'}">${formatMoney(r.margin)}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    </div>`;
+}
+
+function buildPnlPreviewHTML(ctx, totals, rows, entries, productMap) {
+  const margin = (Number(totals.totalValue) || 0) - (Number(totals.totalCost) || 0);
+  let body = '';
+  if (ctx.reportType === 'pnl-daily') {
+    body = renderPnlPeriodBreakdownHTML(buildPnlDailyRows(entries, productMap), { mode: 'daily' });
+  } else if (ctx.reportType === 'pnl-monthly') {
+    body = renderPnlPeriodBreakdownHTML(buildPnlMonthlyRows(entries, productMap), { mode: 'monthly' });
+  } else {
+    body = renderPnlTableHTML(rows, totals);
+  }
+  return `
+    <div class="report-preview">
+      <p class="report-preview-meta">${escapeHtml(reportSubtitle(ctx))}</p>
+      <div class="stat-grid report-preview-stats">
+        <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+          <div class="stat-label">עלות</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value">${formatMoney(totals.totalValue)}</div>
+          <div class="stat-label">הכנסה (ערך ללקוח)</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value ${margin >= 0 ? 'report-pnl-positive' : 'report-pnl-negative'}">${formatMoney(margin)}</div>
+          <div class="stat-label">רווח / הפסד</div>
+        </div>
+      </div>
+      <h4 class="report-preview-heading">${ctx.reportType === 'pnl-daily' ? 'פירוט יומי' : ctx.reportType === 'pnl-monthly' ? 'פירוט חודשי' : 'פירוט מוצרים'}</h4>
+      ${body}
     </div>`;
 }
 
@@ -1582,32 +1881,6 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
     </div>`;
 }
 
-function renderFlowsFiltersHTML(ctx, today, defaultMonth) {
-  const batchVal = escapeHtml(ctx.batchSearch || '');
-  return `
-    <div class="report-filter-grid">
-      <div class="form-group">
-        <label for="report-from">מתאריך</label>
-        <input type="date" id="report-from" value="${ctx.from}" ${ctx.batchSearch ? 'disabled' : ''}>
-      </div>
-      <div class="form-group">
-        <label for="report-to">עד תאריך</label>
-        <input type="date" id="report-to" value="${ctx.to}" ${ctx.batchSearch ? 'disabled' : ''}>
-      </div>
-      <div class="form-group report-batch-search-group">
-        <label for="report-batch-search">חיפוש לפי מספר אצווה</label>
-        <div class="filter-row" style="margin:0;gap:6px">
-          <input type="search" id="report-batch-search" value="${batchVal}" placeholder="למשל: 42 או A-105" inputmode="search" autocomplete="off" style="flex:1">
-          <button type="button" class="btn btn-primary btn-sm" id="report-batch-search-btn">חפש</button>
-          ${ctx.batchSearch ? '<button type="button" class="btn btn-secondary btn-sm" id="report-batch-clear-btn">נקה</button>' : ''}
-        </div>
-      </div>
-    </div>
-    <p class="form-hint" style="margin-top:8px;margin-bottom:0">${ctx.batchSearch
-    ? `מציג תהליכים עם אצווה «${escapeHtml(ctx.batchSearch)}» מכל התקופות`
-    : 'אפשר לחפש תזרים לפי מספר אצווה — החיפוש עובר על כל ההיסטוריה'}</p>`;
-}
-
 function renderManagerFiltersHTML(ctx) {
   return `
     <div class="report-filter-grid">
@@ -1623,67 +1896,293 @@ function renderManagerFiltersHTML(ctx) {
     <p class="form-hint">משימות, שיפורים, תקלות ומשמרות לפי תאריך · צוות, ניקוי, יעדים ורכישות — מצב נוכחי</p>`;
 }
 
-function renderReportFiltersCards(ctx, categories, products, today, defaultMonth, catalog) {
-  const isFlows = isFlowsReportType(ctx.reportType);
-  const isHistory = ctx.reportType === 'production-history';
-  const isManager = isManagerReportType(ctx.reportType);
-  const productionFilters = isFlows || isHistory || isManager ? '' : renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth);
-  const flowsFilters = isFlows ? renderFlowsFiltersHTML(ctx, today, defaultMonth) : '';
-  const historyFilters = isHistory ? renderProductionHistoryFiltersHTML(ctx, catalog) : '';
-  const managerFilters = isManager ? renderManagerFiltersHTML(ctx) : '';
-
+function renderFlowsFiltersHTML(ctx, flowsOverview = []) {
+  const batchVal = escapeHtml(ctx.batchSearch || '');
+  const flowOptions = (flowsOverview || []).map((f) => {
+    const path = [f.groupName, f.targetLabel].filter(Boolean).join(' › ');
+    return `<option value="${f.id}" ${String(f.id) === String(ctx.selectedFlowId) ? 'selected' : ''}>${escapeHtml(f.name)}${path ? ` — ${escapeHtml(path)}` : ''}</option>`;
+  }).join('');
   return `
-    <div class="card report-filters-card">
-      <div class="card-title">דוח ייצור</div>
-      <div class="tabs tabs-wrap report-type-tabs report-production-tabs">
-        <button type="button" class="tab ${ctx.reportType === 'day' ? 'active' : ''}" data-type="day">יומי</button>
-        <button type="button" class="tab ${ctx.reportType === 'week' ? 'active' : ''}" data-type="week">שבועי מפורט</button>
-        <button type="button" class="tab ${ctx.reportType === 'month' ? 'active' : ''}" data-type="month">חודשי</button>
-        <button type="button" class="tab ${ctx.reportType === 'range' ? 'active' : ''}" data-type="range">טווח תאריכים</button>
-        <button type="button" class="tab ${ctx.reportType === 'category' ? 'active' : ''}" data-type="category">לפי קטגוריה</button>
-        <button type="button" class="tab ${ctx.reportType === 'product' ? 'active' : ''}" data-type="product">לפי מוצר</button>
-        <button type="button" class="tab ${ctx.reportType === 'production-history' ? 'active' : ''}" data-type="production-history">היסטוריית ייצור</button>
+    <div class="report-filter-grid">
+      <div class="form-group">
+        <label for="report-from">מתאריך</label>
+        <input type="date" id="report-from" value="${ctx.from}" ${ctx.batchSearch ? 'disabled' : ''}>
       </div>
-      ${productionFilters ? `<div class="report-dynamic-filters">${productionFilters}</div>` : ''}
-      ${historyFilters ? `<div class="report-dynamic-filters report-history-dynamic-filters">${historyFilters}</div>` : ''}
+      <div class="form-group">
+        <label for="report-to">עד תאריך</label>
+        <input type="date" id="report-to" value="${ctx.to}" ${ctx.batchSearch ? 'disabled' : ''}>
+      </div>
+      <div class="form-group">
+        <label for="report-flow-type">סוג תזרים</label>
+        <select id="report-flow-type" ${ctx.batchSearch ? 'disabled' : ''}>
+          <option value="">כל התזרימים</option>
+          ${flowOptions}
+        </select>
+      </div>
+      <div class="form-group report-batch-search-group">
+        <label for="report-batch-search">מספר אצווה</label>
+        <div class="filter-row" style="margin:0;gap:6px">
+          <input type="search" id="report-batch-search" value="${batchVal}" placeholder="למשל: 42 או A-105" inputmode="search" autocomplete="off" style="flex:1">
+          <button type="button" class="btn btn-primary btn-sm" id="report-batch-search-btn">חפש</button>
+          ${ctx.batchSearch ? '<button type="button" class="btn btn-secondary btn-sm" id="report-batch-clear-btn">נקה</button>' : ''}
+        </div>
+      </div>
     </div>
+    <p class="form-hint" style="margin-top:8px;margin-bottom:0">${ctx.batchSearch
+    ? `מציג תהליכים עם אצווה «${escapeHtml(ctx.batchSearch)}» מכל התקופות`
+    : 'סנן לפי תקופה, סוג תזרים או מספר אצווה'}</p>`;
+}
 
-    <div class="card report-flows-filters-card">
-      <div class="card-title">דוחות תזרימים</div>
-      <div class="tabs tabs-wrap report-type-tabs report-flows-tabs">
-        <button type="button" class="tab ${ctx.reportType === 'flows-detail' ? 'active' : ''}" data-type="flows-detail">תזרימים מפורט</button>
-        <button type="button" class="tab ${ctx.reportType === 'flows-summary' ? 'active' : ''}" data-type="flows-summary">סיכום תזרימים</button>
+function renderPortionsFiltersHTML(ctx, portionNames = []) {
+  const nameOptions = portionNames.map((n) =>
+    `<option value="${escapeHtml(n)}" ${n === ctx.selectedPortionName ? 'selected' : ''}>${escapeHtml(n)}</option>`,
+  ).join('');
+  return `
+    <div class="report-filter-grid">
+      <div class="form-group">
+        <label for="report-from">מתאריך</label>
+        <input type="date" id="report-from" value="${ctx.from}">
       </div>
-      ${flowsFilters ? `<div class="report-dynamic-filters report-flows-dynamic-filters">${flowsFilters}</div>` : ''}
-    </div>
-
-    <div class="card report-manager-filters-card">
-      <div class="card-title">דוחות מנהל</div>
-      <div class="tabs tabs-wrap report-type-tabs report-manager-tabs">
-        <button type="button" class="tab ${ctx.reportType === 'manager' ? 'active' : ''}" data-type="manager">דוח עמדת מנהל</button>
+      <div class="form-group">
+        <label for="report-to">עד תאריך</label>
+        <input type="date" id="report-to" value="${ctx.to}">
       </div>
-      ${managerFilters ? `<div class="report-dynamic-filters report-manager-dynamic-filters">${managerFilters}</div>` : ''}
+      ${ctx.reportType === 'portions-type' ? `
+      <div class="form-group">
+        <label for="report-portion-name">סוג מנה</label>
+        <select id="report-portion-name" ${portionNames.length ? '' : 'disabled'}>
+          <option value="">בחר מנה...</option>
+          ${nameOptions}
+        </select>
+      </div>` : ''}
     </div>`;
 }
 
+function renderProductsFiltersHTML(ctx, categories, products, groups, today, defaultMonth) {
+  const alias = productsReportDataAlias(ctx.reportType);
+  let html = '';
+  if (ctx.reportType === 'products-period') {
+    const mode = ctx.productsPeriodMode || 'month';
+    html += `
+      <div class="tabs tabs-wrap report-products-period-tabs" style="margin-bottom:10px">
+        <button type="button" class="tab ${mode === 'day' ? 'active' : ''}" data-products-period="day">יומי</button>
+        <button type="button" class="tab ${mode === 'week' ? 'active' : ''}" data-products-period="week">שבועי</button>
+        <button type="button" class="tab ${mode === 'month' ? 'active' : ''}" data-products-period="month">חודשי</button>
+        <button type="button" class="tab ${mode === 'range' ? 'active' : ''}" data-products-period="range">טווח</button>
+      </div>`;
+    if (mode === 'day') {
+      html += `<div class="form-group"><label for="report-day">תאריך</label><input type="date" id="report-day" value="${ctx.from}"></div>`;
+    } else if (mode === 'week') {
+      html += `<div class="form-group"><label for="report-week">שבוע</label><input type="date" id="report-week" value="${ctx.weekAnchor || ctx.to}"><p class="form-hint">${formatDateHebrew(ctx.from)} – ${formatDateHebrew(ctx.to)}</p></div>`;
+    } else if (mode === 'month') {
+      html += `<div class="form-group"><label for="report-month">חודש</label><input type="month" id="report-month" value="${defaultMonth}"></div>`;
+    } else {
+      html += `
+        <div class="report-filter-grid">
+          <div class="form-group"><label for="report-from">מתאריך</label><input type="date" id="report-from" value="${ctx.from}"></div>
+          <div class="form-group"><label for="report-to">עד תאריך</label><input type="date" id="report-to" value="${ctx.to}"></div>
+        </div>`;
+    }
+    return html;
+  }
+
+  html += `
+    <div class="report-filter-grid">
+      <div class="form-group"><label for="report-from">מתאריך</label><input type="date" id="report-from" value="${ctx.from}"></div>
+      <div class="form-group"><label for="report-to">עד תאריך</label><input type="date" id="report-to" value="${ctx.to}"></div>
+    </div>`;
+
+  if (alias === 'category' || ctx.reportType === 'products-category') {
+    html += `
+      <div class="form-group">
+        <label for="report-category">קטגוריה</label>
+        <select id="report-category" ${categories.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר קטגוריה...</option>
+          ${categories.map((c) => `<option value="${c.id}" ${String(c.id) === ctx.selectedCategoryId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>`;
+  }
+  if (alias === 'product' || ctx.reportType === 'products-product') {
+    html += `
+      <div class="form-group">
+        <label for="report-product">מוצר / סוג</label>
+        <select id="report-product" ${products.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר מוצר...</option>
+          ${products.map((p) => {
+    const cat = categories.find((c) => c.id === p.categoryId);
+    return `<option value="${p.id}" ${String(p.id) === ctx.selectedProductId ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(cat?.name || '')})</option>`;
+  }).join('')}
+        </select>
+      </div>`;
+  }
+  if (ctx.reportType === 'products-group') {
+    html += `
+      <div class="form-group">
+        <label for="report-group">קטגוריה כללית</label>
+        <select id="report-group" ${groups.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר קטגוריה כללית...</option>
+          ${groups.map((g) => `<option value="${g.id}" ${String(g.id) === String(ctx.selectedGroupId) ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>`;
+  }
+  return html;
+}
+
+function renderPnlFiltersHTML(ctx, products, categories, defaultMonth) {
+  if (ctx.reportType === 'pnl-monthly') {
+    return `
+      <div class="form-group">
+        <label for="report-month">חודש</label>
+        <input type="month" id="report-month" value="${defaultMonth}">
+      </div>`;
+  }
+  let html = `
+    <div class="report-filter-grid">
+      <div class="form-group"><label for="report-from">מתאריך</label><input type="date" id="report-from" value="${ctx.from}"></div>
+      <div class="form-group"><label for="report-to">עד תאריך</label><input type="date" id="report-to" value="${ctx.to}"></div>
+    </div>`;
+  if (ctx.reportType === 'pnl-product') {
+    html += `
+      <div class="form-group">
+        <label for="report-product">מוצר</label>
+        <select id="report-product" ${products.length === 0 ? 'disabled' : ''}>
+          <option value="">בחר מוצר...</option>
+          ${products.map((p) => {
+    const cat = categories.find((c) => c.id === p.categoryId);
+    return `<option value="${p.id}" ${String(p.id) === ctx.selectedProductId ? 'selected' : ''}>${escapeHtml(p.name)} (${escapeHtml(cat?.name || '')})</option>`;
+  }).join('')}
+        </select>
+      </div>`;
+  }
+  return html;
+}
+
+function renderReportFiltersCards(ctx, categories, products, today, defaultMonth, catalog, {
+  flowsOverview = [],
+  groups = [],
+  portionNames = [],
+} = {}) {
+  const activeSection = reportSectionForType(ctx.reportType);
+  const tab = (type, label, activeTypes) => {
+    const active = activeTypes.includes(ctx.reportType);
+    return `<button type="button" class="tab ${active ? 'active' : ''}" data-type="${type}">${label}</button>`;
+  };
+
+  const productionBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-production-tabs">
+      ${tab('day', 'יומי', ['day'])}
+      ${tab('week', 'שבועי מפורט', ['week'])}
+      ${tab('month', 'חודשי', ['month'])}
+      ${tab('range', 'טווח תאריכים', ['range'])}
+      ${tab('category', 'לפי קטגוריה', ['category'])}
+      ${tab('product', 'לפי מוצר', ['product'])}
+      ${tab('production-history', 'היסטוריית ייצור', ['production-history'])}
+    </div>
+    ${activeSection === 'production' && !isFlowsReportType(ctx.reportType) && ctx.reportType !== 'production-history'
+    ? `<div class="report-dynamic-filters">${renderFiltersHTML({ ...ctx, defaultMonth }, categories, products, today, defaultMonth)}</div>`
+    : ''}
+    ${ctx.reportType === 'production-history'
+    ? `<div class="report-dynamic-filters report-history-dynamic-filters">${renderProductionHistoryFiltersHTML(ctx, catalog)}</div>`
+    : ''}`;
+
+  const flowsBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-flows-tabs">
+      ${tab('flows-detail', 'תזרימים מפורט', ['flows-detail'])}
+      ${tab('flows-summary', 'סיכום תזרימים', ['flows-summary'])}
+    </div>
+    ${isFlowsReportType(ctx.reportType)
+    ? `<div class="report-dynamic-filters report-flows-dynamic-filters">${renderFlowsFiltersHTML(ctx, flowsOverview)}</div>`
+    : '<p class="form-hint">בחר סוג דוח תזרימים כדי לסנן לפי תאריך, סוג תזרים, אצווה ותקופה</p>'}`;
+
+  const productsBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-products-tabs">
+      ${tab('products-general', 'דוח כללי', ['products-general'])}
+      ${tab('products-product', 'לפי סוג', ['products-product'])}
+      ${tab('products-category', 'קטגוריה', ['products-category'])}
+      ${tab('products-group', 'קטגוריה כללית', ['products-group'])}
+      ${tab('products-period', 'תקופה', ['products-period'])}
+    </div>
+    ${isProductsReportType(ctx.reportType)
+    ? `<div class="report-dynamic-filters">${renderProductsFiltersHTML(ctx, categories, products, groups, today, defaultMonth)}</div>`
+    : '<p class="form-hint">בחר סוג דוח מוצרים</p>'}`;
+
+  const portionsBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-portions-tabs">
+      ${tab('portions', 'דוח כללי', ['portions'])}
+      ${tab('portions-type', 'לפי סוג', ['portions-type'])}
+    </div>
+    ${isPortionsReportType(ctx.reportType)
+    ? `<div class="report-dynamic-filters">${renderPortionsFiltersHTML(ctx, portionNames)}</div>`
+    : '<p class="form-hint">בחר דוח מנות · סנן לפי תקופה או סוג מנה</p>'}`;
+
+  const managerBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-manager-tabs">
+      ${tab('manager', 'דוח מנהל מפורט', ['manager'])}
+    </div>
+    ${isManagerReportType(ctx.reportType)
+    ? `<div class="report-dynamic-filters report-manager-dynamic-filters">${renderManagerFiltersHTML(ctx)}</div>`
+    : '<p class="form-hint">לחץ כדי לפתוח דוח מנהל מפורט</p>'}`;
+
+  const pnlBody = `
+    <div class="tabs tabs-wrap report-type-tabs report-pnl-tabs">
+      ${tab('pnl', 'כללי מפורט', ['pnl'])}
+      ${tab('pnl-product', 'מוצר', ['pnl-product'])}
+      ${tab('pnl-daily', 'יומי', ['pnl-daily'])}
+      ${tab('pnl-monthly', 'חודשי', ['pnl-monthly'])}
+      ${tab('pnl-period', 'תקופה', ['pnl-period'])}
+    </div>
+    ${isPnlReportType(ctx.reportType)
+    ? `<div class="report-dynamic-filters">${renderPnlFiltersHTML(ctx, products, categories, defaultMonth)}</div>`
+    : '<p class="form-hint">בחר סוג דוח רווח והפסד</p>'}`;
+
+  return `
+    ${renderCollapsibleReportSection('production', '1 · דוח ייצור', productionBody, {
+    defaultOpen: activeSection === 'production',
+    className: 'report-filters-card',
+  })}
+    ${renderCollapsibleReportSection('flows', '2 · דוח תזרימים', flowsBody, {
+    defaultOpen: activeSection === 'flows',
+    className: 'report-flows-filters-card',
+  })}
+    ${renderCollapsibleReportSection('products', '3 · דוח מוצרים', productsBody, {
+    defaultOpen: activeSection === 'products',
+    className: 'report-products-filters-card',
+  })}
+    ${renderCollapsibleReportSection('portions', '4 · דוח מנות', portionsBody, {
+    defaultOpen: activeSection === 'portions',
+    className: 'report-portions-filters-card',
+  })}
+    ${renderCollapsibleReportSection('manager', '5 · דוח מנהל מפורט', managerBody, {
+    defaultOpen: activeSection === 'manager',
+    className: 'report-manager-filters-card',
+  })}
+    ${renderCollapsibleReportSection('pnl', '6 · דוח רווח והפסד', pnlBody, {
+    defaultOpen: activeSection === 'pnl',
+    className: 'report-pnl-filters-card',
+  })}`;
+}
+
 function bindFilterEvents(container) {
-  container.querySelectorAll('.report-production-tabs .tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      container.dataset.reportType = tab.dataset.type;
-      renderReports(container);
+  const bindTypeTabs = (selector) => {
+    container.querySelectorAll(selector).forEach((tab) => {
+      tab.addEventListener('click', () => {
+        container.dataset.reportType = tab.dataset.type;
+        const section = reportSectionForType(tab.dataset.type);
+        setReportSectionOpen(section, true);
+        renderReports(container);
+      });
     });
-  });
+  };
+  bindTypeTabs('.report-production-tabs .tab');
+  bindTypeTabs('.report-flows-tabs .tab');
+  bindTypeTabs('.report-products-tabs .tab');
+  bindTypeTabs('.report-portions-tabs .tab');
+  bindTypeTabs('.report-manager-tabs .tab');
+  bindTypeTabs('.report-pnl-tabs .tab');
 
-  container.querySelectorAll('.report-flows-tabs .tab').forEach((tab) => {
+  container.querySelectorAll('.report-products-period-tabs .tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      container.dataset.reportType = tab.dataset.type;
-      renderReports(container);
-    });
-  });
-
-  container.querySelectorAll('.report-manager-tabs .tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      container.dataset.reportType = tab.dataset.type;
+      container.dataset.productsPeriodMode = tab.dataset.productsPeriod;
       renderReports(container);
     });
   });
@@ -1732,6 +2231,25 @@ function bindFilterEvents(container) {
     renderReports(container);
   });
 
+  document.getElementById('report-flow-type')?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    if (val) {
+      container.dataset.selectedFlowId = val;
+      const opt = e.target.selectedOptions?.[0];
+      container.dataset.selectedFlowName = opt?.textContent?.split(' — ')[0] || '';
+    } else {
+      delete container.dataset.selectedFlowId;
+      delete container.dataset.selectedFlowName;
+    }
+    renderReports(container);
+  });
+
+  document.getElementById('report-portion-name')?.addEventListener('change', (e) => {
+    if (e.target.value) container.dataset.selectedPortionName = e.target.value;
+    else delete container.dataset.selectedPortionName;
+    renderReports(container);
+  });
+
   document.getElementById('report-category')?.addEventListener('change', (e) => {
     container.dataset.selectedCategory = e.target.value;
     renderReports(container);
@@ -1739,6 +2257,11 @@ function bindFilterEvents(container) {
 
   document.getElementById('report-product')?.addEventListener('change', (e) => {
     container.dataset.selectedProduct = e.target.value;
+    renderReports(container);
+  });
+
+  document.getElementById('report-group')?.addEventListener('change', (e) => {
+    container.dataset.selectedGroup = e.target.value;
     renderReports(container);
   });
 
@@ -1788,7 +2311,7 @@ export async function renderReports(container) {
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
 
-  const ctx = resolveReportContext(container, today, curYear, curMonth, catMap, productMap);
+  const ctx = resolveReportContext(container, today, curYear, curMonth, catMap, productMap, groupMap);
   ctx.productMap = productMap;
   ctx.defaultMonth = container.dataset.selectedMonth || defaultMonth;
   if (ctx.batchSearch && isFlowsReportType(ctx.reportType)) {
@@ -1806,7 +2329,8 @@ export async function renderReports(container) {
     }
   }
 
-  if (ctx.reportType === 'month') {
+  if (ctx.reportType === 'month' || ctx.reportType === 'pnl-monthly'
+    || (ctx.reportType === 'products-period' && (ctx.productsPeriodMode || 'month') === 'month')) {
     const selectedMonth = parseMonthValue(container.dataset.selectedMonth, curYear, curMonth);
     ctx.monthIso = selectedMonth.iso;
     const mr = monthRange(selectedMonth.year, selectedMonth.month);
@@ -1831,6 +2355,9 @@ export async function renderReports(container) {
       to: ctx.to,
       allTime: ctx.historyAllTime,
     });
+  } else if (ctx.reportType === 'products-group' && ctx.selectedGroupId) {
+    const ids = productIdsForHistoryScope('group', ctx.selectedGroupId, products, categories);
+    entries = ids ? rawEntries.filter((e) => ids.has(e.productId)) : [];
   }
 
   const totals = await getProductionTotals(entries, productMap);
@@ -1838,19 +2365,22 @@ export async function renderReports(container) {
   const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
 
   let relevantProducts = products;
-  if (ctx.reportType === 'category' && ctx.selectedCategoryId) {
+  if ((ctx.reportType === 'category' || ctx.reportType === 'products-category') && ctx.selectedCategoryId) {
     relevantProducts = products.filter((p) => String(p.categoryId) === ctx.selectedCategoryId);
-  } else if (ctx.reportType === 'product' && ctx.selectedProductId) {
+  } else if ((ctx.reportType === 'product' || ctx.reportType === 'products-product' || ctx.reportType === 'pnl-product') && ctx.selectedProductId) {
     relevantProducts = products.filter((p) => String(p.id) === ctx.selectedProductId);
   } else if (ctx.reportType === 'production-history' && ctx.historyScopeId) {
     const ids = productIdsForHistoryScope(ctx.historyScope, ctx.historyScopeId, products, categories);
+    relevantProducts = ids ? products.filter((p) => ids.has(p.id)) : [];
+  } else if (ctx.reportType === 'products-group' && ctx.selectedGroupId) {
+    const ids = productIdsForHistoryScope('group', ctx.selectedGroupId, products, categories);
     relevantProducts = ids ? products.filter((p) => ids.has(p.id)) : [];
   }
 
   const rows = buildProductRows(relevantProducts, totals, categories, ctx.reportType);
 
   const catSummary = mapCategorySummary(
-    ctx.reportType === 'category' && ctx.selectedCategoryId
+    ((ctx.reportType === 'category' || ctx.reportType === 'products-category') && ctx.selectedCategoryId)
       ? categories.filter((c) => String(c.id) === ctx.selectedCategoryId)
       : categories,
     products,
@@ -1862,20 +2392,26 @@ export async function renderReports(container) {
     ? `${ctx.reportTitle} — ${ctx.filterLabel}`
     : ctx.reportTitle;
 
-  const needsCategory = ctx.reportType === 'category' && !ctx.selectedCategoryId;
-  const needsProduct = ctx.reportType === 'product' && !ctx.selectedProductId;
+  const needsCategory = (ctx.reportType === 'category' || ctx.reportType === 'products-category') && !ctx.selectedCategoryId;
+  const needsProduct = (ctx.reportType === 'product' || ctx.reportType === 'products-product' || ctx.reportType === 'pnl-product') && !ctx.selectedProductId;
+  const needsGroup = ctx.reportType === 'products-group' && !ctx.selectedGroupId;
+  const needsPortionName = ctx.reportType === 'portions-type' && !ctx.selectedPortionName;
   const needsHistoryScope = ctx.reportType === 'production-history' && !ctx.historyScopeId;
   const isFlowsReport = isFlowsReportType(ctx.reportType);
   const isHistoryReport = ctx.reportType === 'production-history';
   const isManagerReport = isManagerReportType(ctx.reportType);
+  const isProductsReport = isProductsReportType(ctx.reportType);
+  const isPortionsReport = isPortionsReportType(ctx.reportType);
+  const isPnlReport = isPnlReportType(ctx.reportType);
   const isFlowsSummary = ctx.reportType === 'flows-summary';
   const isFlowsDetail = ctx.reportType === 'flows-detail';
-  const canExport = isManagerReport || isFlowsReport || isHistoryReport
-    ? !needsHistoryScope
+  const canExport = isManagerReport || isFlowsReport || isHistoryReport || isPortionsReport || isPnlReport || isProductsReport
+    ? !(needsHistoryScope || needsCategory || needsProduct || needsGroup || needsPortionName)
     : (!needsCategory && !needsProduct);
   const sheetsHTML = await renderSheetsStatusHTML();
   const sheetsReady = await isSheetsConfigured();
-  const flowsOverview = isFlowsReport ? await getAllFlowsOverview() : [];
+  const flowsOverview = await getAllFlowsOverview();
+  const portionNames = collectPortionNamesFromRuns(productionRuns);
   const flowsReportHtml = isFlowsSummary
     ? await buildFlowsReportHTML(productionRuns, productMap, flowsOverview)
     : isFlowsDetail
@@ -1885,18 +2421,32 @@ export async function renderReports(container) {
     ? await fetchManagerReportData(ctx.from, ctx.to, { categories, productMap })
     : null;
   const managerReportHtml = managerData ? buildManagerReportHTML(managerData, ctx) : '';
-  const previewHtml = isManagerReport
-    ? managerReportHtml
-    : isFlowsReport
-      ? flowsReportHtml
-      : isHistoryReport
-        ? buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap)
-        : ctx.reportType === 'week'
-          ? await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap)
-          : buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+  const portionsReportHtml = isPortionsReport
+    ? renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap, {
+      portionName: ctx.reportType === 'portions-type' ? (ctx.selectedPortionName || '') : '',
+    })
+    : '';
+  const pnlReportHtml = isPnlReport
+    ? buildPnlPreviewHTML(ctx, totals, rows, entries, productMap)
+    : '';
+  let previewHtml = '';
+  if (isManagerReport) previewHtml = managerReportHtml;
+  else if (isFlowsReport) previewHtml = flowsReportHtml;
+  else if (isPortionsReport) previewHtml = portionsReportHtml;
+  else if (isPnlReport) previewHtml = pnlReportHtml;
+  else if (isHistoryReport) previewHtml = buildProductionHistoryPreviewHTML(ctx, entries, productMap, categories, catMap);
+  else if (ctx.reportType === 'week') {
+    previewHtml = await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap);
+  } else {
+    previewHtml = buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+  }
   const isPageView = container.dataset.reportView === 'page';
 
-  const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth, catalog);
+  const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth, catalog, {
+    flowsOverview,
+    groups,
+    portionNames,
+  });
 
   if (isPageView) {
     container.innerHTML = `
@@ -1915,67 +2465,73 @@ export async function renderReports(container) {
       </div>`;
 
     bindFilterEvents(container);
+    bindReportCollapse(container);
     bindReportPageToolbar(container, { fullTitle, ctx, safeLabel, previewHtml });
     return;
   }
 
-  container.innerHTML = `
-    <div class="card sheets-primary-card">
-      <div class="card-title">📊 Google Sheets</div>
-      <div id="sheets-status">${sheetsHTML}</div>
-    </div>
+  const toolsBody = `
+      <div class="card sheets-primary-card" style="margin:0 0 12px;box-shadow:none">
+        <div class="card-title">📊 Google Sheets</div>
+        <div id="sheets-status">${sheetsHTML}</div>
+      </div>
+      <div class="card report-actions-card" style="margin:0 0 12px;box-shadow:none">
+        <div class="card-title">הפקת דוח</div>
+        ${needsCategory ? '<p class="report-hint">בחר קטגוריה לצפייה ולייצוא</p>' : ''}
+        ${needsProduct ? '<p class="report-hint">בחר מוצר לצפייה ולייצוא</p>' : ''}
+        ${needsGroup ? '<p class="report-hint">בחר קטגוריה כללית לצפייה ולייצוא</p>' : ''}
+        ${needsPortionName ? '<p class="report-hint">בחר סוג מנה לצפייה ולייצוא</p>' : ''}
+        ${needsHistoryScope ? '<p class="report-hint">בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולייצוא</p>' : ''}
+        <button type="button" class="btn btn-primary" id="open-report-page" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+          📄 דוח מעוצב — כמו באפליקציה
+        </button>
+        <button type="button" class="btn btn-primary" id="export-sheets-report" style="width:100%;margin-bottom:8px" ${canExport && sheetsReady ? '' : 'disabled'}>
+          📊 שלח דוח ל-Google Sheets
+        </button>
+        ${!sheetsReady ? `<button type="button" class="btn btn-secondary" id="export-sheets-setup" style="width:100%;margin-bottom:8px">🔗 חבר Google Sheets לייצוא</button>` : ''}
+        <button type="button" class="btn btn-secondary" id="preview-report" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+          👁 צפייה מקדימה
+        </button>
+        <details class="excel-export-details">
+          <summary class="excel-export-summary">ייצוא Excel (גיבוי)</summary>
+          <button type="button" class="btn btn-secondary btn-sm" id="export-excel" style="width:100%;margin:8px 0" ${canExport ? '' : 'disabled'}>
+            📊 הורד Excel — ייצור
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="export-process" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+            📝 הורד Excel — תיעוד
+          </button>
+          <button type="button" class="btn btn-secondary btn-sm" id="export-combined" style="width:100%" ${canExport ? '' : 'disabled'}>
+            📋 הורד Excel — משולב
+          </button>
+        </details>
+      </div>
+      <div class="card report-import-card" style="margin:0 0 12px;box-shadow:none">
+        <div class="card-title">ייבוא נתונים</div>
+        <p class="report-hint">מומלץ: ייבוא מ-Google Sheets · או מקובץ Excel</p>
+        <input type="file" id="reports-import-file" accept=".csv,.xlsx,.xls,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+        <button type="button" class="btn btn-secondary" id="reports-import-btn" style="width:100%;margin-bottom:8px">
+          📥 ייבא קובץ Excel
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="reports-template-btn" style="width:100%">
+          הורד קובץ דוגמה
+        </button>
+      </div>
+      <div class="card report-audit-card" style="margin:0;box-shadow:none">
+        <div class="card-title">🔍 בדיקת תקינות חישובים</div>
+        <p class="report-hint">בודק שאין רישומים יתומים, כפילויות, או פערים אחרי איחוד מוצרים</p>
+        <button type="button" class="btn btn-secondary" id="run-audit" style="width:100%;margin-bottom:8px">
+          הרץ בדיקת תקינות
+        </button>
+        <div id="audit-results"></div>
+      </div>`;
 
+  container.innerHTML = `
     ${filtersCard}
 
-    <div class="card report-actions-card">
-      <div class="card-title">הפקת דוח</div>
-      ${needsCategory ? '<p class="report-hint">בחר קטגוריה לצפייה ולייצוא</p>' : ''}
-      ${needsProduct ? '<p class="report-hint">בחר מוצר לצפייה ולייצוא</p>' : ''}
-      ${needsHistoryScope ? '<p class="report-hint">בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולייצוא</p>' : ''}
-      <button type="button" class="btn btn-primary" id="open-report-page" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
-        📄 דוח מעוצב — כמו באפליקציה
-      </button>
-      <button type="button" class="btn btn-primary" id="export-sheets-report" style="width:100%;margin-bottom:8px" ${canExport && sheetsReady ? '' : 'disabled'}>
-        📊 שלח דוח ל-Google Sheets
-      </button>
-      ${!sheetsReady ? `<button type="button" class="btn btn-secondary" id="export-sheets-setup" style="width:100%;margin-bottom:8px">🔗 חבר Google Sheets לייצוא</button>` : ''}
-      <button type="button" class="btn btn-secondary" id="preview-report" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
-        👁 צפייה מקדימה
-      </button>
-      <details class="excel-export-details">
-        <summary class="excel-export-summary">ייצוא Excel (גיבוי)</summary>
-        <button type="button" class="btn btn-secondary btn-sm" id="export-excel" style="width:100%;margin:8px 0" ${canExport ? '' : 'disabled'}>
-          📊 הורד Excel — ייצור
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm" id="export-process" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
-          📝 הורד Excel — תיעוד
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm" id="export-combined" style="width:100%" ${canExport ? '' : 'disabled'}>
-          📋 הורד Excel — משולב
-        </button>
-      </details>
-    </div>
-
-    <div class="card report-import-card">
-      <div class="card-title">ייבוא נתונים</div>
-      <p class="report-hint">מומלץ: ייבוא מ-Google Sheets (למעלה) · או מקובץ Excel</p>
-      <input type="file" id="reports-import-file" accept=".csv,.xlsx,.xls,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
-      <button type="button" class="btn btn-secondary" id="reports-import-btn" style="width:100%;margin-bottom:8px">
-        📥 ייבא קובץ Excel
-      </button>
-      <button type="button" class="btn btn-secondary btn-sm" id="reports-template-btn" style="width:100%">
-        הורד קובץ דוגמה
-      </button>
-    </div>
-
-    <div class="card report-audit-card">
-      <div class="card-title">🔍 בדיקת תקינות חישובים</div>
-      <p class="report-hint">בודק שאין רישומים יתומים, כפילויות, או פערים אחרי איחוד מוצרים</p>
-      <button type="button" class="btn btn-secondary" id="run-audit" style="width:100%;margin-bottom:8px">
-        הרץ בדיקת תקינות
-      </button>
-      <div id="audit-results"></div>
-    </div>
+    ${renderCollapsibleReportSection('tools', 'הפקת דוחות, יבוא ובדיקה', toolsBody, {
+    defaultOpen: false,
+    className: 'report-tools-section',
+  })}
 
     <p class="stats-block-label">${fullTitle} · ${ctx.label}</p>
 
@@ -1983,6 +2539,16 @@ export async function renderReports(container) {
     <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : 'report-flows-detail-card'}">
       <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
       ${flowsReportHtml}
+    </div>
+    ` : isPortionsReport ? `
+    <div class="card report-portions-only-card">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${needsPortionName ? '<p class="report-hint">בחר סוג מנה</p>' : portionsReportHtml}
+    </div>
+    ` : isPnlReport ? `
+    <div class="card report-pnl-card">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${needsProduct ? '<p class="report-hint">בחר מוצר</p>' : pnlReportHtml}
     </div>
     ` : isManagerReport ? `
     <div class="card report-manager-card">
@@ -2067,6 +2633,7 @@ export async function renderReports(container) {
     </div>`}`;
 
   bindFilterEvents(container);
+  bindReportCollapse(container);
 
   bindSheetsStatusEvents(container, {
     onRefresh: () => renderReports(container),

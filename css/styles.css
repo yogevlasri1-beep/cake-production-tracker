@@ -6790,6 +6790,62 @@ table.report-cat-summary-table td:not(:first-child) {
   margin-top: 8px;
 }
 
+.report-section-collapse > .report-section-collapse-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.report-section-collapse > .report-section-collapse-summary::-webkit-details-marker {
+  display: none;
+}
+
+.report-section-collapse-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.report-section-collapse-chevron::before {
+  content: '';
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-inline-end: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-135deg);
+  opacity: 0.55;
+  transition: transform 0.15s ease;
+}
+
+.report-section-collapse:not([open]) > .report-section-collapse-summary .report-section-collapse-chevron::before {
+  transform: rotate(45deg);
+}
+
+.report-section-collapse-body {
+  padding-top: 4px;
+}
+
+.report-section-collapse.card {
+  margin-bottom: 10px;
+}
+
+.report-pnl-positive {
+  color: #15803d;
+  font-weight: 700;
+}
+
+.report-pnl-negative {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.report-tools-section .card {
+  border: 1px solid var(--border);
+}
+
 .excel-export-summary {
   cursor: pointer;
   font-size: 0.85rem;
