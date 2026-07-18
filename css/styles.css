@@ -7703,7 +7703,35 @@ body {
 }
 
 .manager-plan-td-qty {
-  width: 7.5rem;
+  width: 11rem;
+  min-width: 9rem;
+}
+
+.manager-plan-product-added-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manager-plan-product-added-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+
+.manager-plan-product-added-icon {
+  flex-shrink: 0;
+}
+
+.manager-plan-product-added-text {
+  min-width: 0;
+  word-break: break-word;
 }
 
 .manager-plan-td-done {

@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=323';
+} from '../db.js?v=324';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=323';
-import { openModal, closeModal } from '../modal.js?v=323';
-import { renderTargets } from './targets.js?v=323';
-import { renderPurchasingInManager } from './purchasing.js?v=323';
-import { forceAppUpdate } from '../sw-register.js?v=323';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=323';
+} from '../utils.js?v=324';
+import { openModal, closeModal } from '../modal.js?v=324';
+import { renderTargets } from './targets.js?v=324';
+import { renderPurchasingInManager } from './purchasing.js?v=324';
+import { forceAppUpdate } from '../sw-register.js?v=324';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=324';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=323';
+} from '../daily-plan-export.js?v=324';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -548,12 +548,46 @@ function planTableRowAttrs(item) {
   return `class="manager-plan-item${item.done ? ' is-done' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}" data-assignee="${escapeHtml(item.assigneeName || '')}"`;
 }
 
-function planProductTableRow(item) {
+function planProductAddedListHTML(item, { relatedPortions = [], relatedTasks = [] } = {}) {
+  const lines = [];
+  if (item.portionName) {
+    const meta = [
+      item.portionWeight != null ? `${item.portionWeight} ק"ג` : '',
+      item.portionExtra || '',
+    ].filter(Boolean).join(' · ');
+    lines.push({
+      icon: '🍽',
+      text: `${item.portionName}${meta ? ` (${meta})` : ''}`,
+    });
+  }
+  for (const p of relatedPortions) {
+    if (item.portionPresetId && Number(p.portionPresetId) === Number(item.portionPresetId)) continue;
+    const name = p.portionName || p.label || 'מנה';
+    const qty = p.quantity != null ? ` × ${formatDecimal(p.quantity)}` : '';
+    lines.push({ icon: '🍽', text: `${name}${qty}` });
+  }
+  for (const t of relatedTasks) {
+    const icon = t.itemKind === 'flow_cleaning' ? '🧹' : '✅';
+    lines.push({ icon, text: planItemTaskName(t) });
+  }
+  if (!lines.length) return '';
+  return `
+    <ul class="manager-plan-product-added-list">
+      ${lines.map((line) => `
+        <li class="manager-plan-product-added-item">
+          <span class="manager-plan-product-added-icon">${line.icon}</span>
+          <span class="manager-plan-product-added-text">${escapeHtml(line.text)}</span>
+        </li>`).join('')}
+    </ul>`;
+}
+
+function planProductTableRow(item, extras = {}) {
   return `
     <tr ${planTableRowAttrs(item)}>
       <td class="manager-plan-td-name">${escapeHtml(item.label || 'מוצר')}</td>
       <td class="manager-plan-td-qty">
         <input type="number" class="plan-item-qty-input manager-plan-table-qty" min="0" step="0.001" inputmode="decimal" value="${item.quantity ?? ''}" aria-label="כמות" placeholder="—">
+        ${planProductAddedListHTML(item, extras)}
       </td>
       ${planTableActionsHTML(item)}
     </tr>`;

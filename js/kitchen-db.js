@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=323';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=324';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=323';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=323';
+} from './validators.js?v=324';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=324';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
