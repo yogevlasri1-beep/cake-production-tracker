@@ -7662,6 +7662,99 @@ body {
   font-weight: 700;
 }
 
+.manager-plan-table-wrap {
+  overflow-x: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.manager-plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.manager-plan-table th,
+.manager-plan-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.manager-plan-table th {
+  background: color-mix(in srgb, var(--primary-soft) 70%, white);
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.manager-plan-table tr:last-child td {
+  border-bottom: none;
+}
+
+.manager-plan-table tr.manager-plan-item.is-done td.manager-plan-td-name,
+.manager-plan-table tr.manager-plan-item.is-done td.manager-plan-td-flow {
+  text-decoration: line-through;
+  opacity: 0.65;
+}
+
+.manager-plan-td-qty {
+  width: 7.5rem;
+}
+
+.manager-plan-td-done {
+  width: 4.5rem;
+  text-align: center;
+}
+
+.manager-plan-td-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: end;
+}
+
+.manager-plan-td-actions .btn {
+  margin-inline-start: 4px;
+}
+
+.manager-plan-table-qty {
+  width: 100%;
+  max-width: 6.5rem;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.manager-plan-highlights-block {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.manager-plan-highlights-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  margin-bottom: 8px;
+}
+
+.manager-plan-highlights-ul {
+  margin: 0 0 12px;
+  padding-inline-start: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.manager-plan-highlights-ul li {
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+
 .manager-plan-section {
   margin-bottom: 14px;
 }
