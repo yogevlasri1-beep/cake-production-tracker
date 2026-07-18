@@ -2999,6 +2999,56 @@ body.flow-checklist-drag-active {
 }
 
 /* ── בית: ציר זמן תזרים ── */
+.home-active-flows-collapse {
+  margin-bottom: 16px;
+}
+
+.home-active-flows-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  user-select: none;
+}
+
+.home-active-flows-summary::-webkit-details-marker {
+  display: none;
+}
+
+.home-active-flows-summary::after {
+  content: '‹';
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+
+.home-active-flows-collapse[open] > .home-active-flows-summary::after {
+  transform: rotate(90deg);
+}
+
+.home-active-flows-summary-title {
+  min-width: 0;
+}
+
+.home-active-flows-body {
+  margin-top: 12px;
+}
+
+.home-active-flows-body .home-flow-card:last-child {
+  margin-bottom: 0;
+}
+
+.process-list-mode-tabs {
+  margin-bottom: 12px;
+}
+
 .home-flow-card {
   margin-bottom: 12px;
 }

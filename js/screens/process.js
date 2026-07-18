@@ -24,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=316';
+} from '../db.js?v=317';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=316').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=317').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=316';
-import { openModal, closeModal } from '../modal.js?v=316';
-import { requestAutoBackupNow } from '../backup-service.js?v=316';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=316';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=316';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=317';
+import { openModal, closeModal } from '../modal.js?v=317';
+import { requestAutoBackupNow } from '../backup-service.js?v=317';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=317';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=317';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1377,6 +1377,15 @@ function renderAllRunsByFlowHTML(runs, layout, catMap, productMap, groupMap, flo
 
 const RUNS_HISTORY_MODE_KEY = 'yitzurRunsHistoryMode';
 const RUNS_HISTORY_FLOW_KEY = 'yitzurRunsHistoryFlowId';
+const PROCESS_LIST_MODE_KEY = 'yitzurProcessListMode';
+
+function getProcessListMode() {
+  return sessionStorage.getItem(PROCESS_LIST_MODE_KEY) === 'build' ? 'build' : 'active';
+}
+
+function setProcessListMode(mode) {
+  sessionStorage.setItem(PROCESS_LIST_MODE_KEY, mode === 'build' ? 'build' : 'active');
+}
 
 function getRunsHistoryMode() {
   const mode = sessionStorage.getItem(RUNS_HISTORY_MODE_KEY);
@@ -1579,8 +1588,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=316');
-    const { db } = await import('../db.js?v=316');
+    const { getRecipe } = await import('../kitchen-db.js?v=317');
+    const { db } = await import('../db.js?v=317');
     const blocks = [];
 
     for (const row of rows) {
@@ -4134,26 +4143,43 @@ export async function renderProcess(container) {
     return renderRunsHistoryView(container, ctx);
   }
 
+  const listMode = getProcessListMode();
+  const isBuildMode = listMode === 'build';
+
   const [activeRuns, dateRuns, flowsOverview, sheetsHTML] = await Promise.all([
     getActiveProductionRuns(),
     getProductionRunsForDate(date),
     getAllFlowsOverview(),
-    renderSheetsStatusHTML(),
+    isBuildMode ? renderSheetsStatusHTML() : Promise.resolve(''),
   ]);
   syncAllActiveProductionRuns().catch(() => {});
   const doneRuns = dateRuns.filter((r) => r.status === 'completed');
 
-  container.innerHTML = `
+  const listModeTabs = `
+    <div class="flow-scope-tabs process-list-mode-tabs" role="tablist" aria-label="תצוגת תזרימים">
+      <button type="button" class="flow-scope-tab process-list-mode-tab${!isBuildMode ? ' active' : ''}" data-list-mode="active">תזרימים פעילים</button>
+      <button type="button" class="flow-scope-tab process-list-mode-tab${isBuildMode ? ' active' : ''}" data-list-mode="build">בניית תזרים</button>
+    </div>`;
+
+  const activeModeHTML = `
     <div class="section-header">
       <h2 style="font-size:1rem">תזרימי יצור</h2>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <button type="button" class="btn btn-secondary btn-sm" id="sync-all-active-runs">🔄 רענן פעילים</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="manage-flow">⚙️ נהל תזרים</button>
         <button type="button" class="btn btn-primary btn-sm" id="new-run">+ תהליך חדש</button>
       </div>
     </div>
 
+    ${listModeTabs}
+
     <p class="form-hint" style="margin-bottom:12px">רישום ייצור מתבצע בתוך התזרים — בשלב <strong>תיעוד ייצור</strong> בזמן תהליך פעיל</p>
+
+    <div class="card">
+      <div class="card-title">פעילים (${activeRuns.length})</div>
+      ${activeRuns.length
+        ? renderRunsListGroupedHTML(activeRuns, layout, catMap, productMap, groupMap, { listDate: date })
+        : '<p class="form-hint" style="text-align:center;padding:16px">אין תזרימים פעילים — לחץ «תהליך חדש»</p>'}
+    </div>
 
     <div class="card">
       <div class="form-group" style="margin-bottom:0">
@@ -4162,27 +4188,38 @@ export async function renderProcess(container) {
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-title">הושלמו — ${formatDate(date)}</div>
+      ${doneRuns.length === 0
+        ? '<p class="form-hint" style="text-align:center;padding:8px">אין תהליכים שהושלמו לתאריך זה</p>'
+        : doneRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate: date })).join('')}
+    </div>
+
+    <div class="card flow-runs-history-entry">
+      <button type="button" class="btn btn-secondary" id="open-runs-history" style="width:100%">📋 היסטוריית תזרימים</button>
+    </div>`;
+
+  const buildModeHTML = `
+    <div class="section-header">
+      <h2 style="font-size:1rem">בניית תזרים</h2>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn btn-secondary btn-sm" id="manage-flow">⚙️ נהל תזרים</button>
+      </div>
+    </div>
+
+    ${listModeTabs}
+
+    <p class="form-hint" style="margin-bottom:12px">הגדר תזרימים, שלבים ומנות — ואז התחל תהליך מ«תזרימים פעילים»</p>
+
     ${flowsOverview.length ? `
     <div class="card flows-overview">
       <div class="card-title">תזרימים מוגדרים (${flowsOverview.length})</div>
       <p class="form-hint" style="margin-bottom:8px">לחץ על תזרים לעריכה והגדרת שלבים</p>
       ${renderFlowsOverviewGrouped(flowsOverview, layout, { showHistoryButton: false })}
-    </div>` : ''}
-
-    ${activeRuns.length ? `
-      <div class="card">
-        <div class="card-title">פעילים (${activeRuns.length})</div>
-        ${renderRunsListGroupedHTML(activeRuns, layout, catMap, productMap, groupMap, { listDate: date })}
-      </div>` : ''}
-
+    </div>` : `
     <div class="card">
-      <div class="card-title">${activeRuns.length ? 'הושלמו' : 'תהליכים'} — ${formatDate(date)}</div>
-      ${doneRuns.length === 0 && activeRuns.length === 0
-        ? '<p class="form-hint" style="text-align:center;padding:16px">אין תהליכים לתאריך זה — לחץ «תהליך חדש»</p>'
-        : doneRuns.length === 0
-          ? '<p class="form-hint" style="text-align:center;padding:8px">אין תהליכים שהושלמו</p>'
-          : doneRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap, { listDate: date })).join('')}
-    </div>
+      <p class="form-hint" style="text-align:center;padding:16px">אין תזרימים מוגדרים — לחץ «נהל תזרים» ליצירה</p>
+    </div>`}
 
     <div class="card sheets-primary-card">
       <div class="card-title">📊 Google Sheets</div>
@@ -4202,11 +4239,18 @@ export async function renderProcess(container) {
       <button type="button" class="btn btn-secondary btn-sm" id="process-template-btn" style="width:100%">
         הורד קובץ דוגמה
       </button>
-    </details>
+    </details>`;
 
-    <div class="card flow-runs-history-entry">
-      <button type="button" class="btn btn-secondary" id="open-runs-history" style="width:100%">📋 היסטוריית תזרימים</button>
-    </div>`;
+  container.innerHTML = isBuildMode ? buildModeHTML : activeModeHTML;
+
+  container.querySelectorAll('.process-list-mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = btn.dataset.listMode;
+      if (!next || next === listMode) return;
+      setProcessListMode(next);
+      renderProcess(container);
+    });
+  });
 
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
@@ -4271,32 +4315,34 @@ export async function renderProcess(container) {
     });
   });
 
-  bindSheetsStatusEvents(container, {
-    onRefresh: () => renderProcess(container),
-    onImportComplete: () => renderProcess(container),
-  });
+  if (isBuildMode) {
+    bindSheetsStatusEvents(container, {
+      onRefresh: () => renderProcess(container),
+      onImportComplete: () => renderProcess(container),
+    });
 
-  document.getElementById('process-import-btn')?.addEventListener('click', () => {
-    document.getElementById('process-import-file').click();
-  });
+    document.getElementById('process-import-btn')?.addEventListener('click', () => {
+      document.getElementById('process-import-file').click();
+    });
 
-  document.getElementById('process-template-btn')?.addEventListener('click', async () => {
-    const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
-    const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'dugma-yitzur.csv';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
+    document.getElementById('process-template-btn')?.addEventListener('click', async () => {
+      const { CSV_TEMPLATE_BLOCKS } = await import('../import.js');
+      const blob = new Blob(['\ufeff' + CSV_TEMPLATE_BLOCKS], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'dugma-yitzur.csv';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
 
-  document.getElementById('process-import-file')?.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-    const { handleProductionImportFile } = await import('../import-flow.js');
-    await handleProductionImportFile(file, { onComplete: () => renderProcess(container) });
-  });
+    document.getElementById('process-import-file')?.addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+      const { handleProductionImportFile } = await import('../import-flow.js');
+      await handleProductionImportFile(file, { onComplete: () => renderProcess(container) });
+    });
+  }
 
   restoreProcessScrollIfNeeded(container);
 }

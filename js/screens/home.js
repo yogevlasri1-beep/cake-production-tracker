@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=316';
+} from '../db.js?v=317';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=316';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=316';
+} from '../utils.js?v=317';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=317';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=316';
-import { requestAutoBackupNow } from '../backup-service.js?v=316';
+} from '../calc.js?v=317';
+import { requestAutoBackupNow } from '../backup-service.js?v=317';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -74,31 +74,35 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
   if (!activeRuns.length) return '';
 
   return `
-    <div class="section-header home-section-header">
-      <h2>תזרימי יצור פעילים</h2>
-    </div>
-    ${activeRuns.map((run) => {
-      const { date, time } = runDateParts(run);
-      const { targetName, flowName } = homeRunTitleParts(run, catMap, productMap, groupMap);
-      return `
-      <div class="card home-flow-card" data-run-id="${run.id}">
-        <div class="home-flow-card-header">
-          <div class="home-flow-card-info">
-            <div class="home-flow-card-title">
-              <span class="home-flow-card-target">${targetName}</span>
-              ${flowName ? `<span class="home-flow-card-flow">${flowName}</span>` : ''}
+    <details class="card home-active-flows-collapse">
+      <summary class="home-active-flows-summary">
+        <span class="home-active-flows-summary-title">תזרימי יצור פעילים (${activeRuns.length})</span>
+      </summary>
+      <div class="home-active-flows-body">
+        ${activeRuns.map((run) => {
+          const { date, time } = runDateParts(run);
+          const { targetName, flowName } = homeRunTitleParts(run, catMap, productMap, groupMap);
+          return `
+          <div class="card home-flow-card" data-run-id="${run.id}">
+            <div class="home-flow-card-header">
+              <div class="home-flow-card-info">
+                <div class="home-flow-card-title">
+                  <span class="home-flow-card-target">${targetName}</span>
+                  ${flowName ? `<span class="home-flow-card-flow">${flowName}</span>` : ''}
+                </div>
+                ${run.batchNumber ? `<div class="home-flow-card-batch">אצווה ${escapeHtml(String(run.batchNumber))}</div>` : ''}
+                <div class="home-flow-card-date-row">
+                  <span class="home-flow-card-date">${escapeHtml(date)}</span>${time ? `<span class="home-flow-card-time-sep">·</span><span class="home-flow-card-time">${escapeHtml(time)}</span>` : ''}
+                </div>
+                <div class="home-flow-card-meta">שלב ${idxDisplay(run)}</div>
+              </div>
+              <button type="button" class="btn btn-primary btn-sm home-flow-open" data-run-id="${run.id}" data-run-date="${run.date}">פתח</button>
             </div>
-            ${run.batchNumber ? `<div class="home-flow-card-batch">אצווה ${escapeHtml(String(run.batchNumber))}</div>` : ''}
-            <div class="home-flow-card-date-row">
-              <span class="home-flow-card-date">${escapeHtml(date)}</span>${time ? `<span class="home-flow-card-time-sep">·</span><span class="home-flow-card-time">${escapeHtml(time)}</span>` : ''}
-            </div>
-            <div class="home-flow-card-meta">שלב ${idxDisplay(run)}</div>
-          </div>
-          <button type="button" class="btn btn-primary btn-sm home-flow-open" data-run-id="${run.id}" data-run-date="${run.date}">פתח</button>
-        </div>
-        ${buildHomeFlowTimeline(run)}
-      </div>`;
-    }).join('')}`;
+            ${buildHomeFlowTimeline(run)}
+          </div>`;
+        }).join('')}
+      </div>
+    </details>`;
 }
 
 function idxDisplay(run) {
@@ -614,13 +618,13 @@ export async function renderHome(container) {
       if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
       main.dataset.view = 'run';
       main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=316');
+      const { navigate } = await import('../app.js?v=317');
       navigate('process');
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=316');
+    const { navigate } = await import('../app.js?v=317');
     navigate('backup');
   });
 
