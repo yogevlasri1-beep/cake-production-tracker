@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=326';
+import { escapeHtml } from './utils.js?v=327';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -34,6 +34,11 @@ const DAILY_PLAN_PRINT_CSS = `
     gap: 10px 14px;
     align-items: start;
   }
+  .plan-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
   .plan-section {
     break-inside: avoid;
     margin-bottom: 8px;
@@ -46,6 +51,52 @@ const DAILY_PLAN_PRINT_CSS = `
     border-bottom: 2px solid #bfdbfe;
     padding-bottom: 3px;
     margin-bottom: 6px;
+  }
+  .plan-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12pt;
+    border: 2px solid #94a3b8;
+  }
+  .plan-table th,
+  .plan-table td {
+    border: 1px solid #cbd5e1;
+    padding: 6px 8px;
+    text-align: right;
+    vertical-align: top;
+  }
+  .plan-table th {
+    background: #dbeafe;
+    font-weight: 800;
+    font-size: 11pt;
+  }
+  .plan-td-qty,
+  .plan-td-done {
+    width: 18%;
+    text-align: center;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .plan-highlights-block {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: #fef9c3;
+    border: 2px solid #facc15;
+    border-radius: 8px;
+  }
+  .plan-highlights-title {
+    font-size: 12pt;
+    font-weight: 800;
+    margin-bottom: 4px;
+  }
+  .plan-highlights-list {
+    margin: 0;
+    padding-inline-start: 1.2em;
+  }
+  .plan-highlights-list li {
+    font-size: 12pt;
+    font-weight: 600;
+    margin: 2px 0;
   }
   .plan-list {
     list-style: none;
@@ -185,7 +236,10 @@ const DAILY_PLAN_PRINT_CSS = `
   @media print {
     body { padding: 0; font-size: 13pt; }
     .plan-header h1 { font-size: 20pt; }
-    .plan-section-title { font-size: 15pt; }
+    .plan-section-title { font-size: 14pt; }
+    .plan-table { font-size: 11pt; }
+    .plan-table th, .plan-table td { padding: 4px 6px; }
+    .plan-highlights-list li { font-size: 11pt; }
     .plan-list li { font-size: 13pt; padding: 2px 0; }
     .plan-highlights { font-size: 13pt; padding: 6px 8px; }
     .plan-page--flows {
