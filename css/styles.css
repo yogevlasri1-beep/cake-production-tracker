@@ -2012,10 +2012,70 @@ body {
   margin-bottom: 16px;
 }
 
+.flow-history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.flow-history-mode-tabs {
+  flex: 1 1 auto;
+}
+
+.flow-history-flow-filter {
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.flow-history-flow-filter label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.flow-history-flow-filter select {
+  width: 100%;
+}
+
+.flow-history-mode-tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.flow-runs-flow-group + .flow-runs-flow-group {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 2px solid var(--border, #e2e8f0);
+}
+
+.flow-runs-flow-label {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 10px;
+}
+
+.flow-runs-flow-count {
+  font-weight: 600;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 .flow-runs-date-group + .flow-runs-date-group {
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.flow-runs-date-group--nested {
+  margin-right: 4px;
+}
+
+.flow-runs-date-group--nested + .flow-runs-date-group--nested {
+  margin-top: 10px;
+  padding-top: 8px;
 }
 
 .flow-runs-date-label {

@@ -24,20 +24,20 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=315';
+} from '../db.js?v=316';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=315').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=316').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=315';
-import { openModal, closeModal } from '../modal.js?v=315';
-import { requestAutoBackupNow } from '../backup-service.js?v=315';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=315';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=315';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=316';
+import { openModal, closeModal } from '../modal.js?v=316';
+import { requestAutoBackupNow } from '../backup-service.js?v=316';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=316';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=316';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1300,6 +1300,50 @@ function groupRunsByDate(runs) {
   return groups;
 }
 
+function groupRunsByFlow(runs, flowNameMap = new Map()) {
+  const groups = [];
+  const indexByFlow = new Map();
+  for (const run of runs) {
+    const key = run.flowId ? String(run.flowId) : 'none';
+    if (!indexByFlow.has(key)) {
+      const flowName = run.flowId
+        ? (flowNameMap.get(Number(run.flowId)) || run.flowName || `תזרים #${run.flowId}`)
+        : (run.flowName || 'ללא תזרים');
+      indexByFlow.set(key, groups.length);
+      groups.push({
+        flowId: run.flowId ? Number(run.flowId) : null,
+        flowName,
+        runs: [],
+      });
+    }
+    groups[indexByFlow.get(key)].runs.push(run);
+  }
+  groups.sort((a, b) => {
+    const da = a.runs[0]?.date || '';
+    const db = b.runs[0]?.date || '';
+    if (da !== db) return db.localeCompare(da);
+    return a.flowName.localeCompare(b.flowName, 'he');
+  });
+  return groups;
+}
+
+function buildHistoryFlowOptions(runs, allFlows = []) {
+  const nameMap = new Map(allFlows.map((f) => [Number(f.id), f.name]));
+  const seen = new Map();
+  for (const run of runs) {
+    if (!run.flowId) continue;
+    const id = Number(run.flowId);
+    if (seen.has(id)) continue;
+    seen.set(id, nameMap.get(id) || run.flowName || `תזרים #${id}`);
+  }
+  for (const f of allFlows) {
+    if (!seen.has(Number(f.id))) seen.set(Number(f.id), f.name);
+  }
+  return [...seen.entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
 function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
   if (!runs.length) {
     return '<p class="form-hint" style="text-align:center;padding:12px">עדיין לא התחלת תהליכי יצור</p>';
@@ -1310,6 +1354,48 @@ function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
       <div class="flow-runs-date-label">${formatDate(date)}</div>
       ${dayRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap)).join('')}
     </div>`).join('');
+}
+
+function renderAllRunsByFlowHTML(runs, layout, catMap, productMap, groupMap, flowNameMap = new Map()) {
+  if (!runs.length) {
+    return '<p class="form-hint" style="text-align:center;padding:12px">עדיין לא התחלת תהליכי יצור</p>';
+  }
+  const flowGroups = groupRunsByFlow(runs, flowNameMap);
+  return flowGroups.map(({ flowName, runs: flowRuns }) => {
+    const dateGroups = groupRunsByDate(flowRuns);
+    return `
+      <div class="flow-runs-flow-group">
+        <div class="flow-runs-flow-label">🔄 ${escapeHtml(flowName)} <span class="flow-runs-flow-count">(${flowRuns.length})</span></div>
+        ${dateGroups.map(({ date, runs: dayRuns }) => `
+          <div class="flow-runs-date-group flow-runs-date-group--nested">
+            <div class="flow-runs-date-label">${formatDate(date)}</div>
+            ${dayRuns.map((r) => renderRunCard(r, catMap, productMap, groupMap)).join('')}
+          </div>`).join('')}
+      </div>`;
+  }).join('');
+}
+
+const RUNS_HISTORY_MODE_KEY = 'yitzurRunsHistoryMode';
+const RUNS_HISTORY_FLOW_KEY = 'yitzurRunsHistoryFlowId';
+
+function getRunsHistoryMode() {
+  const mode = sessionStorage.getItem(RUNS_HISTORY_MODE_KEY);
+  return mode === 'flow' ? 'flow' : 'date';
+}
+
+function setRunsHistoryMode(mode) {
+  sessionStorage.setItem(RUNS_HISTORY_MODE_KEY, mode === 'flow' ? 'flow' : 'date');
+}
+
+function getRunsHistoryFlowFilter() {
+  const raw = sessionStorage.getItem(RUNS_HISTORY_FLOW_KEY) || '';
+  const id = Number(raw);
+  return id || '';
+}
+
+function setRunsHistoryFlowFilter(flowId) {
+  if (flowId) sessionStorage.setItem(RUNS_HISTORY_FLOW_KEY, String(flowId));
+  else sessionStorage.removeItem(RUNS_HISTORY_FLOW_KEY);
 }
 
 function metricsProductionRows(metrics, productMap) {
@@ -1493,8 +1579,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=315');
-    const { db } = await import('../db.js?v=315');
+    const { getRecipe } = await import('../kitchen-db.js?v=316');
+    const { db } = await import('../db.js?v=316');
     const blocks = [];
 
     for (const row of rows) {
@@ -1603,22 +1689,81 @@ function bindRunMetricsDetailClicks(container, run) {
 
 async function renderRunsHistoryView(container, ctx) {
   const { layout, catMap, productMap, groupMap } = ctx;
-  const allRuns = await getAllProductionRuns();
+  const [allRuns, allFlows] = await Promise.all([
+    getAllProductionRuns(),
+    getAllFlowsOverview(),
+  ]);
+  const flowNameMap = new Map(allFlows.map((f) => [Number(f.id), f.name]));
+  const flowOptions = buildHistoryFlowOptions(allRuns, allFlows);
+
+  let mode = getRunsHistoryMode();
+  const flowFilter = getRunsHistoryFlowFilter();
+  // בחירת תזרים ספציפי — תמיד לפי תאריך
+  if (flowFilter) mode = 'date';
+
+  const filteredRuns = flowFilter
+    ? allRuns.filter((r) => Number(r.flowId) === Number(flowFilter))
+    : allRuns;
+
+  const selectedFlowName = flowFilter
+    ? (flowNameMap.get(Number(flowFilter)) || filteredRuns[0]?.flowName || `תזרים #${flowFilter}`)
+    : '';
+
+  const listHTML = mode === 'flow'
+    ? renderAllRunsByFlowHTML(filteredRuns, layout, catMap, productMap, groupMap, flowNameMap)
+    : renderAllRunsByDateHTML(filteredRuns, layout, catMap, productMap, groupMap);
+
+  const hint = flowFilter
+    ? `תזרים «${selectedFlowName}» לפי תאריך — מהחדש לישן`
+    : (mode === 'flow'
+      ? 'מקובץ לפי תזרים · בתוך כל תזרים לפי תאריך'
+      : 'כל התהליכים לפי תאריך — מהחדש לישן');
 
   container.innerHTML = `
     <div class="card">
       <button type="button" class="btn btn-secondary btn-sm" id="back-from-runs-history">← חזרה</button>
       <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריית תזרימים</h2>
-      <p class="form-hint" style="margin-bottom:0">כל התהליכים לפי תאריך — מהחדש לישן</p>
+      <p class="form-hint" style="margin-bottom:12px">${escapeHtml(hint)}</p>
+      <div class="flow-history-toolbar">
+        <div class="flow-scope-tabs flow-history-mode-tabs" role="tablist" aria-label="אופן תצוגה">
+          <button type="button" class="flow-scope-tab flow-history-mode-tab${mode === 'date' ? ' active' : ''}" data-history-mode="date"${flowFilter ? ' disabled' : ''}>לפי תאריך</button>
+          <button type="button" class="flow-scope-tab flow-history-mode-tab${mode === 'flow' ? ' active' : ''}" data-history-mode="flow"${flowFilter ? ' disabled' : ''}>לפי תזרים</button>
+        </div>
+        <div class="form-group flow-history-flow-filter" style="margin:0">
+          <label for="runs-history-flow-filter">תזרים</label>
+          <select id="runs-history-flow-filter">
+            <option value="">כל התזרימים</option>
+            ${flowOptions.map((f) => `
+              <option value="${f.id}"${Number(flowFilter) === Number(f.id) ? ' selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
     </div>
 
     <div class="card flow-all-runs-history">
-      <div class="card-title">תהליכים (${allRuns.length})</div>
-      ${renderAllRunsByDateHTML(allRuns, layout, catMap, productMap, groupMap)}
+      <div class="card-title">${flowFilter ? escapeHtml(selectedFlowName) : 'תהליכים'} (${filteredRuns.length})</div>
+      ${filteredRuns.length
+    ? listHTML
+    : `<p class="form-hint" style="text-align:center;padding:12px">${flowFilter ? 'אין תהליכים לתזרים זה' : 'עדיין לא התחלת תהליכי יצור'}</p>`}
     </div>`;
 
   document.getElementById('back-from-runs-history')?.addEventListener('click', () => {
     container.dataset.view = 'list';
+    renderProcess(container);
+  });
+
+  container.querySelectorAll('.flow-history-mode-tab').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      const next = btn.dataset.historyMode;
+      if (!next || next === mode) return;
+      setRunsHistoryMode(next);
+      renderProcess(container);
+    });
+  });
+
+  document.getElementById('runs-history-flow-filter')?.addEventListener('change', (e) => {
+    setRunsHistoryFlowFilter(e.target.value);
     renderProcess(container);
   });
 
