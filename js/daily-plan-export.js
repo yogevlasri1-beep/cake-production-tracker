@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=333';
+import { escapeHtml } from './utils.js?v=334';
 
 const DAILY_PLAN_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }

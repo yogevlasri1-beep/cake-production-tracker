@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=333';
+} from '../db.js?v=334';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=333').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=334').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=333';
-import { openModal, closeModal } from '../modal.js?v=333';
-import { requestAutoBackupNow } from '../backup-service.js?v=333';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=333';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=333';
-import { materialMatchesSearch } from '../kitchen-db.js?v=333';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=334';
+import { openModal, closeModal } from '../modal.js?v=334';
+import { requestAutoBackupNow } from '../backup-service.js?v=334';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=334';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=334';
+import { materialMatchesSearch } from '../kitchen-db.js?v=334';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1637,8 +1637,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=333');
-    const { db } = await import('../db.js?v=333');
+    const { getRecipe } = await import('../kitchen-db.js?v=334');
+    const { db } = await import('../db.js?v=334');
     const blocks = [];
 
     for (const row of rows) {
@@ -2140,8 +2140,40 @@ function collectRunStepPortionEntries(run) {
   return entries;
 }
 
+function collectRunPortionSummaryRows(run) {
+  const rows = [];
+  (run?.steps || []).forEach((step) => {
+    if (!step.tracksPortions) return;
+    for (const batch of getStepPortionBatches(step)) {
+      const count = Number(batch.count) || 0;
+      if (!count) continue;
+      rows.push({
+        name: String(batch.name || 'מנה').trim() || 'מנה',
+        count: Math.round(count * 100) / 100,
+        fromRecipe: !!batch.fromRecipe,
+        date: batch.date || '',
+      });
+    }
+  });
+  for (const log of getRunPortionLogs(run)) {
+    const count = Number(log.count) || 0;
+    if (!count) continue;
+    rows.push({
+      name: String(log.name || 'מנה').trim() || 'מנה',
+      count: Math.round(count * 100) / 100,
+      fromRecipe: !!log.fromRecipe,
+      date: log.date || '',
+    });
+  }
+  return rows.sort((a, b) => {
+    const d = String(b.date || '').localeCompare(String(a.date || ''));
+    if (d) return d;
+    return a.name.localeCompare(b.name, 'he');
+  });
+}
+
 function renderRunPortionsSummaryTableHTML(run) {
-  const rows = collectRunPortionTypeRows(run);
+  const rows = collectRunPortionSummaryRows(run);
   if (!rows.length) {
     return '<p class="form-hint run-portions-summary-empty" style="margin:0">עדיין אין מנות מתועדות בתהליך</p>';
   }
@@ -2155,6 +2187,7 @@ function renderRunPortionsSummaryTableHTML(run) {
             <tr>
               <th>שם מנה</th>
               <th>כמות</th>
+              <th>תאריך</th>
             </tr>
           </thead>
           <tbody>
@@ -2162,6 +2195,7 @@ function renderRunPortionsSummaryTableHTML(run) {
               <tr>
                 <td class="run-portions-summary-name">${r.fromRecipe ? '<span class="flow-preset-recipe-star" title="ממתכון">★</span> ' : ''}${escapeHtml(r.name)}</td>
                 <td class="run-portions-summary-qty">${formatPortionCount(r.count)}</td>
+                <td class="run-portions-summary-date">${r.date ? formatDate(r.date) : '—'}</td>
               </tr>`).join('')}
           </tbody>
         </table>
@@ -2424,7 +2458,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=333');
+    const kitchen = await import('../kitchen-db.js?v=334');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),

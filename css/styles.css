@@ -3244,6 +3244,13 @@ body.flow-checklist-drag-active {
   white-space: nowrap;
 }
 
+.run-portions-summary-date {
+  width: 6.5rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .run-portions-summary-total {
   margin: 8px 0 0;
   font-size: 0.88rem;
