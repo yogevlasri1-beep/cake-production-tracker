@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=336';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=337';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=336';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=336';
+} from './validators.js?v=337';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=337';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1852,13 +1852,20 @@ export async function getRecipeLinkedRawMaterialIds() {
   return ids;
 }
 
-/** מסמן חומרי גלם כפעילים אם הם במתכונים, אחרת לא פעילים */
+/** מסמן חומרי גלם כפעילים אם הם במתכונים; אריזות תמיד פעילות */
 export async function syncRawMaterialsActiveFromRecipes() {
-  const linkedIds = await getRecipeLinkedRawMaterialIds();
-  const materials = await db.rawMaterials.toArray();
+  const [linkedIds, materials, categories] = await Promise.all([
+    getRecipeLinkedRawMaterialIds(),
+    db.rawMaterials.toArray(),
+    getSupplierCategories(),
+  ]);
+  const packagingCatIds = new Set(
+    categories.filter((c) => isPackagingSupplierCategory(c)).map((c) => c.id),
+  );
   const updates = [];
   for (const m of materials) {
-    const shouldBeActive = linkedIds.has(m.id);
+    const isPackaging = packagingCatIds.has(m.supplierCategoryId) || !!m.packagingKind;
+    const shouldBeActive = isPackaging || linkedIds.has(m.id);
     if (m.active !== shouldBeActive) {
       updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
     }
@@ -2726,6 +2733,7 @@ export async function updateSupplierCategory(id, patch) {
   }
   if ('isPackaging' in data) data.isPackaging = !!data.isPackaging;
   if (Object.keys(data).length) await db.supplierCategories.update(cid, data);
+  if ('isPackaging' in data) await syncRawMaterialsActiveFromRecipes();
 }
 
 export async function setSupplierCategoryOrder(orderedIds) {
@@ -2900,7 +2908,7 @@ export async function addRawMaterial({
       : sanitizeProcessedPricePerKg(processedPricePerKg),
     synonyms: sanitizeMaterialSynonyms(synonyms),
     ...packaging,
-    active: false,
+    active: isPackagingSupplierCategory(category),
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {

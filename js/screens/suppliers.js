@@ -18,13 +18,13 @@ import {
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
-} from '../kitchen-db.js?v=336';
-import { getProducts } from '../db.js?v=336';
-import { parseSupplierFile } from '../supplier-import.js?v=336';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=336';
-import { openModal, closeModal } from '../modal.js?v=336';
-import { requestAutoBackupNow } from '../backup-service.js?v=336';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=336';
+} from '../kitchen-db.js?v=337';
+import { getProducts } from '../db.js?v=337';
+import { parseSupplierFile } from '../supplier-import.js?v=337';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=337';
+import { openModal, closeModal } from '../modal.js?v=337';
+import { requestAutoBackupNow } from '../backup-service.js?v=337';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=337';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -123,6 +123,22 @@ function renderPackagingMetaLine(material) {
   return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
+/** מטא־דאטה לתצוגה ברשימות — באריזות בלי מחיר/ק״ג מטעה */
+function formatMaterialPriceMeta(m) {
+  if (m?.packagingKind) {
+    return (Number(m.unitPrice) || 0) > 0 ? formatMoney(m.unitPrice) : '—';
+  }
+  const ppk = getMaterialPurchasePricePerKg(m);
+  const parts = [];
+  if (ppk != null) parts.push(`${formatMoney(ppk)}/ק"ג`);
+  if ((m.unitPrice || 0) > 0 && m.packageWeightGrams) {
+    parts.push(`אריזה ${formatMoney(m.unitPrice)} (${formatWeightGrams(m.packageWeightGrams)})`);
+  } else if ((m.unitPrice || 0) > 0) {
+    parts.push(formatMoney(m.unitPrice));
+  }
+  return parts.join(' · ') || '—';
+}
+
 function filterCatalogItems(catalog, search) {
   if (!search) return catalog;
   return catalog.filter((item) => {
@@ -148,10 +164,11 @@ function renderCatalogResultsHTML(items) {
         <span class="catalog-mat-name">${escapeHtml(item.name)}${defaultMeta}</span>
         <span class="catalog-mat-meta">
           ${item.supplierCount ? `${item.supplierCount} ספקים` : 'ללא ספק'}
-          ${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}
-          ${best.unitPrice > 0 && best.packageWeightGrams ? ` · אריזה ${formatMoney(best.unitPrice)}` : ''}
-          ${packMeta}
+          ${best.packagingKind
+    ? ((Number(best.unitPrice) || 0) > 0 ? ` · ${formatMoney(best.unitPrice)}` : '')
+    : `${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}${best.unitPrice > 0 && best.packageWeightGrams ? ` · אריזה ${formatMoney(best.unitPrice)}` : ''}`}
         </span>
+        ${packMeta ? `<span class="catalog-mat-pack">${packMeta.replace(/^\s·\s*/, '')}</span>` : ''}
       </button>`;
   }).join('')}
   </div>`;
@@ -269,18 +286,6 @@ function formatWeightGrams(grams) {
   if (!grams) return '—';
   if (grams >= 1000) return `${(grams / 1000).toFixed(grams % 1000 === 0 ? 0 : 2)} ק"ג`;
   return `${grams} גרם`;
-}
-
-function formatMaterialPriceMeta(m) {
-  const ppk = getMaterialPurchasePricePerKg(m);
-  const parts = [];
-  if (ppk != null) parts.push(`${formatMoney(ppk)}/ק"ג`);
-  if ((m.unitPrice || 0) > 0 && m.packageWeightGrams) {
-    parts.push(`אריזה ${formatMoney(m.unitPrice)} (${formatWeightGrams(m.packageWeightGrams)})`);
-  } else if ((m.unitPrice || 0) > 0) {
-    parts.push(formatMoney(m.unitPrice));
-  }
-  return parts.join(' · ') || '—';
 }
 
 function readMaterialPricingFromForm() {
@@ -941,32 +946,45 @@ async function renderBrowseTab(body, container) {
 function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
   if (!cat.suppliers.length) return '';
   const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0);
+  const isPackaging = isPackagingSupplierCategory(cat);
   return `
     <div class="card supplier-browse-cat">
       <button type="button" class="supplier-browse-cat-header category-toggle-browse">
-        <span class="supplier-browse-cat-name">${escapeHtml(cat.name)}</span>
-        <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} חומרים</span>
+        <span class="supplier-browse-cat-name">${isPackaging ? '📦 ' : ''}${escapeHtml(cat.name)}</span>
+        <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} ${isPackaging ? 'אריזות' : 'חומרים'}</span>
       </button>
       <div class="supplier-browse-cat-body">
-        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds })).join('')}
+        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds, isPackaging })).join('')}
       </div>
     </div>`;
 }
 
-function renderBrowseMaterialRow(m) {
-  const isActive = m.active === true;
+function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
+  const isActive = forceActive || m.active === true;
   const rowClass = isActive ? 'browse-material-row--active' : 'browse-material-row--inactive';
   const defaultBadge = m.isRecipeDefault
     ? ' <span class="recipe-default-badge" title="ברירת מחדל למתכונים">★</span>'
     : '';
+  const packMeta = renderPackagingMetaLine(m).replace(/^\s·\s*/, '');
   return `
         <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
-          <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
-          <span class="browse-mat-price">${formatMaterialPriceMeta(m)}${renderPackagingMetaLine(m)}</span>
+          <span class="browse-mat-main">
+            <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
+            <span class="browse-mat-price">${formatMaterialPriceMeta(m)}</span>
+            ${packMeta ? `<span class="browse-mat-pack">${packMeta}</span>` : ''}
+          </span>
         </button>`;
 }
 
-function renderBrowseSupplierMaterialsHTML(materials) {
+function renderBrowseSupplierMaterialsHTML(materials, { isPackaging = false } = {}) {
+  if (isPackaging) {
+    if (!materials.length) return '';
+    return `
+      <div class="browse-mats-section browse-mats-section--active">
+        <div class="browse-mats-section-label">אריזות (${materials.length})</div>
+        ${materials.map((m) => renderBrowseMaterialRow(m, { forceActive: true })).join('')}
+      </div>`;
+  }
   const activeMats = materials.filter((m) => m.active === true);
   const inactiveMats = materials.filter((m) => m.active !== true);
   const sections = [];
@@ -991,14 +1009,18 @@ function renderBrowseSupplierMaterialsHTML(materials) {
   return sections.join('');
 }
 
-function renderBrowseSupplierBlock(supplier, { search, expandedIds } = {}) {
+function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging = false } = {}) {
   const expanded = supplier.autoExpand || expandedIds.has(supplier.id);
   const collapsedClass = expanded ? '' : ' is-collapsed';
   const activeCount = supplier.materials.filter((m) => m.active === true).length;
   const inactiveCount = supplier.materials.length - activeCount;
   const metaParts = [];
-  if (activeCount) metaParts.push(`${activeCount} פעילים`);
-  if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
+  if (isPackaging) {
+    metaParts.push(`${supplier.materials.length} אריזות`);
+  } else {
+    if (activeCount) metaParts.push(`${activeCount} פעילים`);
+    if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
+  }
   const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
   return `
     <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}">
@@ -1008,9 +1030,9 @@ function renderBrowseSupplierBlock(supplier, { search, expandedIds } = {}) {
       </button>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
-        ${renderBrowseSupplierMaterialsHTML(supplier.materials)}
+        ${renderBrowseSupplierMaterialsHTML(supplier.materials, { isPackaging })}
       </div>`
-    : '<p class="form-hint supplier-browse-empty">אין חומרי גלם</p>'}
+    : `<p class="form-hint supplier-browse-empty">${isPackaging ? 'אין אריזות' : 'אין חומרי גלם'}</p>`}
     </section>`;
 }
 
@@ -1343,13 +1365,13 @@ function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMat
       <div class="list-item material-list-item" data-material-id="${m.id}">
         <button type="button" class="material-drag-handle" aria-label="גרור"${searching ? ' disabled title="גרור ללא חיפוש"' : ''}>☰</button>
         <span class="material-order-num">${(orderIdx >= 0 ? orderIdx : i) + 1}</span>
-        <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
+        <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer;min-width:0">
           <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
           <div class="list-item-meta">
             ${formatMaterialPriceMeta(m)}
             ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
-            ${renderPackagingMetaLine(m)}
           </div>
+          ${m.packagingKind ? `<div class="list-item-pack-meta">${renderPackagingMetaLine(m).replace(/^\s·\s*/, '')}</div>` : ''}
         </button>
         <div class="list-item-actions">
           <button type="button" class="btn btn-secondary btn-sm dup-mat-sup" data-id="${m.id}" title="הוסף אצל ספק נוסף">+ספק</button>
@@ -1374,12 +1396,11 @@ function updateEditMaterialsResults(host, container) {
     state.supMap,
     state.selectedMatCat,
   );
-  const hint = host.querySelector('.filter-row .form-hint');
-  if (hint) {
-    const base = hint.textContent.split(' · ')[0] || '';
-    const packaging = hint.textContent.includes('קטגוריית אריזות');
-    const count = search.trim() ? ` · ${filtered.length} מתוך ${state.materials.length}` : '';
-    hint.textContent = `${base}${packaging ? ' · קטגוריית אריזות' : ''}${count}`;
+  const countEl = host.querySelector('#edit-mat-search-count');
+  if (countEl) {
+    countEl.textContent = search.trim()
+      ? ` · ${filtered.length} מתוך ${state.materials.length}`
+      : '';
   }
   bindEditMaterialListHandlers(host, container, state.materials, state.selectedMatCat);
 }

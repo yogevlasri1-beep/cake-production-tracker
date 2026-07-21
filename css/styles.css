@@ -9637,10 +9637,12 @@ body.supplier-drag-active {
 
 .browse-material-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   padding: 10px 12px;
   margin-bottom: 6px;
   border: 1px solid var(--border);
@@ -9650,6 +9652,42 @@ body.supplier-drag-active {
   font: inherit;
   text-align: right;
   touch-action: manipulation;
+  overflow: hidden;
+}
+
+.browse-mat-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  width: 100%;
+}
+
+.browse-mat-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.browse-mat-price {
+  font-size: 0.88rem;
+  color: #0f766e;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.browse-mat-pack {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 .browse-material-row--active {
@@ -9723,18 +9761,6 @@ body.supplier-drag-active {
   border: none;
   border-top: 2px dashed #cbd5e1;
   margin: 14px 0 12px;
-}
-
-.browse-mat-name {
-  font-weight: 600;
-  font-size: 0.92rem;
-}
-
-.browse-mat-price {
-  font-size: 0.88rem;
-  color: #0f766e;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .material-detail-current {
@@ -10167,6 +10193,24 @@ body.supplier-drag-active {
 .catalog-mat-meta {
   font-size: 0.85rem;
   color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.catalog-mat-pack,
+.list-item-pack-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  margin-top: 2px;
+}
+
+.list-item-meta {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 }
 
 .material-pricing-grid {
