@@ -18,13 +18,13 @@ import {
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
-} from '../kitchen-db.js?v=335';
-import { getProducts } from '../db.js?v=335';
-import { parseSupplierFile } from '../supplier-import.js?v=335';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=335';
-import { openModal, closeModal } from '../modal.js?v=335';
-import { requestAutoBackupNow } from '../backup-service.js?v=335';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=335';
+} from '../kitchen-db.js?v=336';
+import { getProducts } from '../db.js?v=336';
+import { parseSupplierFile } from '../supplier-import.js?v=336';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=336';
+import { openModal, closeModal } from '../modal.js?v=336';
+import { requestAutoBackupNow } from '../backup-service.js?v=336';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=336';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -1162,6 +1162,8 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
 
   const selectedCategory = categories.find((c) => String(c.id) === String(selectedMatCat));
   const isPackagingCat = isPackagingSupplierCategory(selectedCategory);
+  const matSearch = container.dataset.editMatSearch || '';
+  const filteredMaterials = filterEditMaterials(materials, matSearch, supMap);
 
   host.innerHTML = `
     <div class="card">
@@ -1189,42 +1191,37 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
           <button type="button" class="workspace-chip${String(c.id) === String(selectedMatCat) ? ' active' : ''}"
             data-mat-cat="${c.id}">${renderSupplierCategoryChipLabel(c)}</button>`).join('')}
       </div>
+      <div class="form-group" style="margin-bottom:10px">
+        <input type="search" id="edit-mat-search" class="edit-mat-search-input"
+          placeholder="חיפוש לפי שם / מילה נרדפת / ספק..."
+          value="${escapeHtml(matSearch)}" autocomplete="off">
+      </div>
       <div class="filter-row" style="margin-bottom:12px">
-        <div class="form-hint" style="margin:0;flex:1">
+        <div class="form-hint" style="margin:0;flex:1" id="edit-mat-list-hint">
           ${escapeHtml(catMap.get(Number(selectedMatCat)) || 'בחר קטגוריה')}
           ${isPackagingCat ? ' · קטגוריית אריזות' : ''}
+          <span id="edit-mat-search-count">${matSearch.trim() ? ` · ${filteredMaterials.length} מתוך ${materials.length}` : ''}</span>
         </div>
         <button type="button" class="btn btn-secondary btn-sm" id="edit-mat-cat-settings" title="הגדרות קטגוריה">⚙️</button>
         <button type="button" class="btn btn-primary btn-sm" id="add-material">+ ${isPackagingCat ? 'אריזה' : 'חומר'}</button>
       </div>
-      ${materials.length === 0
-    ? '<p class="form-hint">אין חומרים — ייבא מ-Excel או הוסף ידנית</p>'
-    : `<div class="material-list" data-cat-id="${selectedMatCat}">
-        ${materials.map((m, i) => `
-        <div class="list-item material-list-item" data-material-id="${m.id}">
-          <button type="button" class="material-drag-handle" aria-label="גרור">☰</button>
-          <span class="material-order-num">${i + 1}</span>
-          <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
-            <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
-            <div class="list-item-meta">
-              ${formatMaterialPriceMeta(m)}
-              ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
-              ${renderPackagingMetaLine(m)}
-            </div>
-          </button>
-          <div class="list-item-actions">
-            <button type="button" class="btn btn-secondary btn-sm dup-mat-sup" data-id="${m.id}" title="הוסף אצל ספק נוסף">+ספק</button>
-            <button type="button" class="btn btn-danger btn-sm del-mat" data-id="${m.id}">🗑</button>
-          </div>
-        </div>`).join('')}
-      </div>`}
+      <div id="edit-mat-results">
+        ${renderEditMaterialsListHTML(filteredMaterials, materials, supMap, selectedMatCat)}
+      </div>
     </div>`;
+
+  host._editMatState = { materials, filteredMaterials, selectedMatCat, supMap };
 
   host.querySelectorAll('[data-mat-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       container.dataset.matCat = btn.dataset.matCat;
       renderEditSections(host, container, categories, btn.dataset.matCat);
     });
+  });
+
+  document.getElementById('edit-mat-search')?.addEventListener('input', (e) => {
+    container.dataset.editMatSearch = e.target.value;
+    updateEditMaterialsResults(host, container);
   });
 
   host.querySelectorAll('.supplier-edit-cat').forEach((el) => {
@@ -1271,28 +1268,7 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
     openAddMaterialModal(container, Number(selectedMatCat), await getSuppliers(), selectedCategory);
   });
 
-  host.querySelectorAll('.edit-mat-open').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
-      if (mat) openEditMaterialModal(container, mat);
-    });
-  });
-
-  host.querySelectorAll('.dup-mat-sup').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
-      if (mat) openDuplicateMaterialModal(container, mat, Number(selectedMatCat));
-    });
-  });
-
-  host.querySelectorAll('.del-mat').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('למחוק חומר גלם?')) return;
-      await deleteRawMaterial(Number(btn.dataset.id));
-      showToast('נמחק');
-      renderSuppliers(container);
-    });
-  });
+  bindEditMaterialListHandlers(host, container, materials, selectedMatCat);
 
   host.querySelectorAll('.sup-quick-cat').forEach((sel) => {
     sel.addEventListener('click', (e) => e.stopPropagation());
@@ -1333,11 +1309,6 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
     });
   });
 
-  if (materials.length) {
-    bindMaterialDragList(host, Number(selectedMatCat), async (orderedIds) => {
-      await setRawMaterialOrder(Number(selectedMatCat), orderedIds);
-    });
-  }
   for (const cat of categories) {
     const list = host.querySelector(`.supplier-list[data-cat-id="${cat.id}"]`);
     const catSuppliers = suppliersByCat.get(cat.id) || [];
@@ -1346,6 +1317,102 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
         await setSupplierOrder(cat.id, orderedIds);
       });
     }
+  }
+}
+
+function filterEditMaterials(materials, search, supMap) {
+  const q = String(search || '').trim();
+  if (!q) return materials;
+  return materials.filter((m) => materialMatchesSearch(m, q, {
+    supplierName: m.supplierId ? (supMap.get(m.supplierId) || '') : '',
+  }));
+}
+
+function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMatCat) {
+  if (!allMaterials.length) {
+    return '<p class="form-hint">אין חומרים — ייבא מ-Excel או הוסף ידנית</p>';
+  }
+  if (!filtered.length) {
+    return '<p class="form-hint">אין תוצאות לחיפוש</p>';
+  }
+  const searching = filtered.length !== allMaterials.length;
+  return `<div class="material-list" data-cat-id="${selectedMatCat}">
+    ${filtered.map((m, i) => {
+    const orderIdx = allMaterials.findIndex((x) => x.id === m.id);
+    return `
+      <div class="list-item material-list-item" data-material-id="${m.id}">
+        <button type="button" class="material-drag-handle" aria-label="גרור"${searching ? ' disabled title="גרור ללא חיפוש"' : ''}>☰</button>
+        <span class="material-order-num">${(orderIdx >= 0 ? orderIdx : i) + 1}</span>
+        <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
+          <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
+          <div class="list-item-meta">
+            ${formatMaterialPriceMeta(m)}
+            ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
+            ${renderPackagingMetaLine(m)}
+          </div>
+        </button>
+        <div class="list-item-actions">
+          <button type="button" class="btn btn-secondary btn-sm dup-mat-sup" data-id="${m.id}" title="הוסף אצל ספק נוסף">+ספק</button>
+          <button type="button" class="btn btn-danger btn-sm del-mat" data-id="${m.id}">🗑</button>
+        </div>
+      </div>`;
+  }).join('')}
+  </div>`;
+}
+
+function updateEditMaterialsResults(host, container) {
+  const state = host._editMatState;
+  if (!state) return;
+  const search = container.dataset.editMatSearch || '';
+  const filtered = filterEditMaterials(state.materials, search, state.supMap);
+  state.filteredMaterials = filtered;
+  const resultsEl = host.querySelector('#edit-mat-results');
+  if (!resultsEl) return;
+  resultsEl.innerHTML = renderEditMaterialsListHTML(
+    filtered,
+    state.materials,
+    state.supMap,
+    state.selectedMatCat,
+  );
+  const hint = host.querySelector('.filter-row .form-hint');
+  if (hint) {
+    const base = hint.textContent.split(' · ')[0] || '';
+    const packaging = hint.textContent.includes('קטגוריית אריזות');
+    const count = search.trim() ? ` · ${filtered.length} מתוך ${state.materials.length}` : '';
+    hint.textContent = `${base}${packaging ? ' · קטגוריית אריזות' : ''}${count}`;
+  }
+  bindEditMaterialListHandlers(host, container, state.materials, state.selectedMatCat);
+}
+
+function bindEditMaterialListHandlers(host, container, materials, selectedMatCat) {
+  host.querySelectorAll('.edit-mat-open').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
+      if (mat) openEditMaterialModal(container, mat);
+    });
+  });
+
+  host.querySelectorAll('.dup-mat-sup').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
+      if (mat) openDuplicateMaterialModal(container, mat, Number(selectedMatCat));
+    });
+  });
+
+  host.querySelectorAll('.del-mat').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק חומר גלם?')) return;
+      await deleteRawMaterial(Number(btn.dataset.id));
+      showToast('נמחק');
+      renderSuppliers(container);
+    });
+  });
+
+  const searching = !!(container.dataset.editMatSearch || '').trim();
+  if (materials.length && !searching) {
+    bindMaterialDragList(host, Number(selectedMatCat), async (orderedIds) => {
+      await setRawMaterialOrder(Number(selectedMatCat), orderedIds);
+    });
   }
 }
 
