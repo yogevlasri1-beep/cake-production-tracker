@@ -10185,6 +10185,18 @@ body.supplier-drag-active {
   text-align: right;
 }
 
+.catalog-offers-table tr.is-recipe-default {
+  background: color-mix(in srgb, var(--primary-soft) 55%, transparent);
+}
+
+.recipe-default-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary, #0f766e);
+  white-space: nowrap;
+}
+
 .combined-history-table th:nth-child(3),
 .combined-history-table th:nth-child(4),
 .combined-history-table td:nth-child(3),

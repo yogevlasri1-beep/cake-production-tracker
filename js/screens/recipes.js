@@ -28,21 +28,21 @@ import {
   BAKING_SCOPE_GROUP, BAKING_SCOPE_CATEGORY,
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
-  computePricePerKg, pickHighestPricedMaterial,
+  computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms,
-} from '../kitchen-db.js?v=332';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=332';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=332';
-import { renderRecipesMachines } from '../recipes-machines.js?v=332';
-import { renderRecipesPortions } from '../recipes-portions.js?v=332';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=332';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=332';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=332';
-import { openModal, closeModal } from '../modal.js?v=332';
+} from '../kitchen-db.js?v=333';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=333';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=333';
+import { renderRecipesMachines } from '../recipes-machines.js?v=333';
+import { renderRecipesPortions } from '../recipes-portions.js?v=333';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=333';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=333';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=333';
+import { openModal, closeModal } from '../modal.js?v=333';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=332';
-import { defaultColorForIndex } from '../chart.js?v=332';
+} from '../product-drag.js?v=333';
+import { defaultColorForIndex } from '../chart.js?v=333';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2344,15 +2344,21 @@ function buildRecipeMaterialContext(mats, suppliers) {
 }
 
 function resolveIngredientDisplay(ing, ctx) {
-  const { mat, priceSource } = resolveRecipeIngredientMaterial(ing, ctx);
+  const { mat, priceSource, usedRecipeDefault } = resolveRecipeIngredientMaterial(ing, ctx);
   const lineCost = computeIngredientLineCost(ing, mat);
   const ppk = mat ? computePricePerKg(mat.unitPrice, mat.packageWeightGrams) : null;
   let badge = 'ללא מחיר';
   if (mat) {
-    if (priceSource === 'max') badge = 'מחיר מקס׳ (אוטומטי)';
-    else badge = ctx.supMap.get(mat.supplierId) || 'ספק';
+    const supName = ctx.supMap.get(mat.supplierId) || 'ספק';
+    if (priceSource === 'max') {
+      badge = usedRecipeDefault
+        ? `ברירת מחדל · ${supName}`
+        : 'מחיר מקס׳ (אוטומטי)';
+    } else {
+      badge = `${supName} (ידני)`;
+    }
   }
-  return { mat, lineCost, badge, priceSource, ppk };
+  return { mat, lineCost, badge, priceSource, ppk, usedRecipeDefault };
 }
 
 function renderRecipeCostSummaryHTML(ingredients, ctx) {
@@ -2365,7 +2371,7 @@ function renderRecipeCostSummaryHTML(ingredients, ctx) {
     <div class="recipe-cost-summary">
       <span class="recipe-cost-label">עלות חומרי גלם למתכון</span>
       <strong class="recipe-cost-value">${formatMoney(total)}</strong>
-      <span class="form-hint">מחירים מספקים · ברירת מחדל: הגבוה ביותר</span>
+      <span class="form-hint">מחירים מספקים · ברירת מחדל לספק אם סומנה, אחרת הגבוה ביותר</span>
     </div>`;
 }
 
@@ -2407,7 +2413,9 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
 async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, suppliers, productCatalog, catalogLayout, returnToView, formDraft) {
   const offers = await getMaterialsByIngredientName(ing.name);
   const currentSource = getIngredientPriceSource(ing);
+  const defaultMat = pickRecipeDefaultMaterial(offers);
   const maxMat = pickHighestPricedMaterial(offers);
+  const autoMat = defaultMat || maxMat;
   const currentMat = Number(ing.rawMaterialId)
     ? mats.find((m) => m.id === Number(ing.rawMaterialId))
     : null;
@@ -2425,6 +2433,16 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
     if (toastMsg) showToast(toastMsg);
   };
 
+  const defaultSupName = defaultMat
+    ? (ctx.supMap.get(defaultMat.supplierId) || 'ספק')
+    : '';
+  const autoLabel = defaultMat
+    ? `ברירת מחדל · ${defaultSupName}`
+    : 'מחיר גבוה ביותר (אוטומטי)';
+  const autoMeta = autoMat
+    ? `${formatMoney(materialComparisonPriceDisplay(autoMat))}/ק"ג משוער`
+    : 'אין מחירים';
+
   openModal({
     title: `עריכת חומר גלם`,
     modalClass: 'modal-ingredient-edit',
@@ -2441,19 +2459,20 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">החל לפי שם בשדה (ללא בחירה מהרשימה)</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">
-      <p class="form-hint" style="margin-top:0">תמחור ל<strong>${escapeHtml(ing.name)}</strong> — ברירת מחדל: המחיר הגבוה ביותר</p>
+      <p class="form-hint" style="margin-top:0">תמחור ל<strong>${escapeHtml(ing.name)}</strong> — ${defaultMat ? `ברירת מחדל: ${escapeHtml(defaultSupName)}` : 'ברירת מחדל: המחיר הגבוה ביותר'} · ניתן לבחור ספק אחר לעקיפה במתכון זה</p>
       <div class="ing-price-picker">
         <button type="button" class="ing-price-option${currentSource === 'max' ? ' active' : ''}" data-source="max">
-          <span class="ing-price-option-name">מחיר גבוה ביותר (אוטומטי)</span>
-          <span class="ing-price-option-meta">${maxMat ? formatMoney(materialComparisonPriceDisplay(maxMat)) + '/ק"ג משוער' : 'אין מחירים'}</span>
+          <span class="ing-price-option-name">${escapeHtml(autoLabel)}</span>
+          <span class="ing-price-option-meta">${autoMeta}</span>
         </button>
         ${offers.map((m) => {
     const sup = ctx.supMap.get(m.supplierId) || 'ספק';
     const ppk = computePricePerKg(m.unitPrice, m.packageWeightGrams);
     const isActive = currentSource === 'supplier' && Number(ing.rawMaterialId) === m.id;
+    const defMark = m.isRecipeDefault ? ' ★' : '';
     return `
         <button type="button" class="ing-price-option${isActive ? ' active' : ''}" data-source="supplier" data-mid="${m.id}">
-          <span class="ing-price-option-name">${escapeHtml(sup)} · ${escapeHtml(m.name)}</span>
+          <span class="ing-price-option-name">${escapeHtml(sup)}${defMark} · ${escapeHtml(m.name)}</span>
           <span class="ing-price-option-meta">${formatMoney(m.unitPrice)}/${escapeHtml(m.unit)}${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}</span>
         </button>`;
   }).join('')}

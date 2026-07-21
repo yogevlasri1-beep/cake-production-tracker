@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=332';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=333';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=332';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=332';
+} from './validators.js?v=333';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=333';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1890,6 +1890,17 @@ export function pickHighestPricedMaterial(offers) {
   ), offers[0]);
 }
 
+/** הצעת ספק שמסומנת כברירת מחדל למתכונים */
+export function pickRecipeDefaultMaterial(offers) {
+  if (!offers?.length) return null;
+  return offers.find((m) => m.isRecipeDefault) || null;
+}
+
+/**
+ * פותר חומר גלם לשורת מתכון.
+ * priceSource=max → ברירת מחדל לספק אם סומנה, אחרת המחיר הגבוה ביותר.
+ * priceSource=supplier → הצעה ספציפית (עקיפה במתכון).
+ */
 export function resolveRecipeIngredientMaterial(ing, { matById, byNameKey }) {
   const source = getIngredientPriceSource(ing);
   if (source === 'supplier' && ing.rawMaterialId) {
@@ -1898,9 +1909,36 @@ export function resolveRecipeIngredientMaterial(ing, { matById, byNameKey }) {
   }
   const key = normalizeMaterialKey(ing.name);
   const offers = byNameKey.get(key) || [];
-  let mat = pickHighestPricedMaterial(offers);
+  const preferred = pickRecipeDefaultMaterial(offers);
+  let mat = preferred || pickHighestPricedMaterial(offers);
   if (!mat && ing.rawMaterialId) mat = matById.get(Number(ing.rawMaterialId)) || null;
-  return { mat, priceSource: 'max' };
+  return {
+    mat,
+    priceSource: 'max',
+    usedRecipeDefault: !!preferred && mat && preferred.id === mat.id,
+  };
+}
+
+/** מסמן / מבטל הצעת ספק כברירת מחדל למתכונים (רק אחת לכל שם חומר) */
+export async function setRawMaterialRecipeDefault(materialId, enabled = true) {
+  const mid = sanitizeProductId(materialId);
+  if (!mid) throw new ValidationError('חומר לא תקין');
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat) throw new ValidationError('חומר לא נמצא');
+
+  const key = normalizeMaterialKey(mat.name);
+  const all = await db.rawMaterials.toArray();
+  const siblings = all.filter((m) => normalizeMaterialKey(m.name) === key);
+
+  await db.transaction('rw', db.rawMaterials, async () => {
+    for (const sibling of siblings) {
+      const next = enabled && sibling.id === mid;
+      if (!!sibling.isRecipeDefault !== next) {
+        await db.rawMaterials.update(sibling.id, { isRecipeDefault: next });
+      }
+    }
+  });
+  return mid;
 }
 
 export function computeIngredientLineCost(ing, mat) {
@@ -2981,6 +3019,7 @@ export async function getMasterMaterialsList(supplierCategoryId) {
   for (const [key, offers] of byKey.entries()) {
     offers.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
     const supplierIds = new Set(offers.filter((o) => o.supplierId).map((o) => o.supplierId));
+    const recipeDefault = offers.find((o) => o.isRecipeDefault) || null;
     list.push({
       key,
       name: offers[0].name,
@@ -2988,6 +3027,8 @@ export async function getMasterMaterialsList(supplierCategoryId) {
       offers,
       primaryId: offers[0].id,
       supplierCount: supplierIds.size,
+      recipeDefaultId: recipeDefault?.id || null,
+      recipeDefaultSupplierId: recipeDefault?.supplierId || null,
     });
   }
   list.sort((a, b) => a.name.localeCompare(b.name, 'he'));

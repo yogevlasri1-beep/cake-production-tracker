@@ -16,13 +16,14 @@ import {
   PACKAGING_KIND_CARTON, PACKAGING_KIND_PLASTIC,
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
-} from '../kitchen-db.js?v=332';
-import { getProducts } from '../db.js?v=332';
-import { parseSupplierFile } from '../supplier-import.js?v=332';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=332';
-import { openModal, closeModal } from '../modal.js?v=332';
-import { requestAutoBackupNow } from '../backup-service.js?v=332';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=332';
+  setRawMaterialRecipeDefault,
+} from '../kitchen-db.js?v=333';
+import { getProducts } from '../db.js?v=333';
+import { parseSupplierFile } from '../supplier-import.js?v=333';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=333';
+import { openModal, closeModal } from '../modal.js?v=333';
+import { requestAutoBackupNow } from '../backup-service.js?v=333';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=333';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -138,9 +139,12 @@ function renderCatalogResultsHTML(items) {
     const best = pickBestOffer(item.offers);
     const ppk = getMaterialPurchasePricePerKg(best);
     const packMeta = renderPackagingMetaLine(best);
+    const defaultMeta = item.recipeDefaultId
+      ? ' <span class="recipe-default-badge" title="ברירת מחדל למתכונים">★ ברירת מחדל</span>'
+      : '';
     return `
       <button type="button" class="catalog-material-row" data-primary-id="${item.primaryId}">
-        <span class="catalog-mat-name">${escapeHtml(item.name)}</span>
+        <span class="catalog-mat-name">${escapeHtml(item.name)}${defaultMeta}</span>
         <span class="catalog-mat-meta">
           ${item.supplierCount ? `${item.supplierCount} ספקים` : 'ללא ספק'}
           ${ppk != null ? ` · ${formatMoney(ppk)}/ק"ג` : ''}
@@ -350,18 +354,24 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         </div>
         ${catalogItem.offers.length
     ? `<table class="catalog-offers-table">
-          <thead><tr><th>ספק</th><th>מחיר/ק"ג</th><th>כמות באריזה</th><th>מחיר לאריזה</th><th>לאחר עיבוד</th><th></th></tr></thead>
+          <thead><tr><th>ספק</th><th>מחיר/ק"ג</th><th>כמות באריזה</th><th>מחיר לאריזה</th><th>לאחר עיבוד</th><th>מתכונים</th><th></th></tr></thead>
           <tbody>
             ${catalogItem.offers.map((o) => {
     const ppk = getMaterialPurchasePricePerKg(o);
     const processed = sanitizeProcessedPricePerKg(o.processedPricePerKg);
+    const isDefault = !!o.isRecipeDefault;
     return `
-            <tr data-offer-id="${o.id}">
-              <td>${escapeHtml(o.supplierId ? supMap.get(o.supplierId) || '—' : 'ללא ספק')}</td>
+            <tr data-offer-id="${o.id}" class="${isDefault ? 'is-recipe-default' : ''}">
+              <td>${escapeHtml(o.supplierId ? supMap.get(o.supplierId) || '—' : 'ללא ספק')}${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}</td>
               <td>${ppk != null ? formatMoney(ppk) : '—'}</td>
               <td>${formatWeightGrams(o.packageWeightGrams)}</td>
               <td>${formatMoney(o.unitPrice)}</td>
               <td>${processed != null ? formatMoney(processed) : '—'}</td>
+              <td>
+                <button type="button" class="btn btn-sm ${isDefault ? 'btn-primary' : 'btn-secondary'} set-recipe-default" data-id="${o.id}" data-on="${isDefault ? '1' : '0'}" title="${isDefault ? 'הסר ברירת מחדל' : 'סמן כברירת מחדל למתכונים'}">
+                  ${isDefault ? '★ ברירת מחדל' : 'סמן ברירת מחדל'}
+                </button>
+              </td>
               <td><button type="button" class="btn btn-secondary btn-sm edit-catalog-offer" data-id="${o.id}">✏️</button></td>
             </tr>`;
   }).join('')}
@@ -369,6 +379,7 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         </table>`
     : '<p class="form-hint">אין שיוך לספקים עדיין</p>'}
       </div>
+      <p class="form-hint">ברירת מחדל למתכונים — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה (אפשר לעקוף בכל מתכון)</p>
       <div class="material-detail-history">
         <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
         ${history.length
@@ -393,6 +404,25 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
   document.getElementById('catalog-assign-sup')?.addEventListener('click', () => {
     closeModal();
     setTimeout(() => openAssignMaterialModal(container, catalogItem, categories, suppliers), 200);
+  });
+  document.querySelectorAll('.set-recipe-default').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const id = Number(btn.dataset.id);
+        const currentlyOn = btn.dataset.on === '1';
+        await setRawMaterialRecipeDefault(id, !currentlyOn);
+        showToast(currentlyOn ? 'בוטלה ברירת המחדל' : 'סומן כברירת מחדל למתכונים ✓');
+        requestAutoBackupNow().catch(() => {});
+        closeModal();
+        await renderSuppliers(container);
+        const catalog = await getMasterMaterialsList();
+        const nextItem = catalog.find((c) => c.offers.some((o) => o.id === id))
+          || catalog.find((c) => c.primaryId === catalogItem.primaryId);
+        if (nextItem) openCatalogMaterialDetailModal(container, nextItem, categories, supMap);
+      } catch (e) {
+        showToast(e.message || 'שגיאה');
+      }
+    });
   });
   document.querySelectorAll('.edit-catalog-offer').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -757,9 +787,12 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
 function renderBrowseMaterialRow(m) {
   const isActive = m.active === true;
   const rowClass = isActive ? 'browse-material-row--active' : 'browse-material-row--inactive';
+  const defaultBadge = m.isRecipeDefault
+    ? ' <span class="recipe-default-badge" title="ברירת מחדל למתכונים">★</span>'
+    : '';
   return `
         <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
-          <span class="browse-mat-name">${escapeHtml(m.name)}</span>
+          <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
           <span class="browse-mat-price">${formatMaterialPriceMeta(m)}${renderPackagingMetaLine(m)}</span>
         </button>`;
 }
@@ -832,8 +865,15 @@ async function openMaterialDetailModal(container, materialId) {
       <div class="material-detail-meta">
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
         ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
+        ${mat.isRecipeDefault ? '<span class="recipe-default-badge">★ ברירת מחדל למתכונים</span>' : ''}
         ${mat.packagingKind ? `<span class="form-hint">${escapeHtml(getPackagingKindLabel(mat.packagingKind))}${mat.packUnitsCount > 1 ? ` · ${mat.packUnitsCount} בחבילה` : ''}${mat.packagingKind === PACKAGING_KIND_CARTON && mat.packProductsPerUnit ? ` · ${mat.packProductsPerUnit} מוצרים/קרטון` : ''}</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
+      </div>
+      <div class="form-group" style="margin-top:12px">
+        <button type="button" class="btn ${mat.isRecipeDefault ? 'btn-primary' : 'btn-secondary'} btn-sm" id="mat-detail-recipe-default" style="width:100%">
+          ${mat.isRecipeDefault ? '★ ברירת מחדל למתכונים — לחץ לביטול' : '★ סמן כברירת מחדל למתכונים'}
+        </button>
+        <p class="form-hint">כשמסומן — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה</p>
       </div>
       ${others.length ? `
       <div class="material-detail-others">
@@ -868,6 +908,18 @@ async function openMaterialDetailModal(container, materialId) {
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('mat-detail-recipe-default')?.addEventListener('click', async () => {
+    try {
+      await setRawMaterialRecipeDefault(mat.id, !mat.isRecipeDefault);
+      showToast(mat.isRecipeDefault ? 'בוטלה ברירת המחדל' : 'סומן כברירת מחדל למתכונים ✓');
+      requestAutoBackupNow().catch(() => {});
+      closeModal();
+      await renderSuppliers(container);
+      openMaterialDetailModal(container, mat.id);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
   document.getElementById('mat-detail-edit')?.addEventListener('click', () => {
     closeModal();
     switchSupplierTab('edit');
@@ -984,7 +1036,7 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
           <button type="button" class="material-drag-handle" aria-label="גרור">☰</button>
           <span class="material-order-num">${i + 1}</span>
           <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer">
-            <div class="list-item-name">${escapeHtml(m.name)}</div>
+            <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
             <div class="list-item-meta">
               ${formatMaterialPriceMeta(m)}
               ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
@@ -1347,7 +1399,15 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
       <select id="mat-supplier"><option value="">—</option>
         ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
-    </div>`;
+    </div>
+    ${mat ? `
+    <div class="form-group">
+      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="mat-recipe-default"${mat.isRecipeDefault ? ' checked' : ''}>
+        <span>ברירת מחדל למתכונים</span>
+      </label>
+      <p class="form-hint">כשמסומן — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה (רק הצעה אחת לשם חומר)</p>
+    </div>` : ''}`;
 }
 
 function readMaterialSynonymsFromForm() {
@@ -1443,6 +1503,10 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
       };
       if (materialId) {
         await updateRawMaterial(materialId, payload);
+        const recipeDefaultEl = document.getElementById('mat-recipe-default');
+        if (recipeDefaultEl) {
+          await setRawMaterialRecipeDefault(materialId, !!recipeDefaultEl.checked);
+        }
         const newPricePerKg = document.getElementById('mat-new-price-per-kg')?.value;
         const priceDate = document.getElementById('mat-price-date')?.value;
         if (!isPackaging && newPricePerKg !== '' && newPricePerKg != null) {
