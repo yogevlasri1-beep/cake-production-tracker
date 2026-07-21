@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=337';
+} from '../db.js?v=338';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=337').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=338').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=337';
-import { openModal, closeModal } from '../modal.js?v=337';
-import { requestAutoBackupNow } from '../backup-service.js?v=337';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=337';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=337';
-import { materialMatchesSearch } from '../kitchen-db.js?v=337';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=338';
+import { openModal, closeModal } from '../modal.js?v=338';
+import { requestAutoBackupNow } from '../backup-service.js?v=338';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=338';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=338';
+import { materialMatchesSearch } from '../kitchen-db.js?v=338';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1412,6 +1412,30 @@ function metricsProductionRows(metrics, productMap) {
       || a.productId - b.productId);
 }
 
+function metricsProductionByCategory(metrics, productMap, catMap) {
+  const rows = metricsProductionRows(metrics, productMap);
+  const byCat = new Map();
+  for (const row of rows) {
+    const catId = row.product?.categoryId != null ? Number(row.product.categoryId) : 0;
+    const catName = catId && catMap?.get?.(catId)
+      ? catMap.get(catId)
+      : (catId ? `קטגוריה #${catId}` : 'ללא קטגוריה');
+    if (!byCat.has(catId)) {
+      byCat.set(catId, { catId, catName, qty: 0, products: [] });
+    }
+    const group = byCat.get(catId);
+    group.qty += Number(row.qty) || 0;
+    group.products.push(row);
+  }
+  return [...byCat.values()]
+    .map((g) => ({
+      ...g,
+      qty: Math.round(g.qty * 1000) / 1000,
+      products: g.products.sort((a, b) => (a.product?.name || '').localeCompare(b.product?.name || '', 'he')),
+    }))
+    .sort((a, b) => a.catName.localeCompare(b.catName, 'he'));
+}
+
 function renderMetricsProductionRowsHTML(metrics, productMap, { compact = false } = {}) {
   const rows = metricsProductionRows(metrics, productMap);
   if (!rows.length) {
@@ -1460,6 +1484,8 @@ function formatMetricsProductionLine(metrics, productMap) {
 
 function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', compact = false, interactive = false } = {}) {
   if (!metrics) return '';
+  const productsLine = metrics.productionQty > 0 ? formatDecimal(metrics.productionQty) : '—';
+  const productTypes = metricsProductionRows(metrics, productMap).length;
   const portionsLine = metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—';
   const weightLine = metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—';
   const timeLine = metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—';
@@ -1475,10 +1501,20 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
   return `
     <div class="flow-metrics-card${compact ? ' flow-metrics-card--compact' : ''}${clickable ? ' flow-metrics-card--interactive' : ''}">
       ${title ? `<div class="flow-metrics-title">${escapeHtml(title)}${meta ? `<span class="flow-metrics-meta">${escapeHtml(meta)}</span>` : ''}</div>` : (meta ? `<div class="flow-metrics-meta-only">${escapeHtml(meta.replace(/^ · /, ''))}</div>` : '')}
-      <div class="flow-metrics-products">
-        <div class="flow-metrics-products-label">ייצור</div>
-        ${renderMetricsProductionRowsHTML(metrics, productMap, { compact })}
+      <div class="flow-metrics-grid">
+        ${clickable ? `<button type="button" class="flow-metrics-stat flow-metrics-stat--btn flow-metrics-stat--products" data-metrics-detail="products" title="פירוט מוצרים לפי קטגוריה">` : '<div class="flow-metrics-stat flow-metrics-stat--products">'}
+          <span class="flow-metrics-icon">📦</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${productsLine}</span>
+            <span class="flow-metrics-label">סה״כ מוצרים${productTypes ? ` · ${productTypes} סוגים` : ''}</span>
+          </div>
+        ${clickable ? '</button>' : '</div>'}
       </div>
+      ${!clickable ? `
+      <div class="flow-metrics-products">
+        <div class="flow-metrics-products-label">פירוט ייצור</div>
+        ${renderMetricsProductionRowsHTML(metrics, productMap, { compact })}
+      </div>` : ''}
       <div class="flow-metrics-grid flow-metrics-grid--secondary">
         ${clickable ? `<button type="button" class="flow-metrics-stat flow-metrics-stat--btn" data-metrics-detail="portions" title="פירוט מנות וכמות">` : '<div class="flow-metrics-stat">'}
           <span class="flow-metrics-icon">🍽</span>
@@ -1502,7 +1538,7 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
           </div>
         ${clickable ? '</button>' : '</div>'}
       </div>
-      ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מנות / משקל / זמן לפירוט</p>' : ''}
+      ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מוצרים / מנות / משקל / זמן לפירוט</p>' : ''}
       <div class="flow-metrics-batch-track">
         <div class="flow-metrics-batch-track-title">📦 מעקב מנות חומרי גלם</div>
         ${batchRows.length ? `
@@ -1631,14 +1667,49 @@ function openRunPortionsQuantityModal(run) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 }
 
+async function openRunProductsDetailModal(run, productMap, catMap) {
+  const entries = await getRunProductionEntries(run.id);
+  const metrics = computeRunMetrics(run, entries);
+  const groups = metricsProductionByCategory(metrics, productMap, catMap);
+  const totalQty = metrics.productionQty || 0;
+  const typeCount = metricsProductionRows(metrics, productMap).length;
+
+  openModal({
+    title: 'פירוט מוצרים',
+    modalClass: 'modal-metrics-products',
+    bodyHTML: groups.length ? `
+      <p class="form-hint" style="margin-top:0">סה״כ <strong>${formatDecimal(totalQty)}</strong> מוצרים · ${typeCount} סוגים · ${groups.length} קטגוריות</p>
+      <div class="flow-metrics-products-detail">
+        ${groups.map((g) => `
+          <section class="flow-metrics-products-cat">
+            <div class="flow-metrics-products-cat-header">
+              <strong>${escapeHtml(g.catName)}</strong>
+              <span class="flow-metrics-products-cat-total">${formatDecimal(g.qty)}</span>
+            </div>
+            <ul class="flow-metrics-detail-list">
+              ${g.products.map(({ product, productId, qty }) => `
+                <li class="flow-metrics-detail-row">
+                  <span class="flow-metrics-detail-name">${escapeHtml(product?.name || `#${productId}`)}</span>
+                  <span class="flow-metrics-detail-value">${product ? formatProductQuantity(product, qty) : formatDecimal(qty)}</span>
+                </li>`).join('')}
+            </ul>
+          </section>`).join('')}
+      </div>
+      <p class="flow-metrics-detail-total"><strong>סה״כ מוצרים:</strong> ${formatDecimal(totalQty)}</p>`
+      : '<p class="form-hint">עדיין לא תועד ייצור בתהליך</p>',
+    footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">סגור</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+}
+
 async function openRunPortionsWeightModal(run) {
   const rows = collectRunPortionTypeRows(run);
   const totalKg = rows.reduce((s, r) => s + (r.weightKg || 0), 0);
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=337');
-    const { db } = await import('../db.js?v=337');
+    const { getRecipe } = await import('../kitchen-db.js?v=338');
+    const { db } = await import('../db.js?v=338');
     const blocks = [];
 
     for (const row of rows) {
@@ -1734,11 +1805,13 @@ function openRunStepsTimeModal(run) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 }
 
-function bindRunMetricsDetailClicks(container, run) {
+function bindRunMetricsDetailClicks(container, run, { productMap, catMap } = {}) {
   container.querySelectorAll('[data-metrics-detail]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const kind = btn.dataset.metricsDetail;
-      if (kind === 'portions') openRunPortionsQuantityModal(run);
+      if (kind === 'products') {
+        await openRunProductsDetailModal(run, productMap || new Map(), catMap || new Map());
+      } else if (kind === 'portions') openRunPortionsQuantityModal(run);
       else if (kind === 'weight') await openRunPortionsWeightModal(run);
       else if (kind === 'time') openRunStepsTimeModal(run);
     });
@@ -2458,7 +2531,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=337');
+    const kitchen = await import('../kitchen-db.js?v=338');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3250,7 +3323,7 @@ async function renderRunView(container, runId, ctx) {
     onSaved: () => renderProcess(container),
   });
 
-  bindRunMetricsDetailClicks(container, run);
+  bindRunMetricsDetailClicks(container, run, { productMap, catMap });
 
   bindRunProductionPanels(container, run, productionCtx);
 }

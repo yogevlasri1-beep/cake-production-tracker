@@ -1,10 +1,10 @@
-import { loadFFlate } from './docx-loader.js?v=337';
+import { loadFFlate } from './docx-loader.js?v=338';
 import {
   formatRecipeIngredientsTotal, formatRecipeQuantity,
   getRecipeProductYieldInfo,
   formatSubdivisionWeight,
   resolveRecipeBaking, formatOvenBakeParamsLine, getRecipeOvenLabel,
-} from './kitchen-db.js?v=337';
+} from './kitchen-db.js?v=338';
 
 const UNIT_KG = /^(ק"ג|ק״ג|קג|kg|קילו)$/i;
 const UNIT_G = /^(גרם|ג'|ג׳|gr|g)$/i;

@@ -6138,6 +6138,45 @@ table.report-table tfoot td {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.flow-metrics-stat--products {
+  background: color-mix(in srgb, var(--primary-soft, #ecfdf5) 70%, white);
+  border-color: color-mix(in srgb, var(--primary, #0f766e) 35%, var(--border));
+}
+
+button.flow-metrics-stat--products:hover {
+  background: color-mix(in srgb, var(--primary-soft, #d1fae5) 85%, white);
+}
+
+.flow-metrics-products-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.flow-metrics-products-cat {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--surface);
+}
+
+.flow-metrics-products-cat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.flow-metrics-products-cat-total {
+  font-weight: 800;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 @media (max-width: 520px) {
   .flow-metrics-grid--secondary {
     grid-template-columns: 1fr;
