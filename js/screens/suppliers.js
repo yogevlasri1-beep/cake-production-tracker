@@ -8,7 +8,8 @@ import {
   importSupplierExcelEntries,
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
-  getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, computePricePerKg,
+  getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, mergeSelectedRawMaterials,
+  buildMergedMaterialSynonyms, computePricePerKg,
   computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg,
   getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, sanitizeProcessedPricePerKg,
   getSupplierShortagesGrouped, addSupplierShortage, updateSupplierShortage, deleteSupplierShortage,
@@ -17,13 +18,13 @@ import {
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
-} from '../kitchen-db.js?v=334';
-import { getProducts } from '../db.js?v=334';
-import { parseSupplierFile } from '../supplier-import.js?v=334';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=334';
-import { openModal, closeModal } from '../modal.js?v=334';
-import { requestAutoBackupNow } from '../backup-service.js?v=334';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=334';
+} from '../kitchen-db.js?v=335';
+import { getProducts } from '../db.js?v=335';
+import { parseSupplierFile } from '../supplier-import.js?v=335';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=335';
+import { openModal, closeModal } from '../modal.js?v=335';
+import { requestAutoBackupNow } from '../backup-service.js?v=335';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=335';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -198,6 +199,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
         <div class="card-title" style="margin:0;flex:1">מחסן חומרי גלם</div>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-dup">אחד כפילויות</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-selected">איחוד נבחרים</button>
       </div>
       <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · גיליון לכל ספק (עם או בלי כותרות — שם + מחיר לק"ג)</p>
     </div>
@@ -248,6 +250,9 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
 
   document.getElementById('catalog-merge-dup')?.addEventListener('click', () => {
     openMergeDuplicatesModal(container);
+  });
+  document.getElementById('catalog-merge-selected')?.addEventListener('click', () => {
+    openMergeSelectedMaterialsModal(container);
   });
 }
 
@@ -569,6 +574,170 @@ async function mergeDupGroupFromUI(gi, container) {
   showToast('אוחד ✓');
   requestAutoBackupNow().catch(() => {});
   await refreshMergeDuplicatesModal(container);
+}
+
+async function openMergeSelectedMaterialsModal(container) {
+  const [materials, suppliers] = await Promise.all([getRawMaterials(), getSuppliers()]);
+  if (materials.length < 2) {
+    showToast('צריך לפחות 2 חומרי גלם לאיחוד');
+    return;
+  }
+  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const sorted = [...materials].sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
+
+  function renderOptions(search = '') {
+    const q = search.trim().toLocaleLowerCase('he');
+    const list = sorted.filter((m) => materialMatchesSearch(m, q, {
+      supplierName: m.supplierId ? (supMap.get(m.supplierId) || '') : '',
+    }));
+    if (!list.length) return '<p class="form-hint">אין תוצאות</p>';
+    return list.map((m) => `
+      <div class="merge-product-option manual-merge-option manual-mat-merge-option">
+        <label class="manual-mat-merge-select">
+          <input type="checkbox" class="manual-mat-merge-check" value="${m.id}">
+          <span class="manual-mat-merge-option-body">
+            <strong>${escapeHtml(m.name)}</strong>
+            <span class="merge-product-meta">
+              ${escapeHtml(m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ללא ספק')}
+              · ${formatMaterialPriceMeta(m)}
+              ${m.isRecipeDefault ? ' · ★ ברירת מחדל' : ''}
+            </span>
+          </span>
+        </label>
+        <label class="manual-mat-merge-keep" title="רשומה שתישאר">
+          <input type="radio" name="manual-mat-keep" class="manual-mat-keep-radio" value="${m.id}" disabled>
+          <span>יעד</span>
+        </label>
+      </div>`).join('');
+  }
+
+  openModal({
+    title: 'איחוד חומרי גלם נבחרים',
+    modalClass: 'modal-merge-selected-mats',
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0;line-height:1.5">
+        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» נשארת;
+        השאר מאוחדים אליה (מחירים, היסטוריה, מתכונים). שמות שונים מתווספים למילים נרדפות.
+      </p>
+      <div class="form-group" style="margin-bottom:8px">
+        <input type="search" id="manual-mat-merge-search" placeholder="חיפוש לפי שם / מילה נרדפת / ספק..." autocomplete="off">
+      </div>
+      <div class="manual-merge-list" id="manual-mat-merge-list">
+        ${renderOptions()}
+      </div>
+      <p class="form-hint" id="manual-mat-merge-preview" style="margin-top:10px"></p>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+      <button type="button" class="btn btn-primary" id="confirm-manual-mat-merge">אחד חומרים</button>`,
+  });
+
+  const listEl = document.getElementById('manual-mat-merge-list');
+  const previewEl = document.getElementById('manual-mat-merge-preview');
+
+  function selectedMats() {
+    const ids = [...document.querySelectorAll('.manual-mat-merge-check:checked')].map((el) => Number(el.value));
+    return ids.map((id) => sorted.find((m) => m.id === id)).filter(Boolean);
+  }
+
+  function syncKeepRadios() {
+    const checked = new Set(
+      [...document.querySelectorAll('.manual-mat-merge-check:checked')].map((el) => el.value),
+    );
+    listEl.querySelectorAll('.manual-mat-merge-option').forEach((row) => {
+      const cb = row.querySelector('.manual-mat-merge-check');
+      const radio = row.querySelector('.manual-mat-keep-radio');
+      if (!cb || !radio) return;
+      const on = checked.has(cb.value);
+      radio.disabled = !on;
+      if (!on) radio.checked = false;
+    });
+    const enabledRadios = [...listEl.querySelectorAll('.manual-mat-keep-radio:not(:disabled)')];
+    if (enabledRadios.length && !enabledRadios.some((r) => r.checked)) {
+      enabledRadios[0].checked = true;
+    }
+    updatePreview();
+  }
+
+  function updatePreview() {
+    if (!previewEl) return;
+    const mats = selectedMats();
+    if (mats.length < 2) {
+      previewEl.textContent = 'יש לבחור לפחות 2 חומרים';
+      return;
+    }
+    const keepId = Number(document.querySelector('.manual-mat-keep-radio:checked')?.value);
+    const keep = mats.find((m) => m.id === keepId) || mats[0];
+    const others = mats.filter((m) => m.id !== keep.id);
+    const syns = buildMergedMaterialSynonyms(keep, others);
+    const synText = syns.length ? syns.join(' · ') : '—';
+    previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong>
+      · מאוחדים: ${others.length}
+      · מילים נרדפות אחרי איחוד: ${escapeHtml(synText)}`;
+  }
+
+  function bindList() {
+    listEl.querySelectorAll('.manual-mat-merge-check').forEach((cb) => {
+      cb.addEventListener('change', syncKeepRadios);
+    });
+    listEl.querySelectorAll('.manual-mat-keep-radio').forEach((radio) => {
+      radio.addEventListener('change', updatePreview);
+    });
+  }
+
+  bindList();
+  syncKeepRadios();
+
+  document.getElementById('manual-mat-merge-search')?.addEventListener('input', (e) => {
+    const checked = new Set(
+      [...document.querySelectorAll('.manual-mat-merge-check:checked')].map((el) => el.value),
+    );
+    const keepId = document.querySelector('.manual-mat-keep-radio:checked')?.value;
+    listEl.innerHTML = renderOptions(e.target.value);
+    listEl.querySelectorAll('.manual-mat-merge-check').forEach((cb) => {
+      if (checked.has(cb.value)) cb.checked = true;
+    });
+    bindList();
+    syncKeepRadios();
+    if (keepId) {
+      const radio = listEl.querySelector(`.manual-mat-keep-radio[value="${keepId}"]`);
+      if (radio && !radio.disabled) radio.checked = true;
+    }
+    updatePreview();
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  document.getElementById('confirm-manual-mat-merge')?.addEventListener('click', async () => {
+    const mats = selectedMats();
+    if (mats.length < 2) {
+      showToast('יש לבחור לפחות 2 חומרים');
+      return;
+    }
+    const keepId = Number(document.querySelector('.manual-mat-keep-radio:checked')?.value);
+    if (!keepId || !mats.some((m) => m.id === keepId)) {
+      showToast('בחר רשומת יעד');
+      return;
+    }
+    const mergeIds = mats.map((m) => m.id).filter((id) => id !== keepId);
+    const btn = document.getElementById('confirm-manual-mat-merge');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'מאחד...';
+    }
+    try {
+      await mergeSelectedRawMaterials(keepId, mergeIds);
+      closeModal();
+      showToast('חומרים אוחדו ✓');
+      requestAutoBackupNow().catch(() => {});
+      renderSuppliers(container);
+    } catch (err) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'אחד חומרים';
+      }
+      showToast(err.message || 'שגיאה באיחוד');
+    }
+  });
 }
 
 async function openMergeDuplicatesModal(container) {

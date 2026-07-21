@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=334';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=335';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=334';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=334';
+} from './validators.js?v=335';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=335';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1820,11 +1820,17 @@ export function getIngredientPriceSource(ing) {
 
 export function buildMaterialsByNameKey(materials) {
   const map = new Map();
-  for (const m of materials || []) {
-    const key = normalizeMaterialKey(m.name);
-    if (!key) continue;
+  const add = (key, m) => {
+    if (!key) return;
     if (!map.has(key)) map.set(key, []);
-    map.get(key).push(m);
+    const list = map.get(key);
+    if (!list.some((x) => x.id === m.id)) list.push(m);
+  };
+  for (const m of materials || []) {
+    add(normalizeMaterialKey(m.name), m);
+    for (const syn of getMaterialSynonyms(m)) {
+      add(normalizeMaterialKey(syn), m);
+    }
   }
   return map;
 }
@@ -1974,7 +1980,10 @@ export async function getMaterialsByIngredientName(name) {
   const key = normalizeMaterialKey(name);
   if (!key) return [];
   const all = await db.rawMaterials.toArray();
-  return all.filter((m) => normalizeMaterialKey(m.name) === key);
+  return all.filter((m) => {
+    if (normalizeMaterialKey(m.name) === key) return true;
+    return getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === key);
+  });
 }
 
 async function syncRecipesAffectedByMaterial(materialId) {
@@ -3123,6 +3132,66 @@ export async function getDuplicateMaterialGroups() {
     .sort((a, b) => a.name.localeCompare(b.name, 'he'));
 }
 
+/** בונה מילים נרדפות לאיחוד — שמות/מילים נרדפות של הרשומות המאוחדות (בלי שם היעד) */
+export function buildMergedMaterialSynonyms(keep, others = []) {
+  if (!keep) return [];
+  const keepKey = normalizeMaterialKey(keep.name);
+  const collected = [...getMaterialSynonyms(keep)];
+  for (const m of others || []) {
+    if (!m) continue;
+    const nameKey = normalizeMaterialKey(m.name);
+    if (nameKey && nameKey !== keepKey) collected.push(m.name);
+    collected.push(...getMaterialSynonyms(m));
+  }
+  return sanitizeMaterialSynonyms(
+    collected.filter((s) => normalizeMaterialKey(s) !== keepKey),
+  );
+}
+
+function materialFieldFillPatch(keep, others) {
+  const patch = {};
+  if (!keep.packageWeightGrams) {
+    const from = others.find((o) => o.packageWeightGrams);
+    if (from) patch.packageWeightGrams = from.packageWeightGrams;
+  }
+  if (sanitizeProcessedPricePerKg(keep.processedPricePerKg) == null) {
+    const from = others.find((o) => sanitizeProcessedPricePerKg(o.processedPricePerKg) != null);
+    if (from) patch.processedPricePerKg = from.processedPricePerKg;
+  }
+  if (!keep.supplierId) {
+    const from = others.find((o) => o.supplierId);
+    if (from) patch.supplierId = from.supplierId;
+  }
+  if (!String(keep.unit || '').trim()) {
+    const from = others.find((o) => String(o.unit || '').trim());
+    if (from) patch.unit = from.unit;
+  }
+  if (!keep.supplierCategoryId) {
+    const from = others.find((o) => o.supplierCategoryId);
+    if (from) patch.supplierCategoryId = from.supplierCategoryId;
+  }
+  if (!keep.isRecipeDefault && others.some((o) => o.isRecipeDefault)) {
+    patch.isRecipeDefault = true;
+  }
+  if ((Number(keep.unitPrice) || 0) <= 0) {
+    const from = others.find((o) => (Number(o.unitPrice) || 0) > 0);
+    if (from) patch.unitPrice = from.unitPrice;
+  }
+  return patch;
+}
+
+async function renameRecipeIngredientsMaterialName(fromName, toName) {
+  const fromKey = normalizeMaterialKey(fromName);
+  const to = sanitizeName(toName, 80);
+  if (!fromKey || !to || fromKey === normalizeMaterialKey(to)) return;
+  const ings = await db.recipeIngredients.toArray();
+  for (const ing of ings) {
+    if (normalizeMaterialKey(ing.name) === fromKey) {
+      await db.recipeIngredients.update(ing.id, { name: to });
+    }
+  }
+}
+
 export async function mergeDuplicateMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
   if (!keep) throw new ValidationError('חומר לא תקין');
@@ -3154,6 +3223,48 @@ async function mergeMaterialIntoKeep(keep, mid) {
     }
   }
   await db.rawMaterials.delete(mid);
+}
+
+/**
+ * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
+ * שם היעד נשאר; שמות אחרים + מילים נרדפות מאוחדים לרשימת מילים נרדפות.
+ */
+export async function mergeSelectedRawMaterials(keepId, mergeIds) {
+  const keep = sanitizeProductId(keepId);
+  if (!keep) throw new ValidationError('חומר לא תקין');
+  const ids = [...new Set((mergeIds || []).map(sanitizeProductId).filter((id) => id && id !== keep))];
+  if (!ids.length) throw new ValidationError('בחר לפחות חומר נוסף לאיחוד');
+
+  const keepMat = await db.rawMaterials.get(keep);
+  if (!keepMat) throw new ValidationError('חומר היעד לא נמצא');
+  const others = [];
+  for (const mid of ids) {
+    const mat = await db.rawMaterials.get(mid);
+    if (mat) others.push(mat);
+  }
+  if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
+
+  const synonyms = buildMergedMaterialSynonyms(keepMat, others);
+  const fillPatch = materialFieldFillPatch(keepMat, others);
+  const shouldSetDefault = !!fillPatch.isRecipeDefault;
+
+  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+    for (const mat of others) {
+      await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
+      await mergeMaterialIntoKeep(keep, mat.id);
+    }
+    const patch = { ...fillPatch, synonyms };
+    delete patch.isRecipeDefault;
+    await db.rawMaterials.update(keep, patch);
+  });
+
+  if (shouldSetDefault) {
+    await setRawMaterialRecipeDefault(keep, true);
+  }
+  await syncRawMaterialLatestPrice(keep);
+  await syncRawMaterialsActiveFromRecipes();
+  await syncRecipesAffectedByMaterial(keep);
+  return keep;
 }
 
 /** שומר מספר רשומות (ספקים) — לא מסומנות מאוחדות לרשומת יעד מתאימה */

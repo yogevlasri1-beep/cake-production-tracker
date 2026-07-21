@@ -6592,6 +6592,49 @@ table.report-cat-summary-table td:not(:first-child) {
   margin: 0;
 }
 
+.manual-mat-merge-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.manual-mat-merge-select {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1;
+  cursor: pointer;
+  margin: 0;
+}
+
+.manual-mat-merge-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.manual-mat-merge-keep {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin: 0;
+  padding-top: 2px;
+}
+
+.manual-mat-merge-keep:has(input:disabled) {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .backup-card {
   margin-top: 8px;
 }

@@ -1,10 +1,10 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=334';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=334';
-import { openModal, closeModal } from '../modal.js?v=334';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=334';
+} from '../db.js?v=335';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=335';
+import { openModal, closeModal } from '../modal.js?v=335';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=335';
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
