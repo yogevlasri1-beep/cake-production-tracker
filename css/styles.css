@@ -10136,6 +10136,91 @@ body.supplier-drag-active {
   flex-wrap: wrap;
 }
 
+.portion-packaging-item-main--stack {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.portion-packaging-numbers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.portion-packaging-number-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.portion-packaging-number-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.portion-packaging-number-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.portion-packaging-num-add {
+  align-self: flex-start;
+}
+
+.run-portion-ing-batch-summary {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary-soft, #ecfdf5) 55%, white);
+  border: 1px solid color-mix(in srgb, var(--primary, #0f766e) 20%, var(--border));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-portion-ing-batch-summary-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.run-portion-ing-batch-summary-name {
+  font-weight: 650;
+}
+
+.run-portion-ing-batch-summary-nums {
+  font-weight: 700;
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-portion-ing-batch-summary-sup {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.flow-metrics-batch-portion-block {
+  margin-bottom: 10px;
+}
+
+.flow-metrics-batch-portion-title {
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+
+.flow-portion-batch-item {
+  flex-wrap: wrap;
+}
+
 .portion-packaging-item-name {
   flex: 1;
   min-width: 140px;

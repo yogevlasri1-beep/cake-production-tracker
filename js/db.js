@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=338';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=338';
-import { defaultColorForIndex } from './chart.js?v=338';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=338';
+} from './validators.js?v=339';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=339';
+import { defaultColorForIndex } from './chart.js?v=339';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=339';
 
 export { ValidationError };
 
@@ -6658,6 +6658,7 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
     date: batchDate,
     recordedAt: managerNowISO(),
     note: String(note || '').trim().slice(0, 200),
+    ingredientBatches: [],
   };
 
   if (pid) {
@@ -6746,21 +6747,101 @@ export function getRunMaterialProcessingLogs(run) {
 /** רשימת מספרי מנה (אריזה) לסיכום מעקב חומרי גלם */
 export function collectRunIngredientBatchTracking(run) {
   const rows = [];
+  const pushBatch = (portionName, portionLogId, bat) => {
+    const num = String(bat.packagingBatchNumber || '').trim();
+    if (!num) return;
+    rows.push({
+      portionName: portionName || 'מנה',
+      portionLogId: portionLogId || null,
+      ingredientName: bat.name || 'חומר גלם',
+      packagingBatchNumber: num,
+      supplierName: bat.supplierName || '',
+      rawMaterialId: bat.rawMaterialId || null,
+      recipeIngredientId: bat.recipeIngredientId || null,
+    });
+  };
   for (const log of getRunPortionLogs(run)) {
     for (const bat of log.ingredientBatches || []) {
-      const num = String(bat.packagingBatchNumber || '').trim();
-      if (!num) continue;
-      rows.push({
-        portionName: log.name || 'מנה',
-        portionLogId: log.id,
-        ingredientName: bat.name || 'חומר גלם',
-        packagingBatchNumber: num,
-        supplierName: bat.supplierName || '',
-        rawMaterialId: bat.rawMaterialId || null,
-      });
+      pushBatch(log.name || 'מנה', log.id, bat);
+    }
+  }
+  for (const step of run?.steps || []) {
+    if (!step.tracksPortions) continue;
+    for (const batch of getStepPortionBatches(step)) {
+      for (const bat of batch.ingredientBatches || []) {
+        pushBatch(batch.name || 'מנה', null, bat);
+      }
     }
   }
   return rows;
+}
+
+function cleanIngredientBatchRows(batches = []) {
+  const cleaned = [];
+  for (const row of batches || []) {
+    const recipeIngredientId = Number(row.recipeIngredientId) || null;
+    const name = String(row.name || '').trim().slice(0, 120);
+    const rawMaterialId = row.rawMaterialId ? Number(row.rawMaterialId) : null;
+    const supplierName = String(row.supplierName || '').trim().slice(0, 80);
+    const numbers = [];
+    if (Array.isArray(row.packagingBatchNumbers)) {
+      for (const n of row.packagingBatchNumbers) {
+        const s = String(n || '').trim().slice(0, 60);
+        if (s) numbers.push(s);
+      }
+    }
+    const single = String(row.packagingBatchNumber || '').trim().slice(0, 60);
+    if (single && !numbers.includes(single)) numbers.push(single);
+    if (!numbers.length && !rawMaterialId) continue;
+    if (!numbers.length) {
+      cleaned.push({
+        recipeIngredientId,
+        name: name || 'חומר גלם',
+        packagingBatchNumber: '',
+        rawMaterialId,
+        supplierName,
+      });
+      continue;
+    }
+    for (const packagingBatchNumber of numbers) {
+      cleaned.push({
+        recipeIngredientId,
+        name: name || 'חומר גלם',
+        packagingBatchNumber,
+        rawMaterialId,
+        supplierName,
+      });
+    }
+  }
+  return cleaned;
+}
+
+export async function saveRunPortionIngredientBatches(runId, logId, batches = []) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = [...getRunPortionLogs(run)];
+  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
+  if (idx < 0) throw new ValidationError('רשומת מנה לא נמצאה');
+
+  logs[idx] = { ...logs[idx], ingredientBatches: cleanIngredientBatchRows(batches) };
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+}
+
+/** שמירת רשימת מספרי מנה על רשומת מנות בשלב */
+export async function saveRunStepPortionIngredientBatches(runId, stepIndex, batchIndex, batches = []) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  const portionBatches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  const idx = Number(batchIndex);
+  if (idx < 0 || idx >= portionBatches.length) throw new ValidationError('רשומת מנות לא נמצאה');
+
+  portionBatches[idx] = {
+    ...portionBatches[idx],
+    ingredientBatches: cleanIngredientBatchRows(batches),
+  };
+  await db.runStepStates.update(step.id, { portionBatches });
 }
 
 export async function addRunPortionLog(runId, { presetId, count, date, note } = {}) {
@@ -6831,35 +6912,6 @@ export async function deleteRunPortionLog(runId, logId) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   const logs = getRunPortionLogs(run).filter((l) => Number(l.id) !== Number(logId));
-  await db.productionRuns.update(runId, { runPortionLogs: logs });
-}
-
-export async function saveRunPortionIngredientBatches(runId, logId, batches = []) {
-  const run = await getProductionRun(runId);
-  if (!run) throw new ValidationError('תהליך לא נמצא');
-  const logs = [...getRunPortionLogs(run)];
-  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
-  if (idx < 0) throw new ValidationError('רשומת מנה לא נמצאה');
-
-  const cleaned = [];
-  for (const row of batches || []) {
-    const recipeIngredientId = Number(row.recipeIngredientId) || null;
-    const name = String(row.name || '').trim().slice(0, 120);
-    const packagingBatchNumber = String(row.packagingBatchNumber || '').trim().slice(0, 60);
-    const rawMaterialId = row.rawMaterialId ? Number(row.rawMaterialId) : null;
-    const supplierName = String(row.supplierName || '').trim().slice(0, 80);
-    if (!name && !packagingBatchNumber && !rawMaterialId) continue;
-    if (!packagingBatchNumber && !rawMaterialId) continue;
-    cleaned.push({
-      recipeIngredientId,
-      name: name || 'חומר גלם',
-      packagingBatchNumber,
-      rawMaterialId,
-      supplierName,
-    });
-  }
-
-  logs[idx] = { ...logs[idx], ingredientBatches: cleaned };
   await db.productionRuns.update(runId, { runPortionLogs: logs });
 }
 
