@@ -29,20 +29,20 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
-  materialMatchesSearch, getMaterialSynonyms,
-} from '../kitchen-db.js?v=339';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=339';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=339';
-import { renderRecipesMachines } from '../recipes-machines.js?v=339';
-import { renderRecipesPortions } from '../recipes-portions.js?v=339';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=339';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=339';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=339';
-import { openModal, closeModal } from '../modal.js?v=339';
+  materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
+} from '../kitchen-db.js?v=340';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=340';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=340';
+import { renderRecipesMachines } from '../recipes-machines.js?v=340';
+import { renderRecipesPortions } from '../recipes-portions.js?v=340';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=340';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=340';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=340';
+import { openModal, closeModal } from '../modal.js?v=340';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=339';
-import { defaultColorForIndex } from '../chart.js?v=339';
+} from '../product-drag.js?v=340';
+import { defaultColorForIndex } from '../chart.js?v=340';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2343,14 +2343,40 @@ function buildRecipeMaterialContext(mats, suppliers) {
   };
 }
 
+function ingredientMaterialHasPrice(mat) {
+  if (!mat) return false;
+  const effective = getMaterialEffectivePricePerKg(mat);
+  if (effective != null && effective > 0) return true;
+  return (Number(mat.unitPrice) || 0) > 0;
+}
+
+/** סטטוס שיוך לספקים: linked / no-price / unlinked */
+function getIngredientSupplierStatus(mat) {
+  if (!mat) return 'unlinked';
+  return ingredientMaterialHasPrice(mat) ? 'linked' : 'no-price';
+}
+
+function ingredientStatusDotHTML(status) {
+  const map = {
+    linked: { cls: 'recipe-ing-status--linked', title: 'משויך לספקים · יש מחיר', label: 'ירוק' },
+    'no-price': { cls: 'recipe-ing-status--no-price', title: 'משויך לספקים · אין מחיר', label: 'צהוב' },
+    unlinked: { cls: 'recipe-ing-status--unlinked', title: 'לא משויך לספקים', label: 'אדום' },
+  };
+  const info = map[status] || map.unlinked;
+  return `<span class="recipe-ing-status ${info.cls}" title="${info.title}" aria-label="${info.title}"></span>`;
+}
+
 function resolveIngredientDisplay(ing, ctx) {
   const { mat, priceSource, usedRecipeDefault } = resolveRecipeIngredientMaterial(ing, ctx);
   const lineCost = computeIngredientLineCost(ing, mat);
   const ppk = mat ? computePricePerKg(mat.unitPrice, mat.packageWeightGrams) : null;
-  let badge = 'ללא מחיר';
+  const status = getIngredientSupplierStatus(mat);
+  let badge = 'לא משויך לספקים';
   if (mat) {
     const supName = ctx.supMap.get(mat.supplierId) || 'ספק';
-    if (priceSource === 'max') {
+    if (status === 'no-price') {
+      badge = `משויך · ללא מחיר · ${supName}`;
+    } else if (priceSource === 'max') {
       badge = usedRecipeDefault
         ? `ברירת מחדל · ${supName}`
         : 'מחיר מקס׳ (אוטומטי)';
@@ -2358,20 +2384,32 @@ function resolveIngredientDisplay(ing, ctx) {
       badge = `${supName} (ידני)`;
     }
   }
-  return { mat, lineCost, badge, priceSource, ppk, usedRecipeDefault };
+  return { mat, lineCost, badge, priceSource, ppk, usedRecipeDefault, status };
 }
 
 function renderRecipeCostSummaryHTML(ingredients, ctx) {
   let total = 0;
+  let linked = 0;
+  let noPrice = 0;
+  let unlinked = 0;
   for (const ing of ingredients || []) {
-    total += resolveIngredientDisplay(ing, ctx).lineCost;
+    const { lineCost, status } = resolveIngredientDisplay(ing, ctx);
+    total += lineCost;
+    if (status === 'linked') linked += 1;
+    else if (status === 'no-price') noPrice += 1;
+    else unlinked += 1;
   }
   if (!ingredients?.length) return '';
   return `
     <div class="recipe-cost-summary">
-      <span class="recipe-cost-label">עלות חומרי גלם למתכון</span>
+      <span class="recipe-cost-label">סה״כ עלות למנה</span>
       <strong class="recipe-cost-value">${formatMoney(total)}</strong>
-      <span class="form-hint">מחירים מספקים · ברירת מחדל לספק אם סומנה, אחרת הגבוה ביותר</span>
+      <span class="form-hint">המתכון = מנה אחת · מחירים מספקים</span>
+      <div class="recipe-ing-status-legend" aria-hidden="true">
+        <span><span class="recipe-ing-status recipe-ing-status--linked"></span> משויך (${linked})</span>
+        <span><span class="recipe-ing-status recipe-ing-status--no-price"></span> בלי מחיר (${noPrice})</span>
+        <span><span class="recipe-ing-status recipe-ing-status--unlinked"></span> לא משויך (${unlinked})</span>
+      </div>
     </div>`;
 }
 
@@ -2393,11 +2431,11 @@ function renderRecipeIngredientsHeaderHTML() {
 
 function renderRecipeIngredientRowHTML(ing, ctx) {
   const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
-  const { lineCost, badge, mat } = resolveIngredientDisplay(ing, ctx);
+  const { lineCost, badge, mat, status } = resolveIngredientDisplay(ing, ctx);
   return `
-    <div class="filter-row recipe-ing-row" style="margin-bottom:6px;align-items:center" data-ing-id="${ing.id}">
+    <div class="filter-row recipe-ing-row" style="margin-bottom:6px;align-items:center" data-ing-id="${ing.id}" data-ing-status="${status}">
       <button type="button" class="recipe-ing-name pick-ing-supplier" data-ing-id="${ing.id}" title="לחץ לעריכת חומר גלם ובחירה מספקים">
-        <span class="recipe-ing-name-text">✏️ ${escapeHtml(ing.name)}</span>
+        <span class="recipe-ing-name-text">${ingredientStatusDotHTML(status)} ✏️ ${escapeHtml(ing.name)}</span>
         <span class="recipe-ing-price-meta">${escapeHtml(badge)} · לחץ לעריכה</span>
       </button>
       <input type="number" class="ing-qty" min="0.001" step="0.001" value="${formatRecipeQuantity(ing.quantity)}" style="width:80px">
@@ -2405,7 +2443,7 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
         ${RECIPE_WEIGHT_UNITS.map((u) => `
           <option value="${u.id}" ${kind === u.id ? 'selected' : ''}>${u.label}</option>`).join('')}
       </select>
-      <span class="recipe-ing-line-cost" title="מחיר לפי הכמות במתכון">${mat ? formatMoney(lineCost) : '—'}</span>
+      <span class="recipe-ing-line-cost" title="מחיר לפי הכמות במתכון">${mat && status !== 'no-price' ? formatMoney(lineCost) : '—'}</span>
       <button type="button" class="btn btn-danger btn-sm del-ing" data-id="${ing.id}">🗑</button>
     </div>`;
 }
@@ -2567,9 +2605,16 @@ function refreshRecipeIngredientCosts(baseIngredients, ctx) {
   document.querySelectorAll('.recipe-ing-row').forEach((row) => {
     const ing = current.find((i) => i.id === Number(row.dataset.ingId));
     if (!ing) return;
-    const { lineCost, mat } = resolveIngredientDisplay(ing, ctx);
+    const { lineCost, mat, status, badge } = resolveIngredientDisplay(ing, ctx);
+    row.dataset.ingStatus = status;
     const costEl = row.querySelector('.recipe-ing-line-cost');
-    if (costEl) costEl.textContent = mat ? formatMoney(lineCost) : '—';
+    if (costEl) costEl.textContent = mat && status !== 'no-price' ? formatMoney(lineCost) : '—';
+    const nameText = row.querySelector('.recipe-ing-name-text');
+    if (nameText) {
+      nameText.innerHTML = `${ingredientStatusDotHTML(status)} ✏️ ${escapeHtml(ing.name)}`;
+    }
+    const meta = row.querySelector('.recipe-ing-price-meta');
+    if (meta) meta.textContent = `${badge} · לחץ לעריכה`;
   });
 }
 
@@ -3602,15 +3647,17 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
   const isSubRecipe = !!recipe.parentRecipeId;
   let totalCost = 0;
   const ingredientRows = ingredients.map((ing, i) => {
-    const { lineCost, mat } = matCtx ? resolveIngredientDisplay(ing, matCtx) : { lineCost: 0, mat: null };
+    const { lineCost, mat, status } = matCtx
+      ? resolveIngredientDisplay(ing, matCtx)
+      : { lineCost: 0, mat: null, status: 'unlinked' };
     totalCost += lineCost;
     return `
               <tr>
                 <td class="col-num">${i + 1}</td>
-                <td class="col-name">${escapeHtml(ing.name)}</td>
+                <td class="col-name">${ingredientStatusDotHTML(status)} ${escapeHtml(ing.name)}</td>
                 <td class="col-qty"><span class="recipe-qty-value">${formatRecipeQuantity(ing.quantity)}</span></td>
                 <td class="col-unit">${escapeHtml(ing.unit)}</td>
-                <td class="col-cost">${mat ? formatMoney(lineCost) : '—'}</td>
+                <td class="col-cost">${mat && status !== 'no-price' ? formatMoney(lineCost) : '—'}</td>
               </tr>`;
   }).join('');
 
@@ -3646,7 +3693,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
             <tbody>
               ${ingredientRows}
               <tr class="recipe-cost-total-row">
-                <td colspan="4" class="recipe-cost-total-label">סה״כ חומרי גלם</td>
+                <td colspan="4" class="recipe-cost-total-label">סה״כ עלות למנה</td>
                 <td class="col-cost"><strong>${formatMoney(totalCost)}</strong></td>
               </tr>
             </tbody>

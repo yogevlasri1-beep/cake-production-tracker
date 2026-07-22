@@ -9131,6 +9131,55 @@ body.supplier-drag-active {
   color: var(--primary, #2563eb);
 }
 
+.recipe-ing-status {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-inline-end: 6px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.recipe-ing-status--linked {
+  background: #16a34a;
+}
+
+.recipe-ing-status--no-price {
+  background: #eab308;
+}
+
+.recipe-ing-status--unlinked {
+  background: #dc2626;
+}
+
+.recipe-ing-status-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.recipe-ing-status-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.recipe-ing-name-text {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.recipe-sheet-table .col-name .recipe-ing-status {
+  margin-inline-end: 8px;
+}
+
 .recipe-ing-name {
   flex: 1;
   min-width: 0;
