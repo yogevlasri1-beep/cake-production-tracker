@@ -1819,10 +1819,14 @@ function readRecipeProductLinkFromForm() {
     };
   }
   if (scopeType === 'product') {
+    const pickRow = document.getElementById('recipe-product-scope-pick-row');
+    const stickyIds = typeof pickRow?._getStickyProductIds === 'function'
+      ? pickRow._getStickyProductIds()
+      : [...document.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value)).filter(Boolean);
     return {
       linkedProductGroupIds: [],
       linkedProductCategoryIds: [],
-      linkedProductIds: [...document.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value)).filter(Boolean),
+      linkedProductIds: stickyIds,
     };
   }
   return { linkedProductGroupIds: [], linkedProductCategoryIds: [], linkedProductIds: [] };
