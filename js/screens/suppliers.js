@@ -19,15 +19,16 @@ import {
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
   setRawMaterialAsPortion,
-} from '../kitchen-db.js?v=349';
-import { getProducts } from '../db.js?v=349';
-import { parseSupplierFile } from '../supplier-import.js?v=349';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=349';
-import { openModal, closeModal } from '../modal.js?v=349';
-import { requestAutoBackupNow } from '../backup-service.js?v=349';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=349';
+} from '../kitchen-db.js?v=350';
+import { getProducts } from '../db.js?v=350';
+import { parseSupplierFile } from '../supplier-import.js?v=350';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=350';
+import { openModal, closeModal } from '../modal.js?v=350';
+import { requestAutoBackupNow } from '../backup-service.js?v=350';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=350';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
+const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
 
 export const SUPPLIER_TABS = {
   catalog: { id: 'catalog', label: 'מחסן', subtitle: 'רשימת חומרי גלם כללית, שיוך לספקים' },
@@ -77,6 +78,27 @@ export function suppliersMeta() {
   return { title: 'ספקים', subtitle: meta?.subtitle || '' };
 }
 
+/** פתיחת חומר גלם במסך ספקים (אחרי ניווט) */
+export function requestOpenSupplierMaterial(materialId) {
+  const id = Number(materialId);
+  if (!id) return;
+  try {
+    sessionStorage.setItem(PENDING_MATERIAL_KEY, String(id));
+    sessionStorage.setItem(SUPPLIER_TAB_KEY, 'browse');
+  } catch { /* ignore */ }
+}
+
+function consumePendingSupplierMaterial() {
+  try {
+    const id = Number(sessionStorage.getItem(PENDING_MATERIAL_KEY) || '');
+    if (!id) return null;
+    sessionStorage.removeItem(PENDING_MATERIAL_KEY);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
 export async function renderSuppliers(container) {
   const tab = getSupplierTab(container);
   container.dataset.supplierTab = tab;
@@ -103,6 +125,11 @@ export async function renderSuppliers(container) {
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat || container.dataset.matCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
   else await renderOrderTab(body, container, products, weekStart);
+
+  const pendingMaterialId = consumePendingSupplierMaterial();
+  if (pendingMaterialId) {
+    setTimeout(() => openMaterialDetailModal(container, pendingMaterialId), 120);
+  }
 }
 
 /* ── מחסן: קטלוג חומרי גלם ── */

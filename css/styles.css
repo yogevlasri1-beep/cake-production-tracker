@@ -9268,6 +9268,49 @@ body.supplier-drag-active {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
 }
 
+.recipe-ing-identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.recipe-ing-identity .recipe-ing-name {
+  flex: 1;
+}
+
+.recipe-ing-identity--sheet {
+  align-items: center;
+}
+
+.recipe-ing-status-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.recipe-ing-status-btn .recipe-ing-status {
+  margin-inline-end: 0;
+  width: 0.7rem;
+  height: 0.7rem;
+}
+
+.recipe-ing-status-btn:hover,
+.recipe-ing-status-btn:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-alt, #f8fafc);
+  outline: none;
+}
+
 .recipe-ing-status--linked {
   background: #16a34a;
 }

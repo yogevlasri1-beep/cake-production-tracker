@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=349';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=349';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=349';
-import { renderRecipesMachines } from '../recipes-machines.js?v=349';
-import { renderRecipesPortions } from '../recipes-portions.js?v=349';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=349';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=349';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=349';
-import { openModal, closeModal } from '../modal.js?v=349';
+} from '../kitchen-db.js?v=350';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=350';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=350';
+import { renderRecipesMachines } from '../recipes-machines.js?v=350';
+import { renderRecipesPortions } from '../recipes-portions.js?v=350';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=350';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=350';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=350';
+import { openModal, closeModal } from '../modal.js?v=350';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=349';
-import { defaultColorForIndex } from '../chart.js?v=349';
+} from '../product-drag.js?v=350';
+import { defaultColorForIndex } from '../chart.js?v=350';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2439,14 +2439,24 @@ function getIngredientSupplierStatus(mat) {
   return ingredientMaterialHasPrice(mat) ? 'linked' : 'no-price';
 }
 
-function ingredientStatusDotHTML(status) {
+function ingredientStatusDotHTML(status, { asButton = false, materialId = null, ingredientId = null } = {}) {
   const map = {
-    linked: { cls: 'recipe-ing-status--linked', title: 'משויך לספקים · יש מחיר', label: 'ירוק' },
-    'no-price': { cls: 'recipe-ing-status--no-price', title: 'משויך לספקים · אין מחיר', label: 'צהוב' },
-    unlinked: { cls: 'recipe-ing-status--unlinked', title: 'לא משויך לספקים', label: 'אדום' },
+    linked: { cls: 'recipe-ing-status--linked', title: 'משויך לספקים · יש מחיר — לחץ לפתיחה בספקים', label: 'ירוק' },
+    'no-price': { cls: 'recipe-ing-status--no-price', title: 'משויך לספקים · אין מחיר — לחץ לפתיחה בספקים', label: 'צהוב' },
+    unlinked: { cls: 'recipe-ing-status--unlinked', title: 'לא משויך לספקים — לחץ על שם החומר לבחירה', label: 'אדום' },
   };
   const info = map[status] || map.unlinked;
-  return `<span class="recipe-ing-status ${info.cls}" title="${info.title}" aria-label="${info.title}"></span>`;
+  const dot = `<span class="recipe-ing-status ${info.cls}" aria-hidden="true"></span>`;
+  if (!asButton) {
+    return `<span class="recipe-ing-status ${info.cls}" title="${info.title}" aria-label="${info.title}"></span>`;
+  }
+  const mid = materialId ? ` data-mat-id="${Number(materialId)}"` : '';
+  const iid = ingredientId != null ? ` data-ing-id="${Number(ingredientId)}"` : '';
+  return `
+    <button type="button" class="recipe-ing-status-btn open-ing-in-suppliers"${mid}${iid}
+      title="${info.title}" aria-label="${info.title}">
+      ${dot}
+    </button>`;
 }
 
 function resolveIngredientDisplay(ing, ctx) {
@@ -2487,7 +2497,7 @@ function renderRecipeCostSummaryHTML(ingredients, ctx) {
     <div class="recipe-cost-summary">
       <span class="recipe-cost-label">סה״כ עלות למנה</span>
       <strong class="recipe-cost-value">${formatMoney(total)}</strong>
-      <span class="form-hint">המתכון = מנה אחת · מחירים מספקים</span>
+      <span class="form-hint">המתכון = מנה אחת · מחירים מספקים · נקודה = פתיחה בספקים · שם = בחירת חומר וספק</span>
       <div class="recipe-ing-status-legend" aria-hidden="true">
         <span><span class="recipe-ing-status recipe-ing-status--linked"></span> משויך (${linked})</span>
         <span><span class="recipe-ing-status recipe-ing-status--no-price"></span> בלי מחיר (${noPrice})</span>
@@ -2517,10 +2527,17 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
   const { lineCost, badge, mat, status } = resolveIngredientDisplay(ing, ctx);
   return `
     <div class="filter-row recipe-ing-row" style="margin-bottom:6px;align-items:center" data-ing-id="${ing.id}" data-ing-status="${status}">
-      <button type="button" class="recipe-ing-name pick-ing-supplier" data-ing-id="${ing.id}" title="לחץ לעריכת חומר גלם ובחירה מספקים">
-        <span class="recipe-ing-name-text">${ingredientStatusDotHTML(status)} ✏️ ${escapeHtml(ing.name)}</span>
-        <span class="recipe-ing-price-meta">${escapeHtml(badge)} · לחץ לעריכה</span>
-      </button>
+      <div class="recipe-ing-identity">
+        ${ingredientStatusDotHTML(status, {
+    asButton: true,
+    materialId: mat?.id || null,
+    ingredientId: ing.id,
+  })}
+        <button type="button" class="recipe-ing-name pick-ing-supplier" data-ing-id="${ing.id}" title="לחץ לבחירת חומר גלם וספק">
+          <span class="recipe-ing-name-text">✏️ ${escapeHtml(ing.name)}</span>
+          <span class="recipe-ing-price-meta">${escapeHtml(badge)} · בחירת חומר וספק</span>
+        </button>
+      </div>
       <input type="number" class="ing-qty" min="0.001" step="0.001" value="${formatRecipeQuantity(ing.quantity)}" style="width:80px">
       <select class="ing-unit" style="width:72px">
         ${RECIPE_WEIGHT_UNITS.map((u) => `
@@ -2529,6 +2546,21 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
       <span class="recipe-ing-line-cost" title="מחיר לפי הכמות במתכון">${mat && status !== 'no-price' ? formatMoney(lineCost) : '—'}</span>
       <button type="button" class="btn btn-danger btn-sm del-ing" data-id="${ing.id}">🗑</button>
     </div>`;
+}
+
+async function openIngredientMaterialInSuppliers(mat) {
+  if (!mat?.id) {
+    showToast('לא משויך לספקים — לחץ על שם החומר לבחירת חומר וספק');
+    return;
+  }
+  try {
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=350');
+    requestOpenSupplierMaterial(mat.id);
+    const { navigateToWorkspace } = await import('../app.js?v=350');
+    await navigateToWorkspace('suppliers', 'suppliers');
+  } catch (err) {
+    showToast(err.message || 'לא ניתן לפתוח בספקים');
+  }
 }
 
 async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, suppliers, productCatalog, catalogLayout, returnToView, formDraft) {
@@ -2565,12 +2597,12 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
     : 'אין מחירים';
 
   openModal({
-    title: `עריכת חומר גלם`,
+    title: `בחירת חומר גלם וספק`,
     modalClass: 'modal-ingredient-edit',
     bodyHTML: `
-      <p class="form-hint ingredient-edit-intro">חפש ובחר חומר גלם מרשימת הספקים, או בחר מחיר מההצעות למטה.</p>
+      <p class="form-hint ingredient-edit-intro">בחר חומר גלם מספקים, ואז בחר ספק/מחיר מההצעות למטה.</p>
       <div class="form-group" style="margin-top:0">
-        <label for="change-ing-mat-search">חומר גלם מספקים</label>
+        <label for="change-ing-mat-search">1 · חומר גלם מספקים</label>
         <div class="mat-search-wrap" style="position:relative">
           <input type="text" id="change-ing-mat-search" value="${escapeHtml(currentMat?.name || ing.name)}" placeholder="חפש לפי שם חומר גלם..." autocomplete="off">
           <input type="hidden" id="change-ing-mat-id" value="${currentMat?.id || ''}">
@@ -2580,7 +2612,7 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
       </div>
       <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">החל לפי שם בשדה (ללא בחירה מהרשימה)</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">
-      <p class="form-hint" style="margin-top:0">תמחור ל<strong>${escapeHtml(ing.name)}</strong> — ${defaultMat ? `ברירת מחדל: ${escapeHtml(defaultSupName)}` : 'ברירת מחדל: המחיר הגבוה ביותר'} · ניתן לבחור ספק אחר לעקיפה במתכון זה</p>
+      <p class="form-hint" style="margin-top:0"><strong>2 · ספק / מחיר</strong> ל<strong>${escapeHtml(ing.name)}</strong> — ${defaultMat ? `ברירת מחדל: ${escapeHtml(defaultSupName)}` : 'ברירת מחדל: המחיר הגבוה ביותר'} · ניתן לבחור ספק אחר לעקיפה במתכון זה</p>
       <div class="ing-price-picker">
         <button type="button" class="ing-price-option${currentSource === 'max' ? ' active' : ''}" data-source="max">
           <span class="ing-price-option-name">${escapeHtml(autoLabel)}</span>
@@ -2692,12 +2724,29 @@ function refreshRecipeIngredientCosts(baseIngredients, ctx) {
     row.dataset.ingStatus = status;
     const costEl = row.querySelector('.recipe-ing-line-cost');
     if (costEl) costEl.textContent = mat && status !== 'no-price' ? formatMoney(lineCost) : '—';
+    const statusBtn = row.querySelector('.open-ing-in-suppliers');
+    if (statusBtn) {
+      if (mat?.id) statusBtn.dataset.matId = String(mat.id);
+      else delete statusBtn.dataset.matId;
+      const map = {
+        linked: { cls: 'recipe-ing-status--linked', title: 'משויך לספקים · יש מחיר — לחץ לפתיחה בספקים' },
+        'no-price': { cls: 'recipe-ing-status--no-price', title: 'משויך לספקים · אין מחיר — לחץ לפתיחה בספקים' },
+        unlinked: { cls: 'recipe-ing-status--unlinked', title: 'לא משויך לספקים — לחץ על שם החומר לבחירה' },
+      };
+      const info = map[status] || map.unlinked;
+      statusBtn.title = info.title;
+      statusBtn.setAttribute('aria-label', info.title);
+      const dot = statusBtn.querySelector('.recipe-ing-status');
+      if (dot) {
+        dot.className = `recipe-ing-status ${info.cls}`;
+      }
+    }
     const nameText = row.querySelector('.recipe-ing-name-text');
     if (nameText) {
-      nameText.innerHTML = `${ingredientStatusDotHTML(status)} ✏️ ${escapeHtml(ing.name)}`;
+      nameText.innerHTML = `✏️ ${escapeHtml(ing.name)}`;
     }
     const meta = row.querySelector('.recipe-ing-price-meta');
-    if (meta) meta.textContent = `${badge} · לחץ לעריכה`;
+    if (meta) meta.textContent = `${badge} · בחירת חומר וספק`;
   });
 }
 
@@ -3737,7 +3786,16 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
     return `
               <tr>
                 <td class="col-num">${i + 1}</td>
-                <td class="col-name">${ingredientStatusDotHTML(status)} ${escapeHtml(ing.name)}</td>
+                <td class="col-name">
+                  <span class="recipe-ing-identity recipe-ing-identity--sheet">
+                    ${ingredientStatusDotHTML(status, {
+    asButton: true,
+    materialId: mat?.id || null,
+    ingredientId: ing.id,
+  })}
+                    <span class="recipe-ing-name-text">${escapeHtml(ing.name)}</span>
+                  </span>
+                </td>
                 <td class="col-qty"><span class="recipe-qty-value">${formatRecipeQuantity(ing.quantity)}</span></td>
                 <td class="col-unit">${escapeHtml(ing.unit)}</td>
                 <td class="col-cost">${mat && status !== 'no-price' ? formatMoney(lineCost) : '—'}</td>
@@ -3853,6 +3911,15 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   });
 
   bindRecipeProductionCalculator(recipe, recipe.ingredients || [], matCtx);
+
+  document.querySelectorAll('.modal-recipe-view .open-ing-in-suppliers').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const matId = Number(btn.dataset.matId);
+      const mat = matId ? mats.find((m) => m.id === matId) : null;
+      openIngredientMaterialInSuppliers(mat);
+    });
+  });
 }
 
 function openRecipeNotesEditor(container, recipe, { productCatalog, layout }) {
@@ -4085,6 +4152,25 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       try { await updateRecipeIngredient(ingId, { unitKind: e.target.value }); }
       catch (err) { showToast(err.message || 'שגיאה'); }
       refreshRecipeTotalDisplay(ingredients, recipe, matCtx);
+    });
+  });
+
+  document.querySelectorAll('.open-ing-in-suppliers').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const matId = Number(btn.dataset.matId);
+      const mat = matId ? mats.find((m) => m.id === matId) : null;
+      if (mat) {
+        openIngredientMaterialInSuppliers(mat);
+        return;
+      }
+      const ing = ingredients.find((i) => i.id === Number(btn.dataset.ingId));
+      if (ing) {
+        const { mat: resolved } = resolveIngredientDisplay(ing, matCtx);
+        openIngredientMaterialInSuppliers(resolved);
+      } else {
+        openIngredientMaterialInSuppliers(null);
+      }
     });
   });
 
