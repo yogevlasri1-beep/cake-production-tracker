@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=343';
+} from '../db.js?v=344';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -16,12 +16,12 @@ import {
   syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=343';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=343';
-import { openModal, closeModal } from '../modal.js?v=343';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=343';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=343';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=343';
+} from '../kitchen-db.js?v=344';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=344';
+import { openModal, closeModal } from '../modal.js?v=344';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=344';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=344';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=344';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -564,7 +564,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=343');
+    const { navigate } = await import('../app.js?v=344');
     navigate('backup');
   });
 

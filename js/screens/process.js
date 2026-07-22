@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=343';
+} from '../db.js?v=344';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=343').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=344').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=343';
-import { openModal, closeModal } from '../modal.js?v=343';
-import { requestAutoBackupNow } from '../backup-service.js?v=343';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=343';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=343';
-import { materialMatchesSearch } from '../kitchen-db.js?v=343';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=344';
+import { openModal, closeModal } from '../modal.js?v=344';
+import { requestAutoBackupNow } from '../backup-service.js?v=344';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=344';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=344';
+import { materialMatchesSearch } from '../kitchen-db.js?v=344';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -590,11 +590,9 @@ function runStartDateIso(run) {
 
 function formatRunTimestamp(iso, fallbackDate) {
   if (!iso) return fallbackDate ? formatDate(fallbackDate) : '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return formatDate(String(iso).slice(0, 10));
-  const date = d.toLocaleDateString('he-IL');
-  const time = d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
-  return `${date} · ${time}`;
+  const formatted = formatDateTime(iso);
+  if (formatted && formatted !== '—') return formatted;
+  return formatDate(String(iso).slice(0, 10) || fallbackDate || '');
 }
 
 function runDatesLabel(run) {
@@ -1792,8 +1790,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=343');
-    const { db } = await import('../db.js?v=343');
+    const { getRecipe } = await import('../kitchen-db.js?v=344');
+    const { db } = await import('../db.js?v=344');
     const blocks = [];
 
     for (const row of rows) {
@@ -2630,7 +2628,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=343');
+    const kitchen = await import('../kitchen-db.js?v=344');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -4432,7 +4430,9 @@ async function renderStartView(container, ctx) {
   const allFlowsOverview = await getAllFlowsOverview();
   const scopeType = container.dataset.scopeType || 'category';
   const productId = container.dataset.selectedProduct || '';
-  const date = container.dataset.selectedDate || todayISO();
+  // תאריך ברירת מחדל = היום — לא תאריך ישן שנשאר מסינון/היסטוריה
+  const date = todayISO();
+  container.dataset.selectedDate = date;
 
   let {
     groupId,
@@ -4527,6 +4527,7 @@ async function renderStartView(container, ctx) {
       <div class="form-group">
         <label for="start-date">תאריך</label>
         <input type="date" id="start-date" value="${date}">
+        <p class="form-hint">שעת התחלה = הרגע שלוחצים «התחל» (תאריך ושעה נוכחיים)</p>
       </div>
 
       <div class="form-group">
@@ -4798,13 +4799,14 @@ async function renderStartView(container, ctx) {
     }
 
     try {
+      // תאריך+שעה נלקחים מרגע הלחיצה ב־startProductionRun
       const runId = await startProductionRun(payload);
       const run = await getProductionRun(runId);
       requestAutoBackupNow().catch(() => {});
       showToast(run?.batchNumber ? `תזרים התחיל · אצווה ${run.batchNumber} ✓` : 'תזרים התחיל ✓');
       container.dataset.view = 'run';
       container.dataset.runId = String(runId);
-      container.dataset.selectedDate = startDate;
+      container.dataset.selectedDate = run?.date || todayISO();
       renderProcess(container);
     } catch (err) {
       const raw = err?.message || '';
@@ -4975,6 +4977,7 @@ export async function renderProcess(container) {
   });
 
   document.getElementById('new-run')?.addEventListener('click', () => {
+    container.dataset.selectedDate = todayISO();
     container.dataset.view = 'start';
     renderProcess(container);
   });

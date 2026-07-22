@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=343';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=343';
-import { defaultColorForIndex } from './chart.js?v=343';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=343';
+} from './validators.js?v=344';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=344';
+import { defaultColorForIndex } from './chart.js?v=344';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=344';
 
 export { ValidationError };
 
@@ -6182,7 +6182,10 @@ export async function startProductionRun({
   date, batchNumber, categoryId, categoryIds, productId, categoryGroupId,
   scopeMode, portionUnit, portionSize, portionCount, flowId,
 }) {
-  if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
+  // תאריך מהטופס אופציונלי לתאימות — בפועל נשמר רגע הלחיצה
+  if (date != null && date !== '' && !isValidISODate(date)) {
+    throw new ValidationError('תאריך לא תקין');
+  }
   const runSettings = await getRunSettings();
   let batch = String(batchNumber || '').trim().slice(0, 40);
   if (!batch && runSettings.autoBatchEnabled) {
@@ -6262,7 +6265,9 @@ export async function startProductionRun({
 
   await assertProductionDbReady();
 
-  const startedAt = `${date}T${localDateTimeISO().slice(11, 19)}`;
+  // תאריך + שעת התחלה = רגע הלחיצה (לא תאריך ישן שנשמר במסך)
+  const startedAt = nowISO();
+  const runDate = isoDatePart(startedAt);
   const prepChecks = resolvedFlowId ? await getFlowPreparations(resolvedFlowId) : [];
   const cleaningTasks = resolvedFlowId ? await getFlowCleaningTasks(resolvedFlowId) : [];
 
@@ -6275,7 +6280,7 @@ export async function startProductionRun({
 
   const runId = await db.transaction('rw', ...txStores, async () => {
     const runId = await db.productionRuns.add({
-      date,
+      date: runDate,
       batchNumber: batch,
       categoryId: resolvedCategoryId,
       categoryIds: resolvedCategoryIds,
