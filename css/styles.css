@@ -6476,6 +6476,15 @@ button.flow-metrics-stat--btn:hover {
   vertical-align: top;
 }
 
+.report-flows-forecast-summary-table td,
+.report-flows-forecast-summary-table th {
+  vertical-align: top;
+}
+
+.report-flows-forecast-detail-section .report-preview-heading {
+  margin-bottom: 8px;
+}
+
 .flow-history-run-metrics {
   margin-top: 4px;
 }

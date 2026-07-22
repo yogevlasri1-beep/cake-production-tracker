@@ -5,35 +5,36 @@ import {
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
   computeRunMetrics, aggregateRunsMetrics, getProductsCatalogLayout,
-  collectRunIngredientBatchTracking,
+  collectRunIngredientBatchTracking, getFlowStepsForFlow, getFlowPortionPresets,
+  getLinkedProductsForFlow, getCandidateProductsForFlow,
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=347';
+} from '../db.js?v=348';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=347';
+} from '../utils.js?v=348';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=347';
-import { openModal, closeModal } from '../modal.js?v=347';
+} from '../export.js?v=348';
+import { openModal, closeModal } from '../modal.js?v=348';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=347';
-import { isSheetsConfigured } from '../google-sheets.js?v=347';
+} from '../sheets-flow.js?v=348';
+import { isSheetsConfigured } from '../google-sheets.js?v=348';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=347';
-import { defaultColorForIndex } from '../chart.js?v=347';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=347';
+} from '../calc.js?v=348';
+import { defaultColorForIndex } from '../chart.js?v=348';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=348';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=347';
+} from '../purchasing-db.js?v=348';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -43,7 +44,12 @@ const MANAGER_URGENCY_LABELS = { red: 'דחוף', yellow: 'בינוני', green:
 const MANAGER_NOTE_KIND_LABELS = { shift: 'משמרת', briefing: 'תדרוך', checklist: 'צ׳קליסט' };
 
 export function isFlowsReportType(type) {
-  return type === 'flows-detail' || type === 'flows-summary' || type === 'flows';
+  return type === 'flows-detail' || type === 'flows-summary' || type === 'flows'
+    || type === 'flows-forecast-summary' || type === 'flows-forecast-detail';
+}
+
+export function isFlowsForecastReportType(type) {
+  return type === 'flows-forecast-summary' || type === 'flows-forecast-detail';
 }
 
 export function isManagerReportType(type) {
@@ -502,6 +508,12 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
   } else if (reportType === 'flows-summary') {
     applyRangeDefaults();
     reportTitle = 'סיכום תזרימים';
+  } else if (reportType === 'flows-forecast-summary') {
+    applyRangeDefaults();
+    reportTitle = 'חיזוי תזרים · מסוכם';
+  } else if (reportType === 'flows-forecast-detail') {
+    applyRangeDefaults();
+    reportTitle = 'חיזוי תזרים · מפורט';
   } else if (reportType === 'production-history') {
     const allTime = container.dataset.historyAllTime !== '0';
     from = container.dataset.historyFrom || monthStartIso(curYear, curMonth);
@@ -985,6 +997,374 @@ function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, gro
     </section>` : '';
 
   return sections + noFlowSection;
+}
+
+function avgOrNull(sum, count) {
+  if (!count) return null;
+  return sum / count;
+}
+
+function roundQty3(n) {
+  if (n == null || !Number.isFinite(n)) return null;
+  return Math.round(n * 1000) / 1000;
+}
+
+/** חיזוי לתזרים בודד — ממוצעים מתהליכים שהושלמו בתקופה */
+async function computeFlowForecast(flowMeta, runsForFlow, productMap) {
+  const completed = (runsForFlow || []).filter((r) => r.status === 'completed');
+  const items = await Promise.all(completed.map(async (run) => {
+    const entries = await getRunProductionEntries(run.id);
+    return { run, entries, metrics: computeRunMetrics(run, entries) };
+  }));
+
+  const sampleSize = items.length;
+  let portionSum = 0;
+  let portionWeightSum = 0;
+  let portionWeightSamples = 0;
+  let productionSum = 0;
+  let durationSum = 0;
+  let durationSamples = 0;
+  const productTotals = new Map();
+  const portionTotals = new Map();
+  const stepTotals = new Map();
+
+  for (const { run, metrics } of items) {
+    if (metrics.portionCount != null) portionSum += metrics.portionCount;
+    if (metrics.portionWeightKg != null) {
+      portionWeightSum += metrics.portionWeightKg;
+      portionWeightSamples += 1;
+    }
+    productionSum += metrics.productionQty || 0;
+    if (metrics.durationMs != null) {
+      durationSum += metrics.durationMs;
+      durationSamples += 1;
+    }
+    for (const [pid, qty] of metrics.productionByProduct || []) {
+      const id = Number(pid);
+      if (!id) continue;
+      productTotals.set(id, (productTotals.get(id) || 0) + (Number(qty) || 0));
+    }
+    for (const step of run.steps || []) {
+      if (!step.tracksPortions) continue;
+      for (const batch of getStepPortionBatches(step)) {
+        const name = String(batch.name || 'מנה').trim() || 'מנה';
+        const weight = batch.weight != null ? Number(batch.weight) : null;
+        const key = `${name}|${weight ?? ''}|${batch.extra || ''}`;
+        if (!portionTotals.has(key)) {
+          portionTotals.set(key, {
+            name,
+            weight: Number.isFinite(weight) ? weight : null,
+            extra: batch.extra || '',
+            countSum: 0,
+            weightKgSum: 0,
+            hasWeight: false,
+          });
+        }
+        const row = portionTotals.get(key);
+        const cnt = Number(batch.count) || 0;
+        row.countSum += cnt;
+        const lineKg = batch.weight != null && Number.isFinite(Number(batch.weight))
+          ? Number(batch.weight) * cnt
+          : null;
+        if (lineKg != null) {
+          row.weightKgSum += lineKg;
+          row.hasWeight = true;
+        }
+      }
+    }
+    let prevCompleted = null;
+    for (let i = 0; i < (run.steps || []).length; i++) {
+      const step = run.steps[i];
+      const name = String(step.stepName || `שלב ${i + 1}`).trim();
+      const ms = stepDurationMs(step, prevCompleted, run.startedAt);
+      if (step.completedAt) prevCompleted = step.completedAt;
+      if (ms == null) continue;
+      if (!stepTotals.has(name)) {
+        stepTotals.set(name, {
+          stepName: name,
+          durationSum: 0,
+          samples: 0,
+          tracksPortions: !!step.tracksPortions,
+          tracksProduction: !!step.tracksProduction,
+        });
+      }
+      const st = stepTotals.get(name);
+      st.durationSum += ms;
+      st.samples += 1;
+      st.tracksPortions = st.tracksPortions || !!step.tracksPortions;
+      st.tracksProduction = st.tracksProduction || !!step.tracksProduction;
+    }
+  }
+
+  const byProduct = [...productTotals.entries()]
+    .map(([productId, totalQty]) => {
+      const product = productMap.get(Number(productId));
+      return {
+        productId: Number(productId),
+        name: product?.name || `#${productId}`,
+        avgQty: roundQty3(avgOrNull(totalQty, sampleSize)),
+        totalQty: roundQty3(totalQty),
+      };
+    })
+    .filter((r) => r.avgQty != null && r.avgQty > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+  const byPortion = [...portionTotals.values()]
+    .map((row) => ({
+      name: row.name,
+      weight: row.weight,
+      extra: row.extra,
+      avgCount: roundQty3(avgOrNull(row.countSum, sampleSize)),
+      avgWeightKg: row.hasWeight ? roundQty3(avgOrNull(row.weightKgSum, sampleSize)) : null,
+    }))
+    .filter((r) => r.avgCount != null && r.avgCount > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+  let templateSteps = [];
+  try {
+    templateSteps = flowMeta?.id ? await getFlowStepsForFlow(flowMeta.id) : [];
+  } catch { /* ignore */ }
+
+  const byStepFromHistory = [...stepTotals.values()].map((st) => ({
+    stepName: st.stepName,
+    avgDurationMs: avgOrNull(st.durationSum, st.samples),
+    samples: st.samples,
+    tracksPortions: st.tracksPortions,
+    tracksProduction: st.tracksProduction,
+  }));
+
+  const byStep = [];
+  const usedNames = new Set();
+  for (const tpl of templateSteps) {
+    const hist = byStepFromHistory.find((s) => s.stepName === tpl.name);
+    usedNames.add(tpl.name);
+    byStep.push({
+      stepName: tpl.name,
+      avgDurationMs: hist?.avgDurationMs ?? null,
+      samples: hist?.samples || 0,
+      tracksPortions: !!tpl.tracksPortions,
+      tracksProduction: !!tpl.tracksProduction,
+    });
+  }
+  for (const hist of byStepFromHistory) {
+    if (usedNames.has(hist.stepName)) continue;
+    byStep.push(hist);
+  }
+
+  let linkedProducts = [];
+  let portionPresets = [];
+  try {
+    if (flowMeta?.id) {
+      const linked = await getLinkedProductsForFlow(flowMeta.id);
+      linkedProducts = linked.map((row) => row.product).filter(Boolean);
+      if (!linkedProducts.length) {
+        linkedProducts = await getCandidateProductsForFlow(flowMeta.id);
+      }
+      portionPresets = await getFlowPortionPresets(flowMeta.id);
+    }
+  } catch { /* catalog optional */ }
+
+  return {
+    flowId: flowMeta?.id || null,
+    flowName: flowMeta?.name || 'תזרים',
+    targetLabel: flowMeta?.targetLabel || '',
+    stepCount: flowMeta?.stepCount || templateSteps.length || 0,
+    sampleSize,
+    expected: {
+      portionCount: roundQty3(avgOrNull(portionSum, sampleSize)),
+      portionWeightKg: roundQty3(avgOrNull(portionWeightSum, portionWeightSamples)),
+      productionQty: roundQty3(avgOrNull(productionSum, sampleSize)),
+      durationMs: avgOrNull(durationSum, durationSamples),
+      byProduct,
+      byPortion,
+      byStep,
+    },
+    catalog: {
+      linkedProducts: linkedProducts.map((p) => ({ id: p.id, name: p.name })),
+      portionPresets: (portionPresets || []).map((p) => ({
+        id: p.id,
+        name: p.name,
+        weight: p.weight,
+        extra: p.extra || '',
+      })),
+    },
+  };
+}
+
+async function buildFlowsForecasts(productionRuns, flowsOverview, productMap, { selectedFlowId } = {}) {
+  const flowMap = new Map((flowsOverview || []).map((f) => [Number(f.id), f]));
+  const { byFlow } = groupRunsByFlow(productionRuns || []);
+
+  let flowIds;
+  if (selectedFlowId) {
+    flowIds = [Number(selectedFlowId)];
+  } else {
+    const ids = new Set([
+      ...[...byFlow.keys()].map(Number),
+      ...(flowsOverview || []).map((f) => Number(f.id)),
+    ]);
+    flowIds = [...ids].filter(Boolean);
+  }
+
+  const forecasts = [];
+  for (const flowId of flowIds) {
+    const meta = flowMap.get(flowId) || {
+      id: flowId,
+      name: byFlow.get(flowId)?.[0]?.flowName || `תזרים #${flowId}`,
+      targetLabel: '',
+      stepCount: 0,
+    };
+    const runs = byFlow.get(flowId) || [];
+    forecasts.push(await computeFlowForecast(meta, runs, productMap));
+  }
+
+  forecasts.sort((a, b) => a.flowName.localeCompare(b.flowName, 'he'));
+  return forecasts;
+}
+
+function renderFlowsForecastSummaryHTML(forecasts) {
+  if (!forecasts.length) {
+    return '<p class="report-empty">אין תזרימים להצגה</p>';
+  }
+  const withHistory = forecasts.filter((f) => f.sampleSize > 0);
+  return `
+    <p class="form-hint" style="margin-top:0">חיזוי לפי ממוצע תהליכים שהושלמו בתקופה · ${withHistory.length} תזרימים עם היסטוריה מתוך ${forecasts.length}</p>
+    <div class="report-table-wrap">
+      <table class="report-table report-flows-forecast-summary-table">
+        <thead><tr>
+          <th>תזרים</th><th>תהליכים לחישוב</th><th>מוצרים (ממוצע)</th><th>מנות (ממוצע)</th><th>משקל מנות</th><th>זמן ממוצע</th>
+        </tr></thead>
+        <tbody>
+          ${forecasts.map((f) => {
+    const productsLine = f.expected.byProduct.length
+      ? f.expected.byProduct.map((p) => `${escapeHtml(p.name)}: ${formatDecimal(p.avgQty)}`).join(' · ')
+      : (f.expected.productionQty != null ? formatDecimal(f.expected.productionQty) : '—');
+    return `
+            <tr>
+              <td class="report-cell-text">
+                <strong>${escapeHtml(f.flowName)}</strong>
+                ${f.targetLabel ? `<div class="form-hint">${escapeHtml(f.targetLabel)}</div>` : ''}
+              </td>
+              <td class="report-cell-num">${f.sampleSize}</td>
+              <td class="report-cell-text">${productsLine}</td>
+              <td class="report-cell-num">${f.expected.portionCount != null ? formatPortionCount(f.expected.portionCount) : '—'}</td>
+              <td class="report-cell-num">${f.expected.portionWeightKg != null ? formatPortionWeightKg(f.expected.portionWeightKg) : '—'}</td>
+              <td class="report-cell-num">${f.expected.durationMs != null ? formatDuration(f.expected.durationMs) : '—'}</td>
+            </tr>`;
+  }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${forecasts.some((f) => f.sampleSize === 0) ? '<p class="form-hint">תזרימים ללא תהליכים שהושלמו בתקופה — אין ממוצע לחיזוי</p>' : ''}`;
+}
+
+function renderOneFlowForecastDetailHTML(f) {
+  const productsHtml = f.expected.byProduct.length
+    ? `<div class="report-table-wrap"><table class="report-table">
+        <thead><tr><th>מוצר</th><th>ממוצע לתהליך</th><th>סה״כ בתקופה</th></tr></thead>
+        <tbody>
+          ${f.expected.byProduct.map((p) => `
+            <tr>
+              <td class="report-cell-text">${escapeHtml(p.name)}</td>
+              <td class="report-cell-num"><strong>${formatDecimal(p.avgQty)}</strong></td>
+              <td class="report-cell-num">${formatDecimal(p.totalQty)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table></div>`
+    : (f.catalog.linkedProducts.length
+      ? `<p class="form-hint">אין ייצור בהיסטוריה · מוצרים משויכים לתזרים: ${escapeHtml(f.catalog.linkedProducts.map((p) => p.name).join(', '))}</p>`
+      : '<p class="form-hint">אין נתוני מוצרים</p>');
+
+  const portionsHtml = f.expected.byPortion.length
+    ? `<div class="report-table-wrap"><table class="report-table">
+        <thead><tr><th>מנה</th><th>משקל למנה</th><th>תוספת</th><th>ממוצע כמות</th><th>ממוצע משקל</th></tr></thead>
+        <tbody>
+          ${f.expected.byPortion.map((p) => `
+            <tr>
+              <td class="report-cell-text">${escapeHtml(p.name)}</td>
+              <td class="report-cell-num">${p.weight != null ? formatPortionWeightKg(p.weight) : '—'}</td>
+              <td class="report-cell-text">${p.extra ? escapeHtml(p.extra) : '—'}</td>
+              <td class="report-cell-num"><strong>${formatPortionCount(p.avgCount)}</strong></td>
+              <td class="report-cell-num">${p.avgWeightKg != null ? formatPortionWeightKg(p.avgWeightKg) : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table></div>`
+    : (f.catalog.portionPresets.length
+      ? `<p class="form-hint">אין מנות בהיסטוריה · מנות מוגדרות: ${escapeHtml(f.catalog.portionPresets.map((p) => p.name).join(', '))}</p>`
+      : '<p class="form-hint">אין נתוני מנות</p>');
+
+  const timeHtml = `
+    <div class="flow-metrics-grid flow-metrics-grid--secondary" style="margin-bottom:10px">
+      <div class="flow-metrics-stat">
+        <span class="flow-metrics-icon">⏱</span>
+        <div class="flow-metrics-body">
+          <span class="flow-metrics-value">${f.expected.durationMs != null ? formatDuration(f.expected.durationMs) : '—'}</span>
+          <span class="flow-metrics-label">זמן ממוצע לתהליך</span>
+        </div>
+      </div>
+      <div class="flow-metrics-stat">
+        <span class="flow-metrics-icon">🍽</span>
+        <div class="flow-metrics-body">
+          <span class="flow-metrics-value">${f.expected.portionCount != null ? formatPortionCount(f.expected.portionCount) : '—'}</span>
+          <span class="flow-metrics-label">מנות ממוצע</span>
+        </div>
+      </div>
+      <div class="flow-metrics-stat">
+        <span class="flow-metrics-icon">📦</span>
+        <div class="flow-metrics-body">
+          <span class="flow-metrics-value">${f.expected.productionQty != null ? formatDecimal(f.expected.productionQty) : '—'}</span>
+          <span class="flow-metrics-label">מוצרים ממוצע</span>
+        </div>
+      </div>
+    </div>
+    ${f.expected.byStep.length ? `
+    <div class="report-table-wrap"><table class="report-table">
+      <thead><tr><th>#</th><th>שלב</th><th>זמן ממוצע</th><th>סוג</th></tr></thead>
+      <tbody>
+        ${f.expected.byStep.map((s, i) => `
+          <tr>
+            <td class="report-cell-num">${i + 1}</td>
+            <td class="report-cell-text">${escapeHtml(s.stepName)}</td>
+            <td class="report-cell-num">${s.avgDurationMs != null ? formatDuration(s.avgDurationMs) : '—'}</td>
+            <td class="report-cell-text">${[
+    s.tracksPortions ? 'מנות' : '',
+    s.tracksProduction ? 'ייצור' : '',
+  ].filter(Boolean).join(' · ') || '—'}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table></div>` : '<p class="form-hint">אין פירוט זמני שלבים</p>'}`;
+
+  return `
+    <section class="report-flows-forecast-detail-section" style="margin-bottom:20px">
+      <h4 class="report-preview-heading" style="margin-top:0">
+        ${escapeHtml(f.flowName)}
+        <span class="form-hint"> · ${f.sampleSize} תהליכים שהושלמו${f.targetLabel ? ` · ${escapeHtml(f.targetLabel)}` : ''}</span>
+      </h4>
+      <h5 class="report-preview-heading" style="font-size:0.95rem">📦 מוצרים</h5>
+      ${productsHtml}
+      <h5 class="report-preview-heading" style="font-size:0.95rem">🍽 מנות</h5>
+      ${portionsHtml}
+      <h5 class="report-preview-heading" style="font-size:0.95rem">⏱ זמן</h5>
+      ${timeHtml}
+    </section>`;
+}
+
+async function buildFlowsForecastReportHTML(productionRuns, productMap, flowsOverview, {
+  mode = 'summary',
+  selectedFlowId = '',
+} = {}) {
+  const forecasts = await buildFlowsForecasts(productionRuns, flowsOverview, productMap, {
+    selectedFlowId: selectedFlowId ? Number(selectedFlowId) : null,
+  });
+  if (!forecasts.length) {
+    return '<p class="report-empty">אין תזרימים להצגה — בחר סוג תזרים או הרחב את טווח התאריכים</p>';
+  }
+  if (mode === 'detail') {
+    return `
+      <p class="form-hint" style="margin-top:0">חיזוי מפורט לפי ממוצע תהליכים שהושלמו · מוצרים, מנות וזמן</p>
+      ${forecasts.map((f) => renderOneFlowForecastDetailHTML(f)).join('')}`;
+  }
+  return renderFlowsForecastSummaryHTML(forecasts);
 }
 
 function aggregatePortionDocumentation(rows) {
@@ -2162,7 +2542,9 @@ function renderFlowsFiltersHTML(ctx, flowsOverview = []) {
     </div>
     <p class="form-hint" style="margin-top:8px;margin-bottom:0">${ctx.batchSearch
     ? `מציג תהליכים עם אצווה «${escapeHtml(ctx.batchSearch)}» מכל התקופות`
-    : 'סנן לפי תקופה, סוג תזרים או מספר אצווה'}</p>`;
+    : isFlowsForecastReportType(ctx.reportType)
+      ? 'חיזוי לפי ממוצע תהליכים שהושלמו בתקופה · בחר סוג תזרים לסינון'
+      : 'סנן לפי תקופה, סוג תזרים או מספר אצווה'}</p>`;
 }
 
 function renderPortionsFiltersHTML(ctx, portionNames = []) {
@@ -2352,6 +2734,8 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     <div class="tabs tabs-wrap report-type-tabs report-flows-tabs">
       ${tab('flows-detail', 'תזרימים מפורט', ['flows-detail'])}
       ${tab('flows-summary', 'סיכום תזרימים', ['flows-summary'])}
+      ${tab('flows-forecast-summary', 'חיזוי · מסוכם', ['flows-forecast-summary'])}
+      ${tab('flows-forecast-detail', 'חיזוי · מפורט', ['flows-forecast-detail'])}
     </div>
     ${isFlowsReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters report-flows-dynamic-filters">${renderFlowsFiltersHTML(ctx, flowsOverview)}</div>`
@@ -2716,6 +3100,7 @@ export async function renderReports(container) {
   const isPnlReport = isPnlReportType(ctx.reportType);
   const isFlowsSummary = ctx.reportType === 'flows-summary';
   const isFlowsDetail = ctx.reportType === 'flows-detail';
+  const isFlowsForecast = isFlowsForecastReportType(ctx.reportType);
   const canExport = isManagerReport || isFlowsReport || isHistoryReport || isPortionsReport || isPnlReport || isProductsReport
     ? !(needsHistoryScope || needsCategory || needsProduct || needsGroup || needsPortionName)
     : (!needsCategory && !needsProduct);
@@ -2727,7 +3112,12 @@ export async function renderReports(container) {
     ? await buildFlowsReportHTML(productionRuns, productMap, flowsOverview)
     : isFlowsDetail
       ? buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview)
-      : '';
+      : isFlowsForecast
+        ? await buildFlowsForecastReportHTML(productionRuns, productMap, flowsOverview, {
+          mode: ctx.reportType === 'flows-forecast-detail' ? 'detail' : 'summary',
+          selectedFlowId: ctx.selectedFlowId || '',
+        })
+        : '';
   const managerData = isManagerReport
     ? await fetchManagerReportData(ctx.from, ctx.to, { categories, productMap })
     : null;
@@ -2853,7 +3243,7 @@ export async function renderReports(container) {
     <p class="stats-block-label">${fullTitle} · ${ctx.label}</p>
 
     ${isFlowsReport ? `
-    <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : 'report-flows-detail-card'}">
+    <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : isFlowsForecast ? 'report-flows-forecast-card' : 'report-flows-detail-card'}">
       <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
       ${flowsReportHtml}
     </div>

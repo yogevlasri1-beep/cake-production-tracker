@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=347';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=347';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=347';
-import { renderRecipesMachines } from '../recipes-machines.js?v=347';
-import { renderRecipesPortions } from '../recipes-portions.js?v=347';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=347';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=347';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=347';
-import { openModal, closeModal } from '../modal.js?v=347';
+} from '../kitchen-db.js?v=348';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=348';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=348';
+import { renderRecipesMachines } from '../recipes-machines.js?v=348';
+import { renderRecipesPortions } from '../recipes-portions.js?v=348';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=348';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=348';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=348';
+import { openModal, closeModal } from '../modal.js?v=348';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=347';
-import { defaultColorForIndex } from '../chart.js?v=347';
+} from '../product-drag.js?v=348';
+import { defaultColorForIndex } from '../chart.js?v=348';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
