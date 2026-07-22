@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=342';
+} from '../db.js?v=343';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=342').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=343').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=342';
-import { openModal, closeModal } from '../modal.js?v=342';
-import { requestAutoBackupNow } from '../backup-service.js?v=342';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=342';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=342';
-import { materialMatchesSearch } from '../kitchen-db.js?v=342';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=343';
+import { openModal, closeModal } from '../modal.js?v=343';
+import { requestAutoBackupNow } from '../backup-service.js?v=343';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=343';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=343';
+import { materialMatchesSearch } from '../kitchen-db.js?v=343';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1353,9 +1353,14 @@ function groupRunsByFlow(runs, flowNameMap = new Map()) {
   for (const run of runs) {
     const key = run.flowId ? String(run.flowId) : 'none';
     if (!indexByFlow.has(key)) {
-      const flowName = run.flowId
-        ? (flowNameMap.get(Number(run.flowId)) || run.flowName || `תזרים #${run.flowId}`)
-        : (run.flowName || 'ללא תזרים');
+      let flowName;
+      if (!run.flowId) {
+        flowName = run.flowName || 'ללא תזרים';
+      } else {
+        const liveName = flowNameMap.get(Number(run.flowId));
+        flowName = liveName
+          || `${run.flowName || `תזרים #${run.flowId}`} (נמחק)`;
+      }
       indexByFlow.set(key, groups.length);
       groups.push({
         flowId: run.flowId ? Number(run.flowId) : null,
@@ -1374,10 +1379,32 @@ function groupRunsByFlow(runs, flowNameMap = new Map()) {
   return groups;
 }
 
-function buildHistoryFlowOptions(_runs, allFlows = []) {
-  return [...allFlows]
-    .map((f) => ({ id: Number(f.id), name: f.name }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+/** אפשרויות סינון — תזרימים קיימים + תזרימים שנמחקו שעדיין יש להם תהליכים (במיוחד שהושלמו) */
+function buildHistoryFlowOptions(runs = [], allFlows = []) {
+  const byId = new Map();
+  for (const f of allFlows) {
+    byId.set(Number(f.id), {
+      id: Number(f.id),
+      name: f.name,
+      deleted: false,
+    });
+  }
+  for (const run of runs) {
+    if (!run.flowId) continue;
+    const id = Number(run.flowId);
+    if (byId.has(id)) continue;
+    const base = run.flowName || `תזרים #${id}`;
+    byId.set(id, {
+      id,
+      name: `${base} (נמחק)`,
+      deleted: true,
+    });
+  }
+  return [...byId.values()]
+    .sort((a, b) => {
+      if (a.deleted !== b.deleted) return a.deleted ? 1 : -1;
+      return a.name.localeCompare(b.name, 'he');
+    });
 }
 
 function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
@@ -1765,8 +1792,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=342');
-    const { db } = await import('../db.js?v=342');
+    const { getRecipe } = await import('../kitchen-db.js?v=343');
+    const { db } = await import('../db.js?v=343');
     const blocks = [];
 
     for (const row of rows) {
@@ -1883,11 +1910,12 @@ async function renderRunsHistoryView(container, ctx) {
   ]);
   const flowNameMap = new Map(allFlows.map((f) => [Number(f.id), f.name]));
   const flowOptions = buildHistoryFlowOptions(allRuns, allFlows);
+  const optionIds = new Set(flowOptions.map((f) => Number(f.id)));
 
   let mode = getRunsHistoryMode();
   let flowFilter = getRunsHistoryFlowFilter();
-  // סינון רק לתזרימים קיימים — אם נבחר תזרים שנמחק, מאפסים
-  if (flowFilter && !flowNameMap.has(Number(flowFilter))) {
+  // מאפסים רק אם המזהה לא קיים בכלל (גם לא בתהליכים ישנים)
+  if (flowFilter && !optionIds.has(Number(flowFilter))) {
     setRunsHistoryFlowFilter('');
     flowFilter = '';
   }
@@ -1898,19 +1926,28 @@ async function renderRunsHistoryView(container, ctx) {
     ? allRuns.filter((r) => Number(r.flowId) === Number(flowFilter))
     : allRuns;
 
+  const selectedOption = flowFilter
+    ? flowOptions.find((f) => Number(f.id) === Number(flowFilter))
+    : null;
   const selectedFlowName = flowFilter
-    ? (flowNameMap.get(Number(flowFilter)) || filteredRuns[0]?.flowName || `תזרים #${flowFilter}`)
+    ? (selectedOption?.name
+      || flowNameMap.get(Number(flowFilter))
+      || filteredRuns[0]?.flowName
+      || `תזרים #${flowFilter}`)
     : '';
 
   const listHTML = mode === 'flow'
     ? renderAllRunsByFlowHTML(filteredRuns, layout, catMap, productMap, groupMap, flowNameMap)
     : renderAllRunsByDateHTML(filteredRuns, layout, catMap, productMap, groupMap);
 
+  const deletedNote = selectedOption?.deleted
+    ? ' · תזרים שנמחק — מוצגים תהליכים שהושלמו / נשמרו בהיסטוריה'
+    : '';
   const hint = flowFilter
-    ? `תזרים «${selectedFlowName}» לפי תאריך — מהחדש לישן`
+    ? `תזרים «${selectedFlowName}» לפי תאריך — מהחדש לישן${deletedNote}`
     : (mode === 'flow'
-      ? 'מקובץ לפי תזרים · בתוך כל תזרים לפי תאריך'
-      : 'כל התהליכים לפי תאריך — מהחדש לישן');
+      ? 'מקובץ לפי תזרים (כולל תזרימים שנמחקו עם תהליכים שהושלמו) · בתוך כל תזרים לפי תאריך'
+      : 'כל התהליכים לפי תאריך — כולל תזרימים שהושלמו גם אם התבנית נמחקה');
 
   container.innerHTML = `
     <div class="card">
@@ -1996,17 +2033,17 @@ async function renderFlowHistoryView(container, ctx) {
   const flowMeta = allFlows.find((f) => f.id === flowId);
   const flow = await getFlow(flowId);
 
-  if (!flow) {
+  const [runs, productsHistory] = await Promise.all([
+    getProductionRunsForFlow(flowId),
+    getFlowProductsHistory(flowId),
+  ]);
+
+  if (!flow && !runs.length) {
     showToast('תזרים לא נמצא');
     container.dataset.view = backView;
     delete container.dataset.flowHistoryId;
     return renderProcess(container);
   }
-
-  const [runs, productsHistory] = await Promise.all([
-    getProductionRunsForFlow(flowId),
-    getFlowProductsHistory(flowId),
-  ]);
 
   const runsWithEntries = await Promise.all(runs.map(async (run) => ({
     run,
@@ -2017,15 +2054,19 @@ async function renderFlowHistoryView(container, ctx) {
     .map((row) => ({ ...row, product: productMap.get(row.productId) }))
     .sort((a, b) => (a.product?.name || '').localeCompare(b.product?.name || '', 'he'));
 
-  const flowName = flowMeta?.name || flow.name || 'תזרים';
+  const flowName = flowMeta?.name || flow?.name || runs[0]?.flowName || `תזרים #${flowId}`;
   const targetLabel = flowMeta?.targetLabel || '';
   const flowAggregate = aggregateRunsMetrics(runsWithEntries);
+  const deletedBanner = !flow
+    ? '<p class="form-hint" style="margin-bottom:0">התזרים נמחק מהמערכת — מוצגים תהליכים שנשמרו בהיסטוריה (כולל כאלה שהושלמו)</p>'
+    : '';
 
   container.innerHTML = `
     <div class="card">
       <button type="button" class="btn btn-secondary btn-sm" id="back-from-flow-history">← חזרה</button>
-      <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריה · ${escapeHtml(flowName)}</h2>
+      <h2 style="font-size:1rem;margin:12px 0 4px">היסטוריה · ${escapeHtml(flowName)}${!flow ? ' (נמחק)' : ''}</h2>
       ${targetLabel ? `<p class="form-hint" style="margin-bottom:0">${escapeHtml(targetLabel)}</p>` : ''}
+      ${deletedBanner}
     </div>
 
     <div class="card">
@@ -2589,7 +2630,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=342');
+    const kitchen = await import('../kitchen-db.js?v=343');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
