@@ -18,13 +18,13 @@ import {
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
-} from '../kitchen-db.js?v=340';
-import { getProducts } from '../db.js?v=340';
-import { parseSupplierFile } from '../supplier-import.js?v=340';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=340';
-import { openModal, closeModal } from '../modal.js?v=340';
-import { requestAutoBackupNow } from '../backup-service.js?v=340';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=340';
+} from '../kitchen-db.js?v=341';
+import { getProducts } from '../db.js?v=341';
+import { parseSupplierFile } from '../supplier-import.js?v=341';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=341';
+import { openModal, closeModal } from '../modal.js?v=341';
+import { requestAutoBackupNow } from '../backup-service.js?v=341';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=341';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
