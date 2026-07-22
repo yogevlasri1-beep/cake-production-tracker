@@ -9174,6 +9174,8 @@ body.supplier-drag-active {
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
+  font-weight: 600;
+  font-size: 0.9rem;
 }
 
 .recipe-sheet-table .col-name .recipe-ing-status {
@@ -9198,12 +9200,6 @@ body.supplier-drag-active {
   border-color: var(--primary, #2563eb);
   background: #eff6ff;
   outline: none;
-}
-
-.recipe-ing-name-text {
-  display: block;
-  font-weight: 600;
-  font-size: 0.9rem;
 }
 
 .recipe-ing-price-meta {

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=341';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=342';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=341';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=341';
+} from './validators.js?v=342';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=342';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2963,15 +2963,158 @@ export async function updateRawMaterial(id, patch) {
   if (Object.keys(data).length) {
     await db.rawMaterials.update(mid, data);
     if ('name' in data) await syncRawMaterialsActiveFromRecipes();
+    const after = await db.rawMaterials.get(mid);
+    if (after?.isPortion) await syncRawMaterialPortionPreset(mid);
   }
 }
 
 export async function deleteRawMaterial(id) {
   const mid = sanitizeProductId(id);
   if (!mid) return;
+  await clearRawMaterialPortionPresets(mid);
   await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
   await db.rawMaterials.delete(mid);
   await syncRawMaterialsActiveFromRecipes();
+}
+
+async function clearRawMaterialPortionPresets(materialId) {
+  const mid = Number(materialId);
+  if (!mid) return;
+  const existing = await db.groupPortionPresets
+    .where('sourceRawMaterialId')
+    .equals(mid)
+    .toArray();
+  for (const row of existing) {
+    await deletePortionPresetIngredientSettings(row.id);
+    if (db.portionPresetLinks) {
+      await db.portionPresetLinks.where('portionPresetId').equals(row.id).delete();
+    }
+    await db.groupPortionPresets.delete(row.id);
+  }
+}
+
+/** סימון חומר גלם כמנה + שיוך למוצר (לתזרים) + משקל מנה בק"ג */
+export async function setRawMaterialAsPortion(materialId, {
+  enabled = false,
+  productId = null,
+  weightKg = null,
+} = {}) {
+  const mid = sanitizeProductId(materialId);
+  if (!mid) throw new ValidationError('חומר גלם לא תקין');
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat) throw new ValidationError('חומר גלם לא נמצא');
+
+  if (!enabled) {
+    await db.rawMaterials.update(mid, {
+      isPortion: false,
+      portionProductId: null,
+      portionWeightKg: null,
+    });
+    await clearRawMaterialPortionPresets(mid);
+    return;
+  }
+
+  const pid = sanitizeProductId(productId);
+  if (!pid) throw new ValidationError('בחר מוצר לשיוך המנה');
+  const product = await db.products.get(pid);
+  if (!product) throw new ValidationError('מוצר לא נמצא');
+
+  const w = sanitizePortionSize(weightKg);
+  if (w == null) throw new ValidationError('הגדר משקל מנה (ק"ג)');
+
+  await db.rawMaterials.update(mid, {
+    isPortion: true,
+    portionProductId: pid,
+    portionWeightKg: w,
+  });
+  await syncRawMaterialPortionPreset(mid);
+}
+
+/** סנכרון מנה מתזרים מחומר גלם שמסומן כמנה */
+export async function syncRawMaterialPortionPreset(materialId) {
+  const mid = sanitizeProductId(materialId);
+  if (!mid) return;
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat?.isPortion) {
+    await clearRawMaterialPortionPresets(mid);
+    return;
+  }
+
+  const pid = sanitizeProductId(mat.portionProductId);
+  const w = sanitizePortionSize(mat.portionWeightKg);
+  if (!pid || w == null) {
+    await clearRawMaterialPortionPresets(mid);
+    return;
+  }
+
+  const product = await db.products.get(pid);
+  if (!product) {
+    await clearRawMaterialPortionPresets(mid);
+    return;
+  }
+
+  let categoryGroupId = PORTION_CATALOG_ONLY_GROUP_ID;
+  if (product.categoryId) {
+    const cat = await db.categories.get(product.categoryId);
+    if (cat?.groupId) categoryGroupId = Number(cat.groupId);
+  }
+
+  const presetData = {
+    name: mat.name,
+    weight: w,
+    extra: 'חומר גלם · מנה',
+    sourceRawMaterialId: mid,
+    sourceRecipeId: null,
+  };
+
+  const existing = await db.groupPortionPresets
+    .where('sourceRawMaterialId')
+    .equals(mid)
+    .toArray();
+
+  for (const row of existing) {
+    if (Number(row.categoryGroupId) !== Number(categoryGroupId)) {
+      await deletePortionPresetIngredientSettings(row.id);
+      if (db.portionPresetLinks) {
+        await db.portionPresetLinks.where('portionPresetId').equals(row.id).delete();
+      }
+      await db.groupPortionPresets.delete(row.id);
+    }
+  }
+
+  const fresh = await db.groupPortionPresets
+    .where('sourceRawMaterialId')
+    .equals(mid)
+    .toArray();
+  let presetId = fresh.find((p) => Number(p.categoryGroupId) === Number(categoryGroupId))?.id;
+
+  if (presetId) {
+    await db.groupPortionPresets.update(presetId, presetData);
+  } else {
+    const groupPresets = await db.groupPortionPresets
+      .where('categoryGroupId')
+      .equals(categoryGroupId)
+      .toArray();
+    const maxOrder = groupPresets.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+    const catalogMax = (await db.groupPortionPresets.toArray())
+      .reduce((m, p) => Math.max(m, p.catalogSortOrder ?? 0), 0);
+    presetId = await db.groupPortionPresets.add({
+      categoryGroupId,
+      ...presetData,
+      sortOrder: maxOrder + 1,
+      catalogSortOrder: catalogMax + 1,
+    });
+  }
+
+  if (db.portionPresetLinks) {
+    await db.portionPresetLinks.where('portionPresetId').equals(presetId).delete();
+    await db.portionPresetLinks.add({
+      portionPresetId: presetId,
+      linkType: 'product',
+      targetId: pid,
+      sortOrder: 1,
+    });
+  }
 }
 
 export function sanitizeMaterialSynonyms(raw) {

@@ -18,13 +18,14 @@ import {
   getPackagingKindLabel, isPackagingSupplierCategory, computePackagingCostPerProduct,
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
-} from '../kitchen-db.js?v=341';
-import { getProducts } from '../db.js?v=341';
-import { parseSupplierFile } from '../supplier-import.js?v=341';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=341';
-import { openModal, closeModal } from '../modal.js?v=341';
-import { requestAutoBackupNow } from '../backup-service.js?v=341';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=341';
+  setRawMaterialAsPortion,
+} from '../kitchen-db.js?v=342';
+import { getProducts } from '../db.js?v=342';
+import { parseSupplierFile } from '../supplier-import.js?v=342';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=342';
+import { openModal, closeModal } from '../modal.js?v=342';
+import { requestAutoBackupNow } from '../backup-service.js?v=342';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=342';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 
@@ -1057,6 +1058,7 @@ async function openMaterialDetailModal(container, materialId) {
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
         ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
         ${mat.isRecipeDefault ? '<span class="recipe-default-badge">★ ברירת מחדל למתכונים</span>' : ''}
+        ${mat.isPortion ? `<span class="recipe-default-badge">מנה · ${mat.portionWeightKg != null ? `${mat.portionWeightKg} ק"ג` : ''}</span>` : ''}
         ${mat.packagingKind ? `<span class="form-hint">${escapeHtml(getPackagingKindLabel(mat.packagingKind))}${mat.packUnitsCount > 1 ? ` · ${mat.packUnitsCount} בחבילה` : ''}${mat.packagingKind === PACKAGING_KIND_CARTON && mat.packProductsPerUnit ? ` · ${mat.packProductsPerUnit} מוצרים/קרטון` : ''}</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
       </div>
@@ -1066,6 +1068,10 @@ async function openMaterialDetailModal(container, materialId) {
         </button>
         <p class="form-hint">כשמסומן — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה</p>
       </div>
+      ${mat.isPortion ? `
+      <div class="form-group" style="margin-top:8px">
+        <p class="form-hint" style="margin:0">מסומן כמנה — ערוך שיוך למוצר ומשקל בטופס העריכה</p>
+      </div>` : ''}
       ${others.length ? `
       <div class="material-detail-others">
         <h4 class="material-detail-subtitle">אותו מוצר אצל ספקים נוספים</h4>
@@ -1556,21 +1562,22 @@ function bindPackagingFormFields() {
 
 async function openAddMaterialModal(container, categoryId, suppliers, category) {
   const isPackaging = isPackagingSupplierCategory(category);
+  const products = await getProducts(true);
   openModal({
     title: isPackaging ? 'אריזה חדשה' : 'חומר גלם חדש',
-    bodyHTML: materialFormHTML(null, suppliers, { isPackaging }),
+    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, products }),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
   });
   bindMaterialForm(container, categoryId, null, { isPackaging });
 }
 
 function openEditMaterialModal(container, mat) {
-  Promise.all([getSuppliers(), getSupplierCategories()]).then(([suppliers, categories]) => {
+  Promise.all([getSuppliers(), getSupplierCategories(), getProducts(true)]).then(([suppliers, categories, products]) => {
     const category = categories.find((c) => c.id === mat.supplierCategoryId);
     const isPackaging = isPackagingSupplierCategory(category);
     openModal({
       title: `עריכה · ${escapeHtml(mat.name)}`,
-      bodyHTML: `${materialFormHTML(mat, suppliers, { isPackaging })}
+      bodyHTML: `${materialFormHTML(mat, suppliers, { isPackaging, products })}
         ${isPackaging ? `
         <div class="form-group" style="margin-top:12px">
           <label>עדכון מחיר (שומר היסטוריה)</label>
@@ -1610,11 +1617,19 @@ async function loadMaterialHistory(materialId) {
     : '';
 }
 
-function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
+function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] } = {}) {
   const defaultUnit = isPackaging ? 'חבילה' : 'ק&quot;ג';
   const packKind = mat?.packagingKind || PACKAGING_KIND_CARTON;
   const pricePerKg = mat ? (getMaterialPurchasePricePerKg(mat) ?? '') : '';
   const packageWeightKg = mat ? (packageWeightKgFromGrams(mat.packageWeightGrams) ?? '') : '';
+  const isPortion = !!mat?.isPortion;
+  const portionProductId = mat?.portionProductId ? Number(mat.portionProductId) : '';
+  const portionWeightKg = mat?.portionWeightKg != null ? mat.portionWeightKg : '';
+  const productOptions = (products || [])
+    .slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
+    .map((p) => `<option value="${p.id}"${portionProductId === Number(p.id) ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    .join('');
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
     <div class="form-group mat-synonyms-group">
@@ -1656,6 +1671,27 @@ function materialFormHTML(mat, suppliers, { isPackaging = false } = {}) {
       <select id="mat-supplier"><option value="">—</option>
         ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="mat-as-portion"${isPortion ? ' checked' : ''}>
+        <span>סמן כמנה</span>
+      </label>
+      <p class="form-hint">החומר יופיע כמנה בתזרים של המוצר המשויך</p>
+    </div>
+    <div id="mat-portion-fields" style="${isPortion ? '' : 'display:none'}">
+      <div class="form-group">
+        <label for="mat-portion-product">שיוך למוצר</label>
+        <select id="mat-portion-product">
+          <option value="">בחר מוצר...</option>
+          ${productOptions}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="mat-portion-weight">משקל מנה (ק&quot;ג)</label>
+        <input type="number" id="mat-portion-weight" min="0.001" step="0.001" inputmode="decimal"
+          value="${portionWeightKg !== '' ? portionWeightKg : ''}" placeholder="למשל: 0.12">
+      </div>
     </div>
     ${mat ? `
     <div class="form-group">
@@ -1744,6 +1780,15 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
   if (isPackaging) bindPackagingFormFields();
   else bindMaterialPricePreviewFields();
   bindMaterialSynonymsUI(synonyms);
+
+  const portionCb = document.getElementById('mat-as-portion');
+  const portionFields = document.getElementById('mat-portion-fields');
+  const syncPortionFields = () => {
+    if (portionFields) portionFields.style.display = portionCb?.checked ? '' : 'none';
+  };
+  portionCb?.addEventListener('change', syncPortionFields);
+  syncPortionFields();
+
   document.getElementById('save-mat')?.addEventListener('click', async () => {
     try {
       const pricing = isPackaging
@@ -1758,6 +1803,11 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         synonyms: readMaterialSynonymsFromForm(),
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
+      const portionEnabled = !!document.getElementById('mat-as-portion')?.checked;
+      const portionProductId = document.getElementById('mat-portion-product')?.value || null;
+      const portionWeightKg = document.getElementById('mat-portion-weight')?.value;
+
+      let savedId = materialId;
       if (materialId) {
         await updateRawMaterial(materialId, payload);
         const recipeDefaultEl = document.getElementById('mat-recipe-default');
@@ -1786,7 +1836,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
           }
         }
       } else {
-        await addRawMaterial({
+        savedId = await addRawMaterial({
           supplierCategoryId: categoryId,
           ...payload,
           unitPrice: isPackaging
@@ -1794,6 +1844,13 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
             : pricing.unitPrice,
         });
       }
+
+      await setRawMaterialAsPortion(savedId, {
+        enabled: portionEnabled,
+        productId: portionProductId,
+        weightKg: portionWeightKg,
+      });
+
       closeModal();
       showToast('נשמר ✓');
       requestAutoBackupNow().catch(() => {});

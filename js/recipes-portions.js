@@ -1,16 +1,16 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=341';
+} from './db.js?v=342';
 import {
   getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
-} from './kitchen-db.js?v=341';
-import { defaultColorForIndex } from './chart.js?v=341';
-import { escapeHtml, showToast } from './utils.js?v=341';
-import { openModal, closeModal } from './modal.js?v=341';
+} from './kitchen-db.js?v=342';
+import { defaultColorForIndex } from './chart.js?v=342';
+import { escapeHtml, showToast } from './utils.js?v=342';
+import { openModal, closeModal } from './modal.js?v=342';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=341').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=342').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -248,7 +248,9 @@ function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } =
     : '<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>';
   const metaLine = portion.sourceKind === 'recipe'
     ? escapeHtml(portion.recipeName || portion.sourceLabel)
-    : escapeHtml(portion.homeGroupName || portion.sourceLabel);
+    : portion.sourceKind === 'material'
+      ? escapeHtml(portion.materialName || portion.sourceLabel)
+      : escapeHtml(portion.homeGroupName || portion.sourceLabel);
   const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תת מתכון</span> ' : '';
   const orderHtml = showOrder
     ? `<div class="portion-order-actions">

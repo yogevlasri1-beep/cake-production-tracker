@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=341';
+} from '../db.js?v=342';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=341').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=342').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=341';
-import { openModal, closeModal } from '../modal.js?v=341';
-import { requestAutoBackupNow } from '../backup-service.js?v=341';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=341';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=341';
-import { materialMatchesSearch } from '../kitchen-db.js?v=341';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=342';
+import { openModal, closeModal } from '../modal.js?v=342';
+import { requestAutoBackupNow } from '../backup-service.js?v=342';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=342';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=342';
+import { materialMatchesSearch } from '../kitchen-db.js?v=342';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -625,13 +625,17 @@ function stepPortionLabel(step) {
 }
 
 function portionPresetOptionLabel(p) {
-  const star = p.sourceRecipeId ? '★ ' : '';
+  const star = (p.sourceRecipeId || p.sourceRawMaterialId) ? '★ ' : '';
   const extra = p.extra ? ` · ${p.extra}` : '';
   return `${star}${p.name} (${p.weight} ק"ג${extra})`;
 }
 
 function portionPresetHasRecipe(p) {
   return !!p?.sourceRecipeId;
+}
+
+function portionPresetIsLinked(p) {
+  return !!(p?.sourceRecipeId || p?.sourceRawMaterialId);
 }
 
 function renderChecklistLibraryHTML(tasks, { categoryLabel = '' } = {}) {
@@ -1761,8 +1765,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=341');
-    const { db } = await import('../db.js?v=341');
+    const { getRecipe } = await import('../kitchen-db.js?v=342');
+    const { db } = await import('../db.js?v=342');
     const blocks = [];
 
     for (const row of rows) {
@@ -2585,7 +2589,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=341');
+    const kitchen = await import('../kitchen-db.js?v=342');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3811,20 +3815,21 @@ async function renderManageView(container, ctx) {
           </select>
         </div>
         ${portionManageGroupId ? `
-          ${portionGroupName ? `<p class="form-hint" style="margin-bottom:12px">מנות עבור: <strong>${escapeHtml(portionGroupName)}</strong> · <span class="flow-preset-recipe-hint">★ ממתכון מקושר</span></p>` : ''}
+          ${portionGroupName ? `<p class="form-hint" style="margin-bottom:12px">מנות עבור: <strong>${escapeHtml(portionGroupName)}</strong> · <span class="flow-preset-recipe-hint">★ ממתכון / חומר גלם</span></p>` : ''}
           ${portionPresets.length ? `
             <ul class="flow-preset-list">
               ${portionPresets.map((p) => `
-                <li class="flow-preset-item list-item${p.sourceRecipeId ? ' flow-preset-item--recipe' : ''}">
+                <li class="flow-preset-item list-item${portionPresetIsLinked(p) ? ' flow-preset-item--recipe' : ''}">
                   <div class="list-item-info">
-                    <div class="list-item-name">${p.sourceRecipeId ? '<span class="flow-preset-recipe-star" title="ממתכון מקושר">★</span> ' : ''}${escapeHtml(p.name)}</div>
-                    <div class="list-item-meta">${p.weight} ק"ג${p.extra ? ` · ${escapeHtml(p.extra)}` : ''}${p.sourceRecipeId ? ' · עריכה במתכונים' : ''}</div>
+                    <div class="list-item-name">${portionPresetIsLinked(p) ? `<span class="flow-preset-recipe-star" title="${p.sourceRawMaterialId ? 'מחומר גלם' : 'ממתכון מקושר'}">★</span> ` : ''}${escapeHtml(p.name)}</div>
+                    <div class="list-item-meta">${p.weight} ק"ג${p.extra ? ` · ${escapeHtml(p.extra)}` : ''}${p.sourceRecipeId ? ' · עריכה במתכונים' : ''}${p.sourceRawMaterialId ? ' · עריכה בספקים' : ''}</div>
                   </div>
                   ${p.sourceRecipeId ? `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm portion-ingredients-btn"
                       data-id="${p.id}" title="רשימת חומרי גלם ומספר מנה">📋 רשימה</button>
-                  </div>` : `
+                  </div>` : p.sourceRawMaterialId ? `
+                  <div class="list-item-actions"></div>` : `
                   <div class="list-item-actions">
                     <button type="button" class="btn btn-secondary btn-sm edit-preset"
                       data-id="${p.id}" data-name="${escapeHtml(p.name)}"
@@ -3832,7 +3837,7 @@ async function renderManageView(container, ctx) {
                     <button type="button" class="btn btn-danger btn-sm delete-preset" data-id="${p.id}">🗑</button>
                   </div>`}
                 </li>`).join('')}
-            </ul>` : '<p class="form-hint">אין מנות — הוסף מנה למטה או שייך מתכון למוצר</p>'}
+            </ul>` : '<p class="form-hint">אין מנות — הוסף מנה למטה או שייך מתכון/חומר גלם למוצר</p>'}
           <div class="flow-new-preset-form" style="margin-top:12px">
             <div class="form-group">
               <label for="new-preset-name">שם מנה</label>
