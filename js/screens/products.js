@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=350';
+} from '../db.js?v=351';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -16,12 +16,14 @@ import {
   syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=350';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=350';
-import { openModal, closeModal } from '../modal.js?v=350';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=350';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=350';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=350';
+  getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
+  getPackagingKindLabel, getSuppliers,
+} from '../kitchen-db.js?v=351';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=351';
+import { openModal, closeModal } from '../modal.js?v=351';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=351';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=351';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=351';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -193,6 +195,7 @@ function productPriceMeta(p) {
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
   if (p.unitsPerCarton) parts.push(`${p.unitsPerCarton} יח'/קרטון`);
+  if (p.packagingMaterialId) parts.push('אריזה משויכת');
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
 }
 
@@ -565,7 +568,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=350');
+    const { navigate } = await import('../app.js?v=351');
     navigate('backup');
   });
 
@@ -789,7 +792,10 @@ function bindProductDetailOpen(container) {
   });
 }
 
-function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [] }) {
+function buildProductDetailHTML(detail, {
+  allRecipes, bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [],
+  packagingMaterial = null, packagingSupplierName = '',
+}) {
   const { product, category, components, linkedRecipes, bakingProfile, bakingProfileLink, totalWeightGrams } = detail;
   const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
   const usedRecipeIds = new Set(components.map((c) => c.recipeId));
@@ -890,6 +896,7 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
         <div class="recipe-sheet-meta">
           <span class="recipe-meta-pill">⚖️ ${totalWeightText}</span>
           ${product.unitsPerCarton ? `<span class="recipe-meta-pill">📦 ${product.unitsPerCarton} יח׳ בקרטון</span>` : ''}
+          ${packagingMaterial ? `<span class="recipe-meta-pill">🥡 ${escapeHtml(packagingMaterial.name)}${packagingSupplierName ? ` · ${escapeHtml(packagingSupplierName)}` : ''}</span>` : ''}
           ${product.active ? '' : '<span class="recipe-meta-pill">לא פעיל</span>'}
         </div>
         <div class="product-detail-collapse-toolbar">
@@ -947,13 +954,18 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
             <span>${formatMoney(detail.currentCosts.rawMaterialsCost)}</span>
           </div>
           <div class="product-pricing-row">
-            <span>אריזה</span>
+            <span>אריזה${packagingMaterial ? ` · ${escapeHtml(packagingMaterial.name)}` : ''}</span>
             <span>${formatMoney(detail.currentCosts.packagingCost)}</span>
           </div>
           ${product.unitsPerCarton ? `
           <div class="product-pricing-row">
             <span>יחידות בקרטון</span>
             <span>${product.unitsPerCarton}</span>
+          </div>` : ''}
+          ${packagingMaterial ? `
+          <div class="product-pricing-row">
+            <span>אריזה מספקים</span>
+            <span>${escapeHtml(packagingMaterial.name)}${packagingSupplierName ? ` · ${escapeHtml(packagingSupplierName)}` : ''}</span>
           </div>` : ''}
           <div class="product-pricing-row">
             <span>עלויות נוספות</span>
@@ -980,23 +992,32 @@ async function openProductDetailModal(container, productId) {
   let allRecipes = [];
   let bakingProfiles = [];
   let profileMap = new Map();
+  let packagingMaterial = null;
+  let packagingSupplierName = '';
 
   let linkedFlows = [];
   let candidateFlows = [];
 
   async function loadContext() {
-    const [d, layout, profiles, linked, candidates] = await Promise.all([
+    const [d, layout, profiles, linked, candidates, packMats, suppliers] = await Promise.all([
       getProductDetail(productId),
       getRecipesCatalogLayout(),
       getBakingProfiles(),
       getLinkedFlowsForProduct(productId),
       getCandidateFlowsForProduct(productId),
+      getPackagingMaterials(),
+      getSuppliers(),
     ]);
     detail = d;
     linkedFlows = linked;
     candidateFlows = candidates;
     bakingProfiles = profiles;
     profileMap = new Map(profiles.map((p) => [p.id, p]));
+    const mid = Number(d?.product?.packagingMaterialId);
+    packagingMaterial = mid ? (packMats.find((m) => m.id === mid) || null) : null;
+    packagingSupplierName = packagingMaterial?.supplierId
+      ? (suppliers.find((s) => s.id === packagingMaterial.supplierId)?.name || '')
+      : '';
     allRecipes = [];
     for (const group of layout.groups) {
       for (const cat of group.categories) {
@@ -1006,10 +1027,15 @@ async function openProductDetailModal(container, productId) {
     allRecipes.sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
 
+  const detailOpts = () => ({
+    allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows,
+    packagingMaterial, packagingSupplierName,
+  });
+
   async function refreshModal() {
     await loadContext();
     const body = document.querySelector('.modal-body');
-    if (body) body.innerHTML = buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows });
+    if (body) body.innerHTML = buildProductDetailHTML(detail, detailOpts());
     bindProductDetailModalEvents(container, productId, refreshModal);
   }
 
@@ -1018,7 +1044,7 @@ async function openProductDetailModal(container, productId) {
   openModal({
     title: '',
     modalClass: 'modal-product-detail',
-    bodyHTML: buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows }),
+    bodyHTML: buildProductDetailHTML(detail, detailOpts()),
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-primary" id="product-detail-edit">עריכת פרטים</button>`,
@@ -1793,8 +1819,23 @@ async function showProductForm(container, opts) {
     } catch { /* preview unavailable */ }
   }
 
-  const layout = await getProductsCatalogLayout();
+  const [layout, packagingMaterials, suppliers] = await Promise.all([
+    getProductsCatalogLayout(),
+    getPackagingMaterials(),
+    getSuppliers(),
+  ]);
   const categories = layout.allCategories.map((c) => ({ id: c.id, name: c.name }));
+  const selectedPackId = Number(opts.packagingMaterialId) || '';
+  const selectedPack = selectedPackId
+    ? packagingMaterials.find((m) => m.id === selectedPackId)
+    : null;
+  const packingOptions = packagingMaterials.map((m) => {
+    const sup = suppliers.find((s) => s.id === m.supplierId)?.name || '';
+    const kind = m.packagingKind ? getPackagingKindLabel(m.packagingKind) : 'אריזה';
+    const qty = m.packProductsPerUnit ? ` · ${m.packProductsPerUnit} יח'/קרטון` : '';
+    const label = `${m.name}${sup ? ` — ${sup}` : ''} (${kind}${qty})`;
+    return `<option value="${m.id}"${selectedPackId === m.id ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
 
   openModal({
     title: opts.id ? 'עריכת מוצר' : `מוצר חדש — ${opts.categoryName || ''}`,
@@ -1811,14 +1852,23 @@ async function showProductForm(container, opts) {
       </div>
       ${productPriceUnitFieldsHTML(opts)}
       <div class="form-group">
+        <label for="prod-packaging-material">אריזה מספקים</label>
+        <select id="prod-packaging-material">
+          <option value="">— ללא שיוך —</option>
+          ${packingOptions}
+        </select>
+        <p class="form-hint">שיוך לקרטון/אריזה מרשימת הספקים</p>
+      </div>
+      <div class="form-group">
         <label for="prod-units-per-carton">יחידות בקרטון</label>
         <input type="number" id="prod-units-per-carton" min="1" step="1" inputmode="numeric"
-          value="${opts.unitsPerCarton != null && opts.unitsPerCarton !== '' ? opts.unitsPerCarton : ''}"
+          value="${opts.unitsPerCarton != null && opts.unitsPerCarton !== '' ? opts.unitsPerCarton : (selectedPack?.packProductsPerUnit || '')}"
           placeholder="לדוגמה: 12">
-        <p class="form-hint">כמה יחידות אורזים בקרטון אחד</p>
+        <p class="form-hint">כמה יחידות אורזים בקרטון אחד · מסונכרן עם האריזה המשויכת</p>
       </div>
       ${rawMaterialsCostSourceFieldsHTML({ ...opts, rawMaterialsCostPreview })}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
+      <p class="form-hint" id="prod-pack-cost-hint" style="margin-top:-6px"></p>
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
@@ -1827,19 +1877,56 @@ async function showProductForm(container, opts) {
 
   bindProductPriceUnitFields();
   bindRawMaterialsCostSourceFields({ productId: opts.id });
+
+  const packSelect = document.getElementById('prod-packaging-material');
+  const unitsInput = document.getElementById('prod-units-per-carton');
+  const packCostInput = document.getElementById('prod-pack');
+  const packCostHint = document.getElementById('prod-pack-cost-hint');
+  const syncPackagingFromSelect = ({ fillCost = false } = {}) => {
+    const mid = Number(packSelect?.value);
+    const mat = mid ? packagingMaterials.find((m) => m.id === mid) : null;
+    if (mat?.packProductsPerUnit && unitsInput && !unitsInput.value) {
+      unitsInput.value = String(mat.packProductsPerUnit);
+    }
+    if (mat?.packProductsPerUnit && unitsInput && document.activeElement !== unitsInput) {
+      /* keep user value if already set */
+    }
+    const cost = mat ? computePackagingCostPerProduct(mat) : null;
+    if (packCostHint) {
+      packCostHint.textContent = cost != null
+        ? `עלות אריזה מחושבת מהספקים: ${formatMoney(cost)} (לחיצה על «מלא מחישוב» תעדכן)`
+        : (mat ? 'לא ניתן לחשב עלות — חסר מחיר/כמות באריזה' : '');
+    }
+    if (fillCost && cost != null && packCostInput) {
+      packCostInput.value = String(cost);
+    }
+  };
+  packSelect?.addEventListener('change', () => {
+    const mid = Number(packSelect.value);
+    const mat = mid ? packagingMaterials.find((m) => m.id === mid) : null;
+    if (mat?.packProductsPerUnit && unitsInput) {
+      unitsInput.value = String(mat.packProductsPerUnit);
+    }
+    syncPackagingFromSelect({ fillCost: true });
+  });
+  syncPackagingFromSelect();
+
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('save-prod').addEventListener('click', async () => {
     const name = document.getElementById('prod-name').value.trim();
     if (!name) return showToast('יש להזין שם מוצר');
 
     const rawMaterialsCostSource = document.querySelector('input[name="prod-raw-source"]:checked')?.value || 'manual';
+    const packagingMaterialId = document.getElementById('prod-packaging-material')?.value || null;
+    const unitsPerCarton = document.getElementById('prod-units-per-carton')?.value ?? '';
     const data = {
       name,
       categoryId: Number(document.getElementById('prod-cat').value),
       unitPrice: document.getElementById('prod-price').value,
       priceUnit: document.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit',
       unitWeightKg: document.getElementById('prod-unit-weight')?.value ?? '',
-      unitsPerCarton: document.getElementById('prod-units-per-carton')?.value ?? '',
+      unitsPerCarton,
+      packagingMaterialId,
       rawMaterialsCostSource,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,
@@ -1863,8 +1950,14 @@ async function showProductForm(container, opts) {
     }
 
     try {
+      let productId = opts.id;
       if (opts.id) await updateProduct(opts.id, data);
-      else await addProduct(data);
+      else productId = await addProduct(data);
+      await syncProductPackagingToMaterial(productId, {
+        packagingMaterialId,
+        unitsPerCarton,
+        syncCost: false,
+      });
       expandCategory(data.categoryId);
       closeModal();
       showToast('נשמר ✓');

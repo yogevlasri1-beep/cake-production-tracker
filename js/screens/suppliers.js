@@ -19,13 +19,14 @@ import {
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
   setRawMaterialAsPortion,
-} from '../kitchen-db.js?v=350';
-import { getProducts } from '../db.js?v=350';
-import { parseSupplierFile } from '../supplier-import.js?v=350';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=350';
-import { openModal, closeModal } from '../modal.js?v=350';
-import { requestAutoBackupNow } from '../backup-service.js?v=350';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=350';
+  applyPackagingLinks,
+} from '../kitchen-db.js?v=351';
+import { getProducts, getCategories } from '../db.js?v=351';
+import { parseSupplierFile } from '../supplier-import.js?v=351';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=351';
+import { openModal, closeModal } from '../modal.js?v=351';
+import { requestAutoBackupNow } from '../backup-service.js?v=351';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=351';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1087,6 +1088,7 @@ async function openMaterialDetailModal(container, materialId) {
         ${mat.isRecipeDefault ? '<span class="recipe-default-badge">★ ברירת מחדל למתכונים</span>' : ''}
         ${mat.isPortion ? `<span class="recipe-default-badge">מנה · ${mat.portionWeightKg != null ? `${mat.portionWeightKg} ק"ג` : ''}</span>` : ''}
         ${mat.packagingKind ? `<span class="form-hint">${escapeHtml(getPackagingKindLabel(mat.packagingKind))}${mat.packUnitsCount > 1 ? ` · ${mat.packUnitsCount} בחבילה` : ''}${mat.packagingKind === PACKAGING_KIND_CARTON && mat.packProductsPerUnit ? ` · ${mat.packProductsPerUnit} מוצרים/קרטון` : ''}</span>` : ''}
+        ${mat.packLinkedProductId || mat.packLinkedCategoryId ? `<span class="form-hint" id="mat-pack-link-label">טוען שיוך...</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
       </div>
       <div class="form-group" style="margin-top:12px">
@@ -1152,6 +1154,25 @@ async function openMaterialDetailModal(container, materialId) {
   document.querySelectorAll('.browse-other-sup').forEach((btn) => {
     btn.addEventListener('click', () => openMaterialDetailModal(container, Number(btn.dataset.id)));
   });
+
+  const linkLabel = document.getElementById('mat-pack-link-label');
+  if (linkLabel) {
+    (async () => {
+      try {
+        if (mat.packLinkedProductId) {
+          const products = await getProducts(true);
+          const p = products.find((x) => x.id === Number(mat.packLinkedProductId));
+          linkLabel.textContent = p ? `משויך למוצר: ${p.name}` : 'משויך למוצר';
+        } else if (mat.packLinkedCategoryId) {
+          const cats = await getCategories();
+          const c = cats.find((x) => x.id === Number(mat.packLinkedCategoryId));
+          linkLabel.textContent = c ? `משויך לקטגוריה: ${c.name}` : 'משויך לקטגוריה';
+        }
+      } catch {
+        linkLabel.textContent = '';
+      }
+    })();
+  }
 }
 
 /* ── עריכה ── */
@@ -1551,11 +1572,18 @@ function openSupplierCategoryForm(container, category) {
 
 function readPackagingFieldsFromForm() {
   const kind = document.querySelector('input[name="mat-pack-kind"]:checked')?.value || PACKAGING_KIND_CARTON;
+  const linkMode = document.querySelector('input[name="mat-pack-link-mode"]:checked')?.value || 'none';
   return {
     packagingKind: kind,
     packUnitsCount: document.getElementById('mat-pack-units')?.value,
     packProductsPerUnit: kind === PACKAGING_KIND_CARTON
       ? document.getElementById('mat-pack-products')?.value
+      : null,
+    packLinkedProductId: linkMode === 'product'
+      ? (document.getElementById('mat-pack-product')?.value || null)
+      : null,
+    packLinkedCategoryId: linkMode === 'category'
+      ? (document.getElementById('mat-pack-category')?.value || null)
       : null,
   };
 }
@@ -1573,38 +1601,49 @@ function updatePackagingCostPreview() {
 
 function bindPackagingFormFields() {
   const productsField = document.getElementById('mat-pack-products-field');
+  const productLinkField = document.getElementById('mat-pack-product-field');
+  const categoryLinkField = document.getElementById('mat-pack-category-field');
   const syncProductsField = () => {
     const kind = document.querySelector('input[name="mat-pack-kind"]:checked')?.value;
     if (productsField) productsField.style.display = kind === PACKAGING_KIND_PLASTIC ? 'none' : '';
     updatePackagingCostPreview();
   };
+  const syncLinkMode = () => {
+    const mode = document.querySelector('input[name="mat-pack-link-mode"]:checked')?.value || 'none';
+    if (productLinkField) productLinkField.style.display = mode === 'product' ? '' : 'none';
+    if (categoryLinkField) categoryLinkField.style.display = mode === 'category' ? '' : 'none';
+  };
   document.querySelectorAll('input[name="mat-pack-kind"]').forEach((radio) => {
     radio.addEventListener('change', syncProductsField);
+  });
+  document.querySelectorAll('input[name="mat-pack-link-mode"]').forEach((radio) => {
+    radio.addEventListener('change', syncLinkMode);
   });
   ['mat-pack-units', 'mat-pack-products', 'mat-price'].forEach((id) => {
     document.getElementById(id)?.addEventListener('input', updatePackagingCostPreview);
   });
   syncProductsField();
+  syncLinkMode();
 }
 
 async function openAddMaterialModal(container, categoryId, suppliers, category) {
   const isPackaging = isPackagingSupplierCategory(category);
-  const products = await getProducts(true);
+  const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
   openModal({
     title: isPackaging ? 'אריזה חדשה' : 'חומר גלם חדש',
-    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, products }),
+    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, products, categories }),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
   });
   bindMaterialForm(container, categoryId, null, { isPackaging });
 }
 
 function openEditMaterialModal(container, mat) {
-  Promise.all([getSuppliers(), getSupplierCategories(), getProducts(true)]).then(([suppliers, categories, products]) => {
+  Promise.all([getSuppliers(), getSupplierCategories(), getProducts(true), getCategories()]).then(([suppliers, categories, products, productCategories]) => {
     const category = categories.find((c) => c.id === mat.supplierCategoryId);
     const isPackaging = isPackagingSupplierCategory(category);
     openModal({
       title: `עריכה · ${escapeHtml(mat.name)}`,
-      bodyHTML: `${materialFormHTML(mat, suppliers, { isPackaging, products })}
+      bodyHTML: `${materialFormHTML(mat, suppliers, { isPackaging, products, categories: productCategories })}
         ${isPackaging ? `
         <div class="form-group" style="margin-top:12px">
           <label>עדכון מחיר (שומר היסטוריה)</label>
@@ -1644,7 +1683,7 @@ async function loadMaterialHistory(materialId) {
     : '';
 }
 
-function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] } = {}) {
+function materialFormHTML(mat, suppliers, { isPackaging = false, products = [], categories = [] } = {}) {
   const defaultUnit = isPackaging ? 'חבילה' : 'ק&quot;ג';
   const packKind = mat?.packagingKind || PACKAGING_KIND_CARTON;
   const pricePerKg = mat ? (getMaterialPurchasePricePerKg(mat) ?? '') : '';
@@ -1652,10 +1691,23 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] }
   const isPortion = !!mat?.isPortion;
   const portionProductId = mat?.portionProductId ? Number(mat.portionProductId) : '';
   const portionWeightKg = mat?.portionWeightKg != null ? mat.portionWeightKg : '';
+  const packProductId = mat?.packLinkedProductId ? Number(mat.packLinkedProductId) : '';
+  const packCategoryId = mat?.packLinkedCategoryId ? Number(mat.packLinkedCategoryId) : '';
+  const packLinkMode = packProductId ? 'product' : (packCategoryId ? 'category' : 'none');
   const productOptions = (products || [])
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
     .map((p) => `<option value="${p.id}"${portionProductId === Number(p.id) ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    .join('');
+  const packProductOptions = (products || [])
+    .slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
+    .map((p) => `<option value="${p.id}"${packProductId === Number(p.id) ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    .join('');
+  const categoryOptions = (categories || [])
+    .slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
+    .map((c) => `<option value="${c.id}"${packCategoryId === Number(c.id) ? ' selected' : ''}>${escapeHtml(c.name)}</option>`)
     .join('');
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
@@ -1685,6 +1737,31 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] }
     <div class="form-group" id="mat-pack-products-field">
       <label>מוצרים בקרטון</label>
       <input type="number" id="mat-pack-products" min="1" step="1" value="${mat?.packProductsPerUnit ?? 1}" placeholder="כמה מוצרים נכנסים בקרטון">
+      <p class="form-hint">כמות יחידות מוצר בתוך קרטון אחד</p>
+    </div>
+    <div class="form-group">
+      <label>שיוך אריזה</label>
+      <div class="packaging-kind-row" role="radiogroup">
+        <label class="packaging-kind-option"><input type="radio" name="mat-pack-link-mode" value="none"${packLinkMode === 'none' ? ' checked' : ''}> ללא</label>
+        <label class="packaging-kind-option"><input type="radio" name="mat-pack-link-mode" value="product"${packLinkMode === 'product' ? ' checked' : ''}> מוצר</label>
+        <label class="packaging-kind-option"><input type="radio" name="mat-pack-link-mode" value="category"${packLinkMode === 'category' ? ' checked' : ''}> קטגוריה</label>
+      </div>
+    </div>
+    <div class="form-group" id="mat-pack-product-field" style="${packLinkMode === 'product' ? '' : 'display:none'}">
+      <label for="mat-pack-product">מוצר משויך</label>
+      <select id="mat-pack-product">
+        <option value="">בחר מוצר...</option>
+        ${packProductOptions}
+      </select>
+      <p class="form-hint">יעדכן בפרופיל המוצר את האריזה ואת כמות היחידות בקרטון</p>
+    </div>
+    <div class="form-group" id="mat-pack-category-field" style="${packLinkMode === 'category' ? '' : 'display:none'}">
+      <label for="mat-pack-category">קטגוריית מוצרים</label>
+      <select id="mat-pack-category">
+        <option value="">בחר קטגוריה...</option>
+        ${categoryOptions}
+      </select>
+      <p class="form-hint">סימון שהאריזה מיועדת לקטגוריה זו</p>
     </div>
     <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>` : `
     <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}"></div>
@@ -1699,6 +1776,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] }
         ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
     </div>
+    ${isPackaging ? '' : `
     <div class="form-group">
       <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="mat-as-portion"${isPortion ? ' checked' : ''}>
@@ -1719,7 +1797,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, products = [] }
         <input type="number" id="mat-portion-weight" min="0.001" step="0.001" inputmode="decimal"
           value="${portionWeightKg !== '' ? portionWeightKg : ''}" placeholder="למשל: 0.12">
       </div>
-    </div>
+    </div>`}
     ${mat ? `
     <div class="form-group">
       <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -1877,6 +1955,16 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         productId: portionProductId,
         weightKg: portionWeightKg,
       });
+
+      if (isPackaging) {
+        const packFields = readPackagingFieldsFromForm();
+        await applyPackagingLinks(savedId, {
+          linkedProductId: packFields.packLinkedProductId,
+          linkedCategoryId: packFields.packLinkedCategoryId,
+          productsPerCarton: packFields.packProductsPerUnit,
+          syncProductCost: true,
+        });
+      }
 
       closeModal();
       showToast('נשמר ✓');

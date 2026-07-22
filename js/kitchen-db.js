@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=350';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=351';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=350';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=350';
+} from './validators.js?v=351';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=351';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2690,6 +2690,8 @@ function normalizePackagingFields(raw, { categoryIsPackaging = false } = {}) {
       packagingKind: null,
       packUnitsCount: null,
       packProductsPerUnit: null,
+      packLinkedProductId: null,
+      packLinkedCategoryId: null,
     };
   }
   const kind = sanitizePackagingKind(raw?.packagingKind) || PACKAGING_KIND_CARTON;
@@ -2697,7 +2699,108 @@ function normalizePackagingFields(raw, { categoryIsPackaging = false } = {}) {
   const packProductsPerUnit = kind === PACKAGING_KIND_CARTON
     ? sanitizePackCount(raw?.packProductsPerUnit)
     : null;
-  return { packagingKind: kind, packUnitsCount, packProductsPerUnit };
+  const linkedProductId = sanitizeProductId(raw?.packLinkedProductId) || null;
+  const linkedCategoryId = linkedProductId
+    ? null
+    : (sanitizeProductId(raw?.packLinkedCategoryId) || null);
+  return {
+    packagingKind: kind,
+    packUnitsCount,
+    packProductsPerUnit,
+    packLinkedProductId: linkedProductId,
+    packLinkedCategoryId: linkedCategoryId,
+  };
+}
+
+/** חומרי גלם מסוג אריזה (קטגוריית אריזות או packagingKind) */
+export async function getPackagingMaterials() {
+  const [mats, cats] = await Promise.all([getRawMaterials(), getSupplierCategories()]);
+  const packCatIds = new Set(
+    (cats || []).filter((c) => isPackagingSupplierCategory(c)).map((c) => c.id),
+  );
+  return (mats || [])
+    .filter((m) => m.packagingKind || packCatIds.has(m.supplierCategoryId))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+}
+
+/**
+ * אחרי שמירת אריזה — מסנכרן שיוך למוצר/קטגוריה וכמות בקרטון למוצר המשויך.
+ */
+export async function applyPackagingLinks(materialId, {
+  linkedProductId = null,
+  linkedCategoryId = null,
+  productsPerCarton = null,
+  syncProductCost = true,
+} = {}) {
+  const mid = sanitizeProductId(materialId);
+  if (!mid) return;
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat) return;
+
+  const pid = sanitizeProductId(linkedProductId) || null;
+  const cid = pid ? null : (sanitizeProductId(linkedCategoryId) || null);
+  let qty = null;
+  if (mat.packagingKind === PACKAGING_KIND_CARTON) {
+    const raw = productsPerCarton ?? mat.packProductsPerUnit;
+    if (raw != null && raw !== '') qty = sanitizePackCount(raw);
+  }
+
+  await db.rawMaterials.update(mid, {
+    packLinkedProductId: pid,
+    packLinkedCategoryId: cid,
+    ...(qty != null ? { packProductsPerUnit: qty } : {}),
+  });
+
+  if (pid) {
+    const patch = {
+      packagingMaterialId: mid,
+      ...(qty != null ? { unitsPerCarton: qty } : {}),
+    };
+    if (syncProductCost) {
+      const cost = computePackagingCostPerProduct({
+        ...mat,
+        packProductsPerUnit: qty ?? mat.packProductsPerUnit,
+      });
+      if (cost != null) patch.packagingCost = cost;
+    }
+    await db.products.update(pid, patch);
+  }
+}
+
+/**
+ * אחרי שמירת מוצר — מסנכרן כמות בקרטון לאריזה המשויכת (אם קרטון).
+ */
+export async function syncProductPackagingToMaterial(productId, {
+  packagingMaterialId = null,
+  unitsPerCarton = null,
+  syncCost = false,
+} = {}) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return;
+  const mid = sanitizeProductId(packagingMaterialId) || null;
+  if (!mid) return;
+
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat) return;
+
+  const patch = {};
+  if (mat.packagingKind === PACKAGING_KIND_CARTON
+    && unitsPerCarton != null && unitsPerCarton !== '') {
+    patch.packProductsPerUnit = sanitizePackCount(unitsPerCarton);
+  }
+  if (!mat.packLinkedProductId && !mat.packLinkedCategoryId) {
+    patch.packLinkedProductId = pid;
+    patch.packLinkedCategoryId = null;
+  }
+  if (Object.keys(patch).length) await db.rawMaterials.update(mid, patch);
+
+  if (syncCost) {
+    const cost = computePackagingCostPerProduct({
+      ...mat,
+      ...patch,
+    });
+    if (cost != null) await db.products.update(pid, { packagingCost: cost });
+  }
 }
 
 export async function getSupplierCategories() {
@@ -2880,6 +2983,7 @@ export async function addRawMaterial({
   supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
   processedPricePerKg,
   packagingKind, packUnitsCount, packProductsPerUnit,
+  packLinkedProductId, packLinkedCategoryId,
   synonyms,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
@@ -2893,7 +2997,10 @@ export async function addRawMaterial({
   const sid = supplierId ? sanitizeProductId(supplierId) : null;
   const pkg = sanitizePackageWeightGrams(packageWeightGrams);
   const packaging = normalizePackagingFields(
-    { packagingKind, packUnitsCount, packProductsPerUnit },
+    {
+      packagingKind, packUnitsCount, packProductsPerUnit,
+      packLinkedProductId, packLinkedCategoryId,
+    },
     { categoryIsPackaging: isPackagingSupplierCategory(category) },
   );
   const id = await db.rawMaterials.add({
@@ -2945,7 +3052,8 @@ export async function updateRawMaterial(id, patch) {
     data.processedPricePerKg = sanitizeProcessedPricePerKg(data.processedPricePerKg);
   }
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
-  if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data) {
+  if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
+    || 'packLinkedProductId' in data || 'packLinkedCategoryId' in data) {
     const current = await db.rawMaterials.get(mid);
     const category = current
       ? await db.supplierCategories.get(current.supplierCategoryId)
@@ -2955,6 +3063,8 @@ export async function updateRawMaterial(id, patch) {
         packagingKind: 'packagingKind' in data ? data.packagingKind : current?.packagingKind,
         packUnitsCount: 'packUnitsCount' in data ? data.packUnitsCount : current?.packUnitsCount,
         packProductsPerUnit: 'packProductsPerUnit' in data ? data.packProductsPerUnit : current?.packProductsPerUnit,
+        packLinkedProductId: 'packLinkedProductId' in data ? data.packLinkedProductId : current?.packLinkedProductId,
+        packLinkedCategoryId: 'packLinkedCategoryId' in data ? data.packLinkedCategoryId : current?.packLinkedCategoryId,
       },
       { categoryIsPackaging: isPackagingSupplierCategory(category) },
     );

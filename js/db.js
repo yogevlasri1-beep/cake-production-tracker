@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=350';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=350';
-import { defaultColorForIndex } from './chart.js?v=350';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=350';
+} from './validators.js?v=351';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=351';
+import { defaultColorForIndex } from './chart.js?v=351';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=351';
 
 export { ValidationError };
 
@@ -3956,6 +3956,7 @@ function productDefaults(fields) {
     priceUnit: sanitizeProductPriceUnit(fields.priceUnit),
     unitWeightKg: sanitizeUnitWeightKg(fields.unitWeightKg, sanitizeProductPriceUnit(fields.priceUnit)),
     unitsPerCarton: sanitizeUnitsPerCarton(fields.unitsPerCarton),
+    packagingMaterialId: sanitizeProductId(fields.packagingMaterialId) || null,
     rawMaterialsCost: sanitizeMoney(fields.rawMaterialsCost),
     rawMaterialsCostSource: sanitizeRawMaterialsCostSource(fields.rawMaterialsCostSource),
     packagingCost: sanitizeMoney(fields.packagingCost),
@@ -4014,6 +4015,9 @@ export async function updateProduct(id, data) {
   }
   if ('unitsPerCarton' in patch) {
     patch.unitsPerCarton = sanitizeUnitsPerCarton(patch.unitsPerCarton);
+  }
+  if ('packagingMaterialId' in patch) {
+    patch.packagingMaterialId = sanitizeProductId(patch.packagingMaterialId) || null;
   }
   return db.products.update(id, patch);
 }
