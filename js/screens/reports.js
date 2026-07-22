@@ -5,34 +5,35 @@ import {
   getCategoryGroups, getAllFlowsOverview, getRunProductionEntries,
   getStepPortionBatches, getStepPortionTotal, formatPortionBatchSummary,
   computeRunMetrics, aggregateRunsMetrics, getProductsCatalogLayout,
+  collectRunIngredientBatchTracking,
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=346';
+} from '../db.js?v=347';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=346';
+} from '../utils.js?v=347';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=346';
-import { openModal, closeModal } from '../modal.js?v=346';
+} from '../export.js?v=347';
+import { openModal, closeModal } from '../modal.js?v=347';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=346';
-import { isSheetsConfigured } from '../google-sheets.js?v=346';
+} from '../sheets-flow.js?v=347';
+import { isSheetsConfigured } from '../google-sheets.js?v=347';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=346';
-import { defaultColorForIndex } from '../chart.js?v=346';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=346';
+} from '../calc.js?v=347';
+import { defaultColorForIndex } from '../chart.js?v=347';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=347';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=346';
+} from '../purchasing-db.js?v=347';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -54,7 +55,7 @@ export function isProductsReportType(type) {
 }
 
 export function isPortionsReportType(type) {
-  return type === 'portions' || type === 'portions-type';
+  return type === 'portions' || type === 'portions-type' || type === 'portions-batches';
 }
 
 export function isPnlReportType(type) {
@@ -470,13 +471,14 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     reportTitle = reportType.startsWith('products') ? 'דוח מוצרים · שבועי' : 'דוח שבועי מפורט';
     weekAnchor = anchor;
   } else if (reportType === 'range' || reportType === 'products-general' || reportType === 'products-period'
-    || reportType === 'portions' || reportType === 'portions-type'
+    || reportType === 'portions' || reportType === 'portions-type' || reportType === 'portions-batches'
     || reportType === 'pnl' || reportType === 'pnl-period' || reportType === 'pnl-daily' || reportType === 'pnl-product') {
     applyRangeDefaults();
     if (reportType === 'products-general') reportTitle = 'דוח מוצרים · כללי';
     else if (reportType === 'products-period') reportTitle = 'דוח מוצרים · תקופה';
     else if (reportType === 'portions') reportTitle = 'דוח מנות · כללי';
     else if (reportType === 'portions-type') reportTitle = 'דוח מנות · לפי סוג';
+    else if (reportType === 'portions-batches') reportTitle = 'דוח מנות · מספרי מנה חומרי גלם';
     else if (reportType === 'pnl') reportTitle = 'רווח והפסד · כללי מפורט';
     else if (reportType === 'pnl-period') reportTitle = 'רווח והפסד · תקופה';
     else if (reportType === 'pnl-daily') reportTitle = 'רווח והפסד · יומי';
@@ -527,6 +529,16 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
   if (selectedPortionName && reportType === 'portions-type') {
     filterLabel = selectedPortionName;
   }
+  const portionMaterialSearch = String(container.dataset.portionMaterialSearch || '').trim();
+  const portionBatchNumSearch = String(container.dataset.portionBatchNumSearch || '').trim();
+  const portionsBatchesMode = container.dataset.portionsBatchesMode === 'material' ? 'material' : 'all';
+  if (reportType === 'portions-batches') {
+    const parts = [];
+    if (portionsBatchesMode === 'material') parts.push('לפי חומר גלם');
+    if (portionMaterialSearch) parts.push(`חומר: ${portionMaterialSearch}`);
+    if (portionBatchNumSearch) parts.push(`מספר מנה: ${portionBatchNumSearch}`);
+    if (parts.length) filterLabel = parts.join(' · ');
+  }
 
   return {
     reportType,
@@ -549,6 +561,9 @@ function resolveReportContext(container, today, curYear, curMonth, catMap, produ
     historyAllTime: container.dataset.historyAllTime !== '0',
     batchSearch: String(container.dataset.batchSearch || '').trim(),
     productsPeriodMode: container.dataset.productsPeriodMode || 'month',
+    portionsBatchesMode,
+    portionMaterialSearch,
+    portionBatchNumSearch,
   };
 }
 
@@ -600,7 +615,7 @@ async function fetchReportData(ctx) {
     }
   }
 
-  let productionRuns = ctx.batchSearch
+  let productionRuns = (ctx.batchSearch || ctx.portionBatchNumSearch)
     ? await getAllProductionRuns()
     : await getProductionRunsInRange(ctx.from, ctx.to, { includeActiveOutsideRange: true });
 
@@ -1084,6 +1099,223 @@ function collectPortionNamesFromRuns(productionRuns) {
     }
   }
   return [...names].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
+/** שורות מספרי מנה על אריזה · חומרי גלם — מכל התהליכים */
+function collectIngredientBatchReportRows(productionRuns) {
+  const rows = [];
+  for (const run of productionRuns || []) {
+    const tracking = collectRunIngredientBatchTracking(run);
+    for (const t of tracking) {
+      rows.push({
+        ...t,
+        runId: run.id,
+        runDate: run.date || '',
+        runBatchNumber: run.batchNumber || '',
+        flowId: run.flowId || null,
+        flowName: run.flowName || (run.flowId ? `תזרים #${run.flowId}` : 'ללא תזרים'),
+        runStatus: run.status || '',
+      });
+    }
+  }
+  rows.sort((a, b) => {
+    const d = String(b.runDate || '').localeCompare(String(a.runDate || ''));
+    if (d) return d;
+    return String(a.ingredientName || '').localeCompare(String(b.ingredientName || ''), 'he')
+      || String(a.packagingBatchNumber || '').localeCompare(String(b.packagingBatchNumber || ''), 'he');
+  });
+  return rows;
+}
+
+function filterIngredientBatchReportRows(rows, { materialQuery = '', batchQuery = '' } = {}) {
+  const mq = String(materialQuery || '').trim().toLocaleLowerCase('he');
+  const bq = String(batchQuery || '').trim().toLocaleLowerCase('he');
+  return (rows || []).filter((row) => {
+    if (mq) {
+      const name = String(row.ingredientName || '').toLocaleLowerCase('he');
+      const supplier = String(row.supplierName || '').toLocaleLowerCase('he');
+      if (!name.includes(mq) && !supplier.includes(mq)) return false;
+    }
+    if (bq) {
+      const num = String(row.packagingBatchNumber || '').toLocaleLowerCase('he');
+      if (!num.includes(bq)) return false;
+    }
+    return true;
+  });
+}
+
+function groupIngredientBatchesByMaterial(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = row.rawMaterialId
+      ? `id:${row.rawMaterialId}`
+      : `name:${String(row.ingredientName || '').toLocaleLowerCase('he')}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        ingredientName: row.ingredientName || 'חומר גלם',
+        supplierName: row.supplierName || '',
+        rawMaterialId: row.rawMaterialId || null,
+        numbers: [],
+        rows: [],
+      });
+    }
+    const g = map.get(key);
+    g.rows.push(row);
+    const num = String(row.packagingBatchNumber || '').trim();
+    if (num && !g.numbers.includes(num)) g.numbers.push(num);
+    if (!g.supplierName && row.supplierName) g.supplierName = row.supplierName;
+  }
+  return [...map.values()].sort((a, b) => a.ingredientName.localeCompare(b.ingredientName, 'he'));
+}
+
+function groupIngredientBatchesByNumber(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const num = String(row.packagingBatchNumber || '').trim();
+    if (!num) continue;
+    const key = num.toLocaleLowerCase('he');
+    if (!map.has(key)) {
+      map.set(key, {
+        packagingBatchNumber: num,
+        flows: new Map(),
+        ingredients: new Set(),
+        rows: [],
+      });
+    }
+    const g = map.get(key);
+    g.rows.push(row);
+    g.ingredients.add(row.ingredientName || 'חומר גלם');
+    const flowKey = row.flowId ? String(row.flowId) : `name:${row.flowName}`;
+    if (!g.flows.has(flowKey)) {
+      g.flows.set(flowKey, {
+        flowId: row.flowId,
+        flowName: row.flowName || 'ללא תזרים',
+        runDates: new Set(),
+        runBatchNumbers: new Set(),
+        count: 0,
+      });
+    }
+    const flow = g.flows.get(flowKey);
+    flow.count += 1;
+    if (row.runDate) flow.runDates.add(row.runDate);
+    if (row.runBatchNumber) flow.runBatchNumbers.add(row.runBatchNumber);
+  }
+  return [...map.values()]
+    .map((g) => ({
+      ...g,
+      ingredients: [...g.ingredients].sort((a, b) => a.localeCompare(b, 'he')),
+      flows: [...g.flows.values()]
+        .map((f) => ({
+          ...f,
+          runDates: [...f.runDates].sort((a, b) => b.localeCompare(a)),
+          runBatchNumbers: [...f.runBatchNumbers],
+        }))
+        .sort((a, b) => a.flowName.localeCompare(b.flowName, 'he')),
+    }))
+    .sort((a, b) => a.packagingBatchNumber.localeCompare(b.packagingBatchNumber, 'he'));
+}
+
+function renderIngredientBatchesReportHTML(productionRuns, {
+  mode = 'all',
+  materialQuery = '',
+  batchQuery = '',
+} = {}) {
+  const allRows = collectIngredientBatchReportRows(productionRuns);
+  const rows = filterIngredientBatchReportRows(allRows, {
+    materialQuery,
+    batchQuery,
+  });
+
+  if (!allRows.length) {
+    return '<p class="report-empty">אין רשימות מספרי מנה לחומרי גלם בתקופה זו</p>';
+  }
+  if (!rows.length) {
+    return `<p class="report-empty">אין תוצאות לחיפוש${materialQuery || batchQuery
+      ? ` (${[materialQuery && `חומר: ${materialQuery}`, batchQuery && `מספר מנה: ${batchQuery}`].filter(Boolean).join(' · ')})`
+      : ''}</p>`;
+  }
+
+  const batchGroups = batchQuery ? groupIngredientBatchesByNumber(rows) : [];
+
+  const flowsForBatchHtml = batchQuery && batchGroups.length ? `
+    <div class="report-portion-batches-flows" style="margin-bottom:16px">
+      <h4 class="report-preview-heading" style="margin-top:0">תזרימים לפי מספר מנה</h4>
+      ${batchGroups.map((g) => `
+        <div class="report-portion-batch-flow-card" style="margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:8px">
+          <div style="font-weight:700;margin-bottom:6px">מספר מנה: <span dir="ltr">${escapeHtml(g.packagingBatchNumber)}</span></div>
+          <p class="form-hint" style="margin:0 0 8px">חומרים: ${escapeHtml(g.ingredients.join(', '))}</p>
+          <div class="report-table-wrap">
+            <table class="report-table">
+              <thead><tr><th>תזרים</th><th>אצוות תהליך</th><th>תאריכים</th><th>רשומות</th></tr></thead>
+              <tbody>
+                ${g.flows.map((f) => `
+                  <tr>
+                    <td class="report-cell-text">${escapeHtml(f.flowName)}</td>
+                    <td class="report-cell-text">${f.runBatchNumbers.length ? escapeHtml(f.runBatchNumbers.join(', ')) : '—'}</td>
+                    <td class="report-cell-text">${f.runDates.map((d) => formatDate(d)).join(', ') || '—'}</td>
+                    <td class="report-cell-num">${f.count}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`).join('')}
+    </div>` : '';
+
+  if (mode === 'material') {
+    const groups = groupIngredientBatchesByMaterial(rows);
+    return `
+      ${flowsForBatchHtml}
+      <h4 class="report-preview-heading" style="margin-top:0">רשימה לפי חומר גלם (${groups.length})</h4>
+      ${groups.map((g) => `
+        <div class="report-portion-material-group" style="margin-bottom:14px">
+          <div style="font-weight:700;margin-bottom:4px">${escapeHtml(g.ingredientName)}${g.supplierName ? ` · <span class="form-hint">${escapeHtml(g.supplierName)}</span>` : ''}</div>
+          <p class="form-hint" style="margin:0 0 6px">מספרי מנה: ${g.numbers.length
+    ? g.numbers.map((n) => `<span dir="ltr">${escapeHtml(n)}</span>`).join(' · ')
+    : '—'}</p>
+          <div class="report-table-wrap">
+            <table class="report-table">
+              <thead><tr>
+                <th>מספר מנה</th><th>תזרים</th><th>מנה</th><th>תאריך</th><th>אצווה</th>
+              </tr></thead>
+              <tbody>
+                ${g.rows.map((row) => `
+                  <tr>
+                    <td class="report-cell-text" dir="ltr">${escapeHtml(row.packagingBatchNumber)}</td>
+                    <td class="report-cell-text">${escapeHtml(row.flowName)}</td>
+                    <td class="report-cell-text">${escapeHtml(row.portionName || '—')}</td>
+                    <td class="report-cell-num">${row.runDate ? formatDate(row.runDate) : '—'}</td>
+                    <td class="report-cell-text">${row.runBatchNumber ? escapeHtml(row.runBatchNumber) : '—'}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`).join('')}
+      <p class="form-hint">סה״כ ${rows.length} רשומות · ${groups.length} חומרי גלם</p>`;
+  }
+
+  return `
+    ${flowsForBatchHtml}
+    <h4 class="report-preview-heading" style="margin-top:0">רשימה כוללת (${rows.length})</h4>
+    <div class="report-table-wrap">
+      <table class="report-table report-portion-batches-table">
+        <thead><tr>
+          <th>תאריך</th><th>חומר גלם</th><th>מספר מנה</th><th>תזרים</th><th>מנה</th><th>ספק</th><th>אצווה</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((row) => `
+            <tr>
+              <td class="report-cell-num">${row.runDate ? formatDate(row.runDate) : '—'}</td>
+              <td class="report-cell-text">${escapeHtml(row.ingredientName)}</td>
+              <td class="report-cell-text" dir="ltr"><strong>${escapeHtml(row.packagingBatchNumber)}</strong></td>
+              <td class="report-cell-text">${escapeHtml(row.flowName)}</td>
+              <td class="report-cell-text">${escapeHtml(row.portionName || '—')}</td>
+              <td class="report-cell-text">${row.supplierName ? escapeHtml(row.supplierName) : '—'}</td>
+              <td class="report-cell-text">${row.runBatchNumber ? escapeHtml(row.runBatchNumber) : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function buildPnlProductRows(rows) {
@@ -1937,15 +2169,18 @@ function renderPortionsFiltersHTML(ctx, portionNames = []) {
   const nameOptions = portionNames.map((n) =>
     `<option value="${escapeHtml(n)}" ${n === ctx.selectedPortionName ? 'selected' : ''}>${escapeHtml(n)}</option>`,
   ).join('');
+  const materialVal = escapeHtml(ctx.portionMaterialSearch || '');
+  const batchNumVal = escapeHtml(ctx.portionBatchNumSearch || '');
+  const mode = ctx.portionsBatchesMode === 'material' ? 'material' : 'all';
   return `
     <div class="report-filter-grid">
       <div class="form-group">
         <label for="report-from">מתאריך</label>
-        <input type="date" id="report-from" value="${ctx.from}">
+        <input type="date" id="report-from" value="${ctx.from}" ${ctx.portionBatchNumSearch ? 'disabled' : ''}>
       </div>
       <div class="form-group">
         <label for="report-to">עד תאריך</label>
-        <input type="date" id="report-to" value="${ctx.to}">
+        <input type="date" id="report-to" value="${ctx.to}" ${ctx.portionBatchNumSearch ? 'disabled' : ''}>
       </div>
       ${ctx.reportType === 'portions-type' ? `
       <div class="form-group">
@@ -1955,7 +2190,35 @@ function renderPortionsFiltersHTML(ctx, portionNames = []) {
           ${nameOptions}
         </select>
       </div>` : ''}
-    </div>`;
+    </div>
+    ${ctx.reportType === 'portions-batches' ? `
+    <div class="tabs tabs-wrap report-portion-batches-mode-tabs" style="margin:10px 0">
+      <button type="button" class="tab ${mode === 'all' ? 'active' : ''}" data-portions-batches-mode="all">רשימה כוללת</button>
+      <button type="button" class="tab ${mode === 'material' ? 'active' : ''}" data-portions-batches-mode="material">לפי חומר גלם</button>
+    </div>
+    <div class="report-filter-grid">
+      <div class="form-group">
+        <label for="report-portion-material-search">חיפוש לפי חומר גלם</label>
+        <div class="filter-row" style="margin:0;gap:6px">
+          <input type="search" id="report-portion-material-search" value="${materialVal}"
+            placeholder="שם חומר או ספק..." inputmode="search" autocomplete="off" style="flex:1">
+          <button type="button" class="btn btn-primary btn-sm" id="report-portion-material-search-btn">חפש</button>
+          ${ctx.portionMaterialSearch ? '<button type="button" class="btn btn-secondary btn-sm" id="report-portion-material-clear-btn">נקה</button>' : ''}
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="report-portion-batch-num-search">חיפוש לפי מספר מנה</label>
+        <div class="filter-row" style="margin:0;gap:6px">
+          <input type="search" id="report-portion-batch-num-search" value="${batchNumVal}"
+            placeholder="מספר על האריזה..." inputmode="search" autocomplete="off" style="flex:1">
+          <button type="button" class="btn btn-primary btn-sm" id="report-portion-batch-num-search-btn">חפש</button>
+          ${ctx.portionBatchNumSearch ? '<button type="button" class="btn btn-secondary btn-sm" id="report-portion-batch-num-clear-btn">נקה</button>' : ''}
+        </div>
+      </div>
+    </div>
+    <p class="form-hint" style="margin-top:8px;margin-bottom:0">${ctx.portionBatchNumSearch
+    ? `מציג מספר מנה «${escapeHtml(ctx.portionBatchNumSearch)}» מכל התקופות · כולל תזרימים`
+    : 'רשימות מספרי מנה שנרשמו על חומרי גלם בתהליכים · חיפוש מספר מנה סורק את כל ההיסטוריה'}</p>` : ''}`;
 }
 
 function renderProductsFiltersHTML(ctx, categories, products, groups, today, defaultMonth) {
@@ -2110,6 +2373,7 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     <div class="tabs tabs-wrap report-type-tabs report-portions-tabs">
       ${tab('portions', 'דוח כללי', ['portions'])}
       ${tab('portions-type', 'לפי סוג', ['portions-type'])}
+      ${tab('portions-batches', 'מספרי מנה · חומרי גלם', ['portions-batches'])}
     </div>
     ${isPortionsReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters">${renderPortionsFiltersHTML(ctx, portionNames)}</div>`
@@ -2250,6 +2514,49 @@ function bindFilterEvents(container) {
     renderReports(container);
   });
 
+  container.querySelectorAll('.report-portion-batches-mode-tabs .tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      container.dataset.portionsBatchesMode = tab.dataset.portionsBatchesMode || 'all';
+      renderReports(container);
+    });
+  });
+
+  const applyPortionMaterialSearch = () => {
+    const raw = document.getElementById('report-portion-material-search')?.value?.trim() || '';
+    if (raw) container.dataset.portionMaterialSearch = raw;
+    else delete container.dataset.portionMaterialSearch;
+    renderReports(container);
+  };
+  document.getElementById('report-portion-material-search-btn')?.addEventListener('click', applyPortionMaterialSearch);
+  document.getElementById('report-portion-material-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyPortionMaterialSearch();
+    }
+  });
+  document.getElementById('report-portion-material-clear-btn')?.addEventListener('click', () => {
+    delete container.dataset.portionMaterialSearch;
+    renderReports(container);
+  });
+
+  const applyPortionBatchNumSearch = () => {
+    const raw = document.getElementById('report-portion-batch-num-search')?.value?.trim() || '';
+    if (raw) container.dataset.portionBatchNumSearch = raw;
+    else delete container.dataset.portionBatchNumSearch;
+    renderReports(container);
+  };
+  document.getElementById('report-portion-batch-num-search-btn')?.addEventListener('click', applyPortionBatchNumSearch);
+  document.getElementById('report-portion-batch-num-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      applyPortionBatchNumSearch();
+    }
+  });
+  document.getElementById('report-portion-batch-num-clear-btn')?.addEventListener('click', () => {
+    delete container.dataset.portionBatchNumSearch;
+    renderReports(container);
+  });
+
   document.getElementById('report-category')?.addEventListener('change', (e) => {
     container.dataset.selectedCategory = e.target.value;
     renderReports(container);
@@ -2317,6 +2624,10 @@ export async function renderReports(container) {
   if (ctx.batchSearch && isFlowsReportType(ctx.reportType)) {
     ctx.filterLabel = `אצווה ${ctx.batchSearch}`;
     ctx.label = `אצווה ${ctx.batchSearch}`;
+  }
+  if (ctx.portionBatchNumSearch && ctx.reportType === 'portions-batches') {
+    ctx.filterLabel = `מספר מנה ${ctx.portionBatchNumSearch}`;
+    ctx.label = `מספר מנה ${ctx.portionBatchNumSearch}`;
   }
 
   if (ctx.reportType === 'production-history' && ctx.historyScopeId) {
@@ -2422,9 +2733,15 @@ export async function renderReports(container) {
     : null;
   const managerReportHtml = managerData ? buildManagerReportHTML(managerData, ctx) : '';
   const portionsReportHtml = isPortionsReport
-    ? renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap, {
-      portionName: ctx.reportType === 'portions-type' ? (ctx.selectedPortionName || '') : '',
-    })
+    ? (ctx.reportType === 'portions-batches'
+      ? renderIngredientBatchesReportHTML(productionRuns, {
+        mode: ctx.portionsBatchesMode || 'all',
+        materialQuery: ctx.portionMaterialSearch || '',
+        batchQuery: ctx.portionBatchNumSearch || '',
+      })
+      : renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap, {
+        portionName: ctx.reportType === 'portions-type' ? (ctx.selectedPortionName || '') : '',
+      }))
     : '';
   const pnlReportHtml = isPnlReport
     ? buildPnlPreviewHTML(ctx, totals, rows, entries, productMap)
