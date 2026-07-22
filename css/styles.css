@@ -7025,6 +7025,28 @@ table.report-cat-summary-table td:not(:first-child) {
   margin-bottom: 10px;
 }
 
+.report-section-actions {
+  margin: 12px 0 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface) 92%, var(--text) 4%);
+}
+
+.report-section-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.report-section-actions-row .btn {
+  flex: 1 1 140px;
+}
+
+.report-section-preview {
+  margin-top: 8px;
+}
+
 .report-pnl-positive {
   color: #15803d;
   font-weight: 700;

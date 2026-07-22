@@ -10,31 +10,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=348';
+} from '../db.js?v=349';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=348';
+} from '../utils.js?v=349';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=348';
-import { openModal, closeModal } from '../modal.js?v=348';
+} from '../export.js?v=349';
+import { openModal, closeModal } from '../modal.js?v=349';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=348';
-import { isSheetsConfigured } from '../google-sheets.js?v=348';
+} from '../sheets-flow.js?v=349';
+import { isSheetsConfigured } from '../google-sheets.js?v=349';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=348';
-import { defaultColorForIndex } from '../chart.js?v=348';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=348';
+} from '../calc.js?v=349';
+import { defaultColorForIndex } from '../chart.js?v=349';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=349';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=348';
+} from '../purchasing-db.js?v=349';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -107,8 +107,12 @@ function setReportSectionOpen(key, open) {
   } catch { /* ignore */ }
 }
 
-function renderCollapsibleReportSection(key, titleHtml, bodyHtml, { defaultOpen = false, className = '' } = {}) {
-  const open = isReportSectionOpen(key, defaultOpen);
+function renderCollapsibleReportSection(key, titleHtml, bodyHtml, {
+  defaultOpen = false,
+  forceOpen = false,
+  className = '',
+} = {}) {
+  const open = forceOpen || isReportSectionOpen(key, defaultOpen);
   return `
     <details class="card report-section-collapse ${className}" data-report-collapse="${escapeHtml(key)}" ${open ? 'open' : ''}>
       <summary class="card-title report-section-collapse-summary">
@@ -117,6 +121,162 @@ function renderCollapsibleReportSection(key, titleHtml, bodyHtml, { defaultOpen 
       </summary>
       <div class="report-section-collapse-body">${bodyHtml}</div>
     </details>`;
+}
+
+function renderReportSectionActionsHTML({ canExport, hints = [] } = {}) {
+  return `
+    <div class="report-section-actions">
+      ${hints.map((h) => `<p class="report-hint">${escapeHtml(h)}</p>`).join('')}
+      <div class="report-section-actions-row">
+        <button type="button" class="btn btn-primary report-section-view-btn" ${canExport ? '' : 'disabled'}>
+          👁 צפה בדוח
+        </button>
+        <button type="button" class="btn btn-secondary report-section-download-btn" ${canExport ? '' : 'disabled'}>
+          💾 הורד כקובץ
+        </button>
+      </div>
+    </div>`;
+}
+
+function buildReportDisplayCardHTML({
+  fullTitle,
+  ctx,
+  needsProduct,
+  needsPortionName,
+  isFlowsReport,
+  isFlowsSummary,
+  isFlowsForecast,
+  isPortionsReport,
+  isPnlReport,
+  isManagerReport,
+  isHistoryReport,
+  flowsReportHtml,
+  portionsReportHtml,
+  pnlReportHtml,
+  managerReportHtml,
+  previewHtml,
+  entries,
+  productMap,
+  categories,
+  catMap,
+  groupMap,
+  totals,
+  rows,
+  catSummary,
+  processLogs,
+  processSummary,
+  processTotalQty,
+  productionRuns,
+}) {
+  if (isFlowsReport) {
+    return `
+    <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : isFlowsForecast ? 'report-flows-forecast-card' : 'report-flows-detail-card'}" style="margin:0;box-shadow:none">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${flowsReportHtml}
+    </div>`;
+  }
+  if (isPortionsReport) {
+    return `
+    <div class="card report-portions-only-card" style="margin:0;box-shadow:none">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${needsPortionName ? '<p class="report-hint">בחר סוג מנה</p>' : portionsReportHtml}
+    </div>`;
+  }
+  if (isPnlReport) {
+    return `
+    <div class="card report-pnl-card" style="margin:0;box-shadow:none">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${needsProduct ? '<p class="report-hint">בחר מוצר</p>' : pnlReportHtml}
+    </div>`;
+  }
+  if (isManagerReport) {
+    return `
+    <div class="card report-manager-card" style="margin:0;box-shadow:none">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      ${managerReportHtml}
+    </div>`;
+  }
+  if (isHistoryReport) {
+    return `
+    <div class="card report-history-card" style="margin:0;box-shadow:none">
+      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
+      <p class="form-hint" style="margin-bottom:10px">היסטוריית ייצור — כמויות בלבד, ללא תזרימים</p>
+      ${renderProductionHistoryTableHTML(entries, productMap, categories, catMap, ctx.historyScope)}
+    </div>`;
+  }
+  if (ctx.reportType === 'week') {
+    return `
+    <div class="card report-page-view" style="padding:16px;margin:0;box-shadow:none">
+      ${previewHtml}
+    </div>`;
+  }
+  return `
+    <p class="stats-block-label" style="margin-top:0">${escapeHtml(fullTitle)} · ${escapeHtml(ctx.label)}</p>
+    <div class="stat-grid">
+      <div class="stat-box">
+        <div class="stat-value">${formatDecimal(totals.total)}</div>
+        <div class="stat-label">ייצור מוצרים (יח')</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
+        <div class="stat-label">עלות ייצור</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-value">${formatMoney(totals.totalValue)}</div>
+        <div class="stat-label">ערך ללקוח</div>
+      </div>
+    </div>
+
+    ${catSummary.length > 0 ? `
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">ייצור לפי קטגוריה — ${escapeHtml(ctx.label)}</div>
+        ${renderCategorySummaryTable(catSummary)}
+      </div>` : ''}
+
+    <div class="card">
+      <div class="card-title">פירוט מוצרים — ${escapeHtml(ctx.label)}</div>
+      <p class="form-hint" style="margin-bottom:10px">עלות (חומ"ג, אריזה, נוספות) נפרדת מערך המכירה ללקוח</p>
+      ${renderProductionTableHTML(rows, totals, catMap)}
+    </div>
+
+    <div class="card report-flows-card">
+      <div class="card-title">תזרימי יצור — ${escapeHtml(ctx.label)}</div>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · שלב נוכחי</p>
+      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+    </div>
+
+    <div class="card report-portions-card">
+      <div class="card-title">🍽 תיעוד מנות — ${escapeHtml(ctx.label)}</div>
+      <p class="form-hint" style="margin-bottom:10px">כל רשומות המנות מתזרימי יצור — כולל כמויות חלקיות (0.1 ומעלה)</p>
+      ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
+    </div>
+
+    <div class="card process-card">
+      <div class="card-title">תיעוד הכנות — ${escapeHtml(ctx.label)}</div>
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">לשימושך · לא נכלל בייצור המוצרים${processTotalQty ? ` · סה"כ כמויות: ${formatDecimal(processTotalQty)}` : ''}</p>
+      ${processLogs.length === 0
+    ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
+    : `${processSummary.length ? `
+          <div class="report-table-wrap">
+          <table class="report-table" style="margin-bottom:12px">
+            <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
+            <tbody>
+              ${processSummary.map((r) => `<tr>
+                <td class="report-cell-text">${escapeHtml(r.activity)}</td>
+                <td class="report-cell-text">${escapeHtml(r.category)}</td>
+                <td class="report-cell-num">${r.qty != null ? formatDecimal(r.qty) : '—'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+          </div>` : ''}
+          ${processLogs.map((log) => `
+          <div class="list-item">
+            <div class="list-item-info">
+              <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
+              <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
+            </div>
+          </div>`).join('')}`}
+    </div>`;
 }
 
 function bindReportCollapse(container) {
@@ -2706,14 +2866,20 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
   flowsOverview = [],
   groups = [],
   portionNames = [],
+  activeSectionBlock = '',
 } = {}) {
   const activeSection = reportSectionForType(ctx.reportType);
   const tab = (type, label, activeTypes) => {
     const active = activeTypes.includes(ctx.reportType);
     return `<button type="button" class="tab ${active ? 'active' : ''}" data-type="${type}">${label}</button>`;
   };
+  const withActiveReport = (sectionKey, body) => (
+    activeSection === sectionKey && activeSectionBlock
+      ? `${body}${activeSectionBlock}`
+      : body
+  );
 
-  const productionBody = `
+  const productionBody = withActiveReport('production', `
     <div class="tabs tabs-wrap report-type-tabs report-production-tabs">
       ${tab('day', 'יומי', ['day'])}
       ${tab('week', 'שבועי מפורט', ['week'])}
@@ -2728,9 +2894,9 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     : ''}
     ${ctx.reportType === 'production-history'
     ? `<div class="report-dynamic-filters report-history-dynamic-filters">${renderProductionHistoryFiltersHTML(ctx, catalog)}</div>`
-    : ''}`;
+    : ''}`);
 
-  const flowsBody = `
+  const flowsBody = withActiveReport('flows', `
     <div class="tabs tabs-wrap report-type-tabs report-flows-tabs">
       ${tab('flows-detail', 'תזרימים מפורט', ['flows-detail'])}
       ${tab('flows-summary', 'סיכום תזרימים', ['flows-summary'])}
@@ -2739,9 +2905,9 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     </div>
     ${isFlowsReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters report-flows-dynamic-filters">${renderFlowsFiltersHTML(ctx, flowsOverview)}</div>`
-    : '<p class="form-hint">בחר סוג דוח תזרימים כדי לסנן לפי תאריך, סוג תזרים, אצווה ותקופה</p>'}`;
+    : '<p class="form-hint">בחר סוג דוח תזרימים כדי לסנן לפי תאריך, סוג תזרים, אצווה ותקופה</p>'}`);
 
-  const productsBody = `
+  const productsBody = withActiveReport('products', `
     <div class="tabs tabs-wrap report-type-tabs report-products-tabs">
       ${tab('products-general', 'דוח כללי', ['products-general'])}
       ${tab('products-product', 'לפי סוג', ['products-product'])}
@@ -2751,9 +2917,9 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     </div>
     ${isProductsReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters">${renderProductsFiltersHTML(ctx, categories, products, groups, today, defaultMonth)}</div>`
-    : '<p class="form-hint">בחר סוג דוח מוצרים</p>'}`;
+    : '<p class="form-hint">בחר סוג דוח מוצרים</p>'}`);
 
-  const portionsBody = `
+  const portionsBody = withActiveReport('portions', `
     <div class="tabs tabs-wrap report-type-tabs report-portions-tabs">
       ${tab('portions', 'דוח כללי', ['portions'])}
       ${tab('portions-type', 'לפי סוג', ['portions-type'])}
@@ -2761,17 +2927,17 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     </div>
     ${isPortionsReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters">${renderPortionsFiltersHTML(ctx, portionNames)}</div>`
-    : '<p class="form-hint">בחר דוח מנות · סנן לפי תקופה או סוג מנה</p>'}`;
+    : '<p class="form-hint">בחר דוח מנות · סנן לפי תקופה או סוג מנה</p>'}`);
 
-  const managerBody = `
+  const managerBody = withActiveReport('manager', `
     <div class="tabs tabs-wrap report-type-tabs report-manager-tabs">
       ${tab('manager', 'דוח מנהל מפורט', ['manager'])}
     </div>
     ${isManagerReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters report-manager-dynamic-filters">${renderManagerFiltersHTML(ctx)}</div>`
-    : '<p class="form-hint">לחץ כדי לפתוח דוח מנהל מפורט</p>'}`;
+    : '<p class="form-hint">לחץ כדי לפתוח דוח מנהל מפורט</p>'}`);
 
-  const pnlBody = `
+  const pnlBody = withActiveReport('pnl', `
     <div class="tabs tabs-wrap report-type-tabs report-pnl-tabs">
       ${tab('pnl', 'כללי מפורט', ['pnl'])}
       ${tab('pnl-product', 'מוצר', ['pnl-product'])}
@@ -2781,31 +2947,37 @@ function renderReportFiltersCards(ctx, categories, products, today, defaultMonth
     </div>
     ${isPnlReportType(ctx.reportType)
     ? `<div class="report-dynamic-filters">${renderPnlFiltersHTML(ctx, products, categories, defaultMonth)}</div>`
-    : '<p class="form-hint">בחר סוג דוח רווח והפסד</p>'}`;
+    : '<p class="form-hint">בחר סוג דוח רווח והפסד</p>'}`);
 
   return `
     ${renderCollapsibleReportSection('production', '1 · דוח ייצור', productionBody, {
     defaultOpen: activeSection === 'production',
+    forceOpen: activeSection === 'production',
     className: 'report-filters-card',
   })}
     ${renderCollapsibleReportSection('flows', '2 · דוח תזרימים', flowsBody, {
     defaultOpen: activeSection === 'flows',
+    forceOpen: activeSection === 'flows',
     className: 'report-flows-filters-card',
   })}
     ${renderCollapsibleReportSection('products', '3 · דוח מוצרים', productsBody, {
     defaultOpen: activeSection === 'products',
+    forceOpen: activeSection === 'products',
     className: 'report-products-filters-card',
   })}
     ${renderCollapsibleReportSection('portions', '4 · דוח מנות', portionsBody, {
     defaultOpen: activeSection === 'portions',
+    forceOpen: activeSection === 'portions',
     className: 'report-portions-filters-card',
   })}
     ${renderCollapsibleReportSection('manager', '5 · דוח מנהל מפורט', managerBody, {
     defaultOpen: activeSection === 'manager',
+    forceOpen: activeSection === 'manager',
     className: 'report-manager-filters-card',
   })}
     ${renderCollapsibleReportSection('pnl', '6 · דוח רווח והפסד', pnlBody, {
     defaultOpen: activeSection === 'pnl',
+    forceOpen: activeSection === 'pnl',
     className: 'report-pnl-filters-card',
   })}`;
 }
@@ -3149,10 +3321,56 @@ export async function renderReports(container) {
   }
   const isPageView = container.dataset.reportView === 'page';
 
+  const viewHints = [
+    needsCategory ? 'בחר קטגוריה לצפייה ולהורדה' : '',
+    needsProduct ? 'בחר מוצר לצפייה ולהורדה' : '',
+    needsGroup ? 'בחר קטגוריה כללית לצפייה ולהורדה' : '',
+    needsPortionName ? 'בחר סוג מנה לצפייה ולהורדה' : '',
+    needsHistoryScope ? 'בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולהורדה' : '',
+  ].filter(Boolean);
+
+  const reportDisplayHtml = buildReportDisplayCardHTML({
+    fullTitle,
+    ctx,
+    needsProduct,
+    needsPortionName,
+    isFlowsReport,
+    isFlowsSummary,
+    isFlowsForecast,
+    isPortionsReport,
+    isPnlReport,
+    isManagerReport,
+    isHistoryReport,
+    flowsReportHtml,
+    portionsReportHtml,
+    pnlReportHtml,
+    managerReportHtml,
+    previewHtml,
+    entries,
+    productMap,
+    categories,
+    catMap,
+    groupMap,
+    totals,
+    rows,
+    catSummary,
+    processLogs,
+    processSummary,
+    processTotalQty,
+    productionRuns,
+  });
+
+  const activeSectionBlock = `
+    ${renderReportSectionActionsHTML({ canExport, hints: viewHints })}
+    <div class="report-section-preview" id="report-section-preview">
+      ${reportDisplayHtml}
+    </div>`;
+
   const filtersCard = renderReportFiltersCards(ctx, categories, products, today, ctx.defaultMonth, catalog, {
     flowsOverview,
     groups,
     portionNames,
+    activeSectionBlock: isPageView ? '' : activeSectionBlock,
   });
 
   if (isPageView) {
@@ -3183,21 +3401,20 @@ export async function renderReports(container) {
         <div id="sheets-status">${sheetsHTML}</div>
       </div>
       <div class="card report-actions-card" style="margin:0 0 12px;box-shadow:none">
-        <div class="card-title">הפקת דוח</div>
-        ${needsCategory ? '<p class="report-hint">בחר קטגוריה לצפייה ולייצוא</p>' : ''}
-        ${needsProduct ? '<p class="report-hint">בחר מוצר לצפייה ולייצוא</p>' : ''}
-        ${needsGroup ? '<p class="report-hint">בחר קטגוריה כללית לצפייה ולייצוא</p>' : ''}
-        ${needsPortionName ? '<p class="report-hint">בחר סוג מנה לצפייה ולייצוא</p>' : ''}
-        ${needsHistoryScope ? '<p class="report-hint">בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולייצוא</p>' : ''}
+        <div class="card-title">ייצוא נוסף</div>
+        ${viewHints.map((h) => `<p class="report-hint">${escapeHtml(h)}</p>`).join('')}
         <button type="button" class="btn btn-primary" id="open-report-page" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
-          📄 דוח מעוצב — כמו באפליקציה
+          📄 דוח מעוצב — מסך מלא
         </button>
         <button type="button" class="btn btn-primary" id="export-sheets-report" style="width:100%;margin-bottom:8px" ${canExport && sheetsReady ? '' : 'disabled'}>
           📊 שלח דוח ל-Google Sheets
         </button>
         ${!sheetsReady ? `<button type="button" class="btn btn-secondary" id="export-sheets-setup" style="width:100%;margin-bottom:8px">🔗 חבר Google Sheets לייצוא</button>` : ''}
         <button type="button" class="btn btn-secondary" id="preview-report" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
-          👁 צפייה מקדימה
+          👁 צפייה מקדימה (חלון)
+        </button>
+        <button type="button" class="btn btn-secondary" id="tools-download-report" style="width:100%;margin-bottom:8px" ${canExport ? '' : 'disabled'}>
+          💾 הורד כקובץ
         </button>
         <details class="excel-export-details">
           <summary class="excel-export-summary">ייצוא Excel (גיבוי)</summary>
@@ -3238,111 +3455,29 @@ export async function renderReports(container) {
     ${renderCollapsibleReportSection('tools', 'הפקת דוחות, יבוא ובדיקה', toolsBody, {
     defaultOpen: false,
     className: 'report-tools-section',
-  })}
-
-    <p class="stats-block-label">${fullTitle} · ${ctx.label}</p>
-
-    ${isFlowsReport ? `
-    <div class="card ${isFlowsSummary ? 'report-flows-summary-card' : isFlowsForecast ? 'report-flows-forecast-card' : 'report-flows-detail-card'}">
-      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
-      ${flowsReportHtml}
-    </div>
-    ` : isPortionsReport ? `
-    <div class="card report-portions-only-card">
-      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
-      ${needsPortionName ? '<p class="report-hint">בחר סוג מנה</p>' : portionsReportHtml}
-    </div>
-    ` : isPnlReport ? `
-    <div class="card report-pnl-card">
-      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
-      ${needsProduct ? '<p class="report-hint">בחר מוצר</p>' : pnlReportHtml}
-    </div>
-    ` : isManagerReport ? `
-    <div class="card report-manager-card">
-      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
-      ${managerReportHtml}
-    </div>
-    ` : isHistoryReport ? `
-    <div class="card report-history-card">
-      <div class="card-title">${escapeHtml(fullTitle)} — ${escapeHtml(ctx.label)}</div>
-      <p class="form-hint" style="margin-bottom:10px">היסטוריית ייצור — כמויות בלבד, ללא תזרימים</p>
-      ${renderProductionHistoryTableHTML(entries, productMap, categories, catMap, ctx.historyScope)}
-    </div>
-    ` : ctx.reportType === 'week' ? `
-    <div class="card report-page-view" style="padding:16px">
-      ${previewHtml}
-    </div>
-    ` : `
-    <div class="stat-grid">
-      <div class="stat-box">
-        <div class="stat-value">${formatDecimal(totals.total)}</div>
-        <div class="stat-label">ייצור מוצרים (יח')</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
-        <div class="stat-label">עלות ייצור</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value">${formatMoney(totals.totalValue)}</div>
-        <div class="stat-label">ערך ללקוח</div>
-      </div>
-    </div>
-
-    ${catSummary.length > 0 ? `
-      <div class="card">
-        <div class="card-title">ייצור לפי קטגוריה — ${ctx.label}</div>
-        ${renderCategorySummaryTable(catSummary)}
-      </div>` : ''}
-
-    <div class="card">
-      <div class="card-title">פירוט מוצרים — ${ctx.label}</div>
-      <p class="form-hint" style="margin-bottom:10px">עלות (חומ"ג, אריזה, נוספות) נפרדת מערך המכירה ללקוח</p>
-      ${renderProductionTableHTML(rows, totals, catMap)}
-    </div>
-
-    <div class="card report-flows-card">
-      <div class="card-title">תזרימי יצור — ${ctx.label}</div>
-      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · שלב נוכחי</p>
-      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
-    </div>
-
-    <div class="card report-portions-card">
-      <div class="card-title">🍽 תיעוד מנות — ${ctx.label}</div>
-      <p class="form-hint" style="margin-bottom:10px">כל רשומות המנות מתזרימי יצור — כולל כמויות חלקיות (0.1 ומעלה)</p>
-      ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
-    </div>
-
-    <div class="card process-card">
-      <div class="card-title">תיעוד הכנות — ${ctx.label}</div>
-      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">לשימושך · לא נכלל בייצור המוצרים${processTotalQty ? ` · סה"כ כמויות: ${formatDecimal(processTotalQty)}` : ''}</p>
-      ${processLogs.length === 0
-        ? '<p class="report-empty">אין תיעוד לתקופה זו</p>'
-        : `${processSummary.length ? `
-          <div class="report-table-wrap">
-          <table class="report-table" style="margin-bottom:12px">
-            <thead><tr><th>הכנה</th><th>קטגוריה</th><th>כמות</th></tr></thead>
-            <tbody>
-              ${processSummary.map((r) => `<tr>
-                <td class="report-cell-text">${escapeHtml(r.activity)}</td>
-                <td class="report-cell-text">${escapeHtml(r.category)}</td>
-                <td class="report-cell-num">${r.qty != null ? formatDecimal(r.qty) : '—'}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table>
-          </div>` : ''}
-          ${processLogs.map((log) => `
-          <div class="list-item">
-            <div class="list-item-info">
-              <div class="list-item-name">${escapeHtml(log.activity)}${log.quantity ? ` · ${formatDecimal(log.quantity)}` : ''}</div>
-              <div class="list-item-meta">${formatDate(log.date)} · ${escapeHtml(catMap.get(log.categoryId) || '')}${log.notes ? ` · ${escapeHtml(log.notes)}` : ''}</div>
-            </div>
-          </div>`).join('')}`}
-    </div>`}`;
+  })}`;
 
   bindFilterEvents(container);
   bindReportCollapse(container);
 
+  const openFullReportPage = () => {
+    container.dataset.reportView = 'page';
+    renderReports(container);
+  };
+  const downloadReportFile = () => {
+    saveFormattedReport({ fullTitle, ctx, safeLabel, previewHtml });
+  };
+
+  container.querySelectorAll('.report-section-view-btn').forEach((btn) => {
+    btn.addEventListener('click', openFullReportPage);
+  });
+  container.querySelectorAll('.report-section-download-btn').forEach((btn) => {
+    btn.addEventListener('click', downloadReportFile);
+  });
+  document.getElementById('tools-download-report')?.addEventListener('click', downloadReportFile);
+
   bindSheetsStatusEvents(container, {
+
     onRefresh: () => renderReports(container),
     onImportComplete: () => renderReports(container),
   });
@@ -3384,10 +3519,7 @@ export async function renderReports(container) {
     catMap,
   };
 
-  document.getElementById('open-report-page')?.addEventListener('click', () => {
-    container.dataset.reportView = 'page';
-    renderReports(container);
-  });
+  document.getElementById('open-report-page')?.addEventListener('click', openFullReportPage);
 
   document.getElementById('preview-report')?.addEventListener('click', () => {
     openModal({
@@ -3402,12 +3534,9 @@ export async function renderReports(container) {
     document.querySelector('.modal-close-btn')?.addEventListener('click', closeModal);
     document.getElementById('preview-open-page')?.addEventListener('click', () => {
       closeModal();
-      container.dataset.reportView = 'page';
-      renderReports(container);
+      openFullReportPage();
     });
-    document.getElementById('preview-save-page')?.addEventListener('click', () => {
-      saveFormattedReport({ fullTitle, ctx, safeLabel, previewHtml });
-    });
+    document.getElementById('preview-save-page')?.addEventListener('click', downloadReportFile);
     document.getElementById('preview-export')?.addEventListener('click', async () => {
       try {
         const msg = await exportProductionExcel({
