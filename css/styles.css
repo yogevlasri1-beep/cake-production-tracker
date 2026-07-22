@@ -792,6 +792,12 @@ body {
   margin-bottom: 6px;
 }
 
+.portion-link-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
 .portion-link-checklist {
   display: flex;
   flex-direction: column;
@@ -805,12 +811,101 @@ body {
 }
 
 .portion-link-checklist--products {
-  max-height: 180px;
+  max-height: 220px;
 }
 
 .portion-link-pick {
   margin: 0;
   font-size: 0.88rem;
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.portion-link-pick--product {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.portion-link-pick--product:last-child {
+  border-bottom: none;
+}
+
+.portion-link-pick-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.portion-link-pick-name {
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.portion-link-pick-path {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.portion-linked-products-summary {
+  margin-bottom: 8px;
+}
+
+.portion-linked-products-list,
+.recipe-linked-products-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  overflow: hidden;
+}
+
+.portion-linked-products-item,
+.recipe-linked-products-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.portion-linked-products-item:last-child,
+.recipe-linked-products-item:last-child {
+  border-bottom: none;
+}
+
+.portion-linked-products-name,
+.recipe-linked-products-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.portion-linked-products-path {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.portion-linked-products-empty,
+.recipe-linked-products-empty {
+  margin: 0;
+  padding: 8px 0;
+}
+
+.recipe-linked-products-panel {
+  margin-bottom: 12px;
+}
+
+.recipe-linked-products-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
 }
 
 .portion-scope-default {

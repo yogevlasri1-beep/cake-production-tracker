@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=344';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=344';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=344';
-import { renderRecipesMachines } from '../recipes-machines.js?v=344';
-import { renderRecipesPortions } from '../recipes-portions.js?v=344';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=344';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=344';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=344';
-import { openModal, closeModal } from '../modal.js?v=344';
+} from '../kitchen-db.js?v=345';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=345';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=345';
+import { renderRecipesMachines } from '../recipes-machines.js?v=345';
+import { renderRecipesPortions } from '../recipes-portions.js?v=345';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=345';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=345';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=345';
+import { openModal, closeModal } from '../modal.js?v=345';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=344';
-import { defaultColorForIndex } from '../chart.js?v=344';
+} from '../product-drag.js?v=345';
+import { defaultColorForIndex } from '../chart.js?v=345';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1654,14 +1654,31 @@ function buildRecipeProductScopePickHTML(scopeType, productCatalog, recipe) {
   }
   if (scopeType === 'product') {
     const filterCatId = recipe?._productFilterCategoryId || '';
+    const selectedIds = recipe?.linkedProductIds || [];
     const catOptions = buildProductCategorySelectHTML(productCatalog, filterCatId)
       .replace('<option value="">— ללא (אופציונלי) —</option>', '<option value="">כל המוצרים</option>');
+    const selectedNames = sortProductIdsByCatalogOrder(selectedIds, productCatalog)
+      .map((id) => {
+        const found = collectProductsFromCatalog(productCatalog).find((p) => Number(p.id) === Number(id));
+        return found ? found.name : `#${id}`;
+      });
+    const selectedList = selectedNames.length
+      ? `<ul class="recipe-linked-products-list">${selectedNames.map((name) => `
+          <li class="recipe-linked-products-item"><span class="recipe-linked-products-name">${escapeHtml(name)}</span></li>`).join('')}</ul>`
+      : '<p class="form-hint recipe-linked-products-empty">אין מוצרים משויכים</p>';
     return `
+      <div class="recipe-linked-products-panel">
+        <div class="recipe-linked-products-head">
+          <strong>מוצרים משויכים (${selectedNames.length})</strong>
+          <button type="button" class="btn btn-secondary btn-sm" id="recipe-clear-product-links">נקה בחירות</button>
+        </div>
+        <div id="recipe-linked-products-summary">${selectedList}</div>
+      </div>
       <div class="form-group" style="margin-bottom:8px">
         <label for="recipe-product-filter-category">סינון לפי קטגוריה (אופציונלי)</label>
         <select id="recipe-product-filter-category" style="width:100%">${catOptions}</select>
       </div>
-      <div class="recipe-product-picker" id="recipe-product-list" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
+      <div class="recipe-product-picker" id="recipe-product-list" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">
         ${buildRecipeProductCheckboxListHTML(productCatalog, recipe)}
       </div>`;
   }
@@ -1689,38 +1706,100 @@ function bindOptionalProductLinker(productCatalog, recipe) {
   if (!pickRow) return;
 
   const getSelectedScope = () => document.querySelector('input[name="recipe-product-scope-type"]:checked')?.value || '';
+  let stickyProductIds = new Set((recipe?.linkedProductIds || []).map(Number).filter(Boolean));
+
+  const syncStickyFromDom = () => {
+    document.querySelectorAll('.recipe-product-cb').forEach((cb) => {
+      const id = Number(cb.value);
+      if (!id) return;
+      if (cb.checked) stickyProductIds.add(id);
+      else stickyProductIds.delete(id);
+    });
+  };
+
+  const renderSelectedSummary = () => {
+    const summary = document.getElementById('recipe-linked-products-summary');
+    const head = document.querySelector('.recipe-linked-products-head strong');
+    if (!summary) return;
+    const selectedIds = [...stickyProductIds];
+    const selectedNames = sortProductIdsByCatalogOrder(selectedIds, productCatalog)
+      .map((id) => {
+        const found = collectProductsFromCatalog(productCatalog).find((p) => Number(p.id) === Number(id));
+        return found ? found.name : `#${id}`;
+      });
+    if (head) head.textContent = `מוצרים משויכים (${selectedNames.length})`;
+    summary.innerHTML = selectedNames.length
+      ? `<ul class="recipe-linked-products-list">${selectedNames.map((name) => `
+          <li class="recipe-linked-products-item"><span class="recipe-linked-products-name">${escapeHtml(name)}</span></li>`).join('')}</ul>`
+      : '<p class="form-hint recipe-linked-products-empty">אין מוצרים משויכים</p>';
+  };
 
   const bindProductScopePickEvents = () => {
     document.getElementById('recipe-product-filter-category')?.addEventListener('change', (e) => {
+      syncStickyFromDom();
       const filterCatId = e.target.value || '';
       const listHost = document.getElementById('recipe-product-list');
-      const selected = [...(listHost?.querySelectorAll('.recipe-product-cb:checked') || [])].map((cb) => Number(cb.value));
       if (!listHost) return;
       listHost.innerHTML = buildRecipeProductCheckboxListHTML(productCatalog, {
         ...recipe,
         _productFilterCategoryId: filterCatId,
-      }, { selectedIds: selected });
+      }, { selectedIds: [...stickyProductIds] });
+      listHost.querySelectorAll('.recipe-product-cb').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          syncStickyFromDom();
+          renderSelectedSummary();
+        });
+      });
+      renderSelectedSummary();
+    });
+
+    document.getElementById('recipe-clear-product-links')?.addEventListener('click', () => {
+      stickyProductIds = new Set();
+      document.querySelectorAll('.recipe-product-cb').forEach((cb) => {
+        cb.checked = false;
+      });
+      renderSelectedSummary();
+      showToast('הבחירות נוקו');
+    });
+
+    document.querySelectorAll('.recipe-product-cb').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        syncStickyFromDom();
+        renderSelectedSummary();
+      });
     });
   };
 
   const refreshPickRow = () => {
+    syncStickyFromDom();
     const scopeType = getSelectedScope();
-    const selectedProducts = [...pickRow.querySelectorAll('.recipe-product-cb:checked')].map((cb) => Number(cb.value));
     const selectedGroups = [...pickRow.querySelectorAll('.recipe-group-cb:checked')].map((cb) => Number(cb.value));
     const selectedCategories = [...pickRow.querySelectorAll('.recipe-category-cb:checked')].map((cb) => Number(cb.value));
+    if (scopeType === 'product') {
+      stickyProductIds = new Set([...stickyProductIds]);
+    }
     pickRow.innerHTML = buildRecipeProductScopePickHTML(scopeType, productCatalog, {
       ...recipe,
-      linkedProductIds: selectedProducts.length ? selectedProducts : recipe?.linkedProductIds,
+      linkedProductIds: [...stickyProductIds],
       linkedProductGroupIds: selectedGroups.length ? selectedGroups : recipe?.linkedProductGroupIds,
       linkedProductCategoryIds: selectedCategories.length ? selectedCategories : recipe?.linkedProductCategoryIds,
     });
     bindProductScopePickEvents();
+    renderSelectedSummary();
   };
 
   document.querySelectorAll('input[name="recipe-product-scope-type"]').forEach((radio) => {
     radio.addEventListener('change', refreshPickRow);
   });
   bindProductScopePickEvents();
+  renderSelectedSummary();
+
+  // חשיפה לקריאה בשמירה — כולל מוצרים מחוץ לסינון
+  pickRow.dataset.stickyProductIds = '1';
+  pickRow._getStickyProductIds = () => {
+    syncStickyFromDom();
+    return [...stickyProductIds];
+  };
 }
 
 function readRecipeProductLinkFromForm() {

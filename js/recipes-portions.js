@@ -1,16 +1,16 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=344';
+} from './db.js?v=345';
 import {
   getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
-} from './kitchen-db.js?v=344';
-import { defaultColorForIndex } from './chart.js?v=344';
-import { escapeHtml, showToast } from './utils.js?v=344';
-import { openModal, closeModal } from './modal.js?v=344';
+} from './kitchen-db.js?v=345';
+import { defaultColorForIndex } from './chart.js?v=345';
+import { escapeHtml, showToast } from './utils.js?v=345';
+import { openModal, closeModal } from './modal.js?v=345';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=344').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=345').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -63,6 +63,51 @@ function portionPresetLabel(p) {
   return `${p.name} (${p.weight} ק"ג${extra})`;
 }
 
+function collectProductLabelsFromCatalog(productCatalog) {
+  const map = new Map();
+  for (const group of productCatalog.groups || []) {
+    for (const cat of group.categories || []) {
+      for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
+        map.set(Number(p.id), {
+          name: p.name,
+          path: `${group.name} › ${cat.name}`,
+        });
+      }
+    }
+  }
+  for (const cat of productCatalog.ungrouped || []) {
+    for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
+      map.set(Number(p.id), {
+        name: p.name,
+        path: cat.name,
+      });
+    }
+  }
+  return map;
+}
+
+function buildSelectedProductsSummaryHTML(productCatalog, selectedIds = []) {
+  const labels = collectProductLabelsFromCatalog(productCatalog);
+  const ids = [...new Set((selectedIds || []).map(Number).filter(Boolean))];
+  if (!ids.length) {
+    return '<p class="form-hint portion-linked-products-empty">אין מוצרים משויכים</p>';
+  }
+  ids.sort((a, b) => String(labels.get(a)?.name || a).localeCompare(String(labels.get(b)?.name || b), 'he'));
+  return `
+    <ul class="portion-linked-products-list">
+      ${ids.map((id) => {
+    const info = labels.get(id);
+    const name = info?.name || `#${id}`;
+    const path = info?.path || '';
+    return `
+        <li class="portion-linked-products-item">
+          <span class="portion-linked-products-name">${escapeHtml(name)}</span>
+          ${path ? `<span class="portion-linked-products-path">${escapeHtml(path)}</span>` : ''}
+        </li>`;
+  }).join('')}
+    </ul>`;
+}
+
 function buildGroupCheckboxesHTML(productCatalog, selectedIds = []) {
   const selected = new Set(selectedIds.map(Number));
   const groups = productCatalog.groups || [];
@@ -105,9 +150,12 @@ function buildProductCheckboxesHTML(productCatalog, selectedIds = []) {
     for (const cat of group.categories || []) {
       for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
         parts.push(`
-          <label class="checkbox-label portion-link-pick">
+          <label class="checkbox-label portion-link-pick portion-link-pick--product">
             <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_PRODUCT}" value="${p.id}"${selected.has(p.id) ? ' checked' : ''}>
-            <span>${escapeHtml(`${group.name} › ${cat.name} › ${p.name}`)}</span>
+            <span class="portion-link-pick-text">
+              <span class="portion-link-pick-name">${escapeHtml(p.name)}</span>
+              <span class="portion-link-pick-path">${escapeHtml(`${group.name} › ${cat.name}`)}</span>
+            </span>
           </label>`);
       }
     }
@@ -115,9 +163,12 @@ function buildProductCheckboxesHTML(productCatalog, selectedIds = []) {
   for (const cat of productCatalog.ungrouped || []) {
     for (const p of (cat.products || []).filter((prod) => prod.active !== false)) {
       parts.push(`
-        <label class="checkbox-label portion-link-pick">
+        <label class="checkbox-label portion-link-pick portion-link-pick--product">
           <input type="checkbox" class="portion-link-cb" data-link-type="${PORTION_LINK_PRODUCT}" value="${p.id}"${selected.has(p.id) ? ' checked' : ''}>
-          <span>${escapeHtml(`${cat.name} › ${p.name}`)}</span>
+          <span class="portion-link-pick-text">
+            <span class="portion-link-pick-name">${escapeHtml(p.name)}</span>
+            <span class="portion-link-pick-path">${escapeHtml(cat.name)}</span>
+          </span>
         </label>`);
     }
   }
@@ -127,7 +178,11 @@ function buildProductCheckboxesHTML(productCatalog, selectedIds = []) {
 }
 
 function buildCustomLinkPickHTML(productCatalog, portion) {
+  const selectedProductIds = portion.linkProductIds || [];
   return `
+    <div class="portion-link-toolbar">
+      <button type="button" class="btn btn-secondary btn-sm" id="portion-clear-link-selection">נקה בחירות</button>
+    </div>
     <div class="portion-link-section">
       <div class="portion-link-section-title">קטגוריות כלליות</div>
       ${buildGroupCheckboxesHTML(productCatalog, portion.linkGroupIds)}
@@ -137,8 +192,12 @@ function buildCustomLinkPickHTML(productCatalog, portion) {
       ${buildCategoryCheckboxesHTML(productCatalog, portion.linkCategoryIds)}
     </div>
     <div class="portion-link-section">
-      <div class="portion-link-section-title">מוצרים</div>
-      ${buildProductCheckboxesHTML(productCatalog, portion.linkProductIds)}
+      <div class="portion-link-section-title">מוצרים משויכים</div>
+      <div id="portion-linked-products-summary" class="portion-linked-products-summary">
+        ${buildSelectedProductsSummaryHTML(productCatalog, selectedProductIds)}
+      </div>
+      <div class="portion-link-section-title" style="margin-top:10px">בחירת מוצרים</div>
+      ${buildProductCheckboxesHTML(productCatalog, selectedProductIds)}
     </div>`;
 }
 
@@ -154,6 +213,26 @@ function readSelectedPortionLinks() {
     else if (el.dataset.linkType === PORTION_LINK_GROUP) groupIds.push(id);
   });
   return { productIds, categoryIds, groupIds };
+}
+
+function refreshPortionLinkedProductsSummary(productCatalog) {
+  const host = document.getElementById('portion-linked-products-summary');
+  if (!host) return;
+  const { productIds } = readSelectedPortionLinks();
+  host.innerHTML = buildSelectedProductsSummaryHTML(productCatalog, productIds);
+}
+
+function bindPortionLinkPickInteractions(productCatalog) {
+  document.getElementById('portion-clear-link-selection')?.addEventListener('click', () => {
+    document.querySelectorAll('.portion-link-cb').forEach((el) => {
+      el.checked = false;
+    });
+    refreshPortionLinkedProductsSummary(productCatalog);
+    showToast('הבחירות נוקו');
+  });
+  document.querySelectorAll('.portion-link-cb').forEach((el) => {
+    el.addEventListener('change', () => refreshPortionLinkedProductsSummary(productCatalog));
+  });
 }
 
 function openPortionLinkForm({ portion, productCatalog, onSaved }) {
@@ -201,6 +280,7 @@ function openPortionLinkForm({ portion, productCatalog, onSaved }) {
       : `<p class="form-hint">${portion.sourceRecipeId
         ? 'המנה תוצג לפי שיוך המתכון למוצרים (במסך עריכת מתכון)'
         : `המנה תוצג לכל המוצרים בקבוצת התזרים «${escapeHtml(portion.homeGroupName || '')}»`}</p>`;
+    if (mode === 'custom') bindPortionLinkPickInteractions(productCatalog);
     updateHint();
   };
 
