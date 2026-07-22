@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=345';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=345';
-import { defaultColorForIndex } from './chart.js?v=345';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=345';
+} from './validators.js?v=346';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=346';
+import { defaultColorForIndex } from './chart.js?v=346';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=346';
 
 export { ValidationError };
 
@@ -3955,12 +3955,20 @@ function productDefaults(fields) {
     unitPrice: sanitizeMoney(fields.unitPrice),
     priceUnit: sanitizeProductPriceUnit(fields.priceUnit),
     unitWeightKg: sanitizeUnitWeightKg(fields.unitWeightKg, sanitizeProductPriceUnit(fields.priceUnit)),
+    unitsPerCarton: sanitizeUnitsPerCarton(fields.unitsPerCarton),
     rawMaterialsCost: sanitizeMoney(fields.rawMaterialsCost),
     rawMaterialsCostSource: sanitizeRawMaterialsCostSource(fields.rawMaterialsCostSource),
     packagingCost: sanitizeMoney(fields.packagingCost),
     additionalCosts: sanitizeMoney(fields.additionalCosts),
     active: fields.active !== false,
   };
+}
+
+function sanitizeUnitsPerCarton(raw) {
+  if (raw == null || raw === '') return null;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 100_000);
 }
 
 export async function addProduct(fields) {
@@ -4003,6 +4011,9 @@ export async function updateProduct(id, data) {
     } else if (unit !== 'kg_units' && unit !== 'kg_with_units') {
       patch.unitWeightKg = null;
     }
+  }
+  if ('unitsPerCarton' in patch) {
+    patch.unitsPerCarton = sanitizeUnitsPerCarton(patch.unitsPerCarton);
   }
   return db.products.update(id, patch);
 }

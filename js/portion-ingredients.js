@@ -1,17 +1,17 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=345';
+} from './kitchen-db.js?v=346';
 import {
   saveRunPortionIngredientBatches,
   saveRunStepPortionIngredientBatches,
   getProductionRun,
   getRunPortionLogs,
   getStepPortionBatches,
-} from './db.js?v=345';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=345';
-import { openModal, closeModal } from './modal.js?v=345';
-import { requestAutoBackupNow } from './backup-service.js?v=345';
+} from './db.js?v=346';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=346';
+import { openModal, closeModal } from './modal.js?v=346';
+import { requestAutoBackupNow } from './backup-service.js?v=346';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;

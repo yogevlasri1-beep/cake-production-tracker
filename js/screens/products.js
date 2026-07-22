@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=345';
+} from '../db.js?v=346';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -16,12 +16,12 @@ import {
   syncProductCostIfRecipesMode, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
-} from '../kitchen-db.js?v=345';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=345';
-import { openModal, closeModal } from '../modal.js?v=345';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=345';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=345';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=345';
+} from '../kitchen-db.js?v=346';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=346';
+import { openModal, closeModal } from '../modal.js?v=346';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=346';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=346';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=346';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -192,6 +192,7 @@ function productPriceMeta(p) {
   }
   const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
+  if (p.unitsPerCarton) parts.push(`${p.unitsPerCarton} יח'/קרטון`);
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
 }
 
@@ -564,7 +565,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=345');
+    const { navigate } = await import('../app.js?v=346');
     navigate('backup');
   });
 
@@ -888,6 +889,7 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
         <h1 class="recipe-sheet-title">${escapeHtml(product.name)}</h1>
         <div class="recipe-sheet-meta">
           <span class="recipe-meta-pill">⚖️ ${totalWeightText}</span>
+          ${product.unitsPerCarton ? `<span class="recipe-meta-pill">📦 ${product.unitsPerCarton} יח׳ בקרטון</span>` : ''}
           ${product.active ? '' : '<span class="recipe-meta-pill">לא פעיל</span>'}
         </div>
         <div class="product-detail-collapse-toolbar">
@@ -948,6 +950,11 @@ function buildProductDetailHTML(detail, { allRecipes, bakingProfiles, profileMap
             <span>אריזה</span>
             <span>${formatMoney(detail.currentCosts.packagingCost)}</span>
           </div>
+          ${product.unitsPerCarton ? `
+          <div class="product-pricing-row">
+            <span>יחידות בקרטון</span>
+            <span>${product.unitsPerCarton}</span>
+          </div>` : ''}
           <div class="product-pricing-row">
             <span>עלויות נוספות</span>
             <span>${formatMoney(detail.currentCosts.additionalCosts)}</span>
@@ -1803,6 +1810,13 @@ async function showProductForm(container, opts) {
         </select>
       </div>
       ${productPriceUnitFieldsHTML(opts)}
+      <div class="form-group">
+        <label for="prod-units-per-carton">יחידות בקרטון</label>
+        <input type="number" id="prod-units-per-carton" min="1" step="1" inputmode="numeric"
+          value="${opts.unitsPerCarton != null && opts.unitsPerCarton !== '' ? opts.unitsPerCarton : ''}"
+          placeholder="לדוגמה: 12">
+        <p class="form-hint">כמה יחידות אורזים בקרטון אחד</p>
+      </div>
       ${rawMaterialsCostSourceFieldsHTML({ ...opts, rawMaterialsCostPreview })}
       ${optionalPriceInput('prod-pack', 'מחיר אריזה (₪)', opts.packagingCost)}
       ${optionalPriceInput('prod-extra', 'עלויות נוספות (₪)', opts.additionalCosts)}`,
@@ -1825,6 +1839,7 @@ async function showProductForm(container, opts) {
       unitPrice: document.getElementById('prod-price').value,
       priceUnit: document.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit',
       unitWeightKg: document.getElementById('prod-unit-weight')?.value ?? '',
+      unitsPerCarton: document.getElementById('prod-units-per-carton')?.value ?? '',
       rawMaterialsCostSource,
       packagingCost: document.getElementById('prod-pack').value,
       additionalCosts: document.getElementById('prod-extra').value,
