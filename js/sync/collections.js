@@ -244,3 +244,78 @@ export function shouldApplyRemote(localUpdatedAt, remoteUpdatedAt) {
   if (Number.isNaN(l) || !localUpdatedAt) return true;
   return r >= l;
 }
+
+function normName(s) {
+  return String(s || '').trim().toLocaleLowerCase('he');
+}
+
+/**
+ * Fingerprint for dedupe / match. Uses name + FK ids as stored on the row
+ * (local numeric or sync UUID — compare only within the same id-space).
+ */
+export function rowFingerprint(collection, row) {
+  if (!row) return '';
+  const n = normName(row.name);
+  switch (collection) {
+    case 'settings':
+      return row.key ? `settings|${row.key}` : '';
+    case 'categoryGroups':
+    case 'supplierCategories':
+    case 'bakingProfiles':
+    case 'productionMachines':
+    case 'recipeGroups':
+    case 'managerResponsibilityAreas':
+    case 'managerDepartments':
+    case 'departmentCleaningLists':
+    case 'purchaseCategories':
+    case 'weeklyProductionPlans':
+      return n ? `${collection}|${n}` : (row.weekStart ? `${collection}|${row.weekStart}` : '');
+    case 'categories':
+      return n ? `${collection}|${n}|${row.groupId ?? ''}` : '';
+    case 'products':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+    case 'suppliers':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+    case 'rawMaterials':
+      return n ? `${collection}|${n}|${row.supplierId ?? ''}|${row.supplierCategoryId ?? ''}` : '';
+    case 'recipes':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.parentRecipeId ?? ''}` : '';
+    case 'recipeCategories':
+      return n ? `${collection}|${n}|${row.groupId ?? ''}` : '';
+    case 'recipeIngredients':
+      return `${collection}|${row.recipeId ?? ''}|${n}|${row.rawMaterialId ?? ''}|${row.sortOrder ?? ''}`;
+    case 'productionEntries':
+      return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}`;
+    case 'rawMaterialPriceHistory':
+      return `${collection}|${row.rawMaterialId ?? ''}|${row.effectiveDate ?? ''}|${row.price ?? ''}`;
+    case 'recipeProductLinks':
+      return `${collection}|${row.recipeId}|${row.productId}`;
+    case 'recipeProductCategoryLinks':
+      return `${collection}|${row.recipeId}|${row.categoryId}`;
+    case 'recipeProductGroupLinks':
+      return `${collection}|${row.recipeId}|${row.groupId}`;
+    case 'productRecipeComponents':
+      return `${collection}|${row.productId}|${row.recipeId}`;
+    case 'productFlowLinks':
+      return `${collection}|${row.productId}|${row.flowId}`;
+    case 'flowSteps':
+      return `${collection}|${row.flowId}|${row.sortOrder ?? ''}|${n}`;
+    case 'flows':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.categoryGroupId ?? ''}` : '';
+    default:
+      return n ? `${collection}|${n}` : '';
+  }
+}
+
+/** Name-only fingerprint — for cloud cross-device dedupe when FK UUIDs differ. */
+export function rowNameFingerprint(collection, row) {
+  if (!row) return '';
+  if (collection === 'settings') return row.key ? `settings|${row.key}` : '';
+  const n = normName(row.name);
+  if (!n && row.weekStart) return `${collection}|${row.weekStart}`;
+  if (!n && row.date && collection === 'productionEntries') {
+    return `${collection}|${row.date}|${normName(row.productName || '')}`;
+  }
+  return n ? `${collection}|name|${n}` : '';
+}
+

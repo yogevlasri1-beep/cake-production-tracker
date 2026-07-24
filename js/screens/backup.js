@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=352';
-import { describeDownloadMethod } from '../download.js?v=352';
-import { showToast, escapeHtml } from '../utils.js?v=352';
-import { openModal, closeModal } from '../modal.js?v=352';
-import { APP_VERSION } from '../version.js?v=352';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=352';
+} from '../backup-service.js?v=353';
+import { describeDownloadMethod } from '../download.js?v=353';
+import { showToast, escapeHtml } from '../utils.js?v=353';
+import { openModal, closeModal } from '../modal.js?v=353';
+import { APP_VERSION } from '../version.js?v=353';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=353';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -299,6 +299,9 @@ export async function renderBackup(container, { navigate } = {}) {
         <button type="button" class="btn btn-secondary btn-sm" id="live-sync-reseed" ${supabaseConfigured ? '' : 'disabled'}>
           העלה את כל הדאטה המקומית
         </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="live-sync-dedupe" ${supabaseConfigured ? '' : 'disabled'}>
+          נקה כפילויות מקומיות
+        </button>
       </div>
       <p class="form-hint" style="margin-top:10px">
         גיבוי JSON בענן (למעלה) נשאר כרשת ביטחון. סנכרון חי לא דורש «מכשיר ראשי».
@@ -391,7 +394,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
     try {
-      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=352');
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=353');
       await setLiveSyncEnabled(e.target.checked);
       showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
       renderBackup(container, { navigate });
@@ -405,7 +408,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=352');
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=353');
       const pushed = await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
@@ -423,10 +426,30 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=352');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=353');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
+      renderBackup(container, { navigate });
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  document.getElementById('live-sync-dedupe')?.addEventListener('click', async () => {
+    if (!confirm('לאחד כפילויות מקומיות (אותו שם + אותו ספק/קטגוריה) ולסמן כפולים בענן למחיקה?')) return;
+    const btn = document.getElementById('live-sync-dedupe');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
+    try {
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=353');
+      const result = await dedupeLocalSyncCollections();
+      await flushSyncQueue();
+      await pullAllCollections({ full: true });
+      await saveLiveSyncSettings({ dedupeDone: true });
+      showToast(result.removed ? `אוחדו ${result.removed} כפילויות ✓` : 'לא נמצאו כפילויות מקומיות');
       renderBackup(container, { navigate });
     } catch (err) {
       showToast(err.message || 'שגיאה');

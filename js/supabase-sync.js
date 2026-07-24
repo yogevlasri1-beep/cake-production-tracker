@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=352';
+import { db, getSetting, setSetting } from './db.js?v=353';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,14 +10,16 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=352';
+} from './supabase-backup.js?v=353';
 import {
   COLLECTION_TABLE,
+  COLLECTION_FKS,
   KITCHEN_ID,
   isSyncCollection,
   orderedCollections,
   shouldApplyRemote,
-} from './sync/collections.js?v=352';
+  rowFingerprint,
+} from './sync/collections.js?v=353';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -27,7 +29,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=352';
+} from './sync/id-map.js?v=353';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -36,6 +38,7 @@ const DEFAULT_LIVE = {
   lastPushAt: null,
   lastError: null,
   seedDone: false,
+  dedupeDone: false,
   pendingCount: 0,
 };
 
@@ -225,15 +228,86 @@ export async function flushSyncQueue() {
   return { flushed };
 }
 
+async function findLocalByFingerprint(collection, fingerprint) {
+  if (!fingerprint || !db[collection]) return null;
+  const rows = await db[collection].toArray();
+  return rows.find((r) => rowFingerprint(collection, r) === fingerprint) || null;
+}
+
+/** Retarget FK fields that point at fromLocalId → toLocalId within one device. */
+async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId) {
+  const from = Number(fromLocalId);
+  const to = Number(toLocalId);
+  if (!from || !to || from === to) return;
+  for (const [collection, fks] of Object.entries(COLLECTION_FKS)) {
+    const fields = Object.entries(fks).filter(([, dep]) => dep === targetCollection).map(([f]) => f);
+    if (!fields.length || !db[collection]) continue;
+    const rows = await db[collection].toArray();
+    for (const row of rows) {
+      const patch = {};
+      for (const field of fields) {
+        if (Number(row[field]) === from) patch[field] = to;
+      }
+      if (Object.keys(patch).length) {
+        applyingRemote = true;
+        try {
+          await db[collection].update(row.id, patch);
+        } finally {
+          applyingRemote = false;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * One-time local dedupe: same fingerprint → keep lowest id, delete rest, retarget FKs.
+ */
+export async function dedupeLocalSyncCollections() {
+  let removed = 0;
+  for (const collection of orderedCollections()) {
+    if (collection === 'settings' || !db[collection]) continue;
+    const rows = await db[collection].toArray();
+    const groups = new Map();
+    for (const row of rows) {
+      const fp = rowFingerprint(collection, row);
+      if (!fp) continue;
+      if (!groups.has(fp)) groups.set(fp, []);
+      groups.get(fp).push(row);
+    }
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => (a.id - b.id));
+      const keep = list[0];
+      for (const drop of list.slice(1)) {
+        await retargetLocalForeignKeys(collection, drop.id, keep.id);
+        const dropKey = localKeyOf(collection, drop);
+        const dropMeta = await getMetaByLocal(collection, dropKey);
+        applyingRemote = true;
+        try {
+          await db[collection].delete(drop.id);
+        } finally {
+          applyingRemote = false;
+        }
+        if (dropMeta?.syncId) {
+          await markMetaDeleted(collection, dropKey, new Date().toISOString());
+          await enqueue({ type: 'delete', collection, localKey: dropKey });
+        } else {
+          await db.syncMeta.where('[collection+localKey]').equals([collection, dropKey]).delete();
+        }
+        removed++;
+      }
+    }
+  }
+  return { removed };
+}
+
 async function applyRemoteRow(collection, cloudRow, deviceId) {
   if (!cloudRow?.id) return false;
-  if (cloudRow.device_id && cloudRow.device_id === deviceId) {
-    // Still apply deletes/updates from same device after reinstall; allow always for simplicity
-  }
 
   const syncId = cloudRow.id;
   const remoteUpdated = cloudRow.updated_at;
-  const existingMeta = await getMetaBySyncId(syncId);
+  let existingMeta = await getMetaBySyncId(syncId);
 
   if (cloudRow.deleted_at) {
     if (existingMeta) {
@@ -270,6 +344,20 @@ async function applyRemoteRow(collection, cloudRow, deviceId) {
       applyingRemote = false;
     }
     return true;
+  }
+
+  // Match existing local row by fingerprint to avoid duplicates from multi-device seed
+  if (!existingMeta) {
+    const fp = rowFingerprint(collection, payload);
+    const match = await findLocalByFingerprint(collection, fp);
+    if (match) {
+      existingMeta = {
+        collection,
+        localKey: String(match.id),
+        syncId,
+        updatedAt: remoteUpdated,
+      };
+    }
   }
 
   applyingRemote = true;
@@ -435,23 +523,33 @@ export async function startLiveSync() {
     }
   };
 
+  // One-time: remove local duplicates created by the old pull-before-seed bug
+  if (!live.dedupeDone) {
+    try {
+      const result = await dedupeLocalSyncCollections();
+      await saveLiveSyncSettings({ dedupeDone: true });
+      if (result.removed) console.info('live sync local dedupe removed', result.removed);
+    } catch (err) {
+      console.warn('live sync local dedupe', err);
+    }
+  }
+
   await tick();
   if (!live.seedDone) {
     try {
       const cfg = await getSupabaseBackupConfig();
-      const sample = await supabaseFetch(
-        cfg,
-        `/sync_products?select=id&limit=1`,
-      );
+      const sample = await supabaseFetch(cfg, `/sync_products?select=id&limit=1`);
       const cloudHasData = Array.isArray(sample) && sample.length > 0;
       if (cloudHasData) {
+        // Cloud already has data: pull+match by fingerprint. Do NOT re-seed everything
+        // (that created duplicate UUID rows across devices).
         await pullAllCollections({ full: true });
-        await seedLocalDataToSupabase({ force: true });
+        await seedOrphanLocalRows();
       } else {
         await seedLocalDataToSupabase({ force: true });
         await pullAllCollections({ full: true });
       }
-      await saveLiveSyncSettings({ seedDone: true });
+      await saveLiveSyncSettings({ seedDone: true, dedupeDone: true });
     } catch (err) {
       console.warn('live sync seed', err);
       await saveLiveSyncSettings({ lastError: String(err.message || err) });
@@ -463,6 +561,28 @@ export async function startLiveSync() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tick();
   });
+}
+
+/** Push only local rows that are not yet linked to a cloud syncId. */
+async function seedOrphanLocalRows() {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) return { seeded: 0 };
+  const deviceId = await getOrCreateDeviceId();
+  let seeded = 0;
+  for (const collection of orderedCollections()) {
+    const table = db[collection];
+    if (!table) continue;
+    const rows = await table.toArray();
+    for (const row of rows) {
+      const localKey = localKeyOf(collection, row);
+      if (!localKey) continue;
+      const meta = await getMetaByLocal(collection, localKey);
+      if (meta?.syncId && !meta.deletedAt) continue;
+      await pushUpsert(cfg, collection, localKey, deviceId);
+      seeded++;
+    }
+  }
+  return { seeded };
 }
 
 export async function stopLiveSync() {
