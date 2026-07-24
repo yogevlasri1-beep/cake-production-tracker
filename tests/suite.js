@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=351';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=352';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=351';
+} from '../js/validators.js?v=352';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=351';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=351';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=351';
+} from '../js/calc.js?v=352';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=352';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=352';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,15 +17,16 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=351';
-import { isAutoBackupDue } from '../js/backup-service.js?v=351';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms } from '../js/kitchen-db.js?v=351';
+} from '../js/supabase-backup.js?v=352';
+import { isAutoBackupDue } from '../js/backup-service.js?v=352';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms } from '../js/kitchen-db.js?v=352';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection } from '../js/sync/collections.js?v=352';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=351';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=351';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=351';
+} from '../js/supplier-import.js?v=352';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=352';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=352';
 
 export async function runAllTests() {
   /* validators */
@@ -341,6 +342,25 @@ export async function runAllTests() {
       { id: 1, name: 'סוכר', unitPrice: 4, packageWeightGrams: 1000, synonyms: ['סוכר לבן'] },
     ]);
     assertEqual(bySyn.get('סוכר לבן')?.[0]?.id, 1);
+  });
+
+  test('shouldApplyRemote — last-write-wins', () => {
+    assertOk(shouldApplyRemote(null, '2026-07-24T10:00:00.000Z'));
+    assertOk(shouldApplyRemote('2026-07-24T09:00:00.000Z', '2026-07-24T10:00:00.000Z'));
+    assertOk(!shouldApplyRemote('2026-07-24T11:00:00.000Z', '2026-07-24T10:00:00.000Z'));
+    assertOk(shouldApplyRemote('2026-07-24T10:00:00.000Z', '2026-07-24T10:00:00.000Z'));
+  });
+
+  test('sync collections registry — כל האוספים ממופים לטבלה', () => {
+    const ordered = orderedCollections();
+    assertOk(ordered.length >= 40);
+    assertOk(isSyncCollection('rawMaterials'));
+    assertOk(isSyncCollection('products'));
+    assertEqual(COLLECTION_TABLE.rawMaterials, 'sync_raw_materials');
+    assertEqual(COLLECTION_TABLE.settings, 'sync_app_settings');
+    for (const c of ordered) {
+      assertOk(!!COLLECTION_TABLE[c], `missing table for ${c}`);
+    }
   });
 
   /* pct */
@@ -717,7 +737,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=351');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=352');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

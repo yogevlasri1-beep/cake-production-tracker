@@ -20,13 +20,13 @@ import {
   setRawMaterialRecipeDefault,
   setRawMaterialAsPortion,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=351';
-import { getProducts, getCategories } from '../db.js?v=351';
-import { parseSupplierFile } from '../supplier-import.js?v=351';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=351';
-import { openModal, closeModal } from '../modal.js?v=351';
-import { requestAutoBackupNow } from '../backup-service.js?v=351';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=351';
+} from '../kitchen-db.js?v=352';
+import { getProducts, getCategories } from '../db.js?v=352';
+import { parseSupplierFile } from '../supplier-import.js?v=352';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=352';
+import { openModal, closeModal } from '../modal.js?v=352';
+import { requestAutoBackupNow } from '../backup-service.js?v=352';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=352';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -650,8 +650,9 @@ async function openMergeSelectedMaterialsModal(container) {
     modalClass: 'modal-merge-selected-mats',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0;line-height:1.5">
-        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» נשארת;
-        השאר מאוחדים אליה (מחירים, היסטוריה, מתכונים). שמות שונים מתווספים למילים נרדפות.
+        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» מקבלת את כל המידע מהשאר
+        (שדות חסרים, מילים נרדפות, מחירים והיסטוריה, מתכונים, אריזה/מנה).
+        ספק שונה נשמר כ«אותו מוצר אצל ספק נוסף» — המחיר מועתק גם להיסטוריית היעד.
       </p>
       <div class="form-group" style="margin-bottom:8px">
         <input type="search" id="manual-mat-merge-search" placeholder="חיפוש לפי שם / מילה נרדפת / ספק..." autocomplete="off">
@@ -706,7 +707,8 @@ async function openMergeSelectedMaterialsModal(container) {
     const synText = syns.length ? syns.join(' · ') : '—';
     previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong>
       · מאוחדים: ${others.length}
-      · מילים נרדפות אחרי איחוד: ${escapeHtml(synText)}`;
+      · מילים נרדפות אחרי איחוד: ${escapeHtml(synText)}
+      · שדות חסרים, מחירים והיסטוריה יועברו ליעד; ספק שונה יישמר כרשומה נפרדת באותו שם`;
   }
 
   function bindList() {

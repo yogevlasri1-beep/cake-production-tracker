@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=351';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=351';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=351';
-import { renderRecipesMachines } from '../recipes-machines.js?v=351';
-import { renderRecipesPortions } from '../recipes-portions.js?v=351';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=351';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=351';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=351';
-import { openModal, closeModal } from '../modal.js?v=351';
+} from '../kitchen-db.js?v=352';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=352';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=352';
+import { renderRecipesMachines } from '../recipes-machines.js?v=352';
+import { renderRecipesPortions } from '../recipes-portions.js?v=352';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=352';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=352';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=352';
+import { openModal, closeModal } from '../modal.js?v=352';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=351';
-import { defaultColorForIndex } from '../chart.js?v=351';
+} from '../product-drag.js?v=352';
+import { defaultColorForIndex } from '../chart.js?v=352';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2554,9 +2554,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=351');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=352');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=351');
+    const { navigateToWorkspace } = await import('../app.js?v=352');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');

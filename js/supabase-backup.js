@@ -1,6 +1,6 @@
-import { getSetting, setSetting } from './db.js?v=351';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=351';
-import { ValidationError } from './validators.js?v=351';
+import { getSetting, setSetting } from './db.js?v=352';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=352';
+import { ValidationError } from './validators.js?v=352';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -19,8 +19,10 @@ const DEFAULT_CONFIG = {
   supabaseUrl: BUILTIN_DEFAULTS.supabaseUrl,
   anonKey: BUILTIN_DEFAULTS.anonKey,
   enabled: true,
-  /** מכשיר ראשי — רק הוא מעלה גיבויים ל-Supabase; מכשירים משניים רק מקבלים */
+  /** מכשיר ראשי — רק הוא מעלה גיבויי JSON ל-Supabase; סנכרון חי עובד בכל המכשירים */
   primaryDevice: true,
+  /** סנכרון שורה-אחר-שורה בין מכשירים (טבלאות sync_*) */
+  liveSyncEnabled: true,
   lastSyncAt: null,
   lastSyncError: null,
   lastSyncKind: null,

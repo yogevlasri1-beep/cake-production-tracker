@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=351';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=352';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=351';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=351';
+} from './validators.js?v=352';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=352';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3409,7 +3409,8 @@ export function buildMergedMaterialSynonyms(keep, others = []) {
   );
 }
 
-function materialFieldFillPatch(keep, others) {
+/** ממלא שדות חסרים ביעד מתוך רשומות מאוחדות — לא דורס ערכים קיימים ביעד */
+export function materialFieldFillPatch(keep, others) {
   const patch = {};
   if (!keep.packageWeightGrams) {
     const from = others.find((o) => o.packageWeightGrams);
@@ -3438,7 +3439,93 @@ function materialFieldFillPatch(keep, others) {
     const from = others.find((o) => (Number(o.unitPrice) || 0) > 0);
     if (from) patch.unitPrice = from.unitPrice;
   }
+  if (!keep.packagingKind) {
+    const from = others.find((o) => o.packagingKind);
+    if (from) {
+      patch.packagingKind = from.packagingKind;
+      if (from.packUnitsCount != null) patch.packUnitsCount = from.packUnitsCount;
+      if (from.packProductsPerUnit != null) patch.packProductsPerUnit = from.packProductsPerUnit;
+      if (from.packLinkedProductId) patch.packLinkedProductId = from.packLinkedProductId;
+      if (from.packLinkedCategoryId) patch.packLinkedCategoryId = from.packLinkedCategoryId;
+    }
+  } else {
+    if (keep.packUnitsCount == null) {
+      const from = others.find((o) => o.packUnitsCount != null);
+      if (from) patch.packUnitsCount = from.packUnitsCount;
+    }
+    if (keep.packProductsPerUnit == null) {
+      const from = others.find((o) => o.packProductsPerUnit != null);
+      if (from) patch.packProductsPerUnit = from.packProductsPerUnit;
+    }
+    if (!keep.packLinkedProductId && !keep.packLinkedCategoryId) {
+      const from = others.find((o) => o.packLinkedProductId || o.packLinkedCategoryId);
+      if (from?.packLinkedProductId) patch.packLinkedProductId = from.packLinkedProductId;
+      else if (from?.packLinkedCategoryId) patch.packLinkedCategoryId = from.packLinkedCategoryId;
+    }
+  }
+  if (!keep.isPortion) {
+    const from = others.find((o) => o.isPortion && o.portionProductId);
+    if (from) {
+      patch.isPortion = true;
+      patch.portionProductId = from.portionProductId;
+      if (from.portionWeightKg != null) patch.portionWeightKg = from.portionWeightKg;
+    }
+  } else if (keep.portionWeightKg == null) {
+    const from = others.find((o) => o.portionWeightKg != null);
+    if (from) patch.portionWeightKg = from.portionWeightKg;
+  }
   return patch;
+}
+
+/** מעתיק מחירים/היסטוריה ליעד בלי למחוק את המקור (לשמירת ספק נוסף) */
+async function copyMaterialPricesOntoKeep(keepId, fromMat) {
+  if (!keepId || !fromMat) return;
+  const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(fromMat.id).toArray();
+  for (const h of history) {
+    if (await priceHistoryEntryExists(keepId, h.effectiveDate, h.price)) continue;
+    await db.rawMaterialPriceHistory.add({
+      rawMaterialId: keepId,
+      price: sanitizeMoney(h.price),
+      effectiveDate: h.effectiveDate,
+      createdAt: h.createdAt || new Date().toISOString(),
+    });
+  }
+  const price = Number(fromMat.unitPrice) || 0;
+  if (price > 0) {
+    const date = todayISO();
+    if (!(await priceHistoryEntryExists(keepId, date, price))) {
+      await db.rawMaterialPriceHistory.add({
+        rawMaterialId: keepId,
+        price: sanitizeMoney(price),
+        effectiveDate: date,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+}
+
+async function retargetMaterialRefs(fromId, toId) {
+  if (!fromId || !toId || fromId === toId) return;
+  if (db.products) {
+    const products = await db.products.toArray();
+    for (const p of products) {
+      if (Number(p.packagingMaterialId) === fromId) {
+        await db.products.update(p.id, { packagingMaterialId: toId });
+      }
+    }
+  }
+  if (db.supplierShortages) {
+    const shortages = await db.supplierShortages.where('rawMaterialId').equals(fromId).toArray();
+    for (const row of shortages) {
+      await db.supplierShortages.update(row.id, { rawMaterialId: toId });
+    }
+  }
+  if (db.groupPortionPresets) {
+    const presets = await db.groupPortionPresets.where('sourceRawMaterialId').equals(fromId).toArray();
+    for (const row of presets) {
+      await db.groupPortionPresets.update(row.id, { sourceRawMaterialId: toId });
+    }
+  }
 }
 
 async function renameRecipeIngredientsMaterialName(fromName, toName) {
@@ -3459,7 +3546,12 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
   const ids = (mergeIds || []).map(sanitizeProductId).filter((id) => id && id !== keep);
   if (!ids.length) return;
 
-  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+  const txTables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
+  if (db.products) txTables.push(db.products);
+  if (db.supplierShortages) txTables.push(db.supplierShortages);
+  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
+
+  await db.transaction('rw', ...txTables, async () => {
     for (const mid of ids) {
       await mergeMaterialIntoKeep(keep, mid);
     }
@@ -3470,10 +3562,27 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
 
 async function mergeMaterialIntoKeep(keep, mid) {
   if (!keep || !mid || keep === mid) return;
+  const fromMat = await db.rawMaterials.get(mid);
+  if (!fromMat) return;
+
   const ings = await db.recipeIngredients.where('rawMaterialId').equals(mid).toArray();
   for (const ing of ings) {
     await db.recipeIngredients.update(ing.id, { rawMaterialId: keep });
   }
+
+  const price = Number(fromMat.unitPrice) || 0;
+  if (price > 0) {
+    const date = todayISO();
+    if (!(await priceHistoryEntryExists(keep, date, price))) {
+      await db.rawMaterialPriceHistory.add({
+        rawMaterialId: keep,
+        price: sanitizeMoney(price),
+        effectiveDate: date,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+
   const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
   for (const h of history) {
     const exists = await priceHistoryEntryExists(keep, h.effectiveDate, h.price);
@@ -3483,12 +3592,15 @@ async function mergeMaterialIntoKeep(keep, mid) {
       await db.rawMaterialPriceHistory.update(h.id, { rawMaterialId: keep });
     }
   }
+
+  await retargetMaterialRefs(mid, keep);
   await db.rawMaterials.delete(mid);
 }
 
 /**
  * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
- * שם היעד נשאר; שמות אחרים + מילים נרדפות מאוחדים לרשימת מילים נרדפות.
+ * שם היעד נשאר; שדות חסרים + מילים נרדפות + מחירים מאוחדים ליעד.
+ * ספק שונה נשמר כרשומה באותו שם (אותו מוצר אצל ספק נוסף) — המחיר מועתק גם להיסטוריית היעד.
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -3508,21 +3620,59 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
   const fillPatch = materialFieldFillPatch(keepMat, others);
   const shouldSetDefault = !!fillPatch.isRecipeDefault;
+  const preferredUnitPrice = fillPatch.unitPrice != null
+    ? fillPatch.unitPrice
+    : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
+  const assignedSupplierId = keepMat.supplierId || fillPatch.supplierId || null;
+  const txTables = [
+    db.rawMaterials,
+    db.rawMaterialPriceHistory,
+    db.recipeIngredients,
+  ];
+  if (db.products) txTables.push(db.products);
+  if (db.supplierShortages) txTables.push(db.supplierShortages);
+  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
 
-  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+  await db.transaction('rw', ...txTables, async () => {
     for (const mat of others) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
-      await mergeMaterialIntoKeep(keep, mat.id);
+      await copyMaterialPricesOntoKeep(keep, mat);
+
+      const otherSupplierId = mat.supplierId || null;
+      const keepAsSibling = !!(otherSupplierId && assignedSupplierId && otherSupplierId !== assignedSupplierId);
+
+      if (keepAsSibling) {
+        const existingSibling = await findRawMaterialBySupplierAndName(otherSupplierId, keepMat.name);
+        if (existingSibling && existingSibling.id !== keep && existingSibling.id !== mat.id) {
+          await mergeMaterialIntoKeep(existingSibling.id, mat.id);
+        } else {
+          await db.rawMaterials.update(mat.id, {
+            name: keepMat.name,
+            synonyms,
+          });
+        }
+      } else {
+        await mergeMaterialIntoKeep(keep, mat.id);
+      }
     }
+
     const patch = { ...fillPatch, synonyms };
     delete patch.isRecipeDefault;
-    await db.rawMaterials.update(keep, patch);
+    if (Object.keys(patch).length) {
+      await db.rawMaterials.update(keep, patch);
+    }
   });
 
   if (shouldSetDefault) {
     await setRawMaterialRecipeDefault(keep, true);
   }
   await syncRawMaterialLatestPrice(keep);
+  if (preferredUnitPrice != null) {
+    await db.rawMaterials.update(keep, { unitPrice: preferredUnitPrice });
+  }
+  if (fillPatch.isPortion) {
+    await syncRawMaterialPortionPreset(keep);
+  }
   await syncRawMaterialsActiveFromRecipes();
   await syncRecipesAffectedByMaterial(keep);
   return keep;
@@ -3543,7 +3693,12 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
   }
 
   const touched = new Set();
-  await db.transaction('rw', db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients, async () => {
+  const txTables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
+  if (db.products) txTables.push(db.products);
+  if (db.supplierShortages) txTables.push(db.supplierShortages);
+  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
+
+  await db.transaction('rw', ...txTables, async () => {
     for (const mid of ids) {
       const mat = await db.rawMaterials.get(mid);
       if (!mat) continue;

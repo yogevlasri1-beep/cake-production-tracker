@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=351';
-import { describeDownloadMethod } from '../download.js?v=351';
-import { showToast, escapeHtml } from '../utils.js?v=351';
-import { openModal, closeModal } from '../modal.js?v=351';
-import { APP_VERSION } from '../version.js?v=351';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=351';
+} from '../backup-service.js?v=352';
+import { describeDownloadMethod } from '../download.js?v=352';
+import { showToast, escapeHtml } from '../utils.js?v=352';
+import { openModal, closeModal } from '../modal.js?v=352';
+import { APP_VERSION } from '../version.js?v=352';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=352';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -95,7 +95,7 @@ export async function renderBackup(container, { navigate } = {}) {
     settings, snapshots, hasDefaultFolder, canWriteToFolder,
     supportsLocationPicker, isNativeApp, isIOS,
     supabaseConfig, supabaseConfigured, supabaseBackups, deviceId,
-    backupScopeId, isPrimaryDevice,
+    backupScopeId, isPrimaryDevice, liveSync,
   } = status;
   const iosPwa = isIOS && !isNativeApp;
 
@@ -271,11 +271,45 @@ export async function renderBackup(container, { navigate } = {}) {
         <input type="file" id="backup-restore-file" accept=".json,application/json">
       </label>`;
 
+  const ls = liveSync || {};
+  const liveSyncOn = ls.enabled !== false;
+  const liveSyncBody = `
+      <p class="form-hint" style="margin-bottom:10px;line-height:1.5">
+        סנכרון חי בין כל המכשירים — שינוי במכשיר אחד מופיע בשאר תוך כמה שניות.
+        מטבח: <code style="font-size:0.78rem">${escapeHtml(ls.kitchenId || backupScopeId || 'yitzur')}</code>
+      </p>
+      <label class="backup-toggle-row" style="margin-bottom:10px">
+        <span>סנכרון חי בין מכשירים</span>
+        <input type="checkbox" id="live-sync-enabled" ${liveSyncOn ? 'checked' : ''}>
+      </label>
+      <p class="backup-meta">
+        מצב: ${ls.online === false ? 'אופליין' : (liveSyncOn ? 'פעיל' : 'כבוי')}
+        ${ls.pendingCount ? ` · ${ls.pendingCount} בתור` : ''}
+        <br>
+        משיכה אחרונה: ${formatWhen(ls.lastPullAt)}
+        <br>
+        דחיפה אחרונה: ${formatWhen(ls.lastPushAt)}
+        ${ls.lastError ? `<br><span style="color:var(--danger)">שגיאה: ${escapeHtml(ls.lastError)}</span>` : ''}
+        ${ls.seedDone ? '<br>✓ סנכרון ראשוני בוצע' : '<br>ממתין לסנכרון ראשוני...'}
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button type="button" class="btn btn-primary btn-sm" id="live-sync-now" ${supabaseConfigured ? '' : 'disabled'}>
+          סנכרן עכשיו
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="live-sync-reseed" ${supabaseConfigured ? '' : 'disabled'}>
+          העלה את כל הדאטה המקומית
+        </button>
+      </div>
+      <p class="form-hint" style="margin-top:10px">
+        גיבוי JSON בענן (למעלה) נשאר כרשת ביטחון. סנכרון חי לא דורש «מכשיר ראשי».
+      </p>`;
+
   container.innerHTML = `
     <button type="button" class="btn btn-secondary btn-sm backup-back-btn" id="backup-back">← חזרה</button>
     ${backupSectionHTML('app-update', '🔄 עדכון אפליקציה', appUpdateBody)}
     ${backupSectionHTML('hero', '💾 גיבוי ושחזור', heroBody, { extraClass: 'backup-hero-card' })}
-    ${backupSectionHTML('supabase', '☁️ גיבוי בענן — Supabase', supabaseBody, { extraClass: 'backup-supabase-card' })}
+    ${backupSectionHTML('live-sync', '🔄 סנכרון חי בין מכשירים', liveSyncBody, { extraClass: 'backup-live-sync-card' })}
+    ${backupSectionHTML('supabase', '☁️ גיבוי JSON בענן — Supabase', supabaseBody, { extraClass: 'backup-supabase-card' })}
     ${backupSectionHTML('auto', '⏱ גיבוי אוטומטי', autoBody)}
     ${backupSectionHTML('folder', '📁 תיקיית ברירת מחדל לגיבויים', folderBody, { extraClass: 'backup-folder-card' })}
     ${backupSectionHTML('local', '📱 גיבוי מקומי על המכשיר', localBody)}
@@ -353,6 +387,52 @@ export async function renderBackup(container, { navigate } = {}) {
       ? 'מכשיר ראשי — גיבויים יועלו לענן ✓'
       : 'מכשיר משני — רק קבלה ושחזור מענן');
     renderBackup(container, { navigate });
+  });
+
+  document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
+    try {
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=352');
+      await setLiveSyncEnabled(e.target.checked);
+      showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
+      renderBackup(container, { navigate });
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('live-sync-now')?.addEventListener('click', async () => {
+    const btn = document.getElementById('live-sync-now');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
+    try {
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=352');
+      const pushed = await flushSyncQueue();
+      const pulled = await pullAllCollections({ full: false });
+      showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
+      renderBackup(container, { navigate });
+    } catch (err) {
+      showToast(err.message || 'שגיאת סנכרון');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  document.getElementById('live-sync-reseed')?.addEventListener('click', async () => {
+    if (!confirm('להעלות את כל הנתונים המקומיים לענן? (לא מוחק נתונים קיימים בענן — last-write-wins)')) return;
+    const btn = document.getElementById('live-sync-reseed');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
+    try {
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=352');
+      const result = await seedLocalDataToSupabase({ force: true });
+      await saveLiveSyncSettings({ seedDone: true });
+      showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
+      renderBackup(container, { navigate });
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
   });
 
   document.getElementById('supabase-test')?.addEventListener('click', async () => {
