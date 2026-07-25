@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=356';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=356';
-import { defaultColorForIndex } from './chart.js?v=356';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=356';
+} from './validators.js?v=357';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=357';
+import { defaultColorForIndex } from './chart.js?v=357';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=357';
 
 export { ValidationError };
 
@@ -7549,7 +7549,9 @@ export async function updateProductionRunDates(runId, { startedDate, completedDa
   await db.productionRuns.update(runId, patch);
 }
 
-export async function updateProductionRunDetails(runId, { batchNumber, startedDate, completedDate } = {}) {
+export async function updateProductionRunDetails(runId, {
+  batchNumber, startedDate, startedTime, completedDate, completedTime,
+} = {}) {
   const run = await db.productionRuns.get(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
 
@@ -7557,18 +7559,29 @@ export async function updateProductionRunDetails(runId, { batchNumber, startedDa
   if (batchNumber !== undefined) {
     patch.batchNumber = String(batchNumber || '').trim().slice(0, 40);
   }
-  if (startedDate !== undefined) {
-    patch.startedAt = mergeDateIntoIso(startedDate, run.startedAt);
-    patch.date = startedDate;
+  if (startedDate !== undefined || startedTime !== undefined) {
+    const date = startedDate !== undefined && startedDate !== ''
+      ? startedDate
+      : isoDatePart(run.startedAt || nowISO());
+    patch.startedAt = mergeDateTimeIntoIso(
+      date,
+      startedTime !== undefined && startedTime !== '' ? startedTime : undefined,
+      run.startedAt,
+    );
+    patch.date = date;
   }
-  if (completedDate !== undefined) {
+  if (completedDate !== undefined || completedTime !== undefined) {
     if (run.status !== 'completed') {
       throw new ValidationError('ניתן לערוך תאריך סיום רק לתהליך שהושלם');
     }
     if (completedDate === '' || completedDate == null) {
       patch.completedAt = null;
     } else {
-      patch.completedAt = mergeDateIntoIso(completedDate, run.completedAt);
+      patch.completedAt = mergeDateTimeIntoIso(
+        completedDate,
+        completedTime !== undefined && completedTime !== '' ? completedTime : undefined,
+        run.completedAt,
+      );
     }
   }
 
@@ -7580,6 +7593,74 @@ export async function updateProductionRunDetails(runId, { batchNumber, startedDa
 
   if (!Object.keys(patch).length) return;
   await db.productionRuns.update(runId, patch);
+}
+
+/**
+ * מבטל סטופרים וזמני קיר של כל השלבים — נשארים רק זמני התחלה/סיום של התזרים כולו.
+ */
+export async function clearRunStepTimers(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) throw new ValidationError('תהליך לא תקין');
+  const run = await getProductionRun(rid);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+
+  await db.transaction('rw', db.runStepStates, async () => {
+    for (const step of run.steps) {
+      await db.runStepStates.update(step.id, {
+        timerState: 'off',
+        timerElapsedMs: 0,
+        timerSegmentStartedAt: null,
+        startedAt: null,
+        completedAt: null,
+      });
+    }
+  });
+  return { cleared: run.steps.length };
+}
+
+/**
+ * משלים את כל השלבים שנותרו ומסיים את התזרים.
+ * זמני שלב לא מתועדים בפירוט — רק startedAt/completedAt של התזרים נשמרים.
+ */
+export async function completeAllRunSteps(runId) {
+  const rid = sanitizeProductId(runId);
+  if (!rid) throw new ValidationError('תהליך לא תקין');
+  const run = await getProductionRun(rid);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  if (run.status === 'completed') throw new ValidationError('התהליך כבר הושלם');
+  if (!run.steps?.length) throw new ValidationError('אין שלבים בתזרים');
+
+  const finishedAt = nowISO();
+  await db.transaction('rw', db.productionRuns, db.runStepStates, async () => {
+    for (const step of run.steps) {
+      if (step.status === 'completed') {
+        // עדיין מאפסים סטופר פעיל אם נשאר
+        if (step.timerState === 'running' || step.timerState === 'paused') {
+          await db.runStepStates.update(step.id, {
+            ...pauseStepTimerPatch(step),
+            timerState: 'off',
+            timerElapsedMs: 0,
+            timerSegmentStartedAt: null,
+          });
+        }
+        continue;
+      }
+      await db.runStepStates.update(step.id, {
+        status: 'completed',
+        startedAt: step.startedAt || run.startedAt || finishedAt,
+        completedAt: finishedAt,
+        timerState: 'off',
+        timerElapsedMs: 0,
+        timerSegmentStartedAt: null,
+      });
+    }
+    await db.productionRuns.update(rid, {
+      status: 'completed',
+      currentStepIndex: run.steps.length,
+      completedAt: finishedAt,
+    });
+  });
+  return { completedAt: finishedAt };
 }
 
 export async function deleteProductionRun(runId) {

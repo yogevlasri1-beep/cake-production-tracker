@@ -3270,8 +3270,79 @@ body.flow-checklist-drag-active {
 }
 
 .flow-run-collapse--portions .flow-run-collapse-body,
-.flow-run-collapse--steps .flow-run-collapse-body {
+.flow-run-collapse--steps .flow-run-collapse-body,
+.flow-run-collapse--time .flow-run-collapse-body {
   padding-top: 4px;
+}
+
+.flow-run-time-section {
+  display: grid;
+  gap: 12px;
+}
+
+.flow-run-time-rows {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: #f8fafc;
+}
+
+.flow-run-time-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.flow-steps-bulk-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.flow-complete-all-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #16a34a;
+  color: #fff;
+  border: none;
+  font-weight: 700;
+  padding: 8px 14px;
+  border-radius: var(--radius);
+}
+
+.flow-complete-all-btn:hover {
+  background: #15803d;
+  color: #fff;
+}
+
+.flow-complete-all-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  color: #16a34a;
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.flow-run-item--clickable,
+.home-flow-card--clickable {
+  cursor: pointer;
+}
+
+.flow-run-item--clickable:hover {
+  background: color-mix(in srgb, var(--primary) 6%, white);
+}
+
+.home-flow-card--clickable:hover {
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
 }
 
 .run-processing-subsection {

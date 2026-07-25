@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=356';
+} from '../db.js?v=357';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=356';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=356';
+} from '../utils.js?v=357';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=357';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=356';
-import { requestAutoBackupNow } from '../backup-service.js?v=356';
+} from '../calc.js?v=357';
+import { requestAutoBackupNow } from '../backup-service.js?v=357';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -83,7 +83,7 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
           const { date, time } = runDateParts(run);
           const { targetName, flowName } = homeRunTitleParts(run, catMap, productMap, groupMap);
           return `
-          <div class="card home-flow-card" data-run-id="${run.id}">
+          <div class="card home-flow-card home-flow-card--clickable" data-run-id="${run.id}" data-run-date="${run.date}" role="button" tabindex="0" aria-label="פתח תזרים">
             <div class="home-flow-card-header">
               <div class="home-flow-card-info">
                 <div class="home-flow-card-title">
@@ -618,19 +618,39 @@ export async function renderHome(container) {
     }
   });
 
+  const openHomeRun = async (btnOrCard) => {
+    const main = document.getElementById('main-content');
+    const runId = btnOrCard.dataset.runId;
+    if (!runId) return;
+    if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
+    main.dataset.view = 'run';
+    main.dataset.runId = runId;
+    const { navigate } = await import('../app.js?v=357');
+    navigate('process');
+  };
+
   container.querySelectorAll('.home-flow-open').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const main = document.getElementById('main-content');
-      if (btn.dataset.runDate) main.dataset.selectedDate = btn.dataset.runDate;
-      main.dataset.view = 'run';
-      main.dataset.runId = btn.dataset.runId;
-      const { navigate } = await import('../app.js?v=356');
-      navigate('process');
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await openHomeRun(btn);
+    });
+  });
+
+  container.querySelectorAll('.home-flow-card--clickable').forEach((card) => {
+    card.addEventListener('click', async (e) => {
+      if (e.target.closest('button, a, input, select, textarea, label')) return;
+      await openHomeRun(card);
+    });
+    card.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        await openHomeRun(card);
+      }
     });
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=356');
+    const { navigate } = await import('../app.js?v=357');
     navigate('backup');
   });
 

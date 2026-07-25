@@ -13,7 +13,7 @@ import {
   getAllProductionRuns,
   getProductionRunsForFlow, getFlowProductsHistory, getFlow,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
-  activateRunStep, setStepTimerAction,
+  activateRunStep, setStepTimerAction, clearRunStepTimers, completeAllRunSteps,
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal, portionBatchLineWeightKg,
@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=356';
+} from '../db.js?v=357';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=356').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=357').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=356';
-import { openModal, closeModal } from '../modal.js?v=356';
-import { requestAutoBackupNow } from '../backup-service.js?v=356';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=356';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=356';
-import { materialMatchesSearch } from '../kitchen-db.js?v=356';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=357';
+import { openModal, closeModal } from '../modal.js?v=357';
+import { requestAutoBackupNow } from '../backup-service.js?v=357';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=357';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=357';
+import { materialMatchesSearch } from '../kitchen-db.js?v=357';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -593,6 +593,37 @@ function formatRunTimestamp(iso, fallbackDate) {
   const formatted = formatDateTime(iso);
   if (formatted && formatted !== '—') return formatted;
   return formatDate(String(iso).slice(0, 10) || fallbackDate || '');
+}
+
+function renderRunTimeSectionHTML(run) {
+  const runDurMs = runDurationMs(run);
+  const runDurationLabel = runDurMs != null
+    ? `${formatDuration(runDurMs)}${run.status === 'active' ? ' (בתהליך)' : ''}`
+    : '—';
+  const canEdit = run.status === 'active' || run.status === 'completed';
+  const canClearSteps = run.status === 'active' || run.status === 'completed';
+  return `
+    <div class="flow-run-time-section">
+      <div class="flow-run-time-rows">
+        <div class="flow-run-dates-row">
+          <span class="flow-run-dates-label">התחלה</span>
+          <span class="flow-run-dates-value">${formatRunTimestamp(run.startedAt, run.date)}</span>
+        </div>
+        <div class="flow-run-dates-row">
+          <span class="flow-run-dates-label">סיום</span>
+          <span class="flow-run-dates-value">${run.completedAt ? formatRunTimestamp(run.completedAt) : '—'}</span>
+        </div>
+        <div class="flow-run-dates-row">
+          <span class="flow-run-dates-label">משך כולל</span>
+          <span class="flow-run-dates-value">⏱ ${runDurationLabel}</span>
+        </div>
+      </div>
+      <p class="form-hint" style="margin:10px 0 0">ההתחלה נרשמת ברגע שלוחצים «התחל תזרים». הסיום נרשם כשמסיימים את כל השלבים.</p>
+      <div class="flow-run-time-actions">
+        ${canEdit ? `<button type="button" class="btn btn-secondary btn-sm" id="edit-run-time">ערוך זמנים</button>` : ''}
+        ${canClearSteps ? `<button type="button" class="btn btn-secondary btn-sm" id="clear-step-timers" title="מבטל סטופרים וזמני שלבים — נשארים רק זמני התזרים">בטל זמני שלבים</button>` : ''}
+      </div>
+    </div>`;
 }
 
 function runDatesLabel(run) {
@@ -1230,7 +1261,7 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
   const statusClass = run.status === 'active' ? 'flow-run-active' : 'flow-run-done';
   const dateHint = listDate && run.date !== listDate ? ` · ${formatDate(run.date)}` : '';
   return `
-    <div class="list-item flow-run-item ${statusClass}" data-run-id="${run.id}">
+    <div class="list-item flow-run-item flow-run-item--clickable ${statusClass}" data-run-id="${run.id}" data-run-date="${run.date}" role="button" tabindex="0" aria-label="פתח תזרים">
       <div class="list-item-info">
         <div class="list-item-name">
           ${batchPrefix(run.batchNumber)}${runTitle(run, catMap, productMap, groupMap)}
@@ -1245,6 +1276,37 @@ function renderRunCard(run, catMap, productMap, groupMap, { listDate } = {}) {
         <button type="button" class="btn btn-danger btn-sm delete-run" data-id="${run.id}">🗑</button>
       </div>
     </div>`;
+}
+
+/** פתיחת תזרים מלחיצה על כרטיס או על כפתור «פתח» */
+function bindOpenRunListClicks(container) {
+  const openRun = (runId, runDate) => {
+    if (!runId) return;
+    if (runDate) container.dataset.selectedDate = runDate;
+    container.dataset.view = 'run';
+    container.dataset.runId = String(runId);
+    renderProcess(container);
+  };
+
+  container.querySelectorAll('.open-run').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRun(btn.dataset.id, btn.dataset.date);
+    });
+  });
+
+  container.querySelectorAll('.flow-run-item--clickable').forEach((item) => {
+    item.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea, label')) return;
+      openRun(item.dataset.runId, item.dataset.runDate);
+    });
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openRun(item.dataset.runId, item.dataset.runDate);
+      }
+    });
+  });
 }
 
 function resolveRunCatalogCategoryId(run, productMap, layout) {
@@ -1790,8 +1852,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=356');
-    const { db } = await import('../db.js?v=356');
+    const { getRecipe } = await import('../kitchen-db.js?v=357');
+    const { db } = await import('../db.js?v=357');
     const blocks = [];
 
     for (const row of rows) {
@@ -1995,17 +2057,11 @@ async function renderRunsHistoryView(container, ctx) {
     renderProcess(container);
   });
 
-  container.querySelectorAll('.open-run').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.date) container.dataset.selectedDate = btn.dataset.date;
-      container.dataset.view = 'run';
-      container.dataset.runId = btn.dataset.id;
-      renderProcess(container);
-    });
-  });
+  bindOpenRunListClicks(container);
 
   container.querySelectorAll('.delete-run').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו.')) return;
       await deleteProductionRun(Number(btn.dataset.id));
       requestAutoBackupNow().catch(() => {});
@@ -2136,14 +2192,7 @@ async function renderFlowHistoryView(container, ctx) {
     renderProcess(container);
   });
 
-  container.querySelectorAll('.open-run').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.date) container.dataset.selectedDate = btn.dataset.date;
-      container.dataset.view = 'run';
-      container.dataset.runId = btn.dataset.id;
-      renderProcess(container);
-    });
-  });
+  bindOpenRunListClicks(container);
 }
 
 function flowChecklistPopoverHTML({
@@ -2628,7 +2677,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=356');
+    const kitchen = await import('../kitchen-db.js?v=357');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -2801,9 +2850,27 @@ async function renderRunView(container, runId, ctx) {
 
     ${renderCollapsibleRunCard(
     run.id,
+    'time',
+    '⏱ זמן',
+    renderRunTimeSectionHTML(run),
+    {
+      defaultOpen: false,
+      className: 'flow-run-collapse--time',
+    },
+  )}
+
+    ${renderCollapsibleRunCard(
+    run.id,
     'steps',
     `📋 שלבי התזרים (${run.steps.length})`,
-    `<div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
+    `${run.status === 'active' && run.steps.some((s) => s.status !== 'completed') ? `
+      <div class="flow-steps-bulk-actions">
+        <button type="button" class="btn flow-complete-all-btn" id="complete-all-steps" title="סיים את כל השלבים" aria-label="סיים את כל השלבים">
+          <span class="flow-complete-all-check" aria-hidden="true">✓</span>
+          <span>סיים את כל השלבים</span>
+        </button>
+      </div>` : ''}
+    <div class="flow-timeline${editAllMode ? ' flow-timeline--edit-all' : ''}">
       ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx, productionStepIdx)).join('')}
     </div>`,
     {
@@ -2843,6 +2910,38 @@ async function renderRunView(container, runId, ctx) {
 
   document.getElementById('edit-run-details')?.addEventListener('click', () => {
     openRunDetailsModal(container, run, ctx);
+  });
+
+  document.getElementById('edit-run-time')?.addEventListener('click', () => {
+    openRunDetailsModal(container, run, ctx, { focusTime: true });
+  });
+
+  document.getElementById('clear-step-timers')?.addEventListener('click', async () => {
+    if (!confirm('לבטל את כל זמני השלבים והסטופרים?\nיישארו רק תאריך/שעת התחלה וסיום של התזרים כולו.')) return;
+    try {
+      await clearRunStepTimers(run.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast('זמני השלבים בוטלו ✓');
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('complete-all-steps')?.addEventListener('click', async () => {
+    if (!confirm('לסיים את כל השלבים כעת?\nהתזרים יושלם ותירשם שעת סיום.')) return;
+    try {
+      await completeAllRunSteps(run.id);
+      requestAutoBackupNow().catch(() => {});
+      showToast('כל השלבים הושלמו ✓');
+      container.dataset.runId = String(run.id);
+      container.dataset.view = 'run';
+      renderProcess(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('sync-run-flow')?.addEventListener('click', async () => {
@@ -3566,28 +3665,44 @@ function bindRunProductionPanels(container, run, productionCtx) {
   });
 }
 
-function openRunDetailsModal(container, run, ctx) {
+function openRunDetailsModal(container, run, ctx, { focusTime = false } = {}) {
   const startDate = runStartDateIso(run) || todayISO();
+  const startTime = isoToTimeInput(run.startedAt) || '';
   const endDate = run.completedAt ? String(run.completedAt).slice(0, 10) : '';
+  const endTime = run.completedAt ? (isoToTimeInput(run.completedAt) || '') : '';
+  const endDisabled = run.status !== 'completed';
 
   openModal({
-    title: 'פרטי תהליך',
+    title: focusTime ? 'זמני תזרים' : 'פרטי תהליך',
     bodyHTML: `
+      ${focusTime ? '' : `
       <div class="form-group">
         <label for="run-batch-number">מספר אצווה</label>
         <input type="text" id="run-batch-number" value="${escapeHtml(run.batchNumber || '')}" placeholder="אופציונלי">
+      </div>`}
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label for="run-started-date">תאריך התחלה</label>
+          <input type="date" id="run-started-date" value="${startDate}">
+        </div>
+        <div class="form-group">
+          <label for="run-started-time">שעת התחלה</label>
+          <input type="time" id="run-started-time" value="${escapeHtml(startTime)}">
+        </div>
       </div>
-      <div class="form-group">
-        <label for="run-started-date">תאריך התחלה</label>
-        <input type="date" id="run-started-date" value="${startDate}">
+      <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label for="run-completed-date">תאריך סיום</label>
+          <input type="date" id="run-completed-date" value="${endDate}"${endDisabled ? ' disabled' : ''}>
+        </div>
+        <div class="form-group">
+          <label for="run-completed-time">שעת סיום</label>
+          <input type="time" id="run-completed-time" value="${escapeHtml(endTime)}"${endDisabled ? ' disabled' : ''}>
+        </div>
       </div>
-      <div class="form-group">
-        <label for="run-completed-date">תאריך סיום</label>
-        <input type="date" id="run-completed-date" value="${endDate}"${run.status === 'completed' ? '' : ' disabled'}>
-        ${run.status !== 'completed'
-    ? '<p class="form-hint">יתמלא אוטומטית בסיום התהליך · ניתן לעריכה אחרי השלמת כל השלבים</p>'
-    : ''}
-      </div>`,
+      ${endDisabled
+    ? '<p class="form-hint">סיום יתמלא אוטומטית כשמסיימים את כל השלבים · ניתן לעריכה אחרי השלמת התזרים</p>'
+    : ''}`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="save-run-details">שמור</button>`,
@@ -3598,15 +3713,19 @@ function openRunDetailsModal(container, run, ctx) {
   document.getElementById('save-run-details')?.addEventListener('click', async () => {
     try {
       const payload = {
-        batchNumber: document.getElementById('run-batch-number')?.value ?? '',
+        batchNumber: focusTime
+          ? (run.batchNumber || '')
+          : (document.getElementById('run-batch-number')?.value ?? ''),
         startedDate: document.getElementById('run-started-date').value,
+        startedTime: document.getElementById('run-started-time')?.value || '',
       };
       if (run.status === 'completed') {
         payload.completedDate = document.getElementById('run-completed-date').value;
+        payload.completedTime = document.getElementById('run-completed-time')?.value || '';
       }
       await updateProductionRunDetails(run.id, payload);
       closeModal();
-      showToast('פרטים נשמרו ✓');
+      showToast(focusTime ? 'זמנים נשמרו ✓' : 'פרטים נשמרו ✓');
       container.dataset.runId = String(run.id);
       container.dataset.view = 'run';
       if (payload.startedDate) container.dataset.selectedDate = payload.startedDate;
@@ -5003,17 +5122,11 @@ export async function renderProcess(container) {
     });
   });
 
-  container.querySelectorAll('.open-run').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.date) container.dataset.selectedDate = btn.dataset.date;
-      container.dataset.view = 'run';
-      container.dataset.runId = btn.dataset.id;
-      renderProcess(container);
-    });
-  });
+  bindOpenRunListClicks(container);
 
   container.querySelectorAll('.delete-run').forEach((btn) => {
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
       if (!confirm('למחוק את התהליך? כל רישומי הייצור שתועדו בו יימחקו.')) return;
       await deleteProductionRun(Number(btn.dataset.id));
       requestAutoBackupNow().catch(() => {});
