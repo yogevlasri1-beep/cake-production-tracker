@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=354';
+import { db, getSetting, setSetting } from './db.js?v=355';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=354';
+} from './supabase-backup.js?v=355';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -19,7 +19,7 @@ import {
   orderedCollections,
   shouldApplyRemote,
   rowFingerprint,
-} from './sync/collections.js?v=354';
+} from './sync/collections.js?v=355';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -29,7 +29,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=354';
+} from './sync/id-map.js?v=355';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -40,11 +40,18 @@ const DEFAULT_LIVE = {
   seedDone: false,
   dedupeDone: false,
   dedupeVersion: 0,
+  repairVersion: 0,
   pendingCount: 0,
 };
 
 /** Bump when rowFingerprint rules change so devices re-run local dedupe. */
 const DEDUPE_VERSION = 2;
+
+/**
+ * Bump to force one full re-pull on every device. Needed after a bug wrote bad
+ * foreign keys locally: the cloud rows are correct, so a full pull repairs them.
+ */
+const REPAIR_VERSION = 1;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -115,25 +122,32 @@ async function enqueue(op) {
   scheduleFlush();
 }
 
-export async function enqueueUpsert(collection, localKey) {
-  if (!isSyncCollection(collection) || applyingRemote) return;
-  if (collection === 'settings') {
-    const skip = new Set([
-      'liveSync', 'supabaseBackup', 'deviceId', 'backupSettings',
-      'recipePortionPresetsSynced',
-    ]);
-    if (skip.has(String(localKey))) return;
-  }
+const LOCAL_ONLY_SETTINGS = new Set([
+  'liveSync', 'supabaseBackup', 'deviceId', 'backupSettings',
+  'recipePortionPresetsSynced',
+]);
+
+function isSyncableOp(collection, localKey) {
+  if (!isSyncCollection(collection)) return false;
+  if (collection === 'settings' && LOCAL_ONLY_SETTINGS.has(String(localKey))) return false;
+  return true;
+}
+
+async function enqueueOp(type, collection, localKey) {
+  if (!isSyncableOp(collection, localKey)) return;
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
-  await enqueue({ type: 'upsert', collection, localKey: String(localKey) });
+  await enqueue({ type, collection, localKey: String(localKey) });
+}
+
+export async function enqueueUpsert(collection, localKey) {
+  if (applyingRemote) return;
+  await enqueueOp('upsert', collection, localKey);
 }
 
 export async function enqueueDelete(collection, localKey) {
-  if (!isSyncCollection(collection) || applyingRemote) return;
-  const live = await getLiveSyncSettings();
-  if (!live.enabled) return;
-  await enqueue({ type: 'delete', collection, localKey: String(localKey) });
+  if (applyingRemote) return;
+  await enqueueOp('delete', collection, localKey);
 }
 
 function scheduleFlush() {
@@ -306,7 +320,7 @@ export async function dedupeLocalSyncCollections() {
   return { removed };
 }
 
-async function applyRemoteRow(collection, cloudRow, deviceId) {
+async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false } = {}) {
   if (!cloudRow?.id) return false;
 
   const syncId = cloudRow.id;
@@ -317,8 +331,13 @@ async function applyRemoteRow(collection, cloudRow, deviceId) {
     if (existingMeta) {
       const local = await readLocalRecord(collection, existingMeta.localKey);
       if (local) {
-        if (collection === 'settings') await db.settings.delete(existingMeta.localKey);
-        else await db[collection].delete(Number(existingMeta.localKey));
+        applyingRemote = true;
+        try {
+          if (collection === 'settings') await db.settings.delete(existingMeta.localKey);
+          else await db[collection].delete(Number(existingMeta.localKey));
+        } finally {
+          applyingRemote = false;
+        }
       }
       await upsertMeta({
         collection,
@@ -335,7 +354,18 @@ async function applyRemoteRow(collection, cloudRow, deviceId) {
     return false;
   }
 
-  const payload = await remapFksToLocalIds(collection, cloudRow.payload || {});
+  const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});
+
+  if (unresolved.length && !allowUnresolvedFks) return 'defer';
+
+  if (unresolved.length) {
+    // Last resort: keep whatever the local row already has instead of writing a
+    // UUID (or null) into a numeric FK, which would orphan the row.
+    const local = existingMeta ? await readLocalRecord(collection, existingMeta.localKey) : null;
+    for (const field of unresolved) {
+      payload[field] = local ? (local[field] ?? null) : null;
+    }
+  }
 
   if (collection === 'settings') {
     const key = payload.key || existingMeta?.localKey;
@@ -392,7 +422,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId) {
   return true;
 }
 
-export async function pullCollection(collection, { since } = {}) {
+export async function pullCollection(collection, { since, deferred } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return 0;
   const table = tableOf(collection);
@@ -406,6 +436,10 @@ export async function pullCollection(collection, { since } = {}) {
   let applied = 0;
   for (const row of rows) {
     const ok = await applyRemoteRow(collection, row, deviceId);
+    if (ok === 'defer') {
+      if (deferred) deferred.push({ collection, row });
+      continue;
+    }
     if (ok) applied++;
   }
   return applied;
@@ -417,9 +451,25 @@ export async function pullAllCollections({ full = false } = {}) {
   const since = full ? null : live.lastPullAt;
   let applied = 0;
   const pullStarted = new Date().toISOString();
+  const deferred = [];
   try {
     for (const collection of orderedCollections()) {
-      applied += await pullCollection(collection, { since });
+      applied += await pullCollection(collection, { since, deferred });
+    }
+    // Second pass: rows whose parents were only created during this pull.
+    if (deferred.length) {
+      const deviceId = await getOrCreateDeviceId();
+      const stillDeferred = [];
+      for (const { collection, row } of deferred) {
+        const ok = await applyRemoteRow(collection, row, deviceId);
+        if (ok === 'defer') stillDeferred.push({ collection, row });
+        else if (ok) applied++;
+      }
+      // Anything still unresolved is applied without touching its dangling FKs.
+      for (const { collection, row } of stillDeferred) {
+        const ok = await applyRemoteRow(collection, row, deviceId, { allowUnresolvedFks: true });
+        if (ok && ok !== 'defer') applied++;
+      }
     }
     await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null });
   } catch (err) {
@@ -456,6 +506,53 @@ export async function seedLocalDataToSupabase({ force = false } = {}) {
   return { seeded };
 }
 
+/**
+ * Mutations observed by the middleware wait here until the surrounding Dexie
+ * transaction commits. Writing to syncQueue/syncMeta from inside the mutate
+ * hook would touch tables outside the transaction scope and break callers that
+ * open an explicit multi-table transaction (e.g. starting a production run).
+ */
+const pendingOps = [];
+const txPendingOps = new WeakMap();
+let pendingOpsTimer = null;
+
+function flushPendingOpsSoon() {
+  if (pendingOpsTimer) return;
+  pendingOpsTimer = setTimeout(async () => {
+    pendingOpsTimer = null;
+    const ops = pendingOps.splice(0, pendingOps.length);
+    for (const op of ops) {
+      try {
+        await enqueueOp(op.type, op.collection, op.localKey);
+      } catch (err) {
+        console.warn('live sync enqueue', err);
+      }
+    }
+  }, 0);
+}
+
+function queueSyncOp(op) {
+  const tx = (typeof Dexie !== 'undefined' && Dexie.currentTransaction) || null;
+  if (!tx || typeof tx.on !== 'function') {
+    pendingOps.push(op);
+    flushPendingOpsSoon();
+    return;
+  }
+  let buffered = txPendingOps.get(tx);
+  if (!buffered) {
+    buffered = [];
+    txPendingOps.set(tx, buffered);
+    tx.on('complete', () => {
+      txPendingOps.delete(tx);
+      pendingOps.push(...buffered);
+      flushPendingOpsSoon();
+    });
+    // On abort the writes never happened, so the buffered ops are dropped.
+    tx.on('abort', () => txPendingOps.delete(tx));
+  }
+  buffered.push(op);
+}
+
 /** Install Dexie middleware to enqueue local mutations. */
 export function installLiveSyncMiddleware() {
   if (db._liveSyncInstalled) return;
@@ -473,26 +570,28 @@ export function installLiveSyncMiddleware() {
           return {
             ...table,
             mutate(req) {
-              return table.mutate(req).then(async (res) => {
+              return table.mutate(req).then((res) => {
                 if (applyingRemote) return res;
                 try {
-                  const live = await getLiveSyncSettings();
-                  if (!live.enabled) return res;
-
                   if (req.type === 'add') {
-                    const keys = res.results || [];
-                    for (const k of keys) {
-                      await enqueueUpsert(tableName, localKeyOf(tableName, { id: k, key: k }));
+                    for (const k of res.results || []) {
+                      queueSyncOp({
+                        type: 'upsert',
+                        collection: tableName,
+                        localKey: localKeyOf(tableName, { id: k, key: k }),
+                      });
                     }
                   } else if (req.type === 'put') {
-                    const values = req.values || [];
-                    for (const v of values) {
-                      await enqueueUpsert(tableName, localKeyOf(tableName, v));
+                    for (const v of req.values || []) {
+                      queueSyncOp({
+                        type: 'upsert',
+                        collection: tableName,
+                        localKey: localKeyOf(tableName, v),
+                      });
                     }
                   } else if (req.type === 'delete') {
-                    const keys = req.keys || [];
-                    for (const k of keys) {
-                      await enqueueDelete(tableName, String(k));
+                    for (const k of req.keys || []) {
+                      queueSyncOp({ type: 'delete', collection: tableName, localKey: String(k) });
                     }
                   } else if (req.type === 'deleteRange') {
                     // Full re-seed on next pull/push cycle is safer; skip
@@ -526,6 +625,18 @@ export async function startLiveSync() {
       console.warn('live sync tick', err);
     }
   };
+
+  // One-time per repair version: re-pull everything so foreign keys that an
+  // earlier bug nulled out locally are restored from the (correct) cloud rows.
+  if ((live.repairVersion || 0) < REPAIR_VERSION) {
+    try {
+      await flushSyncQueue();
+      await pullAllCollections({ full: true });
+      await saveLiveSyncSettings({ repairVersion: REPAIR_VERSION });
+    } catch (err) {
+      console.warn('live sync repair pull', err);
+    }
+  }
 
   await tick();
 

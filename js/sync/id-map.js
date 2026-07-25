@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=354';
-import { COLLECTION_FKS, newSyncId } from './collections.js?v=354';
+import { db } from '../db.js?v=355';
+import { COLLECTION_FKS, newSyncId } from './collections.js?v=355';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -78,10 +78,15 @@ export async function remapFksToSyncIds(collection, row) {
   return out;
 }
 
-/** Replace FK sync UUIDs with local ids for applying remote rows. */
+/**
+ * Replace FK sync UUIDs with local ids for applying remote rows.
+ * A UUID with no local mapping is reported in `unresolved` and left untouched —
+ * nulling it would orphan the row (e.g. a flow step losing its flowId).
+ */
 export async function remapFksToLocalIds(collection, payload) {
   const fks = COLLECTION_FKS[collection] || {};
   const out = { ...payload };
+  const unresolved = [];
   for (const [field, targetCollection] of Object.entries(fks)) {
     const val = out[field];
     if (val == null || val === '') {
@@ -96,8 +101,8 @@ export async function remapFksToLocalIds(collection, payload) {
     if (meta && meta.collection === targetCollection) {
       out[field] = collection === 'settings' ? meta.localKey : Number(meta.localKey) || meta.localKey;
     } else {
-      out[field] = null;
+      unresolved.push(field);
     }
   }
-  return out;
+  return { payload: out, unresolved };
 }
