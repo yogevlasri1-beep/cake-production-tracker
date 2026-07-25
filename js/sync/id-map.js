@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=357';
-import { COLLECTION_FKS, newSyncId } from './collections.js?v=357';
+import { db } from '../db.js?v=358';
+import { COLLECTION_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=358';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -81,6 +81,20 @@ export async function remapFksToSyncIds(collection, row) {
     const syncId = await ensureSyncId(targetCollection, val);
     out[field] = syncId || null;
   }
+  const poly = POLYMORPHIC_FKS[collection];
+  if (poly) {
+    const targetCollection = poly.targets[out[poly.typeField]];
+    const val = out[poly.idField];
+    if (targetCollection && val != null && val !== '' && /^\d+$/.test(String(val))) {
+      // Only remap when the target record actually exists locally — otherwise
+      // keep the raw value instead of fabricating a syncId for a ghost record.
+      const target = db[targetCollection] ? await db[targetCollection].get(Number(val)) : null;
+      if (target) {
+        const syncId = await ensureSyncId(targetCollection, val);
+        if (syncId) out[poly.idField] = syncId;
+      }
+    }
+  }
   return out;
 }
 
@@ -108,6 +122,19 @@ export async function remapFksToLocalIds(collection, payload) {
       out[field] = collection === 'settings' ? meta.localKey : Number(meta.localKey) || meta.localKey;
     } else {
       unresolved.push(field);
+    }
+  }
+  const poly = POLYMORPHIC_FKS[collection];
+  if (poly) {
+    const targetCollection = poly.targets[out[poly.typeField]];
+    const val = out[poly.idField];
+    if (targetCollection && typeof val === 'string' && !/^\d+$/.test(val)) {
+      const meta = await getMetaBySyncId(val);
+      if (meta && meta.collection === targetCollection) {
+        out[poly.idField] = Number(meta.localKey) || meta.localKey;
+      } else {
+        unresolved.push(poly.idField);
+      }
     }
   }
   return { payload: out, unresolved };

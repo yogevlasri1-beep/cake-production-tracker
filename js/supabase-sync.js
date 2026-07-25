@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=357';
+import { db, getSetting, setSetting } from './db.js?v=358';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,16 +10,18 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=357';
+} from './supabase-backup.js?v=358';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
+  POLYMORPHIC_FKS,
   KITCHEN_ID,
   isSyncCollection,
   orderedCollections,
   shouldApplyRemote,
   rowFingerprint,
-} from './sync/collections.js?v=357';
+  rowDedupeFingerprint,
+} from './sync/collections.js?v=358';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -29,7 +31,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=357';
+} from './sync/id-map.js?v=358';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -44,14 +46,15 @@ const DEFAULT_LIVE = {
   pendingCount: 0,
 };
 
-/** Bump when rowFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 2;
+/** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
+const DEDUPE_VERSION = 3;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
  * foreign keys locally: the cloud rows are correct, so a full pull repairs them.
+ * v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
  */
-const REPAIR_VERSION = 1;
+const REPAIR_VERSION = 3;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -259,27 +262,30 @@ async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId
   if (!from || !to || from === to) return;
   for (const [collection, fks] of Object.entries(COLLECTION_FKS)) {
     const fields = Object.entries(fks).filter(([, dep]) => dep === targetCollection).map(([f]) => f);
-    if (!fields.length || !db[collection]) continue;
+    const poly = POLYMORPHIC_FKS[collection];
+    if ((!fields.length && !poly) || !db[collection]) continue;
     const rows = await db[collection].toArray();
     for (const row of rows) {
       const patch = {};
       for (const field of fields) {
         if (Number(row[field]) === from) patch[field] = to;
       }
+      if (poly && poly.targets[row[poly.typeField]] === targetCollection
+          && Number(row[poly.idField]) === from) {
+        patch[poly.idField] = to;
+      }
       if (Object.keys(patch).length) {
-        applyingRemote = true;
-        try {
-          await db[collection].update(row.id, patch);
-        } finally {
-          applyingRemote = false;
-        }
+        // Not wrapped in applyingRemote: the retarget is a real local change
+        // that must reach the cloud, otherwise cloud children keep pointing at
+        // the tombstoned duplicate parent.
+        await db[collection].update(row.id, patch);
       }
     }
   }
 }
 
 /**
- * One-time local dedupe: same fingerprint → keep lowest id, delete rest, retarget FKs.
+ * One-time local dedupe: same dedupe-fingerprint → keep preferred row, delete rest, retarget FKs.
  */
 export async function dedupeLocalSyncCollections() {
   let removed = 0;
@@ -288,14 +294,14 @@ export async function dedupeLocalSyncCollections() {
     const rows = await db[collection].toArray();
     const groups = new Map();
     for (const row of rows) {
-      const fp = rowFingerprint(collection, row);
+      const fp = rowDedupeFingerprint(collection, row);
       if (!fp) continue;
       if (!groups.has(fp)) groups.set(fp, []);
       groups.get(fp).push(row);
     }
     for (const list of groups.values()) {
       if (list.length < 2) continue;
-      list.sort((a, b) => (a.id - b.id));
+      list.sort((a, b) => compareDedupeSurvivors(collection, a, b));
       const keep = list[0];
       for (const drop of list.slice(1)) {
         await retargetLocalForeignKeys(collection, drop.id, keep.id);
@@ -318,6 +324,16 @@ export async function dedupeLocalSyncCollections() {
     }
   }
   return { removed };
+}
+
+/** Prefer the survivor that matches cloud cleanup (richest material link, then oldest id). */
+function compareDedupeSurvivors(collection, a, b) {
+  if (collection === 'recipeIngredients') {
+    const aMat = a.rawMaterialId != null && a.rawMaterialId !== '' ? 1 : 0;
+    const bMat = b.rawMaterialId != null && b.rawMaterialId !== '' ? 1 : 0;
+    if (bMat !== aMat) return bMat - aMat;
+  }
+  return (a.id - b.id);
 }
 
 async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false } = {}) {
@@ -609,6 +625,37 @@ export function installLiveSyncMiddleware() {
   });
 }
 
+/**
+ * Re-push rows whose polymorphic FK (targetId/scopeId) was uploaded as a raw
+ * local numeric id before the poly-remap fix, so the cloud gets real UUIDs.
+ * Only rows whose target actually exists locally are pushed.
+ */
+async function repushPolymorphicCollections() {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) return;
+  const deviceId = await getOrCreateDeviceId();
+  for (const collection of Object.keys(POLYMORPHIC_FKS)) {
+    if (!db[collection]) continue;
+    const poly = POLYMORPHIC_FKS[collection];
+    const rows = await db[collection].toArray();
+    for (const row of rows) {
+      const targetCollection = poly.targets[row[poly.typeField]];
+      const val = row[poly.idField];
+      if (!targetCollection || val == null || !/^\d+$/.test(String(val))) continue;
+      const target = db[targetCollection] ? await db[targetCollection].get(Number(val)) : null;
+      if (!target) continue;
+      const localKey = localKeyOf(collection, row);
+      const meta = await getMetaByLocal(collection, localKey);
+      if (!meta?.syncId) continue; // rows without syncId are covered by seeding
+      try {
+        await pushUpsert(cfg, collection, localKey, deviceId);
+      } catch (err) {
+        console.warn('live sync poly repush', collection, localKey, err);
+      }
+    }
+  }
+}
+
 export async function startLiveSync() {
   if (started) return;
   started = true;
@@ -617,10 +664,12 @@ export async function startLiveSync() {
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
 
+  let pulledOk = false;
   const tick = async () => {
     try {
       await flushSyncQueue();
       await pullAllCollections({ full: false });
+      pulledOk = true;
     } catch (err) {
       console.warn('live sync tick', err);
     }
@@ -628,11 +677,14 @@ export async function startLiveSync() {
 
   // One-time per repair version: re-pull everything so foreign keys that an
   // earlier bug nulled out locally are restored from the (correct) cloud rows.
+  // v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
   if ((live.repairVersion || 0) < REPAIR_VERSION) {
     try {
       await flushSyncQueue();
       await pullAllCollections({ full: true });
+      await repushPolymorphicCollections();
       await saveLiveSyncSettings({ repairVersion: REPAIR_VERSION });
+      pulledOk = true;
     } catch (err) {
       console.warn('live sync repair pull', err);
     }
@@ -642,11 +694,12 @@ export async function startLiveSync() {
 
   // One-time per fingerprint version: remove local duplicates created by the
   // old pull-before-seed bug (v2 also covers production runs / step states).
-  // Runs AFTER the first pull so cloud-side dedupe deletions land first;
-  // otherwise two devices could each tombstone the other's kept copy.
-  if (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION) {
+  // Runs only AFTER a successful pull so cloud-side dedupe deletions land
+  // first; otherwise this device could tombstone the copy the cloud kept.
+  if (pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
     try {
       const result = await dedupeLocalSyncCollections();
+      await flushSyncQueue();
       await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
       if (result.removed) console.info('live sync local dedupe removed', result.removed);
     } catch (err) {
@@ -668,7 +721,10 @@ export async function startLiveSync() {
         await seedLocalDataToSupabase({ force: true });
         await pullAllCollections({ full: true });
       }
-      await saveLiveSyncSettings({ seedDone: true, dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
+      // Only mark seedDone here. dedupeDone is set exclusively by the dedupe
+      // block above (or when it actually runs); never claim dedupe ran if it
+      // was skipped because pulledOk was false.
+      await saveLiveSyncSettings({ seedDone: true });
     } catch (err) {
       console.warn('live sync seed', err);
       await saveLiveSyncSettings({ lastError: String(err.message || err) });

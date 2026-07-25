@@ -143,6 +143,24 @@ export const COLLECTION_FKS = {
 };
 
 /**
+ * Polymorphic FK fields: the target collection depends on a sibling type field.
+ * These cannot live in COLLECTION_FKS (fixed target), so the id-map remaps them
+ * separately using the row's type value.
+ */
+export const POLYMORPHIC_FKS = {
+  portionPresetLinks: {
+    idField: 'targetId',
+    typeField: 'linkType',
+    targets: { product: 'products', category: 'categories', group: 'categoryGroups' },
+  },
+  bakingProfileScopes: {
+    idField: 'scopeId',
+    typeField: 'scopeType',
+    targets: { product: 'products', category: 'categories', group: 'categoryGroups' },
+  },
+};
+
+/**
  * Push / seed order (parents before children).
  * Collections not listed are appended at the end.
  */
@@ -283,7 +301,21 @@ export function rowFingerprint(collection, row) {
     case 'recipeCategories':
       return n ? `${collection}|${n}|${row.groupId ?? ''}` : '';
     case 'recipeIngredients':
+      // Include rawMaterialId so pull-match does not fold two live cloud rows
+      // (same line, different supplier materials) onto one local row.
       return `${collection}|${row.recipeId ?? ''}|${n}|${row.rawMaterialId ?? ''}|${row.sortOrder ?? ''}`;
+    case 'portionPresetLinks':
+      return row.portionPresetId != null
+        ? `${collection}|${row.portionPresetId}|${row.linkType ?? ''}|${row.targetId ?? ''}`
+        : '';
+    case 'portionPresetIngredientSettings':
+      return row.portionPresetId != null
+        ? `${collection}|${row.portionPresetId}|${row.recipeIngredientId ?? ''}`
+        : '';
+    case 'bakingProfileScopes':
+      return row.bakingProfileId != null
+        ? `${collection}|${row.bakingProfileId}|${row.scopeType ?? ''}|${row.scopeId ?? ''}`
+        : '';
     case 'productionEntries':
       return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}`;
     case 'productionRuns':
@@ -321,6 +353,20 @@ export function rowFingerprint(collection, row) {
     default:
       return n ? `${collection}|${n}` : '';
   }
+}
+
+/**
+ * Looser fingerprint used only by local/cloud dedupe. For recipe ingredients,
+ * two copies of the same line that differ only in linked material are treated
+ * as duplicates (post-merge bug); pull-match still uses rowFingerprint.
+ */
+export function rowDedupeFingerprint(collection, row) {
+  if (!row) return '';
+  if (collection === 'recipeIngredients') {
+    const n = normName(row.name);
+    return `${collection}|${row.recipeId ?? ''}|${n}|${row.sortOrder ?? ''}`;
+  }
+  return rowFingerprint(collection, row);
 }
 
 /** Name-only fingerprint — for cloud cross-device dedupe when FK UUIDs differ. */
