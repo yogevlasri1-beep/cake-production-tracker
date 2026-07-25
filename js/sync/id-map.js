@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=355';
-import { COLLECTION_FKS, newSyncId } from './collections.js?v=355';
+import { db } from '../db.js?v=356';
+import { COLLECTION_FKS, newSyncId } from './collections.js?v=356';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -22,8 +22,8 @@ export async function getMetaBySyncId(syncId) {
 }
 
 export async function ensureSyncId(collection, localKey, { updatedAt } = {}) {
-  const key = String(localKey);
-  if (!key) return null;
+  const key = String(localKey ?? '');
+  if (!key || key === 'null' || key === 'undefined' || key === 'NaN') return null;
   const existing = await getMetaByLocal(collection, key);
   if (existing?.syncId) {
     if (updatedAt && updatedAt !== existing.updatedAt) {
@@ -73,7 +73,13 @@ export async function remapFksToSyncIds(collection, row) {
       out[field] = null;
       continue;
     }
-    out[field] = await ensureSyncId(targetCollection, val);
+    // Already a sync UUID (e.g. unresolved FK kept on the local row) — pass through.
+    if (typeof val === 'string' && !/^\d+$/.test(val)) {
+      out[field] = val;
+      continue;
+    }
+    const syncId = await ensureSyncId(targetCollection, val);
+    out[field] = syncId || null;
   }
   return out;
 }

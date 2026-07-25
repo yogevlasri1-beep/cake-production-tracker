@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=355';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=355';
-import { defaultColorForIndex } from './chart.js?v=355';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=355';
+} from './validators.js?v=356';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=356';
+import { defaultColorForIndex } from './chart.js?v=356';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=356';
 
 export { ValidationError };
 
@@ -4725,11 +4725,14 @@ export async function getProcessLogsForMonth(year, month) {
 /* ── צ׳קליסט משימות לתזרים — ספרייה + שיוך לכל תזרim ── */
 
 async function resolveFlowCategoryGroupId(flowId) {
-  const flow = await db.flows.get(Number(flowId));
+  const fid = sanitizeProductId(flowId);
+  if (!fid) return null;
+  const flow = await db.flows.get(fid);
   if (!flow) return null;
   if (flow.categoryGroupId) return flow.categoryGroupId;
-  if (flow.categoryId) {
-    const cat = await db.categories.get(flow.categoryId);
+  const cid = sanitizeProductId(flow.categoryId);
+  if (cid) {
+    const cat = await db.categories.get(cid);
     return cat?.groupId || null;
   }
   return null;
@@ -4781,7 +4784,11 @@ export async function getFlowPreparations(flowId) {
   links.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   const result = [];
   for (const link of links) {
-    const task = await db.checklistTasks.get(link.checklistTaskId);
+    // After a bad sync remaps, checklistTaskId can be null/NaN — Dexie throws
+    // "Invalid argument to (Table).get" on those; skip the broken link.
+    const tid = sanitizeProductId(link.checklistTaskId);
+    if (!tid) continue;
+    const task = await db.checklistTasks.get(tid);
     if (!task) continue;
     result.push(mapFlowChecklistItem(link, task));
   }
@@ -6277,7 +6284,7 @@ export async function startProductionRun({
   let resolvedCategoryId = null;
   let steps = [];
 
-  let resolvedFlowId = flowId ? Number(flowId) : null;
+  let resolvedFlowId = sanitizeProductId(flowId);
   let flowName = '';
 
   if (scopeMode === 'product') {
@@ -6324,7 +6331,7 @@ export async function startProductionRun({
       scopeMode: scopeMode || 'category',
     });
     const defaultFlow = availableFlows.find((f) => f.isDefault) || availableFlows[0];
-    resolvedFlowId = defaultFlow?.id || null;
+    resolvedFlowId = sanitizeProductId(defaultFlow?.id);
     flowName = defaultFlow?.name || '';
   } else {
     const flow = await db.flows.get(resolvedFlowId);
