@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=353';
+import { db, getSetting, setSetting } from './db.js?v=354';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=353';
+} from './supabase-backup.js?v=354';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -19,7 +19,7 @@ import {
   orderedCollections,
   shouldApplyRemote,
   rowFingerprint,
-} from './sync/collections.js?v=353';
+} from './sync/collections.js?v=354';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -29,7 +29,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=353';
+} from './sync/id-map.js?v=354';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -39,8 +39,12 @@ const DEFAULT_LIVE = {
   lastError: null,
   seedDone: false,
   dedupeDone: false,
+  dedupeVersion: 0,
   pendingCount: 0,
 };
+
+/** Bump when rowFingerprint rules change so devices re-run local dedupe. */
+const DEDUPE_VERSION = 2;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -523,18 +527,22 @@ export async function startLiveSync() {
     }
   };
 
-  // One-time: remove local duplicates created by the old pull-before-seed bug
-  if (!live.dedupeDone) {
+  await tick();
+
+  // One-time per fingerprint version: remove local duplicates created by the
+  // old pull-before-seed bug (v2 also covers production runs / step states).
+  // Runs AFTER the first pull so cloud-side dedupe deletions land first;
+  // otherwise two devices could each tombstone the other's kept copy.
+  if (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION) {
     try {
       const result = await dedupeLocalSyncCollections();
-      await saveLiveSyncSettings({ dedupeDone: true });
+      await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
       if (result.removed) console.info('live sync local dedupe removed', result.removed);
     } catch (err) {
       console.warn('live sync local dedupe', err);
     }
   }
 
-  await tick();
   if (!live.seedDone) {
     try {
       const cfg = await getSupabaseBackupConfig();
@@ -549,7 +557,7 @@ export async function startLiveSync() {
         await seedLocalDataToSupabase({ force: true });
         await pullAllCollections({ full: true });
       }
-      await saveLiveSyncSettings({ seedDone: true, dedupeDone: true });
+      await saveLiveSyncSettings({ seedDone: true, dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
     } catch (err) {
       console.warn('live sync seed', err);
       await saveLiveSyncSettings({ lastError: String(err.message || err) });

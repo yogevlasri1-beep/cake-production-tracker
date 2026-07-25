@@ -286,6 +286,22 @@ export function rowFingerprint(collection, row) {
       return `${collection}|${row.recipeId ?? ''}|${n}|${row.rawMaterialId ?? ''}|${row.sortOrder ?? ''}`;
     case 'productionEntries':
       return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}`;
+    case 'productionRuns':
+      return row.date
+        ? `${collection}|${row.date}|${row.batchNumber ?? ''}|${row.flowId ?? ''}`
+        : '';
+    case 'runStepStates':
+      return row.runId != null
+        ? `${collection}|${row.runId}|${row.stepIndex ?? ''}`
+        : '';
+    case 'runPreparationChecks':
+      return row.runId != null
+        ? `${collection}|${row.runId}|${row.flowPreparationId ?? ''}`
+        : '';
+    case 'runCleaningChecks':
+      return row.runId != null
+        ? `${collection}|${row.runId}|${row.flowCleaningTaskId ?? ''}`
+        : '';
     case 'rawMaterialPriceHistory':
       return `${collection}|${row.rawMaterialId ?? ''}|${row.effectiveDate ?? ''}|${row.price ?? ''}`;
     case 'recipeProductLinks':
