@@ -34,6 +34,7 @@ export const COLLECTION_TABLE = {
   recipeProductCategoryLinks: 'sync_recipe_product_category_links',
   recipeProductGroupLinks: 'sync_recipe_product_group_links',
   productRecipeComponents: 'sync_product_recipe_components',
+  productPortionComponents: 'sync_product_portion_components',
   productFlowLinks: 'sync_product_flow_links',
   bakingProfiles: 'sync_baking_profiles',
   bakingProfileProducts: 'sync_baking_profile_products',
@@ -111,6 +112,7 @@ export const COLLECTION_FKS = {
   recipeProductCategoryLinks: { recipeId: 'recipes', categoryId: 'categories' },
   recipeProductGroupLinks: { recipeId: 'recipes', groupId: 'categoryGroups' },
   productRecipeComponents: { productId: 'products', recipeId: 'recipes' },
+  productPortionComponents: { productId: 'products', rawMaterialId: 'rawMaterials' },
   productFlowLinks: { productId: 'products', flowId: 'flows' },
   bakingProfileProducts: { bakingProfileId: 'bakingProfiles', productId: 'products' },
   bakingProfileScopes: { bakingProfileId: 'bakingProfiles' },
@@ -205,6 +207,7 @@ export const SYNC_ORDER = [
   'recipeProductCategoryLinks',
   'recipeProductGroupLinks',
   'productRecipeComponents',
+  'productPortionComponents',
   'productFlowLinks',
   'bakingProfileProducts',
   'bakingProfileScopes',
@@ -352,6 +355,8 @@ export function rowFingerprint(collection, row) {
       return `${collection}|${row.recipeId}|${row.groupId}`;
     case 'productRecipeComponents':
       return `${collection}|${row.productId}|${row.recipeId}`;
+    case 'productPortionComponents':
+      return `${collection}|${row.productId}|${row.rawMaterialId}`;
     case 'productFlowLinks':
       return `${collection}|${row.productId}|${row.flowId}`;
     case 'flowSteps':

@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=368';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=369';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=368';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=368';
+} from './validators.js?v=369';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=369';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2487,8 +2487,7 @@ export async function addProductRecipeComponent({ productId, recipeId, weightGra
     .equals([pid, rid])
     .first();
   if (dup) throw new ValidationError('מתכון כבר ברכיבי המוצר');
-  const existing = await getProductRecipeComponents(pid);
-  const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
+  const maxOrder = await nextProductCompositionSortOrder(pid);
   const wg = weightGrams != null && weightGrams !== ''
     ? sanitizeQuantity(weightGrams, { allowZero: false })
     : null;
@@ -2497,7 +2496,7 @@ export async function addProductRecipeComponent({ productId, recipeId, weightGra
     recipeId: rid,
     weightGrams: wg,
     notes: String(notes || '').trim().slice(0, 500),
-    sortOrder: maxOrder + 1,
+    sortOrder: maxOrder,
   });
 }
 
@@ -2517,6 +2516,87 @@ export async function updateProductRecipeComponent(id, patch) {
 export async function deleteProductRecipeComponent(id) {
   const cid = sanitizeProductId(id);
   if (cid) await db.productRecipeComponents.delete(cid);
+}
+
+export async function getProductPortionComponents(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid || !db.productPortionComponents) return [];
+  const rows = await db.productPortionComponents.where('productId').equals(pid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+async function nextProductCompositionSortOrder(productId) {
+  const [recipes, portions] = await Promise.all([
+    getProductRecipeComponents(productId),
+    getProductPortionComponents(productId),
+  ]);
+  return Math.max(
+    0,
+    ...recipes.map((r) => r.sortOrder ?? 0),
+    ...portions.map((r) => r.sortOrder ?? 0),
+  ) + 1;
+}
+
+export function portionMaterialDefaultWeightGrams(mat) {
+  const kg = Number(mat?.portionWeightKg);
+  if (!Number.isFinite(kg) || kg <= 0) return null;
+  return Math.round(kg * 1000);
+}
+
+export function computePortionComponentCost(mat, weightGrams) {
+  const grams = Number(weightGrams) || 0;
+  if (grams <= 0 || !mat) return 0;
+  const perKg = getMaterialEffectivePricePerKg(mat);
+  if (perKg == null) return 0;
+  return roundQty((grams / 1000) * perKg);
+}
+
+export async function addProductPortionComponent({ productId, rawMaterialId, weightGrams, notes }) {
+  const pid = sanitizeProductId(productId);
+  const mid = sanitizeProductId(rawMaterialId);
+  if (!pid || !mid) throw new ValidationError('שיוך לא תקין');
+  if (!db.productPortionComponents) throw new ValidationError('טבלת מנות לא זמינה — רענן את האפליקציה');
+  const mat = await db.rawMaterials.get(mid);
+  if (!mat) throw new ValidationError('חומר גלם לא נמצא');
+  if (!mat.isPortion) throw new ValidationError('החומר אינו מסומן כמנה');
+  const dup = await db.productPortionComponents
+    .where('[productId+rawMaterialId]')
+    .equals([pid, mid])
+    .first();
+  if (dup) throw new ValidationError('מנה כבר ברכיבי המוצר');
+  const defaultG = portionMaterialDefaultWeightGrams(mat);
+  const wg = weightGrams != null && weightGrams !== ''
+    ? sanitizeQuantity(weightGrams, { allowZero: false })
+    : defaultG;
+  if (wg == null || wg <= 0) throw new ValidationError('הגדר משקל מנה (ק"ג)');
+  const sortOrder = await nextProductCompositionSortOrder(pid);
+  return db.productPortionComponents.add({
+    productId: pid,
+    rawMaterialId: mid,
+    weightGrams: wg,
+    notes: String(notes || '').trim().slice(0, 500),
+    sortOrder,
+  });
+}
+
+export async function updateProductPortionComponent(id, patch) {
+  const cid = sanitizeProductId(id);
+  if (!cid || !db.productPortionComponents) return;
+  const data = { ...patch };
+  if ('weightGrams' in data) {
+    data.weightGrams = data.weightGrams != null && data.weightGrams !== ''
+      ? sanitizeQuantity(data.weightGrams, { allowZero: false })
+      : null;
+    if (data.weightGrams == null) throw new ValidationError('הגדר משקל מנה (ק"ג)');
+  }
+  if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 500);
+  if (Object.keys(data).length) await db.productPortionComponents.update(cid, data);
+}
+
+export async function deleteProductPortionComponent(id) {
+  const cid = sanitizeProductId(id);
+  if (cid && db.productPortionComponents) await db.productPortionComponents.delete(cid);
 }
 
 export async function getRecipesForProduct(productId) {
@@ -2576,8 +2656,9 @@ export async function getProductDetail(productId) {
   const product = await db.products.get(pid);
   if (!product) throw new ValidationError('מוצר לא נמצא');
 
-  const [components, linkedRecipes, bakingLink, materials, profiles, category] = await Promise.all([
+  const [recipeComponents, portionComponents, linkedRecipes, bakingLink, materials, profiles, category] = await Promise.all([
     getProductRecipeComponents(pid),
+    getProductPortionComponents(pid),
     getRecipesForProduct(pid),
     getProductBakingProfileLink(pid),
     getRawMaterials(),
@@ -2585,13 +2666,14 @@ export async function getProductDetail(productId) {
     db.categories.get(product.categoryId),
   ]);
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
+  const matById = new Map(materials.map((m) => [m.id, m]));
 
   let totalWeightGrams = 0;
   let recommendedCost = 0;
   let fullCost = 0;
   const enrichedComponents = [];
 
-  for (const comp of components) {
+  for (const comp of recipeComponents) {
     const recipe = await getRecipe(comp.recipeId);
     if (!recipe) continue;
     const costingIngredients = await getRecipeCostingIngredients(recipe);
@@ -2614,6 +2696,7 @@ export async function getProductDetail(productId) {
 
     enrichedComponents.push({
       ...comp,
+      kind: 'recipe',
       recipe,
       recipeTotalGrams: recipeTotalG,
       effectiveWeightGrams: targetG,
@@ -2623,6 +2706,28 @@ export async function getProductDetail(productId) {
       bakingLine: formatRecipeBakingParamsLine(recipe, profileMap),
     });
   }
+
+  for (const comp of portionComponents) {
+    const mat = matById.get(Number(comp.rawMaterialId));
+    if (!mat) continue;
+    const defaultG = portionMaterialDefaultWeightGrams(mat) || 0;
+    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : defaultG;
+    const lineCost = computePortionComponentCost(mat, targetG);
+    totalWeightGrams += targetG || 0;
+    recommendedCost += lineCost;
+    fullCost += lineCost;
+    enrichedComponents.push({
+      ...comp,
+      kind: 'portion',
+      material: mat,
+      portionDefaultGrams: defaultG,
+      effectiveWeightGrams: targetG,
+      supplierCost: lineCost,
+      fullCost: lineCost,
+    });
+  }
+
+  enrichedComponents.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
 
   const rawMaterialsCostSource = sanitizeRawMaterialsCostSource(product.rawMaterialsCostSource);
   const effectiveRawCost = rawMaterialsCostSource === 'recipes'
@@ -2661,8 +2766,12 @@ export async function syncProductCostFromComposition(productId, { setSource = fa
   if (!product) throw new ValidationError('מוצר לא נמצא');
 
   let recommendedCost = 0;
-  const components = await getProductRecipeComponents(pid);
-  const materials = await getRawMaterials();
+  const [components, portionComponents, materials] = await Promise.all([
+    getProductRecipeComponents(pid),
+    getProductPortionComponents(pid),
+    getRawMaterials(),
+  ]);
+  const matById = new Map(materials.map((m) => [m.id, m]));
   for (const comp of components) {
     const recipe = await getRecipe(comp.recipeId);
     if (!recipe) continue;
@@ -2675,6 +2784,13 @@ export async function syncProductCostFromComposition(productId, { setSource = fa
     recommendedCost += await computeRecipeMaterialsCostFiltered(
       scaledIngredients, materials, { supplierOnly: true },
     );
+  }
+  for (const comp of portionComponents) {
+    const mat = matById.get(Number(comp.rawMaterialId));
+    if (!mat) continue;
+    const defaultG = portionMaterialDefaultWeightGrams(mat) || 0;
+    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : defaultG;
+    recommendedCost += computePortionComponentCost(mat, targetG);
   }
   const cost = roundQty(recommendedCost);
   const patch = { rawMaterialsCost: cost };
@@ -3180,6 +3296,9 @@ export async function deleteRawMaterial(id) {
   const mid = sanitizeProductId(id);
   if (!mid) return;
   await clearRawMaterialPortionPresets(mid);
+  if (db.productPortionComponents) {
+    await db.productPortionComponents.where('rawMaterialId').equals(mid).delete();
+  }
   await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
   await db.rawMaterials.delete(mid);
   await syncRawMaterialsActiveFromRecipes();
@@ -3625,6 +3744,20 @@ async function retargetMaterialRefs(fromId, toId) {
       await db.groupPortionPresets.update(row.id, { sourceRawMaterialId: toId });
     }
   }
+  if (db.productPortionComponents) {
+    const rows = await db.productPortionComponents.where('rawMaterialId').equals(fromId).toArray();
+    for (const row of rows) {
+      const dup = await db.productPortionComponents
+        .where('[productId+rawMaterialId]')
+        .equals([row.productId, toId])
+        .first();
+      if (dup) {
+        await db.productPortionComponents.delete(row.id);
+      } else {
+        await db.productPortionComponents.update(row.id, { rawMaterialId: toId });
+      }
+    }
+  }
 }
 
 async function renameRecipeIngredientsMaterialName(fromName, toName) {
@@ -3649,6 +3782,7 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
   if (db.products) txTables.push(db.products);
   if (db.supplierShortages) txTables.push(db.supplierShortages);
   if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
+  if (db.productPortionComponents) txTables.push(db.productPortionComponents);
 
   await db.transaction('rw', ...txTables, async () => {
     for (const mid of ids) {
@@ -4826,7 +4960,7 @@ export async function exportKitchenTables() {
   const [
     recipeGroups, recipeCategories, recipes, recipeIngredients, recipeProductLinks,
     recipeProductCategoryLinks, recipeProductGroupLinks,
-    productRecipeComponents,
+    productRecipeComponents, productPortionComponents,
     productionMachines, productionMachineFields, productionMachineProducts, productionMachineProductValues,
     bakingProfiles, bakingProfileProducts, bakingProfileScopes,
     supplierCategories, suppliers, rawMaterials, rawMaterialPriceHistory, supplierShortages,
@@ -4840,6 +4974,7 @@ export async function exportKitchenTables() {
     db.recipeProductCategoryLinks?.toArray?.() ?? Promise.resolve([]),
     db.recipeProductGroupLinks?.toArray?.() ?? Promise.resolve([]),
     db.productRecipeComponents?.toArray?.() ?? Promise.resolve([]),
+    db.productPortionComponents?.toArray?.() ?? Promise.resolve([]),
     db.productionMachines?.toArray?.() ?? Promise.resolve([]),
     db.productionMachineFields?.toArray?.() ?? Promise.resolve([]),
     db.productionMachineProducts?.toArray?.() ?? Promise.resolve([]),
@@ -4864,6 +4999,7 @@ export async function exportKitchenTables() {
     recipeProductCategoryLinks,
     recipeProductGroupLinks,
     productRecipeComponents,
+    productPortionComponents,
     productionMachines,
     productionMachineFields,
     productionMachineProducts,
@@ -4885,7 +5021,7 @@ export async function importKitchenTables(payload) {
   const tables = [
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',
     'recipeProductCategoryLinks', 'recipeProductGroupLinks',
-    'productRecipeComponents',
+    'productRecipeComponents', 'productPortionComponents',
     'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
     'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
     'supplierCategories', 'suppliers', 'rawMaterials', 'rawMaterialPriceHistory', 'supplierShortages',

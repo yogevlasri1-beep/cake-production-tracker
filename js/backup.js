@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=368';
-import { APP_VERSION } from './version.js?v=368';
-import { defaultColorForIndex } from './chart.js?v=368';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=368';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=368';
-import { ValidationError } from './validators.js?v=368';
+import { exportAllData, importAllData } from './db.js?v=369';
+import { APP_VERSION } from './version.js?v=369';
+import { defaultColorForIndex } from './chart.js?v=369';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=369';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=369';
+import { ValidationError } from './validators.js?v=369';
 
 export const BACKUP_VERSION = 3;
 
@@ -189,6 +189,7 @@ export function enrichBackupData(raw) {
     bakingProfileProducts: raw.bakingProfileProducts || [],
     bakingProfileScopes: raw.bakingProfileScopes || [],
     productRecipeComponents: raw.productRecipeComponents || [],
+    productPortionComponents: raw.productPortionComponents || [],
     productFlowLinks: raw.productFlowLinks || [],
     productionMachines: raw.productionMachines || [],
     productionMachineFields: raw.productionMachineFields || [],
@@ -265,6 +266,7 @@ export function summarizeBackupData(data) {
     recipeProductCategoryLinks: data.recipeProductCategoryLinks?.length || 0,
     recipeProductGroupLinks: data.recipeProductGroupLinks?.length || 0,
     productRecipeComponents: data.productRecipeComponents?.length || 0,
+    productPortionComponents: data.productPortionComponents?.length || 0,
     productionMachines: data.productionMachines?.length || 0,
     productionMachineFields: data.productionMachineFields?.length || 0,
     productionMachineProducts: data.productionMachineProducts?.length || 0,
@@ -316,6 +318,7 @@ export function formatBackupSummary(counts) {
   if (counts.recipeProductCategoryLinks) parts.push(`${counts.recipeProductCategoryLinks} קישורי קטגוריה`);
   if (counts.recipeProductGroupLinks) parts.push(`${counts.recipeProductGroupLinks} קישורי קבוצה`);
   if (counts.productRecipeComponents) parts.push(`${counts.productRecipeComponents} רכיבי מוצר`);
+  if (counts.productPortionComponents) parts.push(`${counts.productPortionComponents} מנות בהרכב`);
   if (counts.productionMachines) parts.push(`${counts.productionMachines} מכונות יצור`);
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
@@ -378,6 +381,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];
   if (!Array.isArray(data.bakingProfileScopes)) data.bakingProfileScopes = [];
   if (!Array.isArray(data.productRecipeComponents)) data.productRecipeComponents = [];
+  if (!Array.isArray(data.productPortionComponents)) data.productPortionComponents = [];
   if (!Array.isArray(data.productFlowLinks)) data.productFlowLinks = [];
   if (!Array.isArray(data.productionMachines)) data.productionMachines = [];
   if (!Array.isArray(data.productionMachineFields)) data.productionMachineFields = [];

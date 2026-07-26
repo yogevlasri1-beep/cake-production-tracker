@@ -4307,6 +4307,38 @@ textarea {
   flex-wrap: wrap;
 }
 
+.product-composition-add--portion {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.product-add-portion-weight input {
+  width: 72px;
+}
+
+.product-composition-kind-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  vertical-align: middle;
+  background: color-mix(in srgb, #0f766e 14%, white);
+  color: #0f766e;
+}
+
+.product-composition-kind-badge--recipe {
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, white);
+  color: var(--primary-dark, #1d4ed8);
+}
+
+.product-composition-row--portion {
+  border-color: color-mix(in srgb, #0f766e 28%, var(--border));
+  background: color-mix(in srgb, #ecfdf5 55%, white);
+}
+
 .product-add-recipe-select {
   flex: 1;
   min-width: 160px;

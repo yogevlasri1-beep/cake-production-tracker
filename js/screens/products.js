@@ -6,24 +6,26 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=368';
+} from '../db.js?v=369';
 import {
   getProductDetail,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
+  addProductPortionComponent,
+  updateProductPortionComponent, deleteProductPortionComponent,
   getRecipesCatalogLayout, getBakingProfiles, getProductBakingProfileLink,
   linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
   syncProductCostIfRecipesMode, syncAllProductsCostFromRecipes, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
-  recipeTotalWeightGrams,
+  recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=368';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=368';
-import { openModal, closeModal } from '../modal.js?v=368';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=368';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=368';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=368';
+} from '../kitchen-db.js?v=369';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=369';
+import { openModal, closeModal } from '../modal.js?v=369';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=369';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=369';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=369';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -573,7 +575,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=368');
+    const { navigate } = await import('../app.js?v=369');
     navigate('backup');
   });
 
@@ -798,36 +800,61 @@ function bindProductDetailOpen(container) {
 }
 
 function buildProductDetailHTML(detail, {
-  allRecipes, bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [],
+  allRecipes, portionMaterials = [], bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [],
   packagingMaterial = null, packagingSupplierName = '',
 }) {
   const { product, category, components, linkedRecipes, bakingProfile, bakingProfileLink, totalWeightGrams } = detail;
   const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
-  const usedRecipeIds = new Set(components.map((c) => c.recipeId));
+  const usedRecipeIds = new Set(components.filter((c) => c.kind !== 'portion').map((c) => c.recipeId));
+  const usedPortionIds = new Set(components.filter((c) => c.kind === 'portion').map((c) => c.rawMaterialId));
   const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
+  const availablePortions = (portionMaterials || []).filter((m) => !usedPortionIds.has(m.id));
   const quickAddRecipes = linkedRecipes.filter((r) => !usedRecipeIds.has(r.id));
 
   const compositionRows = components.length
     ? components.map((comp) => {
+      if (comp.kind === 'portion') {
+        const defaultG = comp.portionDefaultGrams || 0;
+        const weightKg = gramsToKgInput(comp.weightGrams);
+        const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
+        return `
+        <div class="product-composition-row product-composition-row--portion" data-component-id="${comp.id}" data-kind="portion">
+          <div class="product-composition-main">
+            <span class="product-composition-name">${escapeHtml(comp.material?.name || 'מנה')}
+              <span class="product-composition-kind-badge">מנה</span>
+            </span>
+            <span class="product-composition-meta">ברירת מחדל: ${formatCompositionKg(defaultG)} · חומר גלם</span>
+          </div>
+          <label class="product-composition-weight">
+            <span>ק"ג</span>
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="portion" min="0.001" step="0.001"
+              value="${weightKg}" placeholder="${placeholderKg}">
+          </label>
+          <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
+          <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" data-kind="portion" title="הסר">🗑</button>
+        </div>`;
+      }
       const defaultG = comp.recipeTotalGrams || 0;
       const weightKg = gramsToKgInput(comp.weightGrams);
       const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
       return `
-        <div class="product-composition-row" data-component-id="${comp.id}">
+        <div class="product-composition-row" data-component-id="${comp.id}" data-kind="recipe">
           <div class="product-composition-main">
-            <span class="product-composition-name">${escapeHtml(comp.recipe?.name || 'מתכון')}</span>
+            <span class="product-composition-name">${escapeHtml(comp.recipe?.name || 'מתכון')}
+              <span class="product-composition-kind-badge product-composition-kind-badge--recipe">מתכון</span>
+            </span>
             <span class="product-composition-meta">בסיס: ${formatCompositionKg(defaultG)}</span>
           </div>
           <label class="product-composition-weight">
             <span>ק"ג</span>
-            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" min="0.001" step="0.001"
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="recipe" min="0.001" step="0.001"
               value="${weightKg}" placeholder="${placeholderKg}">
           </label>
           <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
-          <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" title="הסר">🗑</button>
+          <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" data-kind="recipe" title="הסר">🗑</button>
         </div>`;
     }).join('')
-    : '<p class="recipe-sheet-empty">אין רכיבים — הוסף מתכון מהרשימה</p>';
+    : '<p class="recipe-sheet-empty">אין רכיבים — הוסף מתכון או מנה מהרשימה</p>';
 
   const quickAddBanner = !components.length && quickAddRecipes.length
     ? `<div class="product-detail-quick-add">
@@ -844,6 +871,13 @@ function buildProductDetailHTML(detail, {
   const recipeOptions = availableRecipes.length
     ? availableRecipes.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')
     : '<option value="" disabled>— אין מתכונים זמינים —</option>';
+
+  const portionOptions = availablePortions.length
+    ? availablePortions.map((m) => {
+      const defaultKg = Number(m.portionWeightKg) > 0 ? formatDecimal(m.portionWeightKg) : '';
+      return `<option value="${m.id}" data-weight-kg="${defaultKg}">${escapeHtml(m.name)}${defaultKg ? ` (${defaultKg} ק"ג)` : ''}</option>`;
+    }).join('')
+    : '<option value="" disabled>— אין מנות מחומרי גלם —</option>';
 
   const directProfileId = bakingProfileLink?.source === 'product' ? bakingProfile?.id : null;
   const inheritedHint = bakingProfile && bakingProfileLink?.source !== 'product'
@@ -864,8 +898,9 @@ function buildProductDetailHTML(detail, {
     `<option value="${p.id}" ${directProfileId === p.id ? 'selected' : ''}>${escapeHtml(p.name)}</option>`,
   ).join('');
 
-  const componentBakingRows = components.length
-    ? components.map((comp) => {
+  const recipeCompsForBaking = components.filter((c) => c.kind !== 'portion');
+  const componentBakingRows = recipeCompsForBaking.length
+    ? recipeCompsForBaking.map((comp) => {
       const baking = resolveRecipeBaking(comp.recipe, profileMap);
       const line = formatRecipeBakingParamsLine(comp.recipe, profileMap);
       if (!baking.hasBaking && !line) return '';
@@ -911,7 +946,7 @@ function buildProductDetailHTML(detail, {
       </header>
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="הרכב מוצר">
-        <summary class="recipe-sheet-section-title product-detail-collapse-summary">הרכב מוצר · שיוך למתכון</summary>
+        <summary class="recipe-sheet-section-title product-detail-collapse-summary">הרכב מוצר · מתכונים ומנות</summary>
         ${quickAddBanner}
         <div class="product-composition-list">${compositionRows}</div>
         <div class="product-composition-add">
@@ -921,6 +956,18 @@ function buildProductDetailHTML(detail, {
           </select>
           <button type="button" class="btn btn-secondary btn-sm" id="product-add-recipe-btn">+ הוסף</button>
         </div>
+        <div class="product-composition-add product-composition-add--portion">
+          <select id="product-add-portion-select" class="product-add-recipe-select">
+            <option value="">— בחר מנה —</option>
+            ${portionOptions}
+          </select>
+          <label class="product-composition-weight product-add-portion-weight">
+            <span>ק"ג</span>
+            <input type="number" id="product-add-portion-weight" min="0.001" step="0.001" placeholder="משקל">
+          </label>
+          <button type="button" class="btn btn-secondary btn-sm" id="product-add-portion-btn">+ הוסף מנה</button>
+        </div>
+        <p class="form-hint" style="margin-top:8px">מנות מחומרי גלם — רק חומרים שסומנו כמנה בספקים</p>
       </details>
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="אפייה">
@@ -995,6 +1042,7 @@ function buildProductDetailHTML(detail, {
 async function openProductDetailModal(container, productId) {
   let detail;
   let allRecipes = [];
+  let portionMaterials = [];
   let bakingProfiles = [];
   let profileMap = new Map();
   let packagingMaterial = null;
@@ -1004,7 +1052,7 @@ async function openProductDetailModal(container, productId) {
   let candidateFlows = [];
 
   async function loadContext() {
-    const [d, layout, profiles, linked, candidates, packMats, suppliers] = await Promise.all([
+    const [d, layout, profiles, linked, candidates, packMats, suppliers, materials] = await Promise.all([
       getProductDetail(productId),
       getRecipesCatalogLayout(),
       getBakingProfiles(),
@@ -1012,6 +1060,7 @@ async function openProductDetailModal(container, productId) {
       getCandidateFlowsForProduct(productId),
       getPackagingMaterials(),
       getSuppliers(),
+      getRawMaterials(),
     ]);
     detail = d;
     linkedFlows = linked;
@@ -1030,10 +1079,13 @@ async function openProductDetailModal(container, productId) {
       }
     }
     allRecipes.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+    portionMaterials = (materials || [])
+      .filter((m) => m.isPortion)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
   }
 
   const detailOpts = () => ({
-    allRecipes, bakingProfiles, profileMap, linkedFlows, candidateFlows,
+    allRecipes, portionMaterials, bakingProfiles, profileMap, linkedFlows, candidateFlows,
     packagingMaterial, packagingSupplierName,
   });
 
@@ -1086,9 +1138,14 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   document.querySelectorAll('.product-comp-weight-input').forEach((input) => {
     input.addEventListener('change', async () => {
       const id = Number(input.dataset.id);
+      const kind = input.dataset.kind || 'recipe';
       const grams = parseCompositionKgInput(input.value);
       try {
-        await updateProductRecipeComponent(id, { weightGrams: grams });
+        if (kind === 'portion') {
+          await updateProductPortionComponent(id, { weightGrams: grams });
+        } else {
+          await updateProductRecipeComponent(id, { weightGrams: grams });
+        }
         await afterCompositionChange();
       } catch (err) {
         showToast(err.message || 'שגיאה');
@@ -1099,7 +1156,12 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   document.querySelectorAll('.product-comp-remove').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
-        await deleteProductRecipeComponent(Number(btn.dataset.id));
+        const kind = btn.dataset.kind || 'recipe';
+        if (kind === 'portion') {
+          await deleteProductPortionComponent(Number(btn.dataset.id));
+        } else {
+          await deleteProductRecipeComponent(Number(btn.dataset.id));
+        }
         showToast('הוסר');
         await afterCompositionChange();
       } catch (err) {
@@ -1131,6 +1193,38 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     try {
       await addProductRecipeComponent({ productId, recipeId });
       showToast('נוסף');
+      await afterCompositionChange();
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  const portionSelect = document.getElementById('product-add-portion-select');
+  const portionWeightInput = document.getElementById('product-add-portion-weight');
+  const syncPortionWeightPlaceholder = () => {
+    if (!portionSelect || !portionWeightInput) return;
+    const opt = portionSelect.selectedOptions?.[0];
+    const kg = opt?.dataset?.weightKg || '';
+    if (!portionWeightInput.value) portionWeightInput.placeholder = kg || 'משקל';
+    if (kg && !portionWeightInput.value) portionWeightInput.value = kg;
+  };
+  portionSelect?.addEventListener('change', () => {
+    if (portionWeightInput) portionWeightInput.value = '';
+    syncPortionWeightPlaceholder();
+  });
+  syncPortionWeightPlaceholder();
+
+  document.getElementById('product-add-portion-btn')?.addEventListener('click', async () => {
+    const materialId = Number(portionSelect?.value);
+    if (!materialId) return showToast('בחר מנה');
+    const grams = parseCompositionKgInput(portionWeightInput?.value);
+    try {
+      await addProductPortionComponent({
+        productId,
+        rawMaterialId: materialId,
+        weightGrams: grams,
+      });
+      showToast('מנה נוספה');
       await afterCompositionChange();
     } catch (err) {
       showToast(err.message || 'שגיאה');

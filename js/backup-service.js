@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=368';
+} from './db.js?v=369';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=368';
-import { downloadBlob } from './download.js?v=368';
-import { ValidationError } from './validators.js?v=368';
-import { openModal, closeModal } from './modal.js?v=368';
-import { escapeHtml, showToast } from './utils.js?v=368';
+} from './backup.js?v=369';
+import { downloadBlob } from './download.js?v=369';
+import { ValidationError } from './validators.js?v=369';
+import { openModal, closeModal } from './modal.js?v=369';
+import { escapeHtml, showToast } from './utils.js?v=369';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=368';
+} from './backup-folder-bridge.js?v=369';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -33,7 +33,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=368';
+} from './supabase-backup.js?v=369';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -372,7 +372,7 @@ function installDbChangeHooks() {
     'departmentCleaningLists', 'departmentCleaningTasks',
     'managerResponsibilityAreas', 'managerEmployees',
     'processLogs', 'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets', 'portionPresetIngredientSettings', 'groupPreparations', 'checklistTasks', 'flowChecklistItems', 'flowCleaningTasks', 'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks', 'runCleaningChecks',
-    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',     'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'productFlowLinks', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients', 'recipeProductLinks',     'recipeProductCategoryLinks', 'recipeProductGroupLinks', 'productRecipeComponents', 'productPortionComponents', 'productFlowLinks', 'supplierCategories', 'suppliers', 'rawMaterials', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'purchaseCategories', 'purchaseItems',
     'settings',
   ];
@@ -430,7 +430,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=368');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=369');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
