@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=364';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=365';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=364';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=364';
+} from './validators.js?v=365';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=365';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1815,7 +1815,14 @@ export async function updateRecipeIngredient(id, patch) {
   }
   await db.recipeIngredients.update(iid, data);
   const ing = await db.recipeIngredients.get(iid);
-  if (ing?.recipeId) await syncRecipePortionPresets(ing.recipeId);
+  if (ing?.recipeId) {
+    await syncRecipePortionPresets(ing.recipeId);
+    try {
+      await syncProductCostFromRecipe(ing.recipeId);
+    } catch {
+      /* המתכון אינו משמש בהרכב מוצר */
+    }
+  }
   await syncRawMaterialsActiveFromRecipes();
 }
 
@@ -2055,6 +2062,11 @@ export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quant
     priceSource: src,
   });
   await syncRecipePortionPresets(rid);
+  try {
+    await syncProductCostFromRecipe(rid);
+  } catch {
+    /* המתכון אינו משמש בהרכב מוצר */
+  }
   await syncRawMaterialsActiveFromRecipes();
   return ingId;
 }
@@ -2064,7 +2076,14 @@ export async function deleteRecipeIngredient(id) {
   if (!iid) return;
   const ing = await db.recipeIngredients.get(iid);
   await db.recipeIngredients.delete(iid);
-  if (ing?.recipeId) await syncRecipePortionPresets(ing.recipeId);
+  if (ing?.recipeId) {
+    await syncRecipePortionPresets(ing.recipeId);
+    try {
+      await syncProductCostFromRecipe(ing.recipeId);
+    } catch {
+      /* המתכון אינו משמש בהרכב מוצר */
+    }
+  }
   await syncRawMaterialsActiveFromRecipes();
 }
 
@@ -2373,18 +2392,26 @@ export function isProductRecipesCostSource(product) {
   return sanitizeRawMaterialsCostSource(product?.rawMaterialsCostSource) === 'recipes';
 }
 
-/** סנכרון מחיר חומרי גלם במוצר מסכום המתכון */
+/**
+ * מסנכרן מוצרים שמשתמשים במתכון לפי הרכב המוצר ומשקל הרכיב.
+ * אין לשמור את עלות המתכון המלאה ישירות במוצר: אותו מתכון עשוי להיכלל
+ * במוצר בכמות חלקית, ולעיתים המוצר מורכב מכמה מתכונים.
+ */
 export async function syncProductCostFromRecipe(recipeId) {
   const recipe = await getRecipe(recipeId);
-  const productIds = await resolveRecipeLinkedProductIds(recipe);
-  if (!productIds.length) throw new ValidationError('אין מוצרים מקושרים');
-  const cost = await computeRecipeMaterialsCost(recipe.ingredients);
+  if (!recipe) throw new ValidationError('מתכון לא נמצא');
+  const productIds = new Set(await resolveRecipeLinkedProductIds(recipe));
+  const components = await db.productRecipeComponents.where('recipeId').equals(recipe.id).toArray();
+  for (const component of components) productIds.add(component.productId);
+  if (!productIds.size) throw new ValidationError('אין מוצרים מקושרים');
+
+  let lastCost = 0;
   for (const pid of productIds) {
     const product = await db.products.get(pid);
     if (!isProductRecipesCostSource(product)) continue;
-    await db.products.update(pid, { rawMaterialsCost: cost });
+    lastCost = await syncProductCostFromComposition(pid);
   }
-  return cost;
+  return lastCost;
 }
 
 /** משקל כולל של מתכון בגרמים (יבשים + נוזלים כק"ג) */
@@ -2410,6 +2437,18 @@ function ingredientsWithScaledQuantity(ingredients) {
   return (ingredients || []).map((ing) => (
     ing.scaledQuantity != null ? { ...ing, quantity: ing.scaledQuantity } : ing
   ));
+}
+
+/** חומרי המתכון לחישוב משקל/עלות, כולל תוספות לאחר הכנה. */
+async function getRecipeCostingIngredients(recipe) {
+  const ingredients = [...(recipe?.ingredients || [])];
+  if (!recipe?.id || recipe.parentRecipeId) return ingredients;
+  const additions = await getRecipeSubRecipes(recipe.id);
+  for (const addition of additions) {
+    const fullAddition = await getRecipe(addition.id);
+    ingredients.push(...(fullAddition?.ingredients || []));
+  }
+  return ingredients;
 }
 
 /** עלות חומרי גלם — אופציונלית רק מחירי ספק */
@@ -2555,11 +2594,12 @@ export async function getProductDetail(productId) {
   for (const comp of components) {
     const recipe = await getRecipe(comp.recipeId);
     if (!recipe) continue;
-    const recipeTotalG = recipeTotalWeightGrams(recipe.ingredients);
+    const costingIngredients = await getRecipeCostingIngredients(recipe);
+    const recipeTotalG = recipeTotalWeightGrams(costingIngredients);
     const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
     const scaledIngredients = targetG > 0 && recipeTotalG > 0
-      ? scaleIngredientsToTargetGrams(recipe.ingredients, targetG)
-      : recipe.ingredients;
+      ? scaleIngredientsToTargetGrams(costingIngredients, targetG)
+      : costingIngredients;
 
     const lineSupplierCost = await computeRecipeMaterialsCostFiltered(
       scaledIngredients, materials, { supplierOnly: true },
@@ -2626,11 +2666,12 @@ export async function syncProductCostFromComposition(productId, { setSource = fa
   for (const comp of components) {
     const recipe = await getRecipe(comp.recipeId);
     if (!recipe) continue;
-    const recipeTotalG = recipeTotalWeightGrams(recipe.ingredients);
+    const costingIngredients = await getRecipeCostingIngredients(recipe);
+    const recipeTotalG = recipeTotalWeightGrams(costingIngredients);
     const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
     const scaledIngredients = targetG > 0 && recipeTotalG > 0
-      ? scaleIngredientsToTargetGrams(recipe.ingredients, targetG)
-      : recipe.ingredients;
+      ? scaleIngredientsToTargetGrams(costingIngredients, targetG)
+      : costingIngredients;
     recommendedCost += await computeRecipeMaterialsCostFiltered(
       scaledIngredients, materials, { supplierOnly: true },
     );
@@ -2638,7 +2679,11 @@ export async function syncProductCostFromComposition(productId, { setSource = fa
   const cost = roundQty(recommendedCost);
   const patch = { rawMaterialsCost: cost };
   if (setSource) patch.rawMaterialsCostSource = 'recipes';
-  await db.products.update(pid, patch);
+  const storedCost = roundQty(Number(product.rawMaterialsCost) || 0);
+  const sourceChanged = setSource && product.rawMaterialsCostSource !== 'recipes';
+  if (storedCost !== cost || sourceChanged) {
+    await db.products.update(pid, patch);
+  }
   return cost;
 }
 

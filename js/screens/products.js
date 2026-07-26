@@ -6,24 +6,24 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=364';
+} from '../db.js?v=365';
 import {
   getProductDetail,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
   getRecipesCatalogLayout, getBakingProfiles, getProductBakingProfileLink,
   linkProductToBakingProfile, unlinkProductFromBakingProfile, syncProductCostFromComposition,
-  syncProductCostIfRecipesMode, isProductRecipesCostSource,
+  syncProductCostIfRecipesMode, syncAllProductsCostFromRecipes, isProductRecipesCostSource,
   formatRecipeBakingParamsLine, resolveRecipeBaking, getRecipeOvenLabel, formatKgWeight,
   recipeTotalWeightGrams,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=364';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=364';
-import { openModal, closeModal } from '../modal.js?v=364';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=364';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=364';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=364';
+} from '../kitchen-db.js?v=365';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=365';
+import { openModal, closeModal } from '../modal.js?v=365';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=365';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=365';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=365';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -72,6 +72,7 @@ function loadExpandedGroups() {
 }
 
 let expandedGroups = loadExpandedGroups();
+let productCostsReconciled = false;
 
 function saveExpandedGroups() {
   sessionStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...expandedGroups]));
@@ -422,6 +423,10 @@ export async function renderProducts(container) {
   setProductsMode(container, mode);
   const isBuild = mode === 'build';
   const sheetsHTML = isBuild ? await renderSheetsStatusHTML() : '';
+  if (!productCostsReconciled) {
+    await syncAllProductsCostFromRecipes();
+    productCostsReconciled = true;
+  }
   const layout = await getProductsCatalogLayout();
   const totalProducts = (layout.allCategories || []).reduce((s, c) => s + (c.products?.length || 0), 0);
 
@@ -568,7 +573,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=364');
+    const { navigate } = await import('../app.js?v=365');
     navigate('backup');
   });
 
