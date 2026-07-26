@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=363';
+import { APP_VERSION } from './version.js?v=364';
 
 const SW_URL = './sw.js';
 

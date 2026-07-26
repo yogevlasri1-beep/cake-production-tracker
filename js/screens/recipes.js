@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=363';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=363';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=363';
-import { renderRecipesMachines } from '../recipes-machines.js?v=363';
-import { renderRecipesPortions } from '../recipes-portions.js?v=363';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=363';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=363';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=363';
-import { openModal, closeModal } from '../modal.js?v=363';
+} from '../kitchen-db.js?v=364';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=364';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=364';
+import { renderRecipesMachines } from '../recipes-machines.js?v=364';
+import { renderRecipesPortions } from '../recipes-portions.js?v=364';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=364';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=364';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=364';
+import { openModal, closeModal } from '../modal.js?v=364';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=363';
-import { defaultColorForIndex } from '../chart.js?v=363';
+} from '../product-drag.js?v=364';
+import { defaultColorForIndex } from '../chart.js?v=364';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -142,7 +142,11 @@ function updateRecipeSelectionBar(container) {
 }
 
 function recipeListMetaText(r) {
+  const additionCount = Array.isArray(r.subRecipes) ? r.subRecipes.length : 0;
   let meta = r.parentRecipeId ? 'תוספת לאחר הכנה' : 'מנה אחת';
+  if (!r.parentRecipeId && additionCount > 0) {
+    meta += additionCount === 1 ? ' · יש תוספת' : ` · יש ${additionCount} תוספות`;
+  }
   if (r.portionWeightGrams) {
     meta += ` · חלוקה: ${formatSubdivisionWeight(r.portionWeightGrams)}`;
   }
@@ -161,32 +165,7 @@ function recipeNotesFieldHTML(notes = '') {
       </div>`;
 }
 
-function renderSubRecipeItem(r, index, mode = 'edit') {
-  const browseClass = mode === 'browse' ? ' recipe-row-browse' : '';
-  if (mode === 'browse') {
-    return `
-    <div class="list-item recipe-list-item recipe-sub-recipe-item recipe-row-open${browseClass}" data-recipe-id="${r.id}" role="button" tabindex="0">
-      <div class="list-item-info">
-        <div class="list-item-name"><span class="recipe-sub-badge">תוספת לאחר הכנה</span> ${escapeHtml(r.name)}</div>
-        <div class="list-item-meta">${recipeListMetaText(r)}</div>
-      </div>
-      <span class="recipe-browse-chevron" aria-hidden="true">‹</span>
-    </div>`;
-  }
-  return `
-    <div class="list-item recipe-list-item recipe-sub-recipe-item recipe-row-open" data-recipe-id="${r.id}" role="button" tabindex="0">
-      <div class="list-item-info">
-        <div class="list-item-name"><span class="recipe-sub-badge">תוספת לאחר הכנה</span> ${escapeHtml(r.name)}</div>
-        <div class="list-item-meta">${recipeListMetaText(r)}</div>
-      </div>
-      <div class="list-item-actions">
-        <button type="button" class="btn btn-danger btn-sm delete-recipe" data-id="${r.id}">🗑</button>
-      </div>
-    </div>`;
-}
-
 function renderRecipeItem(r, index, mode = 'edit') {
-  const subs = (r.subRecipes || []).map((sub, si) => renderSubRecipeItem(sub, si, mode)).join('');
   if (mode === 'browse') {
     return `
     <div class="recipe-parent-block">
@@ -197,7 +176,6 @@ function renderRecipeItem(r, index, mode = 'edit') {
       </div>
       <span class="recipe-browse-chevron" aria-hidden="true">‹</span>
     </div>
-    ${subs}
     </div>`;
   }
   const checked = selectedRecipeIds.has(r.id) ? 'checked' : '';
@@ -220,7 +198,6 @@ function renderRecipeItem(r, index, mode = 'edit') {
         <button type="button" class="btn btn-danger btn-sm delete-recipe" data-id="${r.id}">🗑</button>
       </div>
     </div>
-    ${subs}
     </div>`;
 }
 
@@ -2554,9 +2531,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=363');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=364');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=363');
+    const { navigateToWorkspace } = await import('../app.js?v=364');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
