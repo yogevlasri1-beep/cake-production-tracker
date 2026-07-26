@@ -3295,6 +3295,82 @@ body.flow-checklist-drag-active {
   gap: 8px;
 }
 
+.flow-step-timers-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #e2e8f0);
+  background: var(--card-bg, #fff);
+}
+
+.flow-step-timers-toggle-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.flow-step-timers-toggle-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.flow-step-timers-toggle-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.flow-step-timers-toggle-track {
+  display: inline-flex;
+  align-items: center;
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #dc2626;
+  transition: background 0.2s ease;
+  padding: 3px;
+  box-sizing: border-box;
+}
+
+.flow-step-timers-toggle-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.flow-step-timers-toggle.is-on .flow-step-timers-toggle-track {
+  background: #16a34a;
+}
+
+.flow-step-timers-toggle.is-on .flow-step-timers-toggle-thumb {
+  transform: translateX(20px);
+}
+
+.flow-step-timers-toggle-state {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.flow-step-timers-toggle.is-on .flow-step-timers-toggle-state {
+  color: #16a34a;
+}
+
+.flow-step-timers-toggle.is-off .flow-step-timers-toggle-state {
+  color: #dc2626;
+}
+
+[dir="rtl"] .flow-step-timers-toggle.is-on .flow-step-timers-toggle-thumb {
+  transform: translateX(-20px);
+}
+
 .flow-steps-bulk-actions {
   display: flex;
   justify-content: flex-end;

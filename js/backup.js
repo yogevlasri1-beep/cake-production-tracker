@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=360';
-import { APP_VERSION } from './version.js?v=360';
-import { defaultColorForIndex } from './chart.js?v=360';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=360';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=360';
-import { ValidationError } from './validators.js?v=360';
+import { exportAllData, importAllData } from './db.js?v=361';
+import { APP_VERSION } from './version.js?v=361';
+import { defaultColorForIndex } from './chart.js?v=361';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=361';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=361';
+import { ValidationError } from './validators.js?v=361';
 
 export const BACKUP_VERSION = 3;
 
@@ -103,7 +103,7 @@ export function normalizeBackupProduct(product, category, stats, indexInCategory
       ? product.priceUnit : 'unit',
     unitWeightKg: product.unitWeightKg != null ? Number(product.unitWeightKg) : null,
     rawMaterialsCost,
-    rawMaterialsCostSource: product.rawMaterialsCostSource === 'recipes' ? 'recipes' : 'manual',
+    rawMaterialsCostSource: product.rawMaterialsCostSource === 'manual' ? 'manual' : 'recipes',
     packagingCost,
     additionalCosts,
     costTotal: roundMoney(rawMaterialsCost + packagingCost + additionalCosts),

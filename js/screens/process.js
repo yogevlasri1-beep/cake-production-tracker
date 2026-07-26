@@ -13,7 +13,7 @@ import {
   getAllProductionRuns,
   getProductionRunsForFlow, getFlowProductsHistory, getFlow,
   completeRunStep, updateRunStepFields, deleteProductionRun, updateProductionRunDetails, reopenRunStep,
-  activateRunStep, setStepTimerAction, clearRunStepTimers, completeAllRunSteps,
+  activateRunStep, setStepTimerAction, setRunStepTimersEnabled, completeAllRunSteps,
   syncProductionRunWithFlow, syncAllActiveProductionRuns,
   addRunStepPortionBatch, updateRunStepPortionBatch, deleteRunStepPortionBatch,
   getStepPortionBatches, getStepPortionTotal, portionBatchLineWeightKg,
@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=360';
+} from '../db.js?v=361';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=360').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=361').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=360';
-import { openModal, closeModal } from '../modal.js?v=360';
-import { requestAutoBackupNow } from '../backup-service.js?v=360';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=360';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=360';
-import { materialMatchesSearch } from '../kitchen-db.js?v=360';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=361';
+import { openModal, closeModal } from '../modal.js?v=361';
+import { requestAutoBackupNow } from '../backup-service.js?v=361';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=361';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=361';
+import { materialMatchesSearch } from '../kitchen-db.js?v=361';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -556,7 +556,8 @@ function stepStopwatchLabel(step) {
   return formatStopwatch(getStepTimerElapsedMs(step));
 }
 
-function stepTimerHTML(step, stepIndex, { runActive = false } = {}) {
+function stepTimerHTML(step, stepIndex, { runActive = false, timersEnabled = true } = {}) {
+  if (!timersEnabled) return '';
   const elapsed = getStepTimerElapsedMs(step);
   const hasTimer = step.timerState && step.timerState !== 'off';
   const label = stepStopwatchLabel(step);
@@ -601,7 +602,8 @@ function renderRunTimeSectionHTML(run) {
     ? `${formatDuration(runDurMs)}${run.status === 'active' ? ' (בתהליך)' : ''}`
     : '—';
   const canEdit = run.status === 'active' || run.status === 'completed';
-  const canClearSteps = run.status === 'active' || run.status === 'completed';
+  const canToggleSteps = run.status === 'active' || run.status === 'completed';
+  const stepTimersOn = stepTimersEnabled(run);
   return `
     <div class="flow-run-time-section">
       <div class="flow-run-time-rows">
@@ -619,11 +621,24 @@ function renderRunTimeSectionHTML(run) {
         </div>
       </div>
       <p class="form-hint" style="margin:10px 0 0">ההתחלה נרשמת ברגע שלוחצים «התחל תזרים». הסיום נרשם כשמסיימים את כל השלבים.</p>
+      ${canToggleSteps ? `
+      <label class="flow-step-timers-toggle${stepTimersOn ? ' is-on' : ' is-off'}" title="הפעלה/כיבוי של תיעוד זמני שלבים. בכיבוי נשארים רק זמני התזרים">
+        <span class="flow-step-timers-toggle-label">זמני שלבים</span>
+        <span class="flow-step-timers-toggle-switch">
+          <input type="checkbox" id="toggle-step-timers"${stepTimersOn ? ' checked' : ''}>
+          <span class="flow-step-timers-toggle-track"><span class="flow-step-timers-toggle-thumb"></span></span>
+        </span>
+        <span class="flow-step-timers-toggle-state">${stepTimersOn ? 'עם זמנים' : 'ללא זמנים'}</span>
+      </label>` : ''}
       <div class="flow-run-time-actions">
         ${canEdit ? `<button type="button" class="btn btn-secondary btn-sm" id="edit-run-time">ערוך זמנים</button>` : ''}
-        ${canClearSteps ? `<button type="button" class="btn btn-secondary btn-sm" id="clear-step-timers" title="מבטל סטופרים וזמני שלבים — נשארים רק זמני התזרים">בטל זמני שלבים</button>` : ''}
       </div>
     </div>`;
+}
+
+/** ברירת מחדל: זמני שלבים מופעלים (רק אם כובו במפורש הם כבויים) */
+function stepTimersEnabled(run) {
+  return run?.stepTimersEnabled !== false;
 }
 
 function runDatesLabel(run) {
@@ -1149,9 +1164,10 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const canActivate = runActive && step.status === 'pending' && !isDone;
   const useTopProductionPanel = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
+  const timersOn = stepTimersEnabled(run);
   const canEditFields = stepUnlocked && (isActive || editAllMode || canEditCompleted || run?.status === 'completed');
   const portionEditable = step.tracksPortions && stepUnlocked && (isActive || isDone || editAllMode);
-  const showTimingFields = canEditFields;
+  const showTimingFields = canEditFields && timersOn;
   const defaultStartNow = isActive && !step.startedAt;
   const defaultEndNow = isActive && !step.completedAt;
   const collapseKey = `step-${stepIndex}`;
@@ -1183,12 +1199,14 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
 
   const portionBatches = getStepPortionBatches(step);
   const hasTimingData = !!(step.startedAt || step.completedAt);
-  const showTimingBtn = stepUnlocked && (showTimingFields || hasTimingData);
+  const showTimingBtn = timersOn && stepUnlocked && (showTimingFields || hasTimingData);
   const showPortionsBtn = step.tracksPortions && stepUnlocked;
   const hasPortionsData = !!(portionText || portionBatches.length);
-  const timingPanelHTML = showTimingFields
-    ? stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow, defaultEndNow })
-    : (stepUnlocked ? stepTimingFieldsHTML(step, stepIndex, { editable: false }) : '');
+  const timingPanelHTML = !timersOn
+    ? ''
+    : (showTimingFields
+      ? stepTimingFieldsHTML(step, stepIndex, { editable: true, defaultStartNow, defaultEndNow })
+      : (stepUnlocked ? stepTimingFieldsHTML(step, stepIndex, { editable: false }) : ''));
   const portionsPanelHTML = step.tracksPortions && stepUnlocked
     ? `${portionText ? `<p class="flow-step-portion-preview">🍽 ${escapeHtml(portionText)}</p>` : ''}
         ${portionEditable || portionBatches.length
@@ -1227,7 +1245,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
               <span class="flow-step-name">${escapeHtml(step.stepName)}</span>
             </div>
             ${metaHTML}
-            ${stepTimerHTML(step, stepIndex, { runActive })}
+            ${stepTimerHTML(step, stepIndex, { runActive, timersEnabled: stepTimersEnabled(run) })}
           </div>
           <div class="flow-step-header-actions">
             ${canActivate ? `<button type="button" class="btn btn-secondary btn-sm flow-step-activate-btn" data-step="${stepIndex}">הפעל שלב</button>` : ''}
@@ -1852,8 +1870,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=360');
-    const { db } = await import('../db.js?v=360');
+    const { getRecipe } = await import('../kitchen-db.js?v=361');
+    const { db } = await import('../db.js?v=361');
     const blocks = [];
 
     for (const row of rows) {
@@ -2677,7 +2695,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=360');
+    const kitchen = await import('../kitchen-db.js?v=361');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -2916,12 +2934,16 @@ async function renderRunView(container, runId, ctx) {
     openRunDetailsModal(container, run, ctx, { focusTime: true });
   });
 
-  document.getElementById('clear-step-timers')?.addEventListener('click', async () => {
-    if (!confirm('לבטל את כל זמני השלבים והסטופרים?\nיישארו רק תאריך/שעת התחלה וסיום של התזרים כולו.')) return;
+  document.getElementById('toggle-step-timers')?.addEventListener('change', async (e) => {
+    const enable = !!e.target.checked;
+    if (!enable && !confirm('לכבות את תיעוד זמני השלבים?\nהסטופרים והזמנים של השלבים יימחקו — יישארו רק תאריך/שעת התחלה וסיום של התזרים כולו.')) {
+      e.target.checked = true;
+      return;
+    }
     try {
-      await clearRunStepTimers(run.id);
+      await setRunStepTimersEnabled(run.id, enable);
       requestAutoBackupNow().catch(() => {});
-      showToast('זמני השלבים בוטלו ✓');
+      showToast(enable ? 'זמני שלבים הופעלו ✓' : 'זמני שלבים כובו ✓');
       container.dataset.runId = String(run.id);
       container.dataset.view = 'run';
       renderProcess(container);

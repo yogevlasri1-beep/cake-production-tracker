@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=360';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=361';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=360';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=360';
+} from './validators.js?v=361';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=361';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1858,20 +1858,20 @@ export async function getRecipeLinkedRawMaterialIds() {
   return ids;
 }
 
-/** מסמן חומרי גלם כפעילים אם הם במתכונים; אריזות תמיד פעילות */
+/** מסמן חומרי גלם כפעילים אם הם במתכונים; אריזות וחומרי ניקיון תמיד פעילים */
 export async function syncRawMaterialsActiveFromRecipes() {
   const [linkedIds, materials, categories] = await Promise.all([
     getRecipeLinkedRawMaterialIds(),
     db.rawMaterials.toArray(),
     getSupplierCategories(),
   ]);
-  const packagingCatIds = new Set(
-    categories.filter((c) => isPackagingSupplierCategory(c)).map((c) => c.id),
+  const alwaysActiveCatIds = new Set(
+    categories.filter((c) => isNonRecipeSupplierCategory(c)).map((c) => c.id),
   );
   const updates = [];
   for (const m of materials) {
-    const isPackaging = packagingCatIds.has(m.supplierCategoryId) || !!m.packagingKind;
-    const shouldBeActive = isPackaging || linkedIds.has(m.id);
+    const alwaysActive = alwaysActiveCatIds.has(m.supplierCategoryId) || !!m.packagingKind;
+    const shouldBeActive = alwaysActive || linkedIds.has(m.id);
     if (m.active !== shouldBeActive) {
       updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
     }
@@ -2651,6 +2651,22 @@ export async function syncProductCostIfRecipesMode(productId) {
   return syncProductCostFromComposition(pid);
 }
 
+/** סנכרון עלות חומ״ג ממתכונים לכל המוצרים במצב recipes */
+export async function syncAllProductsCostFromRecipes() {
+  const products = await db.products.toArray();
+  let synced = 0;
+  for (const p of products) {
+    if (!isProductRecipesCostSource(p)) continue;
+    try {
+      await syncProductCostFromComposition(p.id);
+      synced += 1;
+    } catch {
+      /* מוצר בלי הרכב / שגיאה נקודתית */
+    }
+  }
+  return synced;
+}
+
 /* ── קטגוריות ספקים / אריזות ── */
 
 export const PACKAGING_KIND_CARTON = 'carton';
@@ -2664,6 +2680,16 @@ export function getPackagingKindLabel(kind) {
 
 export function isPackagingSupplierCategory(cat) {
   return !!cat?.isPackaging;
+}
+
+/** קטגוריית חומרי ניקיון — לא קשורה למתכונים, מחיר פשוט ליחידה */
+export function isCleaningSupplierCategory(cat) {
+  return !!cat?.isCleaning;
+}
+
+/** קטגוריה שאינה חומרי גלם למתכונים (אריזות / חומרי ניקיון) — החומרים בה תמיד פעילים */
+export function isNonRecipeSupplierCategory(cat) {
+  return isPackagingSupplierCategory(cat) || isCleaningSupplierCategory(cat);
 }
 
 function sanitizePackagingKind(value) {
@@ -2815,7 +2841,7 @@ export async function getSupplierCategories() {
   return rows;
 }
 
-export async function addSupplierCategory(name, { isPackaging = false } = {}) {
+export async function addSupplierCategory(name, { isPackaging = false, isCleaning = false } = {}) {
   const trimmed = sanitizeName(name, 40);
   if (!trimmed) throw new ValidationError('שם קטגוריה לא תקין');
   const existing = await getSupplierCategories();
@@ -2824,7 +2850,8 @@ export async function addSupplierCategory(name, { isPackaging = false } = {}) {
   return db.supplierCategories.add({
     name: trimmed,
     sortOrder: maxOrder + 1,
-    isPackaging: !!isPackaging,
+    isPackaging: !!isPackaging && !isCleaning,
+    isCleaning: !!isCleaning,
   });
 }
 
@@ -2841,8 +2868,25 @@ export async function updateSupplierCategory(id, patch) {
     }
   }
   if ('isPackaging' in data) data.isPackaging = !!data.isPackaging;
+  if ('isCleaning' in data) data.isCleaning = !!data.isCleaning;
+  if (data.isCleaning) data.isPackaging = false;
   if (Object.keys(data).length) await db.supplierCategories.update(cid, data);
-  if ('isPackaging' in data) await syncRawMaterialsActiveFromRecipes();
+  if ('isPackaging' in data || 'isCleaning' in data) await syncRawMaterialsActiveFromRecipes();
+}
+
+/**
+ * מוודא שקיימת קטגוריית חומרי ניקיון 🧹 — יוצר אחת אם אין,
+ * או מסמן קטגוריה קיימת בשם "חומרי ניקיון" בדגל isCleaning.
+ */
+export async function ensureCleaningSupplierCategory() {
+  const cats = await getSupplierCategories();
+  if (cats.some((c) => isCleaningSupplierCategory(c))) return;
+  const byName = cats.find((c) => String(c.name || '').trim() === 'חומרי ניקיון');
+  if (byName) {
+    await db.supplierCategories.update(byName.id, { isCleaning: true, isPackaging: false });
+    return;
+  }
+  await addSupplierCategory('חומרי ניקיון', { isCleaning: true });
 }
 
 export async function setSupplierCategoryOrder(orderedIds) {
@@ -2997,6 +3041,9 @@ export async function addRawMaterial({
   if (!cid) throw new ValidationError('קטגוריה לא תקינה');
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
   const category = await db.supplierCategories.get(cid);
+  const isPack = isPackagingSupplierCategory(category);
+  const isClean = isCleaningSupplierCategory(category);
+  const simplePricing = isPack || isClean; // בלי משקל אריזה / מחיר לק"ג
   const inCat = await getRawMaterials(cid);
   const maxOrder = inCat.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const price = sanitizeMoney(unitPrice);
@@ -3007,21 +3054,21 @@ export async function addRawMaterial({
       packagingKind, packUnitsCount, packProductsPerUnit,
       packLinkedProductId, packLinkedCategoryId,
     },
-    { categoryIsPackaging: isPackagingSupplierCategory(category) },
+    { categoryIsPackaging: isPack },
   );
   const id = await db.rawMaterials.add({
     supplierCategoryId: cid,
     name: trimmed,
-    unit: String(unit || (isPackagingSupplierCategory(category) ? 'חבילה' : 'ק"ג')).trim().slice(0, 20),
+    unit: String(unit || (isPack ? 'חבילה' : (isClean ? 'יח\'' : 'ק"ג'))).trim().slice(0, 20),
     unitPrice: price,
     supplierId: sid,
-    packageWeightGrams: isPackagingSupplierCategory(category) ? null : pkg,
-    processedPricePerKg: isPackagingSupplierCategory(category)
+    packageWeightGrams: simplePricing ? null : pkg,
+    processedPricePerKg: simplePricing
       ? null
       : sanitizeProcessedPricePerKg(processedPricePerKg),
     synonyms: sanitizeMaterialSynonyms(synonyms),
     ...packaging,
-    active: isPackagingSupplierCategory(category),
+    active: simplePricing,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {

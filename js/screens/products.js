@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=360';
+} from '../db.js?v=361';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -18,12 +18,12 @@ import {
   recipeTotalWeightGrams,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=360';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=360';
-import { openModal, closeModal } from '../modal.js?v=360';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=360';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=360';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=360';
+} from '../kitchen-db.js?v=361';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=361';
+import { openModal, closeModal } from '../modal.js?v=361';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=361';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=361';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=361';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -568,7 +568,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=360');
+    const { navigate } = await import('../app.js?v=361');
     navigate('backup');
   });
 
@@ -872,11 +872,11 @@ function buildProductDetailHTML(detail, {
     ? `<span class="product-detail-margin ${detail.margin >= 0 ? 'positive' : 'negative'}">רווח: ${formatMoney(detail.margin)}</span>`
     : '';
 
-  const rawSource = detail.currentCosts.rawMaterialsCostSource || 'manual';
+  const rawSource = detail.currentCosts.rawMaterialsCostSource || 'recipes';
   const rawSourceLabel = rawSource === 'recipes' ? 'מהמתכונים' : 'ידני';
   const rawCostActions = rawSource === 'recipes'
-    ? `<button type="button" class="btn btn-secondary btn-sm" id="product-switch-manual-cost" style="margin-top:10px">עבור להזנה ידנית</button>`
-    : `<button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">החל עלות מהמתכונים</button>`;
+    ? `<button type="button" class="btn btn-secondary btn-sm" id="product-switch-manual-cost" style="margin-top:10px">בטל — עבור להזנה ידנית</button>`
+    : `<button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">הפעל עלות מהמתכונים</button>`;
 
   const linkedFlowIds = new Set(linkedFlows.map((row) => row.flow.id));
   const flowCheckboxes = candidateFlows.length
@@ -1175,7 +1175,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   document.getElementById('product-switch-manual-cost')?.addEventListener('click', async () => {
     try {
       await updateProduct(productId, { rawMaterialsCostSource: 'manual' });
-      showToast('מקור העלות: הזנה ידנית');
+      showToast('עלות חומרי גלם: הזנה ידנית (בוטל חישוב ממתכונים)');
       await refreshModal();
       renderProducts(container);
     } catch (err) {
@@ -1750,22 +1750,22 @@ function optionalPriceInput(id, label, value, { nested = false } = {}) {
 }
 
 function rawMaterialsCostSourceFieldsHTML(opts = {}) {
-  const source = opts.rawMaterialsCostSource || 'manual';
-  const isManual = source !== 'recipes';
+  const source = opts.rawMaterialsCostSource || 'recipes';
+  const isManual = source === 'manual';
   const previewText = opts.rawMaterialsCostPreview != null ? formatMoney(opts.rawMaterialsCostPreview) : '—';
   return `
       <div class="form-group">
         <label>מחיר חומרי גלם</label>
         <div class="price-unit-options" data-cost-source-group role="radiogroup" aria-label="מקור מחיר חומרי גלם">
-          <label class="price-unit-option${isManual ? ' is-selected' : ''}">
-            <input type="radio" name="prod-raw-source" value="manual" ${isManual ? 'checked' : ''}>
-            <span class="price-unit-option-title">ידני</span>
-            <span class="price-unit-option-sub">הזנה ידנית של עלות</span>
-          </label>
           <label class="price-unit-option${!isManual ? ' is-selected' : ''}">
             <input type="radio" name="prod-raw-source" value="recipes" ${!isManual ? 'checked' : ''}>
             <span class="price-unit-option-title">מהמתכונים</span>
-            <span class="price-unit-option-sub">חישוב מהרכב המוצר</span>
+            <span class="price-unit-option-sub">ברירת מחדל · חישוב מהרכב המוצר</span>
+          </label>
+          <label class="price-unit-option${isManual ? ' is-selected' : ''}">
+            <input type="radio" name="prod-raw-source" value="manual" ${isManual ? 'checked' : ''}>
+            <span class="price-unit-option-title">ידני</span>
+            <span class="price-unit-option-sub">ביטול חישוב אוטומטי · הזנה ידנית</span>
           </label>
         </div>
       </div>
@@ -1916,7 +1916,7 @@ async function showProductForm(container, opts) {
     const name = document.getElementById('prod-name').value.trim();
     if (!name) return showToast('יש להזין שם מוצר');
 
-    const rawMaterialsCostSource = document.querySelector('input[name="prod-raw-source"]:checked')?.value || 'manual';
+    const rawMaterialsCostSource = document.querySelector('input[name="prod-raw-source"]:checked')?.value || 'recipes';
     const packagingMaterialId = document.getElementById('prod-packaging-material')?.value || null;
     const unitsPerCarton = document.getElementById('prod-units-per-carton')?.value ?? '';
     const data = {
