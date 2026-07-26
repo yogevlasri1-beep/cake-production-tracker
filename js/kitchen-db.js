@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=358';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=359';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=358';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=358';
+} from './validators.js?v=359';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=359';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3477,33 +3477,6 @@ export function materialFieldFillPatch(keep, others) {
   return patch;
 }
 
-/** מעתיק מחירים/היסטוריה ליעד בלי למחוק את המקור (לשמירת ספק נוסף) */
-async function copyMaterialPricesOntoKeep(keepId, fromMat) {
-  if (!keepId || !fromMat) return;
-  const history = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(fromMat.id).toArray();
-  for (const h of history) {
-    if (await priceHistoryEntryExists(keepId, h.effectiveDate, h.price)) continue;
-    await db.rawMaterialPriceHistory.add({
-      rawMaterialId: keepId,
-      price: sanitizeMoney(h.price),
-      effectiveDate: h.effectiveDate,
-      createdAt: h.createdAt || new Date().toISOString(),
-    });
-  }
-  const price = Number(fromMat.unitPrice) || 0;
-  if (price > 0) {
-    const date = todayISO();
-    if (!(await priceHistoryEntryExists(keepId, date, price))) {
-      await db.rawMaterialPriceHistory.add({
-        rawMaterialId: keepId,
-        price: sanitizeMoney(price),
-        effectiveDate: date,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-}
-
 async function retargetMaterialRefs(fromId, toId) {
   if (!fromId || !toId || fromId === toId) return;
   if (db.products) {
@@ -3599,8 +3572,8 @@ async function mergeMaterialIntoKeep(keep, mid) {
 
 /**
  * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
- * שם היעד נשאר; שדות חסרים + מילים נרדפות + מחירים מאוחדים ליעד.
- * ספק שונה נשמר כרשומה באותו שם (אותו מוצר אצל ספק נוסף) — המחיר מועתק גם להיסטוריית היעד.
+ * נשארת רשומה אחת בלבד: שם היעד נשאר; שדות חסרים + מילים נרדפות + כל היסטוריית
+ * המחירים עוברים ליעד; מתכונים ושאר הקישורים מוסבים ליעד; הרשומות האחרות נמחקות.
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -3623,7 +3596,6 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
     : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
-  const assignedSupplierId = keepMat.supplierId || fillPatch.supplierId || null;
   const txTables = [
     db.rawMaterials,
     db.rawMaterialPriceHistory,
@@ -3636,24 +3608,7 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   await db.transaction('rw', ...txTables, async () => {
     for (const mat of others) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
-      await copyMaterialPricesOntoKeep(keep, mat);
-
-      const otherSupplierId = mat.supplierId || null;
-      const keepAsSibling = !!(otherSupplierId && assignedSupplierId && otherSupplierId !== assignedSupplierId);
-
-      if (keepAsSibling) {
-        const existingSibling = await findRawMaterialBySupplierAndName(otherSupplierId, keepMat.name);
-        if (existingSibling && existingSibling.id !== keep && existingSibling.id !== mat.id) {
-          await mergeMaterialIntoKeep(existingSibling.id, mat.id);
-        } else {
-          await db.rawMaterials.update(mat.id, {
-            name: keepMat.name,
-            synonyms,
-          });
-        }
-      } else {
-        await mergeMaterialIntoKeep(keep, mat.id);
-      }
+      await mergeMaterialIntoKeep(keep, mat.id);
     }
 
     const patch = { ...fillPatch, synonyms };
