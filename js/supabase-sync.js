@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=359';
+import { db, getSetting, setSetting } from './db.js?v=360';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=359';
+} from './supabase-backup.js?v=360';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -21,7 +21,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=359';
+} from './sync/collections.js?v=360';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -31,7 +31,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=359';
+} from './sync/id-map.js?v=360';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -54,7 +54,7 @@ const DEDUPE_VERSION = 3;
  * foreign keys locally: the cloud rows are correct, so a full pull repairs them.
  * v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
  */
-const REPAIR_VERSION = 3;
+const REPAIR_VERSION = 4;
 
 let applyingRemote = false;
 let flushTimer = null;

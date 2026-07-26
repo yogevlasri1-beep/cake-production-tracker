@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=359';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=359';
-import { defaultColorForIndex } from './chart.js?v=359';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=359';
+} from './validators.js?v=360';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=360';
+import { defaultColorForIndex } from './chart.js?v=360';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=360';
 
 export { ValidationError };
 
@@ -5697,15 +5697,33 @@ async function portionPresetAppliesToProduct(preset, productId, prod, cat, gid, 
   }
 
   if (preset.sourceRecipeId) {
-    if (gid && Number(preset.categoryGroupId) !== Number(gid)) return false;
-    const { resolveRecipeLinkedProductIds, getProductRecipeComponents } = await import('./kitchen-db.js');
-    const recipe = await db.recipes.get(preset.sourceRecipeId);
-    if (!recipe) return false;
+    if (gid && Number(preset.categoryGroupId) !== Number(gid) && Number(preset.categoryGroupId) !== 0) {
+      return false;
+    }
+    const { getRecipe, getProductRecipeComponents } = await import('./kitchen-db.js');
     const componentRecipeIds = new Set(
       (await getProductRecipeComponents(productId)).map((c) => c.recipeId),
     );
-    const linkedIds = await resolveRecipeLinkedProductIds(recipe);
-    return linkedIds.includes(productId) || componentRecipeIds.has(preset.sourceRecipeId);
+    if (componentRecipeIds.has(Number(preset.sourceRecipeId))) return true;
+
+    const recipe = await getRecipe(preset.sourceRecipeId);
+    if (!recipe) return false;
+    const productIds = (recipe.linkedProductIds?.length
+      ? recipe.linkedProductIds
+      : (recipe.linkedProductId ? [recipe.linkedProductId] : [])).map(Number).filter(Boolean);
+    if (productIds.includes(Number(productId))) return true;
+
+    const categoryIds = (recipe.linkedProductCategoryIds?.length
+      ? recipe.linkedProductCategoryIds
+      : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : [])).map(Number).filter(Boolean);
+    if (categoryIds.includes(Number(prod.categoryId))) return true;
+
+    const groupIds = (recipe.linkedProductGroupIds?.length
+      ? recipe.linkedProductGroupIds
+      : (recipe.linkedProductGroupId ? [recipe.linkedProductGroupId] : [])).map(Number).filter(Boolean);
+    if (gid && groupIds.includes(Number(gid))) return true;
+
+    return false;
   }
 
   return gid && Number(preset.categoryGroupId) === Number(gid);
@@ -5878,14 +5896,13 @@ export async function getPortionPresetsForProduct(productId) {
 }
 
 /**
- * מזהי מוצרים / קטגוריות של מתכון — בלי הרחבת «קטגוריה כללית» לכל המוצרים.
- * לתזרים: מנות מקטגוריה כללית לא נכנסות אוטומטית.
+ * מזהי מוצרים / קטגוריות / קבוצות של מתכון (טבלאות שיוך + שדות ישנים).
+ * לתזרים: שיוך לקבוצה נחשב כהתאמה למוצרים בקבוצה (לא נחסם).
  */
-async function resolveRecipeStrictProductAndCategoryIds(recipe) {
-  if (!recipe) return { productIds: [], categoryIds: [], isGroupOnly: false };
-  const { inferRecipeProductLinkScope } = await import('./kitchen-db.js');
-  const scope = inferRecipeProductLinkScope(recipe);
-  if (scope === 'group') return { productIds: [], categoryIds: [], isGroupOnly: true };
+async function resolveRecipeFlowLinkScope(recipeId) {
+  const { getRecipe } = await import('./kitchen-db.js');
+  const recipe = await getRecipe(Number(recipeId));
+  if (!recipe) return { productIds: [], categoryIds: [], groupIds: [] };
 
   const productIds = (recipe.linkedProductIds?.length
     ? recipe.linkedProductIds
@@ -5895,17 +5912,27 @@ async function resolveRecipeStrictProductAndCategoryIds(recipe) {
     ? recipe.linkedProductCategoryIds
     : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : [])).map(Number).filter(Boolean);
 
-  return { productIds, categoryIds, isGroupOnly: false };
+  const groupIds = (recipe.linkedProductGroupIds?.length
+    ? recipe.linkedProductGroupIds
+    : (recipe.linkedProductGroupId ? [recipe.linkedProductGroupId] : [])).map(Number).filter(Boolean);
+
+  return { productIds, categoryIds, groupIds };
 }
 
 /**
- * האם מנה רלוונטית לתזרים — רק שיוך למוצר/קטגוריה של מוצרים בתזרים,
- * לא שיוך לקטגוריה כללית בלבד.
+ * האם מנה רלוונטית לתזרים — לפי שיוך מותאם, או לפי שיוך המתכון
+ * (מוצר / קטגוריה / קבוצה של מוצרים שבתזרים).
  */
 async function portionPresetAppliesToFlowProducts(preset, flowProducts, links = []) {
   if (!flowProducts?.length) return false;
   const flowProductIds = new Set(flowProducts.map((p) => Number(p.id)));
   const flowCategoryIds = new Set(flowProducts.map((p) => Number(p.categoryId)).filter(Boolean));
+  const flowGroupIds = new Set();
+  for (const product of flowProducts) {
+    if (!product?.categoryId) continue;
+    const cat = await db.categories.get(Number(product.categoryId));
+    if (cat?.groupId) flowGroupIds.add(Number(cat.groupId));
+  }
 
   if (links.length) {
     for (const link of links) {
@@ -5913,7 +5940,7 @@ async function portionPresetAppliesToFlowProducts(preset, flowProducts, links = 
       if (!targetId) continue;
       if (link.linkType === PORTION_LINK_PRODUCT && flowProductIds.has(targetId)) return true;
       if (link.linkType === PORTION_LINK_CATEGORY && flowCategoryIds.has(targetId)) return true;
-      // PORTION_LINK_GROUP — לא נכלל בתזרים (מנות של קטגוריה כללית)
+      if (link.linkType === PORTION_LINK_GROUP && flowGroupIds.has(targetId)) return true;
     }
     return false;
   }
@@ -5926,7 +5953,7 @@ async function portionPresetAppliesToFlowProducts(preset, flowProducts, links = 
     return flowCategoryIds.has(Number(preset.linkCategoryId));
   }
   if (linkType === PORTION_LINK_GROUP) {
-    return false;
+    return flowGroupIds.has(Number(preset.linkCategoryGroupId || preset.categoryGroupId));
   }
 
   if (preset.sourceRecipeId) {
@@ -5935,15 +5962,13 @@ async function portionPresetAppliesToFlowProducts(preset, flowProducts, links = 
       const componentRecipeIds = new Set(
         (await getProductRecipeComponents(product.id)).map((c) => c.recipeId),
       );
-      if (componentRecipeIds.has(preset.sourceRecipeId)) return true;
+      if (componentRecipeIds.has(Number(preset.sourceRecipeId))) return true;
     }
 
-    const recipe = await db.recipes.get(preset.sourceRecipeId);
-    if (!recipe) return false;
-    const { productIds, categoryIds, isGroupOnly } = await resolveRecipeStrictProductAndCategoryIds(recipe);
-    if (isGroupOnly) return false;
+    const { productIds, categoryIds, groupIds } = await resolveRecipeFlowLinkScope(preset.sourceRecipeId);
     if (productIds.some((id) => flowProductIds.has(Number(id)))) return true;
     if (categoryIds.some((id) => flowCategoryIds.has(Number(id)))) return true;
+    if (groupIds.some((id) => flowGroupIds.has(Number(id)))) return true;
     return false;
   }
 
@@ -5962,7 +5987,7 @@ async function resolveFlowProductsForPortions(flowId) {
   return getCandidateProductsForFlow(fid);
 }
 
-/** מנות לתזרים — רק כאלה שמשויכות למוצר/קטגוריה של מוצרים שבתזרים */
+/** מנות לתזרים — רק כאלה שמשויכות למוצר/קטגוריה/קבוצה של מוצרים שבתזרים */
 export async function getFlowPortionPresets(flowId) {
   const fid = Number(flowId);
   if (!fid) return [];
@@ -5970,16 +5995,24 @@ export async function getFlowPortionPresets(flowId) {
   if (!flowProducts.length) return [];
 
   const gid = await resolveCategoryGroupIdForFlow(fid);
-  const candidates = gid
-    ? await getGroupPortionPresets(gid)
-    : (await db.groupPortionPresets.toArray()).sort(comparePortionPresets);
-
-  // גם מנות בקטלוג (categoryGroupId=0) שמשויכות למוצר בתזרים
-  const catalogPresets = gid
-    ? (await db.groupPortionPresets.where('categoryGroupId').equals(0).toArray())
-    : [];
+  // Include same-group + catalog presets, and also recipe-sourced presets from
+  // any group (their recipe product/category/group links decide membership).
+  const [groupPresets, catalogPresets, allPresets] = await Promise.all([
+    gid ? getGroupPortionPresets(gid) : Promise.resolve([]),
+    gid ? db.groupPortionPresets.where('categoryGroupId').equals(0).toArray() : Promise.resolve([]),
+    gid ? db.groupPortionPresets.toArray() : Promise.resolve([]),
+  ]);
   const byId = new Map();
-  for (const p of [...candidates, ...catalogPresets]) byId.set(p.id, p);
+  if (gid) {
+    for (const p of [...groupPresets, ...catalogPresets]) byId.set(p.id, p);
+    for (const p of allPresets) {
+      if (p.sourceRecipeId) byId.set(p.id, p);
+    }
+  } else {
+    for (const p of (await db.groupPortionPresets.toArray()).sort(comparePortionPresets)) {
+      byId.set(p.id, p);
+    }
+  }
   const pool = [...byId.values()];
 
   const linksMap = await getPortionPresetLinksMap(pool.map((p) => p.id));

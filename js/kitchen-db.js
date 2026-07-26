@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=359';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=360';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=359';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=359';
+} from './validators.js?v=360';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=360';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1270,9 +1270,15 @@ export async function getRecipe(id) {
   return {
     ...recipe,
     ingredients,
-    linkedProductIds,
-    linkedProductCategoryIds,
-    linkedProductGroupIds,
+    linkedProductIds: linkedProductIds.length
+      ? linkedProductIds
+      : (recipe.linkedProductId ? [recipe.linkedProductId] : []),
+    linkedProductCategoryIds: linkedProductCategoryIds.length
+      ? linkedProductCategoryIds
+      : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : []),
+    linkedProductGroupIds: linkedProductGroupIds.length
+      ? linkedProductGroupIds
+      : (recipe.linkedProductGroupId ? [recipe.linkedProductGroupId] : []),
   };
 }
 
