@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=369';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=370';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=369';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=369';
+} from './validators.js?v=370';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=370';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2656,22 +2656,84 @@ export async function getProductDetail(productId) {
   const product = await db.products.get(pid);
   if (!product) throw new ValidationError('מוצר לא נמצא');
 
-  const [recipeComponents, portionComponents, linkedRecipes, bakingLink, materials, profiles, category] = await Promise.all([
-    getProductRecipeComponents(pid),
-    getProductPortionComponents(pid),
+  const [totals, linkedRecipes, bakingLink, profiles, category] = await Promise.all([
+    computeProductCompositionCostTotals(pid),
     getRecipesForProduct(pid),
     getProductBakingProfileLink(pid),
-    getRawMaterials(),
     getBakingProfiles(),
     db.categories.get(product.categoryId),
   ]);
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
+
+  const enrichedComponents = totals.components.map((comp) => {
+    if (comp.kind === 'portion') return comp;
+    return {
+      ...comp,
+      bakingLine: formatRecipeBakingParamsLine(comp.recipe, profileMap),
+    };
+  });
+
+  const recommendedCost = sanitizeMoney(totals.recommendedCost);
+  const fullCost = sanitizeMoney(totals.fullCost);
+  const rawMaterialsCostSource = sanitizeRawMaterialsCostSource(product.rawMaterialsCostSource);
+
+  // Keep stored cost aligned with live composition so the product list matches detail.
+  if (rawMaterialsCostSource === 'recipes') {
+    const stored = sanitizeMoney(product.rawMaterialsCost);
+    if (stored !== recommendedCost) {
+      await db.products.update(pid, { rawMaterialsCost: recommendedCost });
+      product.rawMaterialsCost = recommendedCost;
+    }
+  }
+
+  const effectiveRawCost = rawMaterialsCostSource === 'recipes'
+    ? recommendedCost
+    : sanitizeMoney(product.rawMaterialsCost);
+  const packagingCost = sanitizeMoney(product.packagingCost);
+  const additionalCosts = sanitizeMoney(product.additionalCosts);
+  const totalCost = sanitizeMoney(effectiveRawCost + packagingCost + additionalCosts);
+  const unitPrice = sanitizeMoney(product.unitPrice);
+
+  return {
+    product,
+    category,
+    components: enrichedComponents,
+    linkedRecipes,
+    bakingProfileLink: bakingLink,
+    bakingProfile: bakingLink?.profile || null,
+    totalWeightGrams: totals.totalWeightGrams,
+    recommendedCost,
+    fullCost,
+    currentCosts: {
+      rawMaterialsCost: effectiveRawCost,
+      rawMaterialsCostSource,
+      packagingCost,
+      additionalCosts,
+      unitPrice,
+      totalCost,
+    },
+    margin: unitPrice > 0 ? sanitizeMoney(unitPrice - totalCost) : null,
+  };
+}
+
+/** מחשב עלות/משקל מהרכב המוצר (מתכונים + מנות) — מקור אמת יחיד לרשימה ולפרופיל */
+export async function computeProductCompositionCostTotals(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) {
+    return { recommendedCost: 0, fullCost: 0, totalWeightGrams: 0, components: [] };
+  }
+
+  const [recipeComponents, portionComponents, materials] = await Promise.all([
+    getProductRecipeComponents(pid),
+    getProductPortionComponents(pid),
+    getRawMaterials(),
+  ]);
   const matById = new Map(materials.map((m) => [m.id, m]));
 
   let totalWeightGrams = 0;
   let recommendedCost = 0;
   let fullCost = 0;
-  const enrichedComponents = [];
+  const components = [];
 
   for (const comp of recipeComponents) {
     const recipe = await getRecipe(comp.recipeId);
@@ -2694,16 +2756,15 @@ export async function getProductDetail(productId) {
     recommendedCost += lineSupplierCost;
     fullCost += lineFullCost;
 
-    enrichedComponents.push({
+    components.push({
       ...comp,
       kind: 'recipe',
       recipe,
       recipeTotalGrams: recipeTotalG,
       effectiveWeightGrams: targetG,
       scaledIngredients,
-      supplierCost: lineSupplierCost,
-      fullCost: lineFullCost,
-      bakingLine: formatRecipeBakingParamsLine(recipe, profileMap),
+      supplierCost: sanitizeMoney(lineSupplierCost),
+      fullCost: sanitizeMoney(lineFullCost),
     });
   }
 
@@ -2716,45 +2777,24 @@ export async function getProductDetail(productId) {
     totalWeightGrams += targetG || 0;
     recommendedCost += lineCost;
     fullCost += lineCost;
-    enrichedComponents.push({
+    components.push({
       ...comp,
       kind: 'portion',
       material: mat,
       portionDefaultGrams: defaultG,
       effectiveWeightGrams: targetG,
-      supplierCost: lineCost,
-      fullCost: lineCost,
+      supplierCost: sanitizeMoney(lineCost),
+      fullCost: sanitizeMoney(lineCost),
     });
   }
 
-  enrichedComponents.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-
-  const rawMaterialsCostSource = sanitizeRawMaterialsCostSource(product.rawMaterialsCostSource);
-  const effectiveRawCost = rawMaterialsCostSource === 'recipes'
-    ? roundQty(recommendedCost)
-    : (product.rawMaterialsCost || 0);
-  const totalCost = effectiveRawCost + (product.packagingCost || 0) + (product.additionalCosts || 0);
-  const unitPrice = Number(product.unitPrice) || 0;
+  components.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
 
   return {
-    product,
-    category,
-    components: enrichedComponents,
-    linkedRecipes,
-    bakingProfileLink: bakingLink,
-    bakingProfile: bakingLink?.profile || null,
+    recommendedCost: sanitizeMoney(recommendedCost),
+    fullCost: sanitizeMoney(fullCost),
     totalWeightGrams,
-    recommendedCost: roundQty(recommendedCost),
-    fullCost: roundQty(fullCost),
-    currentCosts: {
-      rawMaterialsCost: effectiveRawCost,
-      rawMaterialsCostSource,
-      packagingCost: product.packagingCost || 0,
-      additionalCosts: product.additionalCosts || 0,
-      unitPrice,
-      totalCost: roundQty(totalCost),
-    },
-    margin: unitPrice > 0 ? roundQty(unitPrice - totalCost) : null,
+    components,
   };
 }
 
@@ -2765,37 +2805,11 @@ export async function syncProductCostFromComposition(productId, { setSource = fa
   const product = await db.products.get(pid);
   if (!product) throw new ValidationError('מוצר לא נמצא');
 
-  let recommendedCost = 0;
-  const [components, portionComponents, materials] = await Promise.all([
-    getProductRecipeComponents(pid),
-    getProductPortionComponents(pid),
-    getRawMaterials(),
-  ]);
-  const matById = new Map(materials.map((m) => [m.id, m]));
-  for (const comp of components) {
-    const recipe = await getRecipe(comp.recipeId);
-    if (!recipe) continue;
-    const costingIngredients = await getRecipeCostingIngredients(recipe);
-    const recipeTotalG = recipeTotalWeightGrams(costingIngredients);
-    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
-    const scaledIngredients = targetG > 0 && recipeTotalG > 0
-      ? scaleIngredientsToTargetGrams(costingIngredients, targetG)
-      : costingIngredients;
-    recommendedCost += await computeRecipeMaterialsCostFiltered(
-      scaledIngredients, materials, { supplierOnly: true },
-    );
-  }
-  for (const comp of portionComponents) {
-    const mat = matById.get(Number(comp.rawMaterialId));
-    if (!mat) continue;
-    const defaultG = portionMaterialDefaultWeightGrams(mat) || 0;
-    const targetG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : defaultG;
-    recommendedCost += computePortionComponentCost(mat, targetG);
-  }
-  const cost = roundQty(recommendedCost);
+  const { recommendedCost } = await computeProductCompositionCostTotals(pid);
+  const cost = sanitizeMoney(recommendedCost);
   const patch = { rawMaterialsCost: cost };
   if (setSource) patch.rawMaterialsCostSource = 'recipes';
-  const storedCost = roundQty(Number(product.rawMaterialsCost) || 0);
+  const storedCost = sanitizeMoney(product.rawMaterialsCost);
   const sourceChanged = setSource && product.rawMaterialsCostSource !== 'recipes';
   if (storedCost !== cost || sourceChanged) {
     await db.products.update(pid, patch);

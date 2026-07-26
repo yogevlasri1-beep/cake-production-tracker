@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=369';
+} from '../db.js?v=370';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -20,12 +20,12 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=369';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=369';
-import { openModal, closeModal } from '../modal.js?v=369';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=369';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=369';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=369';
+} from '../kitchen-db.js?v=370';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=370';
+import { openModal, closeModal } from '../modal.js?v=370';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=370';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=370';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=370';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -74,7 +74,6 @@ function loadExpandedGroups() {
 }
 
 let expandedGroups = loadExpandedGroups();
-let productCostsReconciled = false;
 
 function saveExpandedGroups() {
   sessionStorage.setItem(EXPANDED_GROUPS_KEY, JSON.stringify([...expandedGroups]));
@@ -195,11 +194,19 @@ function productPriceMeta(p) {
       if (p.unitWeightKg) parts.push(`≈${p.unitWeightKg} ק"ג/יח'`);
     }
   }
-  const cost = (p.rawMaterialsCost || 0) + (p.packagingCost || 0) + (p.additionalCosts || 0);
+  const cost = sanitizeListMoney(p.rawMaterialsCost)
+    + sanitizeListMoney(p.packagingCost)
+    + sanitizeListMoney(p.additionalCosts);
   if (cost > 0) parts.push(`עלות: ${formatMoney(cost)}`);
   if (p.unitsPerCarton) parts.push(`${p.unitsPerCarton} יח'/קרטון`);
   if (p.packagingMaterialId) parts.push('אריזה משויכת');
   return parts.length ? parts.join(' · ') : 'ללא מחירים';
+}
+
+function sanitizeListMoney(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.round(n * 100) / 100;
 }
 
 function categoryUniformPricing(products) {
@@ -425,10 +432,9 @@ export async function renderProducts(container) {
   setProductsMode(container, mode);
   const isBuild = mode === 'build';
   const sheetsHTML = isBuild ? await renderSheetsStatusHTML() : '';
-  if (!productCostsReconciled) {
-    await syncAllProductsCostFromRecipes();
-    productCostsReconciled = true;
-  }
+  // Always reconcile stored product costs with live composition so the list
+  // matches the numbers shown inside the product profile.
+  await syncAllProductsCostFromRecipes();
   const layout = await getProductsCatalogLayout();
   const totalProducts = (layout.allCategories || []).reduce((s, c) => s + (c.products?.length || 0), 0);
 
@@ -575,7 +581,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=369');
+    const { navigate } = await import('../app.js?v=370');
     navigate('backup');
   });
 
@@ -1027,6 +1033,7 @@ function buildProductDetailHTML(detail, {
             <span>סה״כ עלות</span>
             <span>${formatMoney(detail.currentCosts.totalCost)}</span>
           </div>
+          <p class="form-hint" style="margin:6px 0 0">סה״כ עלות = חומרי גלם + אריזה + נוספות · זה הסכום שמוצג ברשימת המוצרים</p>
           ${detail.currentCosts.unitPrice > 0 ? `
           <div class="product-pricing-row">
             <span>מחיר ללקוח</span>
@@ -1098,6 +1105,10 @@ async function openProductDetailModal(container, productId) {
 
   await loadContext();
 
+  const refreshListAfterClose = () => {
+    renderProducts(container);
+  };
+
   openModal({
     title: '',
     modalClass: 'modal-product-detail',
@@ -1107,9 +1118,13 @@ async function openProductDetailModal(container, productId) {
       <button type="button" class="btn btn-primary" id="product-detail-edit">עריכת פרטים</button>`,
   });
 
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.querySelector('.modal-cancel')?.addEventListener('click', () => {
+    closeModal();
+    refreshListAfterClose();
+  });
   document.getElementById('product-detail-edit')?.addEventListener('click', async () => {
     closeModal();
+    refreshListAfterClose();
     const p = await getProduct(productId);
     if (p) showProductForm(container, { ...p });
   });
