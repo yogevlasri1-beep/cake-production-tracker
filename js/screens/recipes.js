@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=361';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=361';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=361';
-import { renderRecipesMachines } from '../recipes-machines.js?v=361';
-import { renderRecipesPortions } from '../recipes-portions.js?v=361';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=361';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=361';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=361';
-import { openModal, closeModal } from '../modal.js?v=361';
+} from '../kitchen-db.js?v=362';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=362';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=362';
+import { renderRecipesMachines } from '../recipes-machines.js?v=362';
+import { renderRecipesPortions } from '../recipes-portions.js?v=362';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=362';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=362';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=362';
+import { openModal, closeModal } from '../modal.js?v=362';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=361';
-import { defaultColorForIndex } from '../chart.js?v=361';
+} from '../product-drag.js?v=362';
+import { defaultColorForIndex } from '../chart.js?v=362';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -142,7 +142,7 @@ function updateRecipeSelectionBar(container) {
 }
 
 function recipeListMetaText(r) {
-  let meta = 'מנה אחת';
+  let meta = r.parentRecipeId ? 'תוספת לאחר הכנה' : 'מנה אחת';
   if (r.portionWeightGrams) {
     meta += ` · חלוקה: ${formatSubdivisionWeight(r.portionWeightGrams)}`;
   }
@@ -167,7 +167,7 @@ function renderSubRecipeItem(r, index, mode = 'edit') {
     return `
     <div class="list-item recipe-list-item recipe-sub-recipe-item recipe-row-open${browseClass}" data-recipe-id="${r.id}" role="button" tabindex="0">
       <div class="list-item-info">
-        <div class="list-item-name"><span class="recipe-sub-badge">תת מתכון</span> ${escapeHtml(r.name)}</div>
+        <div class="list-item-name"><span class="recipe-sub-badge">תוספת לאחר הכנה</span> ${escapeHtml(r.name)}</div>
         <div class="list-item-meta">${recipeListMetaText(r)}</div>
       </div>
       <span class="recipe-browse-chevron" aria-hidden="true">‹</span>
@@ -176,7 +176,7 @@ function renderSubRecipeItem(r, index, mode = 'edit') {
   return `
     <div class="list-item recipe-list-item recipe-sub-recipe-item recipe-row-open" data-recipe-id="${r.id}" role="button" tabindex="0">
       <div class="list-item-info">
-        <div class="list-item-name"><span class="recipe-sub-badge">תת מתכון</span> ${escapeHtml(r.name)}</div>
+        <div class="list-item-name"><span class="recipe-sub-badge">תוספת לאחר הכנה</span> ${escapeHtml(r.name)}</div>
         <div class="list-item-meta">${recipeListMetaText(r)}</div>
       </div>
       <div class="list-item-actions">
@@ -216,7 +216,7 @@ function renderRecipeItem(r, index, mode = 'edit') {
         <div class="list-item-meta">${recipeListMetaText(r)}</div>
       </div>
       <div class="list-item-actions">
-        <button type="button" class="btn btn-secondary btn-sm add-sub-recipe" data-id="${r.id}" title="הוסף תת מתכון">+ תת</button>
+        <button type="button" class="btn btn-secondary btn-sm add-sub-recipe" data-id="${r.id}" title="הוסף תוספת לאחר הכנה">+ תוספת</button>
         <button type="button" class="btn btn-danger btn-sm delete-recipe" data-id="${r.id}">🗑</button>
       </div>
     </div>
@@ -590,12 +590,12 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
       const parentId = Number(btn.dataset.id);
       const parent = await getRecipe(parentId);
       if (!parent) return;
-      const name = prompt('שם תת המתכון (תוספת למוצר):', `${parent.name} — תוספת`);
+      const name = prompt('שם התוספת לאחר ההכנה:', `${parent.name} — תוספת`);
       if (name === null) return;
       try {
         const subId = await addSubRecipe(parentId, { name: name.trim() });
         const sub = await getRecipe(subId);
-        showToast('תת מתכון נוצר ✓');
+        showToast('תוספת לאחר הכנה נוצרה ✓');
         openRecipeForm(container, { recipe: sub, productCatalog, layout, returnToView: true });
       } catch (err) {
         showToast(err.message || 'שגיאה');
@@ -2554,9 +2554,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=361');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=362');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=361');
+    const { navigateToWorkspace } = await import('../app.js?v=362');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
@@ -3773,26 +3773,31 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
 
 function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap, matCtx, subRecipes = [] }) {
   const ingredients = recipe.ingredients || [];
-  const weightSummaryHtml = renderRecipeWeightSummaryHTML(ingredients, recipe);
-  const { units, summary } = getRecipeProductYieldInfo(recipe, ingredients);
-  const yieldBlockHtml = renderRecipeProductYieldBlockHTML(recipe, ingredients, { showCalculator: true });
   const isSubRecipe = !!recipe.parentRecipeId;
-  let totalCost = 0;
-  const ingredientRows = ingredients.map((ing, i) => {
-    const { lineCost, mat, status } = matCtx
-      ? resolveIngredientDisplay(ing, matCtx)
-      : { lineCost: 0, mat: null, status: 'unlinked' };
-    totalCost += lineCost;
-    return `
+  const additions = isSubRecipe ? [] : subRecipes.filter(Boolean);
+  const additionIngredients = additions.flatMap((sub) => sub.ingredients || []);
+  const allIngredients = [...ingredients, ...additionIngredients];
+  const yieldIngredients = isSubRecipe ? ingredients : allIngredients;
+  const { units, summary } = getRecipeProductYieldInfo(recipe, yieldIngredients);
+  const yieldBlockHtml = renderRecipeProductYieldBlockHTML(recipe, yieldIngredients, { showCalculator: true });
+
+  const renderRows = (rows, startIndex = 0) => {
+    let cost = 0;
+    const html = rows.map((ing, i) => {
+      const { lineCost, mat, status } = matCtx
+        ? resolveIngredientDisplay(ing, matCtx)
+        : { lineCost: 0, mat: null, status: 'unlinked' };
+      cost += lineCost;
+      return `
               <tr>
-                <td class="col-num">${i + 1}</td>
+                <td class="col-num">${startIndex + i + 1}</td>
                 <td class="col-name">
                   <span class="recipe-ing-identity recipe-ing-identity--sheet">
                     ${ingredientStatusDotHTML(status, {
-    asButton: true,
-    materialId: mat?.id || null,
-    ingredientId: ing.id,
-  })}
+        asButton: true,
+        materialId: mat?.id || null,
+        ingredientId: ing.id,
+      })}
                     <span class="recipe-ing-name-text">${escapeHtml(ing.name)}</span>
                   </span>
                 </td>
@@ -3800,16 +3805,56 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
                 <td class="col-unit">${escapeHtml(ing.unit)}</td>
                 <td class="col-cost">${mat && status !== 'no-price' ? formatMoney(lineCost) : '—'}</td>
               </tr>`;
+    }).join('');
+    return { html, cost };
+  };
+
+  const mainRows = renderRows(ingredients);
+  const mainWeight = getRecipeWeightSummary(ingredients, { recipe }).mainText || '—';
+  const additionsWeight = getRecipeWeightSummary(additionIngredients, { recipe }).mainText || '—';
+  const combinedWeight = getRecipeWeightSummary(allIngredients, { recipe }).mainText || '—';
+  let nextRowIndex = ingredients.length;
+  let additionsCost = 0;
+  const additionRows = additions.map((sub) => {
+    const rows = renderRows(sub.ingredients || [], nextRowIndex);
+    nextRowIndex += (sub.ingredients || []).length;
+    additionsCost += rows.cost;
+    const subWeight = getRecipeWeightSummary(sub.ingredients || [], { recipe: sub }).mainText || '—';
+    return `
+              <tr class="recipe-after-prep-divider-row">
+                <td colspan="5">
+                  <span class="recipe-after-prep-label">תוספת לאחר הכנה</span>
+                  <strong>${escapeHtml(sub.name)}</strong>
+                </td>
+              </tr>
+              ${rows.html}
+              <tr class="recipe-after-prep-subtotal-row">
+                <td colspan="2" class="recipe-cost-total-label">סה״כ תוספת · ${escapeHtml(sub.name)}</td>
+                <td colspan="2" class="recipe-after-prep-weight"><strong>${escapeHtml(subWeight)}</strong></td>
+                <td class="col-cost"><strong>${formatMoney(rows.cost)}</strong></td>
+              </tr>`;
   }).join('');
+  const totalCost = mainRows.cost + additionsCost;
+  const weightSummaryHtml = additions.length
+    ? ''
+    : renderRecipeWeightSummaryHTML(ingredients, recipe);
+  const additionNotesHtml = additions
+    .filter((sub) => String(sub.notes || '').trim())
+    .map((sub) => `
+      <div class="recipe-after-prep-note">
+        <strong>${escapeHtml(sub.name)}:</strong>
+        <span>${escapeHtml(sub.notes.trim())}</span>
+      </div>`)
+    .join('');
 
   return `
     <article class="recipe-sheet${isSubRecipe ? ' recipe-sub-recipe-sheet' : ''}">
-      ${isSubRecipe ? '<div class="recipe-sub-recipe-banner">תת מתכון</div>' : ''}
+      ${isSubRecipe ? '<div class="recipe-sub-recipe-banner">תוספת לאחר הכנה</div>' : ''}
       <header class="recipe-sheet-header">
         ${categoryPath ? `<p class="recipe-sheet-breadcrumb">${escapeHtml(categoryPath)}</p>` : ''}
         <h1 class="recipe-sheet-title">${escapeHtml(recipe.name)}</h1>
         <div class="recipe-sheet-meta">
-          <span class="recipe-meta-pill">🍽 מנה אחת${summary.totalRecipeKg > 0 ? ` · ${formatKgWeight(summary.totalRecipeKg)}` : ''}</span>
+          <span class="recipe-meta-pill">🍽 ${isSubRecipe ? 'תוספת לאחר הכנה' : (additions.length ? 'מנה אחת · כולל תוספות' : 'מנה אחת')}${summary.totalRecipeKg > 0 ? ` · ${formatKgWeight(summary.totalRecipeKg)}` : ''}</span>
           ${recipe.portionWeightGrams ? `<span class="recipe-meta-pill">⚖️ יחידת חלוקה: ${formatSubdivisionWeight(recipe.portionWeightGrams)}</span>` : ''}
           ${units ? `<span class="recipe-meta-pill recipe-meta-yield">📦 ${formatRecipeQuantity(units.totalUnits)} יחידות</span>` : ''}
           ${productCategoryName ? `<span class="recipe-meta-pill">🏷️ ${escapeHtml(productCategoryName)}</span>` : ''}
@@ -3819,7 +3864,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
       ${yieldBlockHtml}
       <section class="recipe-sheet-section" aria-label="חומרי גלם">
         <h2 class="recipe-sheet-section-title">חומרי גלם</h2>
-        ${ingredients.length ? `
+        ${allIngredients.length ? `
         <div class="recipe-sheet-table-wrap">
           <table class="recipe-sheet-table">
             <thead>
@@ -3832,15 +3877,29 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
               </tr>
             </thead>
             <tbody>
-              ${ingredientRows}
+              ${mainRows.html}
               <tr class="recipe-cost-total-row">
-                <td colspan="4" class="recipe-cost-total-label">סה״כ עלות למנה</td>
-                <td class="col-cost"><strong>${formatMoney(totalCost)}</strong></td>
+                <td colspan="2" class="recipe-cost-total-label">${isSubRecipe ? 'סה״כ תוספת לאחר הכנה' : 'סה״כ מתכון רגיל'}</td>
+                <td colspan="2" class="recipe-after-prep-weight"><strong>${escapeHtml(mainWeight)}</strong></td>
+                <td class="col-cost"><strong>${formatMoney(mainRows.cost)}</strong></td>
               </tr>
+              ${additionRows}
+              ${additions.length > 1 ? `
+              <tr class="recipe-after-prep-all-total-row">
+                <td colspan="2" class="recipe-cost-total-label">סה״כ כל התוספות</td>
+                <td colspan="2" class="recipe-after-prep-weight"><strong>${escapeHtml(additionsWeight)}</strong></td>
+                <td class="col-cost"><strong>${formatMoney(additionsCost)}</strong></td>
+              </tr>` : ''}
+              ${additions.length ? `
+              <tr class="recipe-after-prep-grand-total-row">
+                <td colspan="2" class="recipe-cost-total-label">סה״כ מתכון כולל · רגיל + תוספת</td>
+                <td colspan="2" class="recipe-after-prep-weight"><strong>${escapeHtml(combinedWeight)}</strong></td>
+                <td class="col-cost"><strong>${formatMoney(totalCost)}</strong></td>
+              </tr>` : ''}
             </tbody>
           </table>
         </div>
-        ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם — לחץ «עריכה» להוספה</p>'}
+        ${weightSummaryHtml}` : '<p class="recipe-sheet-empty">אין חומרי גלם במתכון או בתוספות — לחץ «עריכה» להוספה</p>'}
       </section>
       ${buildRecipeBakingViewHTML(recipe, profileMap)}
       <section class="recipe-sheet-section recipe-sheet-notes-block">
@@ -3848,11 +3907,13 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
         ${recipe.notes?.trim()
           ? `<p class="recipe-sheet-notes">${escapeHtml(recipe.notes.trim())}</p>`
           : `<p class="recipe-sheet-notes-empty">אין הערות עדיין — אפשר להוסיף דרך הכנה, טיפים או הערות (אופציונלי).</p>`}
+        ${additionNotesHtml ? `
+          <div class="recipe-after-prep-notes">
+            <h3>הערות לתוספות לאחר הכנה</h3>
+            ${additionNotesHtml}
+          </div>` : ''}
       </section>
-    </article>
-    ${subRecipes.map((sub) => buildRecipeViewHTML(sub, {
-      categoryPath, linkedNames, productCategoryName, profileMap, matCtx, subRecipes: [],
-    })).join('')}`;
+    </article>`;
 }
 
 async function openRecipeView(container, recipe, { productCatalog, layout }) {
@@ -3879,7 +3940,7 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-notes">📝 הערות / הכנה</button>
       <button type="button" class="btn btn-secondary" id="recipe-view-ratio">⚖️ יחס</button>
-      ${!recipe.parentRecipeId ? '<button type="button" class="btn btn-secondary" id="recipe-add-sub">+ תת מתכון</button>' : ''}
+      ${!recipe.parentRecipeId ? '<button type="button" class="btn btn-secondary" id="recipe-add-sub">+ תוספת לאחר הכנה</button>' : ''}
       <button type="button" class="btn btn-primary" id="recipe-view-edit">✏️ עריכה</button>`,
   });
 
@@ -3892,13 +3953,13 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
     openRecipeForm(container, { recipe, productCatalog, layout, returnToView: true });
   });
   document.getElementById('recipe-add-sub')?.addEventListener('click', async () => {
-    const name = prompt('שם תת המתכון (תוספת למוצר):', `${recipe.name} — תוספת`);
+    const name = prompt('שם התוספת לאחר ההכנה:', `${recipe.name} — תוספת`);
     if (name === null) return;
     try {
       const subId = await addSubRecipe(recipe.id, { name: name.trim() });
       closeModal();
       const sub = await getRecipe(subId);
-      showToast('תת מתכון נוצר ✓');
+      showToast('תוספת לאחר הכנה נוצרה ✓');
       openRecipeForm(container, { recipe: sub, productCatalog, layout, returnToView: true });
     } catch (err) {
       showToast(err.message || 'שגיאה');
@@ -3910,7 +3971,11 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
     switchRecipeTab('ratio');
   });
 
-  bindRecipeProductionCalculator(recipe, recipe.ingredients || [], matCtx);
+  bindRecipeProductionCalculator(
+    recipe,
+    [...(recipe.ingredients || []), ...subRecipes.flatMap((sub) => sub.ingredients || [])],
+    matCtx,
+  );
 
   document.querySelectorAll('.modal-recipe-view .open-ing-in-suppliers').forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -4059,7 +4124,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     : '';
 
   openModal({
-    title: isEdit ? (recipe?.parentRecipeId ? 'עריכת תת מתכון' : 'עריכת מתכון') : 'מתכון חדש',
+    title: isEdit ? (recipe?.parentRecipeId ? 'עריכת תוספת לאחר הכנה' : 'עריכת מתכון') : 'מתכון חדש',
     modalClass: isEdit ? 'modal-recipe-edit' : 'modal-recipe-new',
     bodyHTML: `
       <div class="form-group">

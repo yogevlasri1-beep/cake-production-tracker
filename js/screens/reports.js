@@ -10,31 +10,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=361';
+} from '../db.js?v=362';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=361';
+} from '../utils.js?v=362';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=361';
-import { openModal, closeModal } from '../modal.js?v=361';
+} from '../export.js?v=362';
+import { openModal, closeModal } from '../modal.js?v=362';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=361';
-import { isSheetsConfigured } from '../google-sheets.js?v=361';
+} from '../sheets-flow.js?v=362';
+import { isSheetsConfigured } from '../google-sheets.js?v=362';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=361';
-import { defaultColorForIndex } from '../chart.js?v=361';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=361';
+} from '../calc.js?v=362';
+import { defaultColorForIndex } from '../chart.js?v=362';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=362';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=361';
+} from '../purchasing-db.js?v=362';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -167,6 +167,7 @@ function buildReportDisplayCardHTML({
   processSummary,
   processTotalQty,
   productionRuns,
+  productionRunsHtml,
 }) {
   if (isFlowsReport) {
     return `
@@ -241,8 +242,8 @@ function buildReportDisplayCardHTML({
 
     <div class="card report-flows-card">
       <div class="card-title">תזרימי יצור — ${escapeHtml(ctx.label)}</div>
-      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · שלב נוכחי</p>
-      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+      <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px">תהליכים שהושלמו ותהליכים פעילים · סיכום יצור</p>
+      ${productionRunsHtml}
     </div>
 
     <div class="card report-portions-card">
@@ -1121,7 +1122,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
     ${noFlowSection}`;
 }
 
-function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview) {
+async function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview) {
   if (!productionRuns.length) {
     return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
   }
@@ -1135,7 +1136,8 @@ function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, gro
     return nameA.localeCompare(nameB, 'he');
   });
 
-  const sections = flowIds.map((flowId) => {
+  const sections = [];
+  for (const flowId of flowIds) {
     const meta = flowMap.get(flowId);
     const runs = byFlow.get(flowId);
     const flowLabel = meta?.name || runs[0]?.flowName || `תזרים #${flowId}`;
@@ -1143,20 +1145,21 @@ function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, gro
     const targetHint = meta?.targetLabel
       ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(meta.targetLabel)} · ${stepCount} שלבים</p>`
       : '';
-    return `
+    const runsHtml = await renderProductionRunsHTML(runs, ctx, catMap, productMap, groupMap);
+    sections.push(`
       <section class="report-flows-detail-section">
         <h4 class="report-preview-heading" style="margin-top:0">${escapeHtml(flowLabel)}${targetHint} · ${runs.length} תהליכים</h4>
-        ${renderProductionRunsHTML(runs, ctx, catMap, productMap, groupMap)}
-      </section>`;
-  }).join('');
+        ${runsHtml}
+      </section>`);
+  }
 
   const noFlowSection = noFlowRuns.length ? `
     <section class="report-flows-detail-section">
       <h4 class="report-preview-heading">ללא תזרים מוגדר · ${noFlowRuns.length} תהליכים</h4>
-      ${renderProductionRunsHTML(noFlowRuns, ctx, catMap, productMap, groupMap)}
+      ${await renderProductionRunsHTML(noFlowRuns, ctx, catMap, productMap, groupMap)}
     </section>` : '';
 
-  return sections + noFlowSection;
+  return sections.join('') + noFlowSection;
 }
 
 function avgOrNull(sum, count) {
@@ -2089,41 +2092,25 @@ function renderReportQtyValueRow({ name, qty, value, bold = false, variant }) {
     </div>`;
 }
 
-function renderProductionRunsStepsTable(run) {
-  if (!run.steps?.length) return '';
-  const currentIndex = run.status === 'completed' ? run.steps.length : run.currentStepIndex;
+function renderProductionRunSummaryHTML(run, metrics, productMap) {
+  if (!metrics) {
+    return '<p class="form-hint" style="margin:8px 0 0">אין סיכום יצור לתהליך זה</p>';
+  }
   return `
-    <div class="report-table-wrap" style="margin-top:8px">
-    <table class="report-table report-flow-steps-table">
-      <thead><tr><th>#</th><th>שלב</th><th>סטטוס</th><th>התחלה</th><th>סיום</th><th>משך שלב</th><th>מנות</th></tr></thead>
-      <tbody>
-        ${run.steps.map((step, i) => {
-          let status = 'ממתין';
-          if (step.status === 'completed' || i < currentIndex) status = '✓ בוצע';
-          else if (i === currentIndex && run.status === 'active') status = '● פעיל';
-          const portions = formatStepPortionsReport(step);
-          const stepDur = formatDuration(stepDurationMs(step, null, run.startedAt));
-          const startedAt = step.startedAt ? formatDateTime(step.startedAt) : '—';
-          const completedAt = step.completedAt ? formatDateTime(step.completedAt) : '—';
-          return `<tr class="report-flow-step-row report-flow-step-row--${step.status || 'pending'}">
-            <td class="report-cell-num">${i + 1}</td>
-            <td class="report-cell-text">${escapeHtml(step.stepName)}</td>
-            <td class="report-cell-num">${status}</td>
-            <td class="report-cell-text">${startedAt}</td>
-            <td class="report-cell-text">${completedAt}</td>
-            <td class="report-cell-num">${stepDur}</td>
-            <td class="report-cell-text">${portions}</td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table>
+    <div class="report-flow-run-summary" style="margin-top:8px">
+      ${renderMetricsSummaryGrid(metrics, productMap, { title: 'סיכום יצור' })}
     </div>`;
 }
 
-function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap) {
+async function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap) {
   if (!productionRuns.length) {
     return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
   }
+
+  const runsWithMetrics = await Promise.all(productionRuns.map(async (run) => {
+    const entries = await getRunProductionEntries(run.id);
+    return { run, metrics: computeRunMetrics(run, entries) };
+  }));
 
   const activeOutside = productionRuns.filter((r) => r.status === 'active' && (r.date < ctx.from || r.date > ctx.to));
   const activeCount = productionRuns.filter((r) => r.status === 'active').length;
@@ -2134,14 +2121,15 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
     <p class="report-preview-note" style="margin-bottom:10px">${activeCount} פעילים · ${doneCount} הושלמו</p>
     <div class="report-table-wrap">
     <table class="report-table">
-      <thead><tr><th>תאריך התחלה</th><th>תאריך סיום</th><th>משך</th><th>אצווה</th><th>תזרים / יעד</th><th>סטטוס</th><th>שלב</th></tr></thead>
+      <thead><tr><th>תאריך התחלה</th><th>תאריך סיום</th><th>משך</th><th>אצווה</th><th>תזרים / יעד</th><th>סטטוס</th><th>סיכום יצור</th></tr></thead>
       <tbody>
-        ${productionRuns.map((run) => {
+        ${runsWithMetrics.map(({ run, metrics }) => {
           const info = reportRunStepInfo(run);
           const batch = run.batchNumber ? escapeHtml(run.batchNumber) : '—';
           const startDate = reportRunStartDate(run);
           const endDate = reportRunEndDate(run);
           const dateNote = (run.date < ctx.from || run.date > ctx.to) ? ` · ${formatDate(run.date)}` : '';
+          const productionLine = formatMetricsProductionLine(metrics, productMap);
           return `<tr>
             <td class="report-cell-num">${startDate ? formatDate(startDate) : '—'}${dateNote ? `<span class="report-flow-date-note">${dateNote.trim()}</span>` : ''}</td>
             <td class="report-cell-num">${endDate ? formatDate(endDate) : '—'}</td>
@@ -2149,13 +2137,13 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
             <td class="report-cell-text">${batch}</td>
             <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
             <td class="report-cell-num"><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>
-            <td class="report-cell-text">${info.progress} · ${escapeHtml(info.stepName)}</td>
+            <td class="report-cell-text">${productionLine}</td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
     </div>
-    ${productionRuns.map((run) => {
+    ${runsWithMetrics.map(({ run, metrics }) => {
           const info = reportRunStepInfo(run);
           return `
       <details class="report-flow-detail"${run.status === 'active' ? ' open' : ''}>
@@ -2164,8 +2152,7 @@ function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, group
           · ${info.statusLabel} · ${info.progress}
           · ${reportRunDatesLabel(run)}
         </summary>
-        ${run.status === 'active' ? reportFlowTimeline(run) : ''}
-        ${renderProductionRunsStepsTable(run)}
+        ${renderProductionRunSummaryHTML(run, metrics, productMap)}
       </details>`;
         }).join('')}
     ${''}`;
@@ -2558,7 +2545,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
       ${daySections.length ? daySections.join('') : '<p class="report-empty">אין ייצור בשבוע זה</p>'}
 
       <h4 class="report-preview-heading">תזרימי יצור</h4>
-      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+      ${await renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
 
       <h4 class="report-preview-heading">🍽 תיעוד מנות</h4>
       ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
@@ -2590,10 +2577,11 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
     </div>`;
 }
 
-function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap) {
+async function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap) {
   const subtitle = reportSubtitle(ctx);
 
   const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+  const productionRunsHtml = await renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap);
 
   return `
     <div class="report-preview">
@@ -2621,7 +2609,7 @@ function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSum
       ${renderProductionTableHTML(rows, totals, catMap)}
 
       <h4 class="report-preview-heading">תזרימי יצור</h4>
-      ${renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)}
+      ${productionRunsHtml}
 
       <h4 class="report-preview-heading">🍽 תיעוד מנות</h4>
       ${renderPortionDocumentationHTML(productionRuns, catMap, productMap, groupMap)}
@@ -3283,7 +3271,7 @@ export async function renderReports(container) {
   const flowsReportHtml = isFlowsSummary
     ? await buildFlowsReportHTML(productionRuns, productMap, flowsOverview)
     : isFlowsDetail
-      ? buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview)
+      ? await buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMap, groupMap, flowsOverview)
       : isFlowsForecast
         ? await buildFlowsForecastReportHTML(productionRuns, productMap, flowsOverview, {
           mode: ctx.reportType === 'flows-forecast-detail' ? 'detail' : 'summary',
@@ -3317,7 +3305,7 @@ export async function renderReports(container) {
   else if (ctx.reportType === 'week') {
     previewHtml = await buildWeeklyPreviewHTML(ctx, entries, products, categories, productMap, catMap, processLogs, processSummary, productionRuns, groupMap);
   } else {
-    previewHtml = buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
+    previewHtml = await buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap);
   }
   const isPageView = container.dataset.reportView === 'page';
 
@@ -3328,6 +3316,10 @@ export async function renderReports(container) {
     needsPortionName ? 'בחר סוג מנה לצפייה ולהורדה' : '',
     needsHistoryScope ? 'בחר מוצר, קטגוריה או קטגוריה כללית לצפייה ולהורדה' : '',
   ].filter(Boolean);
+
+  const productionRunsHtml = (!isFlowsReport && !isPortionsReport && !isPnlReport && !isManagerReport && !isHistoryReport && ctx.reportType !== 'week')
+    ? await renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap)
+    : '';
 
   const reportDisplayHtml = buildReportDisplayCardHTML({
     fullTitle,
@@ -3358,6 +3350,7 @@ export async function renderReports(container) {
     processSummary,
     processTotalQty,
     productionRuns,
+    productionRunsHtml,
   });
 
   const activeSectionBlock = `

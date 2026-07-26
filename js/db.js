@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=361';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=361';
-import { defaultColorForIndex } from './chart.js?v=361';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=361';
+} from './validators.js?v=362';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=362';
+import { defaultColorForIndex } from './chart.js?v=362';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=362';
 
 export { ValidationError };
 
@@ -5840,12 +5840,12 @@ export async function getPortionPresetsCatalog() {
       linkLabel = buildPortionLinkSummary({ productIds, categoryIds, groupIds }, maps);
       linkPath = 'שיוך מותאם — המנה תופיע למוצרים שמתאימים לאחד מהיעדים';
     } else if (preset.sourceRecipeId) {
-      linkLabel = recipe?.parentRecipeId ? 'תת מתכון · לפי שיוך מתכון' : 'לפי שיוך מתכון';
+      linkLabel = recipe?.parentRecipeId ? 'תוספת לאחר הכנה · לפי שיוך מתכון' : 'לפי שיוך מתכון';
       linkPath = recipe?.parentRecipeId
-        ? `תת מתכון: ${recipe.name}${parentRecipe ? ` · ${parentRecipe.name}` : ''}`
+        ? `תוספת לאחר הכנה: ${recipe.name}${parentRecipe ? ` · ${parentRecipe.name}` : ''}`
         : (recipe?.name ? `מתכון: ${recipe.name}` : '');
       if (Number(preset.categoryGroupId) === 0) {
-        linkLabel = recipe?.parentRecipeId ? 'תת מתכון · בקטלוג' : 'מתכון · בקטלוג';
+        linkLabel = recipe?.parentRecipeId ? 'תוספת לאחר הכנה · בקטלוג' : 'מתכון · בקטלוג';
         linkPath = (linkPath ? `${linkPath} · ` : '') + 'עדיין בלי שיוך לקבוצת מוצרים';
       }
     } else if (preset.sourceRawMaterialId) {
@@ -5870,7 +5870,7 @@ export async function getPortionPresetsCatalog() {
       sourceKind,
       sourceLabel: sourceKind === 'recipe'
         ? (recipe?.parentRecipeId
-          ? `תת מתכון · ${recipe?.name || ''}${parentRecipe ? ` (${parentRecipe.name})` : ''}`
+          ? `תוספת לאחר הכנה · ${recipe?.name || ''}${parentRecipe ? ` (${parentRecipe.name})` : ''}`
           : `מתכון · ${recipe?.name || ''}`)
         : sourceKind === 'material'
           ? `חומר גלם · ${material?.name || ''}`

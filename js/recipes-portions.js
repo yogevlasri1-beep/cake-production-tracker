@@ -1,16 +1,16 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=361';
+} from './db.js?v=362';
 import {
   getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
-} from './kitchen-db.js?v=361';
-import { defaultColorForIndex } from './chart.js?v=361';
-import { escapeHtml, showToast } from './utils.js?v=361';
-import { openModal, closeModal } from './modal.js?v=361';
+} from './kitchen-db.js?v=362';
+import { defaultColorForIndex } from './chart.js?v=362';
+import { escapeHtml, showToast } from './utils.js?v=362';
+import { openModal, closeModal } from './modal.js?v=362';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=361').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=362').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -331,7 +331,7 @@ function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } =
     : portion.sourceKind === 'material'
       ? escapeHtml(portion.materialName || portion.sourceLabel)
       : escapeHtml(portion.homeGroupName || portion.sourceLabel);
-  const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תת מתכון</span> ' : '';
+  const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תוספת לאחר הכנה</span> ' : '';
   const orderHtml = showOrder
     ? `<div class="portion-order-actions">
         <button type="button" class="btn btn-secondary btn-sm portion-move-up" data-id="${portion.id}" title="העלה"${index === 0 ? ' disabled' : ''}>↑</button>
@@ -361,7 +361,7 @@ function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } =
 
 function renderSubRecipeIngredientsTable(ingredients) {
   if (!ingredients?.length) {
-    return '<p class="form-hint portion-empty">אין חומרי גלם — ערוך את תת המתכון במסך מתכונים</p>';
+    return '<p class="form-hint portion-empty">אין חומרי גלם — ערוך את התוספת לאחר ההכנה במסך מתכונים</p>';
   }
   return `
     <div class="recipe-sheet-table-wrap portion-sub-recipe-table-wrap">
@@ -400,7 +400,7 @@ function renderSubRecipePortionCard(portion, recipe) {
       <div class="portion-sub-recipe-card-header">
         <div class="portion-sub-recipe-card-title-block">
           <h3 class="portion-sub-recipe-card-title">
-            <span class="recipe-sub-badge">תת מתכון</span>
+            <span class="recipe-sub-badge">תוספת לאחר הכנה</span>
             ${escapeHtml(portionPresetLabel(portion))}
           </h3>
           <p class="list-item-meta">${escapeHtml(parentLine)}</p>

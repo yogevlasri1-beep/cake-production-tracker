@@ -5186,6 +5186,66 @@ table.report-table tfoot td {
   font-weight: 700;
 }
 
+.recipe-after-prep-divider-row td {
+  padding-top: 14px !important;
+  padding-bottom: 9px !important;
+  border-top: 4px solid color-mix(in srgb, #d97706 72%, var(--border)) !important;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.recipe-after-prep-label {
+  display: inline-block;
+  margin-inline-end: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.recipe-after-prep-weight {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.recipe-after-prep-subtotal-row td {
+  border-top: 2px solid #f59e0b !important;
+  background: #fffbeb;
+}
+
+.recipe-after-prep-all-total-row td {
+  border-top: 2px solid #d97706 !important;
+  background: #fef3c7;
+}
+
+.recipe-after-prep-grand-total-row td {
+  border-top: 4px double #92400e !important;
+  background: #fef3c7;
+  color: #78350f;
+  font-weight: 800;
+}
+
+.recipe-after-prep-notes {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 2px solid #f59e0b;
+}
+
+.recipe-after-prep-notes h3 {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: #92400e;
+}
+
+.recipe-after-prep-note {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
 .recipe-sub-recipe-item {
   margin-inline-start: 20px;
   margin-top: 4px;

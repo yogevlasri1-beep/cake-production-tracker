@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=361';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=362';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=361';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=361';
+} from './validators.js?v=362';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=362';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1154,7 +1154,7 @@ export async function syncSubRecipesProductLinks(parentRecipeId) {
 export async function addSubRecipe(parentRecipeId, { name } = {}) {
   const parent = await getRecipe(parentRecipeId);
   if (!parent) throw new ValidationError('מתכון לא נמצא');
-  if (parent.parentRecipeId) throw new ValidationError('לא ניתן להוסיף תת מתכון לתת מתכון');
+  if (parent.parentRecipeId) throw new ValidationError('לא ניתן להוסיף תוספת לאחר הכנה לתוספת אחרת');
   const subs = await getRecipeSubRecipes(parentRecipeId);
   const trimmed = sanitizeName(name, 80) || `${parent.name} — תוספת`;
   const recipeId = await db.recipes.add({
@@ -2129,16 +2129,16 @@ export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   let weightKg = totalG > 0 ? sanitizePortionSize(totalG / 1000) : null;
   if (weightKg == null) weightKg = 0.001;
   const unitG = Number(recipe.portionWeightGrams) || 0;
-  let extra = recipe.parentRecipeId ? 'תת מתכון' : 'מנה אחת';
+  let extra = recipe.parentRecipeId ? 'תוספת לאחר הכנה' : 'מנה אחת';
   if (totalG <= 0) {
-    extra = recipe.parentRecipeId ? 'תת מתכון · ללא משקל' : 'ללא משקל מחושב';
+    extra = recipe.parentRecipeId ? 'תוספת לאחר הכנה · ללא משקל' : 'ללא משקל מחושב';
   } else if (unitG > 0) {
     const units = computeRecipeProductUnits(weightKg, 1, unitG);
     const countStr = units
       ? formatRecipeQuantity(units.totalUnits)
       : formatRecipeQuantity(totalG / unitG);
     const unitPart = `${countStr} יחידות × ${formatSubdivisionWeight(unitG)}`;
-    extra = recipe.parentRecipeId ? `תת מתכון · ${unitPart}` : unitPart;
+    extra = recipe.parentRecipeId ? `תוספת לאחר הכנה · ${unitPart}` : unitPart;
   }
   return {
     name: recipe.name,
