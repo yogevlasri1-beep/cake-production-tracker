@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=370';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=371';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=370';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=370';
+} from './validators.js?v=371';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=371';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1178,7 +1178,8 @@ export async function addSubRecipe(parentRecipeId, { name } = {}) {
     bakeOvenType: null,
   });
   await copyRecipeProductScopeFromParent(recipeId, parent);
-  await syncRecipePortionPresets(recipeId);
+  // התוספת נכללת במנת המתכון הראשי — לא יוצרים מנה נפרדת
+  await syncRecipePortionPresets(parent.id);
   return recipeId;
 }
 
@@ -1750,6 +1751,8 @@ export async function moveRecipesToCategory(recipeIds, categoryId) {
 export async function deleteRecipe(id) {
   const rid = sanitizeProductId(id);
   if (!rid) return;
+  const recipe = await db.recipes.get(rid);
+  const parentId = recipe?.parentRecipeId ? Number(recipe.parentRecipeId) : null;
   const childRecipes = await getRecipeSubRecipes(rid);
   for (const child of childRecipes) {
     await deleteRecipe(child.id);
@@ -1778,6 +1781,8 @@ export async function deleteRecipe(id) {
     await db.recipes.delete(rid);
   });
   await syncRawMaterialsActiveFromRecipes();
+  // אחרי מחיקת תוספת — מעדכנים את מנת המתכון הראשי
+  if (parentId) await syncRecipePortionPresets(parentId);
 }
 
 /** מוחק את כל המתכונים (רכיבים וקישורים) — קטגוריות וקבוצות נשארות */
@@ -2141,23 +2146,23 @@ export async function resolveCategoryGroupIdsForRecipe(recipe) {
   return [...groupIds];
 }
 
-/** בניית שדות מנה לתזרים ממתכון — המתכון כולו = מנה אחת (גם בלי משקל מחושב) */
-export function buildRecipePortionPresetFields(recipe, ingredients = []) {
+/** בניית שדות מנה לתזרים ממתכון — המתכון + תוספות לאחר הכנה = מנה אחת */
+export function buildRecipePortionPresetFields(recipe, ingredients = [], { hasAdditions = false } = {}) {
   if (!recipe) return null;
   const totalG = recipeTotalWeightGrams(ingredients);
   let weightKg = totalG > 0 ? sanitizePortionSize(totalG / 1000) : null;
   if (weightKg == null) weightKg = 0.001;
   const unitG = Number(recipe.portionWeightGrams) || 0;
-  let extra = recipe.parentRecipeId ? 'תוספת לאחר הכנה' : 'מנה אחת';
+  let extra = hasAdditions ? 'מנה אחת · כולל תוספת לאחר הכנה' : 'מנה אחת';
   if (totalG <= 0) {
-    extra = recipe.parentRecipeId ? 'תוספת לאחר הכנה · ללא משקל' : 'ללא משקל מחושב';
+    extra = hasAdditions ? 'מנה אחת · כולל תוספת · ללא משקל' : 'ללא משקל מחושב';
   } else if (unitG > 0) {
     const units = computeRecipeProductUnits(weightKg, 1, unitG);
     const countStr = units
       ? formatRecipeQuantity(units.totalUnits)
       : formatRecipeQuantity(totalG / unitG);
     const unitPart = `${countStr} יחידות × ${formatSubdivisionWeight(unitG)}`;
-    extra = recipe.parentRecipeId ? `תוספת לאחר הכנה · ${unitPart}` : unitPart;
+    extra = hasAdditions ? `מנה אחת · כולל תוספת · ${unitPart}` : unitPart;
   }
   return {
     name: recipe.name,
@@ -2166,15 +2171,41 @@ export function buildRecipePortionPresetFields(recipe, ingredients = []) {
   };
 }
 
-/** סנכרון מנות מתכון לרשימת המנות — כל מתכון מקבל מנה בקטלוג */
+async function clearRecipePortionPresets(recipeId) {
+  const rid = sanitizeProductId(recipeId);
+  if (!rid) return;
+  const existing = await db.groupPortionPresets
+    .filter((p) => Number(p.sourceRecipeId) === rid)
+    .toArray();
+  for (const row of existing) {
+    await deletePortionPresetIngredientSettings(row.id);
+    if (db.portionPresetLinks) {
+      await db.portionPresetLinks.where('portionPresetId').equals(row.id).delete();
+    }
+    await db.groupPortionPresets.delete(row.id);
+  }
+}
+
+/** סנכרון מנות מתכון לרשימת המנות — מתכון ראשי + תוספות = מנה אחת */
 export async function syncRecipePortionPresets(recipeId) {
   const rid = sanitizeProductId(recipeId);
   if (!rid) return;
   const recipe = await getRecipe(rid);
   if (!recipe) return;
 
+  // תוספת לאחר הכנה אינה מנה נפרדת — נכללת במנת המתכון הראשי
+  if (recipe.parentRecipeId) {
+    await clearRecipePortionPresets(rid);
+    await syncRecipePortionPresets(recipe.parentRecipeId);
+    return;
+  }
+
+  const additions = await getRecipeSubRecipes(rid);
+  const costingIngredients = await getRecipeCostingIngredients(recipe);
   const groupIds = await resolveCategoryGroupIdsForRecipe(recipe);
-  const presetData = buildRecipePortionPresetFields(recipe, recipe.ingredients);
+  const presetData = buildRecipePortionPresetFields(recipe, costingIngredients, {
+    hasAdditions: additions.length > 0,
+  });
   if (!presetData) return;
 
   const existing = await db.groupPortionPresets.filter((p) => p.sourceRecipeId === rid).toArray();
@@ -2185,6 +2216,9 @@ export async function syncRecipePortionPresets(recipeId) {
   for (const row of existing) {
     if (!targetGroups.has(Number(row.categoryGroupId))) {
       await deletePortionPresetIngredientSettings(row.id);
+      if (db.portionPresetLinks) {
+        await db.portionPresetLinks.where('portionPresetId').equals(row.id).delete();
+      }
       await db.groupPortionPresets.delete(row.id);
     }
   }
@@ -2213,8 +2247,12 @@ export async function syncRecipePortionPresets(recipeId) {
 /** סנכרון כל המתכונים — לשדרוג / תיקון נתונים */
 export async function syncAllRecipePortionPresets() {
   const recipes = await db.recipes.toArray();
+  // קודם מנקים מנות נפרדות של תוספות, ואז מסנכרנים רק מתכונים ראשיים
   for (const r of recipes) {
-    await syncRecipePortionPresets(r.id);
+    if (r.parentRecipeId) await clearRecipePortionPresets(r.id);
+  }
+  for (const r of recipes) {
+    if (!r.parentRecipeId) await syncRecipePortionPresets(r.id);
   }
 }
 
@@ -2224,14 +2262,17 @@ export async function deletePortionPresetIngredientSettings(portionPresetId) {
   await db.portionPresetIngredientSettings.where('portionPresetId').equals(pid).delete();
 }
 
-/** נתוני טופס רכיבי מנה — רכיבי מתכון + ספקים אפשריים + הגדרות שמורות */
+/** נתוני טופס רכיבי מנה — רכיבי מתכון (כולל תוספות לאחר הכנה) + ספקים + הגדרות */
 export async function getPortionPresetIngredientsFormData(portionPresetId) {
   const preset = await db.groupPortionPresets.get(Number(portionPresetId));
   if (!preset?.sourceRecipeId) throw new ValidationError('מנה לא מקושרת למתכון');
 
   const rid = Number(preset.sourceRecipeId);
-  const [ingredients, materials, suppliers, existingSettings] = await Promise.all([
-    db.recipeIngredients.where('recipeId').equals(rid).toArray(),
+  const recipe = await getRecipe(rid);
+  const costingIngredients = recipe
+    ? await getRecipeCostingIngredients(recipe)
+    : await db.recipeIngredients.where('recipeId').equals(rid).toArray();
+  const [materials, suppliers, existingSettings] = await Promise.all([
     getRawMaterials(),
     getSuppliers(),
     db.portionPresetIngredientSettings
@@ -2239,11 +2280,11 @@ export async function getPortionPresetIngredientsFormData(portionPresetId) {
       : Promise.resolve([]),
   ]);
 
-  ingredients.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const ingredients = costingIngredients.slice().sort((a, b) =>
+    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
   const byNameKey = buildMaterialsByNameKey(materials);
   const settingsMap = new Map(existingSettings.map((s) => [Number(s.recipeIngredientId), s]));
-  const ingredientIds = new Set(ingredients.map((i) => i.id));
 
   return {
     presetName: preset.name,
@@ -2284,10 +2325,11 @@ export async function savePortionPresetIngredientSettings(portionPresetId, rows)
   if (!preset?.sourceRecipeId) throw new ValidationError('מנה לא מקושרת למתכון');
   if (!db.portionPresetIngredientSettings) return;
 
-  const validIngredientIds = new Set(
-    (await db.recipeIngredients.where('recipeId').equals(Number(preset.sourceRecipeId)).toArray())
-      .map((i) => i.id),
-  );
+  const recipe = await getRecipe(Number(preset.sourceRecipeId));
+  const costingIngredients = recipe
+    ? await getRecipeCostingIngredients(recipe)
+    : await db.recipeIngredients.where('recipeId').equals(Number(preset.sourceRecipeId)).toArray();
+  const validIngredientIds = new Set(costingIngredients.map((i) => i.id));
   const materials = await getRawMaterials();
   const matIds = new Set(materials.map((m) => m.id));
 

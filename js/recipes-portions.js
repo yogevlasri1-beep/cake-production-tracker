@@ -1,16 +1,16 @@
 import {
   getPortionPresetsCatalog, updatePortionPresetLink, setPortionPresetCatalogOrder,
   PORTION_LINK_PRODUCT, PORTION_LINK_CATEGORY, PORTION_LINK_GROUP,
-} from './db.js?v=370';
+} from './db.js?v=371';
 import {
-  getRecipe, formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
-} from './kitchen-db.js?v=370';
-import { defaultColorForIndex } from './chart.js?v=370';
-import { escapeHtml, showToast } from './utils.js?v=370';
-import { openModal, closeModal } from './modal.js?v=370';
+  formatRecipeQuantity, syncAllRecipePortionPresets, getRecipesCatalogLayout,
+} from './kitchen-db.js?v=371';
+import { defaultColorForIndex } from './chart.js?v=371';
+import { escapeHtml, showToast } from './utils.js?v=371';
+import { openModal, closeModal } from './modal.js?v=371';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=370').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=371').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -322,7 +322,7 @@ function indexPortionsByRecipeId(portions) {
   return map;
 }
 
-function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } = {}) {
+function renderPortionRow(portion, { showOrder = false, index = 0, total = 1, additionCount = 0 } = {}) {
   const scopeBadge = portion.hasCustomLinks
     ? '<span class="machine-assignment-scope">שיוך מותאם</span>'
     : '<span class="machine-assignment-scope portion-scope-default">ברירת מחדל</span>';
@@ -331,7 +331,9 @@ function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } =
     : portion.sourceKind === 'material'
       ? escapeHtml(portion.materialName || portion.sourceLabel)
       : escapeHtml(portion.homeGroupName || portion.sourceLabel);
-  const subBadge = portion.isSubRecipe ? '<span class="recipe-sub-badge">תוספת לאחר הכנה</span> ' : '';
+  const additionBadge = additionCount > 0
+    ? `<span class="recipe-sub-badge">${additionCount === 1 ? 'כולל תוספת' : `כולל ${additionCount} תוספות`}</span> `
+    : '';
   const orderHtml = showOrder
     ? `<div class="portion-order-actions">
         <button type="button" class="btn btn-secondary btn-sm portion-move-up" data-id="${portion.id}" title="העלה"${index === 0 ? ' disabled' : ''}>↑</button>
@@ -339,11 +341,11 @@ function renderPortionRow(portion, { showOrder = false, index = 0, total = 1 } =
       </div>`
     : '';
   return `
-    <div class="portion-catalog-row list-item${portion.isSubRecipe ? ' portion-catalog-row--sub-recipe' : ''}" data-portion-id="${portion.id}">
+    <div class="portion-catalog-row list-item" data-portion-id="${portion.id}">
       ${orderHtml}
       <div class="list-item-info">
-        <div class="list-item-name">${subBadge}🍽 ${escapeHtml(portionPresetLabel(portion))}</div>
-        <div class="list-item-meta">${metaLine}</div>
+        <div class="list-item-name">${additionBadge}🍽 ${escapeHtml(portionPresetLabel(portion))}</div>
+        <div class="list-item-meta">${metaLine}${portion.weight != null ? ` · ${portion.weight} ק"ג` : ''}${portion.extra ? ` · ${escapeHtml(portion.extra)}` : ''}</div>
         <div class="list-item-meta portion-link-line">
           ${scopeBadge}
           <strong>${escapeHtml(portion.linkLabel)}</strong>
@@ -420,28 +422,18 @@ function renderSubRecipePortionCard(portion, recipe) {
     </article>`;
 }
 
-function renderRecipeBlock(recipe, portionByRecipeId, subRecipeMap, usedIds) {
+function renderRecipeBlock(recipe, portionByRecipeId, usedIds) {
   const parts = [];
   const mainPortion = portionByRecipeId.get(Number(recipe.id));
   if (mainPortion) {
     usedIds.add(Number(mainPortion.sourceRecipeId));
+    const additionCount = (recipe.subRecipes || []).length;
     parts.push(`
       <div class="portion-recipe-block">
-        ${renderPortionRow(mainPortion)}
+        ${renderPortionRow(mainPortion, { additionCount })}
       </div>`);
   }
-  const subs = recipe.subRecipes || [];
-  const subCards = [];
-  for (const sub of subs) {
-    const subPortion = portionByRecipeId.get(Number(sub.id));
-    if (!subPortion) continue;
-    usedIds.add(Number(subPortion.sourceRecipeId));
-    const fullRecipe = subRecipeMap.get(sub.id) || null;
-    subCards.push(renderSubRecipePortionCard(subPortion, fullRecipe));
-  }
-  if (subCards.length) {
-    parts.push(`<div class="portion-sub-recipe-list">${subCards.join('')}</div>`);
-  }
+  // תוספות לאחר הכנה נכללות במנת המתכון הראשי — לא מוצגות כמנות נפרדות
   return parts.join('');
 }
 
@@ -449,19 +441,16 @@ function countPortionsInCategory(cat, portionByRecipeId) {
   let n = 0;
   for (const recipe of cat.recipes || []) {
     if (portionByRecipeId.has(Number(recipe.id))) n += 1;
-    for (const sub of recipe.subRecipes || []) {
-      if (portionByRecipeId.has(Number(sub.id))) n += 1;
-    }
   }
   return n;
 }
 
-function renderPortionCategoryCard(cat, catIndex, portionByRecipeId, subRecipeMap, usedIds) {
+function renderPortionCategoryCard(cat, catIndex, portionByRecipeId, usedIds) {
   const count = countPortionsInCategory(cat, portionByRecipeId);
   if (!count) return '';
   const color = defaultColorForIndex(cat.id);
   const body = (cat.recipes || []).map((recipe) =>
-    renderRecipeBlock(recipe, portionByRecipeId, subRecipeMap, usedIds)).join('');
+    renderRecipeBlock(recipe, portionByRecipeId, usedIds)).join('');
   return `
     <div class="card portion-recipe-category-card" data-portion-recipe-cat="${cat.id}">
       <div class="portion-recipe-category-header">
@@ -475,9 +464,9 @@ function renderPortionCategoryCard(cat, catIndex, portionByRecipeId, subRecipeMa
     </div>`;
 }
 
-function renderPortionRecipeGroupCard(group, groupIndex, portionByRecipeId, subRecipeMap, usedIds, openGroups) {
+function renderPortionRecipeGroupCard(group, groupIndex, portionByRecipeId, usedIds, openGroups) {
   const catsHtml = (group.categories || []).map((cat, i) =>
-    renderPortionCategoryCard(cat, i, portionByRecipeId, subRecipeMap, usedIds)).join('');
+    renderPortionCategoryCard(cat, i, portionByRecipeId, usedIds)).join('');
   if (!catsHtml.trim()) return '';
   const total = (group.categories || []).reduce(
     (s, c) => s + countPortionsInCategory(c, portionByRecipeId),
@@ -503,38 +492,36 @@ function renderPortionRecipeGroupCard(group, groupIndex, portionByRecipeId, subR
     </div>`;
 }
 
-function renderOrphanRecipePortions(orphanPortions, subRecipeMap) {
-  if (!orphanPortions.length) return '';
+function renderOrphanRecipePortions(orphanPortions) {
+  // תוספות לאחר הכנה אינן מנות נפרדות — מתעלמים אם נשארו רשומות ישנות
   const main = orphanPortions.filter((p) => !p.isSubRecipe);
-  const subs = orphanPortions.filter((p) => p.isSubRecipe);
+  if (!main.length) return '';
   return `
     <div class="card portion-recipe-category-card portion-recipe-orphans">
       <div class="portion-recipe-category-header">
         <span class="category-chip cat-chip" style="${categoryChipStyle('#94a3b8')}">אחר</span>
-        <span class="category-summary">${orphanPortions.length} מנות ללא קטגוריה פעילה</span>
+        <span class="category-summary">${main.length} מנות ללא קטגוריה פעילה</span>
       </div>
       <div class="portion-recipe-category-body">
         ${main.map((p) => renderPortionRow(p)).join('')}
-        ${subs.length ? `<div class="portion-sub-recipe-list">${subs.map((p) =>
-    renderSubRecipePortionCard(p, subRecipeMap.get(p.sourceRecipeId) || null)).join('')}</div>` : ''}
       </div>
     </div>`;
 }
 
-function renderRecipePortionSection(layout, portionByRecipeId, subRecipeMap, open, openGroups) {
+function renderRecipePortionSection(layout, portionByRecipeId, open, openGroups) {
   const usedIds = new Set();
   const groupsHtml = (layout.groups || []).map((g, i) =>
-    renderPortionRecipeGroupCard(g, i, portionByRecipeId, subRecipeMap, usedIds, openGroups)).join('');
+    renderPortionRecipeGroupCard(g, i, portionByRecipeId, usedIds, openGroups)).join('');
   const orphans = [...portionByRecipeId.entries()]
     .filter(([rid]) => !usedIds.has(rid))
     .map(([, p]) => p);
-  const totalCount = portionByRecipeId.size;
+  const totalCount = [...portionByRecipeId.values()].filter((p) => !p.isSubRecipe).length;
   const body = `
     <div class="portion-recipe-catalog">
-      <p class="form-hint portion-recipe-order-hint">הסדר והקטגוריות זהים למסך המתכונים — לשינוי סדר ערוך במתכונים.</p>
+      <p class="form-hint portion-recipe-order-hint">הסדר והקטגוריות זהים למסך המתכונים — לשינוי סדר ערוך במתכונים. מתכון עם תוספת לאחר הכנה נספר כמנה אחת.</p>
       <div class="category-group-list portion-recipe-group-list">
         ${groupsHtml || '<p class="form-hint portion-empty">אין מנות ממתכונים</p>'}
-        ${renderOrphanRecipePortions(orphans, subRecipeMap)}
+        ${renderOrphanRecipePortions(orphans)}
       </div>
     </div>`;
   return `
@@ -610,26 +597,16 @@ export async function renderRecipesPortions(container, { productCatalog }) {
 
   const recipePortions = portions.filter((p) => p.sourceKind === 'recipe');
   const flowPortions = portions.filter((p) => p.sourceKind !== 'recipe');
-  const portionByRecipeId = indexPortionsByRecipeId(recipePortions);
+  const portionByRecipeId = indexPortionsByRecipeId(recipePortions.filter((p) => !p.isSubRecipe));
   const sectionsOpen = getPortionSectionsOpen();
   const openGroups = getPortionRecipeGroupsOpen((layout.groups || []).map((g) => g.id));
-
-  const subRecipeMap = new Map();
-  const subIds = [...portionByRecipeId.values()]
-    .filter((p) => p.isSubRecipe)
-    .map((p) => p.sourceRecipeId);
-  await Promise.all(subIds.map(async (rid) => {
-    if (!rid || subRecipeMap.has(rid)) return;
-    const recipe = await getRecipe(rid);
-    if (recipe) subRecipeMap.set(rid, recipe);
-  }));
 
   container.innerHTML = `
     <div class="card portion-station-intro">
       <div class="card-title">מנות לייצור</div>
-      <p class="form-hint" style="margin:0">מנות ממתכונים מסודרות כמו בקטלוג המתכונים (קבוצה → קטגוריה → מתכון). מנות מתזרים נשארות נפרדות.</p>
+      <p class="form-hint" style="margin:0">מנות ממתכונים מסודרות כמו בקטלוג המתכונים (קבוצה → קטגוריה → מתכון). מתכון עם תוספת לאחר הכנה = מנה אחת (משקל משולב). מנות מתזרים נשארות נפרדות.</p>
     </div>
-    ${renderRecipePortionSection(layout, portionByRecipeId, subRecipeMap, sectionsOpen.recipe, openGroups)}
+    ${renderRecipePortionSection(layout, portionByRecipeId, sectionsOpen.recipe, openGroups)}
     ${renderPortionSection('flow', '🔄 מנות מתזרים', flowPortions, sectionsOpen.flow)}`;
 
   const movePortion = async (id, direction) => {

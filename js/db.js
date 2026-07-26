@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=370';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=370';
-import { defaultColorForIndex } from './chart.js?v=370';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=370';
+} from './validators.js?v=371';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=371';
+import { defaultColorForIndex } from './chart.js?v=371';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=371';
 
 export { ValidationError };
 
