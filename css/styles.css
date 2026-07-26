@@ -9774,6 +9774,54 @@ body.supplier-drag-active {
   line-height: 1.55;
 }
 
+.recipe-book-toc {
+  margin: 0 0 28px;
+  padding-bottom: 20px;
+  border-bottom: 2px solid var(--primary);
+}
+
+.recipe-book-toc-title {
+  text-align: center;
+  font-weight: 700;
+  font-size: 1.85rem;
+  margin: 0 0 18px;
+  color: var(--text);
+}
+
+.recipe-book-toc-group {
+  margin: 0 0 16px;
+}
+
+.recipe-book-toc-group-title {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.recipe-book-toc-sub {
+  margin: 0 0 12px;
+  padding-right: 4px;
+}
+
+.recipe-book-toc-sub-title {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
+.recipe-book-toc-list {
+  margin: 0;
+  padding: 0 1.4em 0 0;
+  list-style: decimal;
+}
+
+.recipe-book-toc-list li {
+  margin: 2px 0;
+  line-height: 1.45;
+}
+
 .recipe-book-group-title {
   text-align: center;
   font-weight: 700;
@@ -10912,6 +10960,19 @@ body.supplier-drag-active {
   .recipe-book-view {
     box-shadow: none;
     border: none;
+  }
+
+  .recipe-book-toc {
+    page-break-after: always;
+    border-bottom: none;
+  }
+
+  .recipe-book-group-title {
+    page-break-before: always;
+  }
+
+  .recipe-book-group-title:first-of-type {
+    page-break-before: avoid;
   }
 }
 

@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=365';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=365';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, renderRecipeBookItemHTML } from '../recipe-import.js?v=365';
-import { renderRecipesMachines } from '../recipes-machines.js?v=365';
-import { renderRecipesPortions } from '../recipes-portions.js?v=365';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=365';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=365';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=365';
-import { openModal, closeModal } from '../modal.js?v=365';
+} from '../kitchen-db.js?v=366';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=366';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=366';
+import { renderRecipesMachines } from '../recipes-machines.js?v=366';
+import { renderRecipesPortions } from '../recipes-portions.js?v=366';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=366';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=366';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=366';
+import { openModal, closeModal } from '../modal.js?v=366';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=365';
-import { defaultColorForIndex } from '../chart.js?v=365';
+} from '../product-drag.js?v=366';
+import { defaultColorForIndex } from '../chart.js?v=366';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1845,15 +1845,16 @@ async function renderRecipeBook(container, { groups, allSubs, productMap, produc
       </div>
     </div>
     <div class="card recipe-book-view" id="recipe-book-content">
+      ${buildRecipeBookTocHTML({ groups, subCategories: allSubs, recipes: allRecipes })}
       ${groups.map((group) => {
     const subs = allSubs.filter((s) => s.groupId === group.id);
-    const groupRecipes = allRecipes.filter((r) => subs.some((s) => s.id === r.categoryId));
+    const groupRecipes = allRecipes.filter((r) => subs.some((s) => s.id === r.categoryId) && !r.parentRecipeId);
     if (!groupRecipes.length) return '';
     return `
         <section class="recipe-book-group">
           <h2 class="recipe-book-group-title">${escapeHtml(group.name)}</h2>
           ${subs.map((sub) => {
-      const subRecipes = groupRecipes.filter((r) => r.categoryId === sub.id && !r.parentRecipeId);
+      const subRecipes = groupRecipes.filter((r) => r.categoryId === sub.id);
       if (!subRecipes.length) return '';
       return `
             <section class="recipe-book-sub">
@@ -2531,9 +2532,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=365');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=366');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=365');
+    const { navigateToWorkspace } = await import('../app.js?v=366');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
