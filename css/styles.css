@@ -2343,6 +2343,37 @@ body {
   line-height: 1;
 }
 
+.mat-portion-products-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface-alt, #f8fafc);
+}
+
+.mat-portion-product-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.mat-portion-product-item:hover {
+  background: color-mix(in srgb, var(--primary, #2563eb) 8%, white);
+}
+
+.mat-portion-product-item input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
 .ingredient-edit-intro {
   margin-bottom: 12px;
 }

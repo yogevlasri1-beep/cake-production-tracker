@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=366';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=367';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=366';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=366';
+} from './validators.js?v=367';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=367';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3201,10 +3201,19 @@ async function clearRawMaterialPortionPresets(materialId) {
   }
 }
 
-/** סימון חומר גלם כמנה + שיוך למוצר (לתזרים) + משקל מנה בק"ג */
+/** מזהי המוצרים המשויכים לחומר גלם שמסומן כמנה (תומך גם בשדה הישן היחיד) */
+export function getMaterialPortionProductIds(mat) {
+  const raw = Array.isArray(mat?.portionProductIds) && mat.portionProductIds.length
+    ? mat.portionProductIds
+    : (mat?.portionProductId ? [mat.portionProductId] : []);
+  return [...new Set(raw.map(sanitizeProductId).filter(Boolean))];
+}
+
+/** סימון חומר גלם כמנה + שיוך למוצר אחד או יותר (לתזרים) + משקל מנה בק"ג */
 export async function setRawMaterialAsPortion(materialId, {
   enabled = false,
   productId = null,
+  productIds = null,
   weightKg = null,
 } = {}) {
   const mid = sanitizeProductId(materialId);
@@ -3216,29 +3225,34 @@ export async function setRawMaterialAsPortion(materialId, {
     await db.rawMaterials.update(mid, {
       isPortion: false,
       portionProductId: null,
+      portionProductIds: [],
       portionWeightKg: null,
     });
     await clearRawMaterialPortionPresets(mid);
     return;
   }
 
-  const pid = sanitizeProductId(productId);
-  if (!pid) throw new ValidationError('בחר מוצר לשיוך המנה');
-  const product = await db.products.get(pid);
-  if (!product) throw new ValidationError('מוצר לא נמצא');
+  const rawIds = Array.isArray(productIds) && productIds.length ? productIds : [productId];
+  const pids = [...new Set(rawIds.map(sanitizeProductId).filter(Boolean))];
+  if (!pids.length) throw new ValidationError('בחר לפחות מוצר אחד לשיוך המנה');
+  for (const pid of pids) {
+    const product = await db.products.get(pid);
+    if (!product) throw new ValidationError('מוצר לא נמצא');
+  }
 
   const w = sanitizePortionSize(weightKg);
   if (w == null) throw new ValidationError('הגדר משקל מנה (ק"ג)');
 
   await db.rawMaterials.update(mid, {
     isPortion: true,
-    portionProductId: pid,
+    portionProductId: pids[0],
+    portionProductIds: pids,
     portionWeightKg: w,
   });
   await syncRawMaterialPortionPreset(mid);
 }
 
-/** סנכרון מנה מתזרים מחומר גלם שמסומן כמנה */
+/** סנכרון מנה מתזרים מחומר גלם שמסומן כמנה — מנה לכל קבוצת קטגוריה של המוצרים */
 export async function syncRawMaterialPortionPreset(materialId) {
   const mid = sanitizeProductId(materialId);
   if (!mid) return;
@@ -3248,23 +3262,28 @@ export async function syncRawMaterialPortionPreset(materialId) {
     return;
   }
 
-  const pid = sanitizeProductId(mat.portionProductId);
+  const pids = getMaterialPortionProductIds(mat);
   const w = sanitizePortionSize(mat.portionWeightKg);
-  if (!pid || w == null) {
+  if (!pids.length || w == null) {
     await clearRawMaterialPortionPresets(mid);
     return;
   }
 
-  const product = await db.products.get(pid);
-  if (!product) {
+  const productsByGroup = new Map();
+  for (const pid of pids) {
+    const product = await db.products.get(pid);
+    if (!product) continue;
+    let categoryGroupId = PORTION_CATALOG_ONLY_GROUP_ID;
+    if (product.categoryId) {
+      const cat = await db.categories.get(product.categoryId);
+      if (cat?.groupId) categoryGroupId = Number(cat.groupId);
+    }
+    if (!productsByGroup.has(categoryGroupId)) productsByGroup.set(categoryGroupId, []);
+    productsByGroup.get(categoryGroupId).push(pid);
+  }
+  if (!productsByGroup.size) {
     await clearRawMaterialPortionPresets(mid);
     return;
-  }
-
-  let categoryGroupId = PORTION_CATALOG_ONLY_GROUP_ID;
-  if (product.categoryId) {
-    const cat = await db.categories.get(product.categoryId);
-    if (cat?.groupId) categoryGroupId = Number(cat.groupId);
   }
 
   const presetData = {
@@ -3281,7 +3300,7 @@ export async function syncRawMaterialPortionPreset(materialId) {
     .toArray();
 
   for (const row of existing) {
-    if (Number(row.categoryGroupId) !== Number(categoryGroupId)) {
+    if (!productsByGroup.has(Number(row.categoryGroupId))) {
       await deletePortionPresetIngredientSettings(row.id);
       if (db.portionPresetLinks) {
         await db.portionPresetLinks.where('portionPresetId').equals(row.id).delete();
@@ -3294,34 +3313,41 @@ export async function syncRawMaterialPortionPreset(materialId) {
     .where('sourceRawMaterialId')
     .equals(mid)
     .toArray();
-  let presetId = fresh.find((p) => Number(p.categoryGroupId) === Number(categoryGroupId))?.id;
 
-  if (presetId) {
-    await db.groupPortionPresets.update(presetId, presetData);
-  } else {
-    const groupPresets = await db.groupPortionPresets
-      .where('categoryGroupId')
-      .equals(categoryGroupId)
-      .toArray();
-    const maxOrder = groupPresets.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
-    const catalogMax = (await db.groupPortionPresets.toArray())
-      .reduce((m, p) => Math.max(m, p.catalogSortOrder ?? 0), 0);
-    presetId = await db.groupPortionPresets.add({
-      categoryGroupId,
-      ...presetData,
-      sortOrder: maxOrder + 1,
-      catalogSortOrder: catalogMax + 1,
-    });
-  }
+  for (const [categoryGroupId, groupPids] of productsByGroup.entries()) {
+    let presetId = fresh.find((p) => Number(p.categoryGroupId) === Number(categoryGroupId))?.id;
 
-  if (db.portionPresetLinks) {
-    await db.portionPresetLinks.where('portionPresetId').equals(presetId).delete();
-    await db.portionPresetLinks.add({
-      portionPresetId: presetId,
-      linkType: 'product',
-      targetId: pid,
-      sortOrder: 1,
-    });
+    if (presetId) {
+      await db.groupPortionPresets.update(presetId, presetData);
+    } else {
+      const groupPresets = await db.groupPortionPresets
+        .where('categoryGroupId')
+        .equals(categoryGroupId)
+        .toArray();
+      const maxOrder = groupPresets.reduce((m, p) => Math.max(m, p.sortOrder ?? 0), 0);
+      const catalogMax = (await db.groupPortionPresets.toArray())
+        .reduce((m, p) => Math.max(m, p.catalogSortOrder ?? 0), 0);
+      presetId = await db.groupPortionPresets.add({
+        categoryGroupId,
+        ...presetData,
+        sortOrder: maxOrder + 1,
+        catalogSortOrder: catalogMax + 1,
+      });
+    }
+
+    if (db.portionPresetLinks) {
+      await db.portionPresetLinks.where('portionPresetId').equals(presetId).delete();
+      let order = 1;
+      for (const pid of groupPids) {
+        await db.portionPresetLinks.add({
+          portionPresetId: presetId,
+          linkType: 'product',
+          targetId: pid,
+          sortOrder: order,
+        });
+        order += 1;
+      }
+    }
   }
 }
 
@@ -3562,10 +3588,12 @@ export function materialFieldFillPatch(keep, others) {
     }
   }
   if (!keep.isPortion) {
-    const from = others.find((o) => o.isPortion && o.portionProductId);
+    const from = others.find((o) => o.isPortion && getMaterialPortionProductIds(o).length);
     if (from) {
+      const fromPids = getMaterialPortionProductIds(from);
       patch.isPortion = true;
-      patch.portionProductId = from.portionProductId;
+      patch.portionProductId = fromPids[0];
+      patch.portionProductIds = fromPids;
       if (from.portionWeightKg != null) patch.portionWeightKg = from.portionWeightKg;
     }
   } else if (keep.portionWeightKg == null) {

@@ -20,14 +20,15 @@ import {
   getMaterialSynonyms, sanitizeMaterialSynonyms, materialMatchesSearch,
   setRawMaterialRecipeDefault,
   setRawMaterialAsPortion,
+  getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=366';
-import { getProducts, getCategories } from '../db.js?v=366';
-import { parseSupplierFile } from '../supplier-import.js?v=366';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=366';
-import { openModal, closeModal } from '../modal.js?v=366';
-import { requestAutoBackupNow } from '../backup-service.js?v=366';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=366';
+} from '../kitchen-db.js?v=367';
+import { getProducts, getCategories } from '../db.js?v=367';
+import { parseSupplierFile } from '../supplier-import.js?v=367';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=367';
+import { openModal, closeModal } from '../modal.js?v=367';
+import { requestAutoBackupNow } from '../backup-service.js?v=367';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=367';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1737,15 +1738,19 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
   const pricePerKg = mat ? (getMaterialPurchasePricePerKg(mat) ?? '') : '';
   const packageWeightKg = mat ? (packageWeightKgFromGrams(mat.packageWeightGrams) ?? '') : '';
   const isPortion = !!mat?.isPortion;
-  const portionProductId = mat?.portionProductId ? Number(mat.portionProductId) : '';
+  const portionProductIds = mat ? getMaterialPortionProductIds(mat) : [];
   const portionWeightKg = mat?.portionWeightKg != null ? mat.portionWeightKg : '';
   const packProductId = mat?.packLinkedProductId ? Number(mat.packLinkedProductId) : '';
   const packCategoryId = mat?.packLinkedCategoryId ? Number(mat.packLinkedCategoryId) : '';
   const packLinkMode = packProductId ? 'product' : (packCategoryId ? 'category' : 'none');
-  const productOptions = (products || [])
+  const portionProductChecks = (products || [])
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
-    .map((p) => `<option value="${p.id}"${portionProductId === Number(p.id) ? ' selected' : ''}>${escapeHtml(p.name)}</option>`)
+    .map((p) => `
+      <label class="mat-portion-product-item">
+        <input type="checkbox" class="mat-portion-product-cb" value="${p.id}"${portionProductIds.includes(Number(p.id)) ? ' checked' : ''}>
+        <span>${escapeHtml(p.name)}</span>
+      </label>`)
     .join('');
   const packProductOptions = (products || [])
     .slice()
@@ -1833,15 +1838,15 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
         <input type="checkbox" id="mat-as-portion"${isPortion ? ' checked' : ''}>
         <span>סמן כמנה</span>
       </label>
-      <p class="form-hint">החומר יופיע כמנה בתזרים של המוצר המשויך</p>
+      <p class="form-hint">החומר יופיע כמנה בתזרים של המוצרים המשויכים</p>
     </div>
     <div id="mat-portion-fields" style="${isPortion ? '' : 'display:none'}">
       <div class="form-group">
-        <label for="mat-portion-product">שיוך למוצר</label>
-        <select id="mat-portion-product">
-          <option value="">בחר מוצר...</option>
-          ${productOptions}
-        </select>
+        <label>שיוך למוצרים</label>
+        <div class="mat-portion-products-list" id="mat-portion-products">
+          ${portionProductChecks || '<p class="form-hint" style="margin:0">אין מוצרים להצגה</p>'}
+        </div>
+        <p class="form-hint">אפשר לסמן כמה מוצרים — המנה תופיע בתזרים של כל מוצר מסומן</p>
       </div>
       <div class="form-group">
         <label for="mat-portion-weight">משקל מנה (ק&quot;ג)</label>
@@ -1961,7 +1966,9 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       const portionEnabled = !!document.getElementById('mat-as-portion')?.checked;
-      const portionProductId = document.getElementById('mat-portion-product')?.value || null;
+      const portionProductIds = [...document.querySelectorAll('.mat-portion-product-cb:checked')]
+        .map((cb) => Number(cb.value))
+        .filter(Boolean);
       const portionWeightKg = document.getElementById('mat-portion-weight')?.value;
 
       let savedId = materialId;
@@ -2004,7 +2011,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
 
       await setRawMaterialAsPortion(savedId, {
         enabled: portionEnabled,
-        productId: portionProductId,
+        productIds: portionProductIds,
         weightKg: portionWeightKg,
       });
 

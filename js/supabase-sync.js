@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=366';
+import { db, getSetting, setSetting } from './db.js?v=367';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,10 +10,11 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=366';
+} from './supabase-backup.js?v=367';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
+  ARRAY_FKS,
   POLYMORPHIC_FKS,
   KITCHEN_ID,
   isSyncCollection,
@@ -21,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=366';
+} from './sync/collections.js?v=367';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -31,7 +32,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=366';
+} from './sync/id-map.js?v=367';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -262,13 +263,21 @@ async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId
   if (!from || !to || from === to) return;
   for (const [collection, fks] of Object.entries(COLLECTION_FKS)) {
     const fields = Object.entries(fks).filter(([, dep]) => dep === targetCollection).map(([f]) => f);
+    const arrayFields = Object.entries(ARRAY_FKS[collection] || {})
+      .filter(([, dep]) => dep === targetCollection).map(([f]) => f);
     const poly = POLYMORPHIC_FKS[collection];
-    if ((!fields.length && !poly) || !db[collection]) continue;
+    if ((!fields.length && !arrayFields.length && !poly) || !db[collection]) continue;
     const rows = await db[collection].toArray();
     for (const row of rows) {
       const patch = {};
       for (const field of fields) {
         if (Number(row[field]) === from) patch[field] = to;
+      }
+      for (const field of arrayFields) {
+        const vals = row[field];
+        if (Array.isArray(vals) && vals.some((v) => Number(v) === from)) {
+          patch[field] = [...new Set(vals.map((v) => (Number(v) === from ? to : v)))];
+        }
       }
       if (poly && poly.targets[row[poly.typeField]] === targetCollection
           && Number(row[poly.idField]) === from) {

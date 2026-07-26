@@ -143,6 +143,14 @@ export const COLLECTION_FKS = {
 };
 
 /**
+ * Array FK fields: a field holding an array of local ids pointing at one
+ * target collection. Each entry is remapped to/from a sync UUID individually.
+ */
+export const ARRAY_FKS = {
+  rawMaterials: { portionProductIds: 'products' },
+};
+
+/**
  * Polymorphic FK fields: the target collection depends on a sibling type field.
  * These cannot live in COLLECTION_FKS (fixed target), so the id-map remaps them
  * separately using the row's type value.

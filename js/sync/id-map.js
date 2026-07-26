@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=366';
-import { COLLECTION_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=366';
+import { db } from '../db.js?v=367';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=367';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -81,6 +81,23 @@ export async function remapFksToSyncIds(collection, row) {
     const syncId = await ensureSyncId(targetCollection, val);
     out[field] = syncId || null;
   }
+  const arrayFks = ARRAY_FKS[collection] || {};
+  for (const [field, targetCollection] of Object.entries(arrayFks)) {
+    const vals = out[field];
+    if (!Array.isArray(vals) || !vals.length) continue;
+    const mapped = [];
+    for (const val of vals) {
+      if (val == null || val === '') continue;
+      // Already a sync UUID — pass through.
+      if (typeof val === 'string' && !/^\d+$/.test(val)) {
+        mapped.push(val);
+        continue;
+      }
+      const syncId = await ensureSyncId(targetCollection, val);
+      if (syncId) mapped.push(syncId);
+    }
+    out[field] = mapped;
+  }
   const poly = POLYMORPHIC_FKS[collection];
   if (poly) {
     const targetCollection = poly.targets[out[poly.typeField]];
@@ -123,6 +140,30 @@ export async function remapFksToLocalIds(collection, payload) {
     } else {
       unresolved.push(field);
     }
+  }
+  const arrayFks = ARRAY_FKS[collection] || {};
+  for (const [field, targetCollection] of Object.entries(arrayFks)) {
+    const vals = out[field];
+    if (!Array.isArray(vals) || !vals.length) continue;
+    const mapped = [];
+    let missing = false;
+    for (const val of vals) {
+      if (val == null || val === '') continue;
+      if (typeof val === 'number' || /^\d+$/.test(String(val))) {
+        mapped.push(Number(val));
+        continue;
+      }
+      const meta = await getMetaBySyncId(String(val));
+      if (meta && meta.collection === targetCollection) {
+        mapped.push(Number(meta.localKey) || meta.localKey);
+      } else {
+        // Keep the UUID so a later pass can still resolve it.
+        mapped.push(val);
+        missing = true;
+      }
+    }
+    out[field] = mapped;
+    if (missing) unresolved.push(field);
   }
   const poly = POLYMORPHIC_FKS[collection];
   if (poly) {
