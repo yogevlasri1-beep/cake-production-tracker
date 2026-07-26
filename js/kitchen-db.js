@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=362';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=363';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=362';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=362';
+} from './validators.js?v=363';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=363';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3621,6 +3621,38 @@ async function mergeMaterialIntoKeep(keep, mid) {
 
   await retargetMaterialRefs(mid, keep);
   await db.rawMaterials.delete(mid);
+  await dedupeRecipeIngredientsForMaterial(keep);
+}
+
+/**
+ * אחרי הסבת מרכיבי מתכון לחומר יעד — מכווץ שורות כפולות שנוצרו כשמתכון הכיל
+ * גם את חומר היעד וגם את החומר שאוחד (אותה מנה בדיוק). שומר שורה אחת לכל
+ * (מתכון + sortOrder) עם אותה כמות ויחידה, ומוחק את הכפילויות כדי שהכמות לא
+ * תוכפל. שורות עם כמות/יחידה/סדר שונים נחשבות מרכיבים לגיטימיים ולא נוגעים בהן.
+ */
+async function dedupeRecipeIngredientsForMaterial(keep) {
+  if (!keep) return;
+  const rows = await db.recipeIngredients.where('rawMaterialId').equals(keep).toArray();
+  const groups = new Map();
+  for (const row of rows) {
+    const rid = sanitizeProductId(row.recipeId);
+    if (!rid) continue;
+    const key = `${rid}|${row.sortOrder ?? ''}|${row.quantity ?? ''}|${row.unit ?? ''}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  for (const dupes of groups.values()) {
+    if (dupes.length < 2) continue;
+    dupes.sort((a, b) => {
+      const an = sanitizeName(a.name, 80) ? 1 : 0;
+      const bn = sanitizeName(b.name, 80) ? 1 : 0;
+      if (an !== bn) return bn - an;
+      return (Number(a.id) || 0) - (Number(b.id) || 0);
+    });
+    for (const extra of dupes.slice(1)) {
+      await db.recipeIngredients.delete(extra.id);
+    }
+  }
 }
 
 /**
