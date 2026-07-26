@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=367';
+import { db, getSetting, setSetting } from './db.js?v=368';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=367';
+} from './supabase-backup.js?v=368';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=367';
+} from './sync/collections.js?v=368';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,7 +32,7 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=367';
+} from './sync/id-map.js?v=368';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {

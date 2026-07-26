@@ -6714,6 +6714,15 @@ button.flow-metrics-stat--btn:hover {
   vertical-align: top;
 }
 
+.report-flows-summary-table th:nth-child(4),
+.report-flows-summary-table td:nth-child(4),
+table.report-table .report-cell-production {
+  min-width: 7.5rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
 .report-flows-forecast-summary-table td,
 .report-flows-forecast-summary-table th {
   vertical-align: top;

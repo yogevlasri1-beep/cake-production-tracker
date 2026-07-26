@@ -10,31 +10,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=367';
+} from '../db.js?v=368';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=367';
+} from '../utils.js?v=368';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=367';
-import { openModal, closeModal } from '../modal.js?v=367';
+} from '../export.js?v=368';
+import { openModal, closeModal } from '../modal.js?v=368';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=367';
-import { isSheetsConfigured } from '../google-sheets.js?v=367';
+} from '../sheets-flow.js?v=368';
+import { isSheetsConfigured } from '../google-sheets.js?v=368';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=367';
-import { defaultColorForIndex } from '../chart.js?v=367';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=367';
+} from '../calc.js?v=368';
+import { defaultColorForIndex } from '../chart.js?v=368';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=368';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=367';
+} from '../purchasing-db.js?v=368';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -1004,7 +1004,18 @@ function renderMetricsProductionRowsHTML(metrics, productMap, { compact = false 
 }
 
 function formatMetricsProductionLine(metrics, productMap) {
-  return renderMetricsProductionRowsHTML(metrics, productMap, { compact: true });
+  const rows = metricsProductionRows(metrics, productMap);
+  if (!rows.length) {
+    if (metrics?.productionQty > 0) return formatDecimal(metrics.productionQty);
+    return '—';
+  }
+  return rows
+    .map(({ product, productId, qty }) => {
+      const name = product?.name || `#${productId}`;
+      const qtyText = product ? formatProductQuantity(product, qty) : formatDecimal(qty);
+      return `${escapeHtml(name)} · ${qtyText}`;
+    })
+    .join('<br>');
 }
 
 function renderMetricsSummaryGrid(metrics, productMap, { title = 'סיכום כולל' } = {}) {
@@ -1079,7 +1090,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
         </td>
         <td class="report-cell-num">${metrics.runCount}</td>
         <td class="report-cell-num">${metrics.completedCount || 0}</td>
-        <td class="report-cell-text">${formatMetricsProductionLine(metrics, productMap)}</td>
+        <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(metrics, productMap)}</td>
         <td class="report-cell-num">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</td>
         <td class="report-cell-num">${metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—'}</td>
         <td class="report-cell-num">${metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—'}</td>
@@ -1098,7 +1109,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
             <td class="report-cell-text">תהליכים ללא flowId</td>
             <td class="report-cell-num">${m.runCount}</td>
             <td class="report-cell-num">${m.completedCount || 0}</td>
-            <td class="report-cell-text">${formatMetricsProductionLine(m, productMap)}</td>
+            <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(m, productMap)}</td>
             <td class="report-cell-num">${m.portionCount != null ? formatPortionCount(m.portionCount) : '—'}</td>
             <td class="report-cell-num">${m.portionWeightKg != null ? formatPortionWeightKg(m.portionWeightKg) : '—'}</td>
             <td class="report-cell-num">${m.durationMs != null ? formatDuration(m.durationMs) : '—'}</td>
@@ -2137,7 +2148,7 @@ async function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap,
             <td class="report-cell-text">${batch}</td>
             <td class="report-cell-text">${reportRunTitle(run, catMap, productMap, groupMap)}</td>
             <td class="report-cell-num"><span class="flow-status-badge flow-status-badge--${run.status === 'completed' ? 'completed' : 'active'}">${info.statusLabel}</span></td>
-            <td class="report-cell-text">${productionLine}</td>
+            <td class="report-cell-text report-cell-production">${productionLine}</td>
           </tr>`;
         }).join('')}
       </tbody>
