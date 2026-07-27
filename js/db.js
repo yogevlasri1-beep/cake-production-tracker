@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=371';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=371';
-import { defaultColorForIndex } from './chart.js?v=371';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=371';
+} from './validators.js?v=372';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=372';
+import { defaultColorForIndex } from './chart.js?v=372';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=372';
 
 export { ValidationError };
 
@@ -8293,19 +8293,35 @@ export async function getFlowProductLinkRows(flowId) {
 export async function getLinkedFlowsForProduct(productId) {
   const links = await getProductFlowLinkRows(productId);
   if (!links.length) return [];
-  const flows = await Promise.all(links.map((l) => db.flows.get(l.flowId)));
-  return links
-    .map((link, i) => ({ link, flow: flows[i] }))
-    .filter((row) => row.flow);
+  const flows = await Promise.all(links.map((l) => db.flows.get(Number(l.flowId))));
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < links.length; i++) {
+    const flow = flows[i];
+    if (!flow) continue;
+    const fid = Number(flow.id);
+    if (seen.has(fid)) continue;
+    seen.add(fid);
+    out.push({ link: links[i], flow });
+  }
+  return out;
 }
 
 export async function getLinkedProductsForFlow(flowId) {
   const links = await getFlowProductLinkRows(flowId);
   if (!links.length) return [];
-  const products = await Promise.all(links.map((l) => db.products.get(l.productId)));
-  return links
-    .map((link, i) => ({ link, product: products[i] }))
-    .filter((row) => row.product);
+  const products = await Promise.all(links.map((l) => db.products.get(Number(l.productId))));
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < links.length; i++) {
+    const product = products[i];
+    if (!product) continue;
+    const pid = Number(product.id);
+    if (seen.has(pid)) continue;
+    seen.add(pid);
+    out.push({ link: links[i], product });
+  }
+  return out;
 }
 
 export async function setProductFlowLinks(productId, flowIds) {
@@ -8331,22 +8347,30 @@ export async function setFlowProductLinks(flowId, productIds) {
   if (!db.productFlowLinks) return;
   const flow = await db.flows.get(fid);
   if (!flow) throw new ValidationError('תזרים לא נמצא');
-  const newPids = new Set((productIds || []).map((id) => sanitizeProductId(id)).filter(Boolean));
+  const newPids = [...new Set((productIds || []).map((id) => sanitizeProductId(id)).filter(Boolean))];
   for (const pid of newPids) {
     const prod = await db.products.get(pid);
     if (!prod) throw new ValidationError('מוצר לא נמצא');
   }
+  const newPidSet = new Set(newPids);
   const existing = await db.productFlowLinks.where('flowId').equals(fid).toArray();
-  const existingPids = new Set(existing.map((l) => l.productId));
   await db.transaction('rw', db.productFlowLinks, async () => {
+    const kept = new Set();
     for (const link of existing) {
-      if (!newPids.has(link.productId)) await db.productFlowLinks.delete(link.id);
+      const pid = Number(link.productId);
+      // Drop unselected links and collapse duplicate (productId, flowId) rows.
+      if (!newPidSet.has(pid) || kept.has(pid)) {
+        await db.productFlowLinks.delete(link.id);
+        continue;
+      }
+      kept.add(pid);
     }
     for (const pid of newPids) {
-      if (existingPids.has(pid)) continue;
+      if (kept.has(pid)) continue;
       const productLinks = await db.productFlowLinks.where('productId').equals(pid).toArray();
       const maxOrder = productLinks.reduce((m, l) => Math.max(m, l.sortOrder ?? 0), 0);
       await db.productFlowLinks.add({ productId: pid, flowId: fid, sortOrder: maxOrder + 1 });
+      kept.add(pid);
     }
   });
 }

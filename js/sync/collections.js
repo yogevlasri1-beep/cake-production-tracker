@@ -358,7 +358,7 @@ export function rowFingerprint(collection, row) {
     case 'productPortionComponents':
       return `${collection}|${row.productId}|${row.rawMaterialId}`;
     case 'productFlowLinks':
-      return `${collection}|${row.productId}|${row.flowId}`;
+      return `${collection}|${Number(row.productId) || ''}|${Number(row.flowId) || ''}`;
     case 'flowSteps':
       return `${collection}|${row.flowId}|${row.sortOrder ?? ''}|${n}`;
     case 'flows':

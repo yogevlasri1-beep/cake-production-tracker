@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=371';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=372';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=371';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=371';
+} from './validators.js?v=372';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=372';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3828,19 +3828,23 @@ async function renameRecipeIngredientsMaterialName(fromName, toName) {
   }
 }
 
+/** טבלאות שנכתבות בזמן איחוד חומרי גלם — חייבות להיות באותה טרנזקציה */
+function materialMergeTxTables() {
+  const tables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
+  if (db.products) tables.push(db.products);
+  if (db.supplierShortages) tables.push(db.supplierShortages);
+  if (db.groupPortionPresets) tables.push(db.groupPortionPresets);
+  if (db.productPortionComponents) tables.push(db.productPortionComponents);
+  return tables;
+}
+
 export async function mergeDuplicateMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
   if (!keep) throw new ValidationError('חומר לא תקין');
   const ids = (mergeIds || []).map(sanitizeProductId).filter((id) => id && id !== keep);
   if (!ids.length) return;
 
-  const txTables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
-  if (db.products) txTables.push(db.products);
-  if (db.supplierShortages) txTables.push(db.supplierShortages);
-  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
-  if (db.productPortionComponents) txTables.push(db.productPortionComponents);
-
-  await db.transaction('rw', ...txTables, async () => {
+  await db.transaction('rw', ...materialMergeTxTables(), async () => {
     for (const mid of ids) {
       await mergeMaterialIntoKeep(keep, mid);
     }
@@ -3944,16 +3948,8 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
     : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
-  const txTables = [
-    db.rawMaterials,
-    db.rawMaterialPriceHistory,
-    db.recipeIngredients,
-  ];
-  if (db.products) txTables.push(db.products);
-  if (db.supplierShortages) txTables.push(db.supplierShortages);
-  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
 
-  await db.transaction('rw', ...txTables, async () => {
+  await db.transaction('rw', ...materialMergeTxTables(), async () => {
     for (const mat of others) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
       await mergeMaterialIntoKeep(keep, mat.id);
@@ -3996,12 +3992,7 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
   }
 
   const touched = new Set();
-  const txTables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
-  if (db.products) txTables.push(db.products);
-  if (db.supplierShortages) txTables.push(db.supplierShortages);
-  if (db.groupPortionPresets) txTables.push(db.groupPortionPresets);
-
-  await db.transaction('rw', ...txTables, async () => {
+  await db.transaction('rw', ...materialMergeTxTables(), async () => {
     for (const mid of ids) {
       const mat = await db.rawMaterials.get(mid);
       if (!mat) continue;
