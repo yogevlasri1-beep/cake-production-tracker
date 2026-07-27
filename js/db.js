@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=372';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=372';
-import { defaultColorForIndex } from './chart.js?v=372';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=372';
+} from './validators.js?v=373';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=373';
+import { defaultColorForIndex } from './chart.js?v=373';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=373';
 
 export { ValidationError };
 
@@ -7132,6 +7132,142 @@ export function collectRunIngredientBatchTracking(run) {
     }
   }
   return rows;
+}
+
+function packagingBatchStamp(entry = {}) {
+  return entry.recordedAt || entry.completedAt || entry.date || '';
+}
+
+/** אירועי רישום מספרי מנה בתהליך — מהחדש לישן */
+function collectRunPackagingBatchEvents(run) {
+  const events = [];
+  for (const log of getRunPortionLogs(run)) {
+    const batches = (log.ingredientBatches || []).filter((b) => String(b.packagingBatchNumber || '').trim());
+    if (!batches.length) continue;
+    events.push({
+      stamp: packagingBatchStamp(log),
+      runId: run?.id || null,
+      ingredientBatches: batches,
+    });
+  }
+  for (const step of run?.steps || []) {
+    if (!step.tracksPortions) continue;
+    for (const batch of getStepPortionBatches(step)) {
+      const batches = (batch.ingredientBatches || []).filter((b) => String(b.packagingBatchNumber || '').trim());
+      if (!batches.length) continue;
+      events.push({
+        stamp: packagingBatchStamp(batch) || packagingBatchStamp(step),
+        runId: run?.id || null,
+        ingredientBatches: batches,
+      });
+    }
+  }
+  events.sort((a, b) => String(b.stamp || '').localeCompare(String(a.stamp || '')));
+  return events;
+}
+
+function packagingSuggestionKeys(bat = {}) {
+  const keys = [];
+  const ingId = Number(bat.recipeIngredientId);
+  if (ingId) keys.push(`ing:${ingId}`);
+  const matId = Number(bat.rawMaterialId);
+  if (matId) keys.push(`mat:${matId}`);
+  const name = String(bat.name || '').trim().toLocaleLowerCase('he');
+  if (name) keys.push(`name:${name}`);
+  return keys;
+}
+
+/**
+ * מספרי מנה אחרונים לכל חומר גלם (להצעה בטופס).
+ * עדיפות: תהליך נוכחי, אחר כך תהליכים אחרונים של אותו תזרים.
+ */
+export async function getSuggestedPackagingBatchNumbers({
+  runId = null,
+  flowId = null,
+  maxRuns = 40,
+} = {}) {
+  const suggestions = new Map();
+  const seenRuns = new Set();
+  const runs = [];
+
+  const pushRun = async (id) => {
+    const rid = Number(id);
+    if (!rid || seenRuns.has(rid)) return;
+    seenRuns.add(rid);
+    const run = await getProductionRun(rid);
+    if (run) runs.push(run);
+  };
+
+  if (runId) await pushRun(runId);
+
+  const fid = Number(flowId) || Number(runs[0]?.flowId) || null;
+  if (fid) {
+    const others = await db.productionRuns
+      .filter((r) => Number(r.flowId) === fid && Number(r.id) !== Number(runId || 0))
+      .toArray();
+    others.sort((a, b) => {
+      const ta = a.completedAt || a.startedAt || `${a.date || ''}T00:00:00`;
+      const tb = b.completedAt || b.startedAt || `${b.date || ''}T00:00:00`;
+      return tb.localeCompare(ta) || (b.id - a.id);
+    });
+    for (const r of others.slice(0, maxRuns)) {
+      await pushRun(r.id);
+    }
+  }
+
+  const allEvents = [];
+  for (const run of runs) {
+    for (const ev of collectRunPackagingBatchEvents(run)) {
+      allEvents.push(ev);
+    }
+  }
+  allEvents.sort((a, b) => String(b.stamp || '').localeCompare(String(a.stamp || ''))
+    || (Number(b.runId) || 0) - (Number(a.runId) || 0));
+
+  for (const ev of allEvents) {
+    const byIng = new Map();
+    for (const bat of ev.ingredientBatches || []) {
+      const num = String(bat.packagingBatchNumber || '').trim();
+      if (!num) continue;
+      const keys = packagingSuggestionKeys(bat);
+      if (!keys.length) continue;
+      const groupKey = keys[0];
+      if (!byIng.has(groupKey)) {
+        byIng.set(groupKey, {
+          numbers: [],
+          rawMaterialId: bat.rawMaterialId || null,
+          keys,
+        });
+      }
+      const g = byIng.get(groupKey);
+      if (!g.numbers.includes(num)) g.numbers.push(num);
+      if (bat.rawMaterialId) g.rawMaterialId = bat.rawMaterialId;
+      for (const k of keys) {
+        if (!g.keys.includes(k)) g.keys.push(k);
+      }
+    }
+    for (const g of byIng.values()) {
+      for (const key of g.keys) {
+        if (suggestions.has(key)) continue;
+        suggestions.set(key, {
+          numbers: [...g.numbers],
+          rawMaterialId: g.rawMaterialId || null,
+        });
+      }
+    }
+  }
+
+  return suggestions;
+}
+
+/** חיפוש הצעת מספר מנה לפי מזהה מתכון / חומר / שם */
+export function lookupPackagingBatchSuggestion(row, suggestions) {
+  if (!suggestions?.size || !row) return null;
+  for (const key of packagingSuggestionKeys(row)) {
+    const hit = suggestions.get(key);
+    if (hit?.numbers?.length) return hit;
+  }
+  return null;
 }
 
 function cleanIngredientBatchRows(batches = []) {

@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=372';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=372';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=372';
-import { renderRecipesMachines } from '../recipes-machines.js?v=372';
-import { renderRecipesPortions } from '../recipes-portions.js?v=372';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=372';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=372';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=372';
-import { openModal, closeModal } from '../modal.js?v=372';
+} from '../kitchen-db.js?v=373';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=373';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=373';
+import { renderRecipesMachines } from '../recipes-machines.js?v=373';
+import { renderRecipesPortions } from '../recipes-portions.js?v=373';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=373';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=373';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=373';
+import { openModal, closeModal } from '../modal.js?v=373';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=372';
-import { defaultColorForIndex } from '../chart.js?v=372';
+} from '../product-drag.js?v=373';
+import { defaultColorForIndex } from '../chart.js?v=373';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -1536,9 +1536,9 @@ function collectProductsFromCatalog(productCatalog, { categoryId, groupId } = {}
 
 function buildRecipeProductCheckboxListHTML(productCatalog, recipe, { selectedIds } = {}) {
   const filterCatId = recipe?._productFilterCategoryId || '';
-  const selected = selectedIds
-    ? new Set(selectedIds)
-    : new Set(recipe?.linkedProductIds || []);
+  const selected = new Set(
+    [...(selectedIds || recipe?.linkedProductIds || [])].map(Number).filter(Boolean),
+  );
   const sections = iterateProductCatalogCategories(productCatalog, {
     categoryId: filterCatId ? Number(filterCatId) : null,
   });
@@ -1551,7 +1551,7 @@ function buildRecipeProductCheckboxListHTML(productCatalog, recipe, { selectedId
     const heading = groupName ? `${groupName} › ${cat.name}` : cat.name;
     const items = products.map((p) => `
         <label class="checkbox-label recipe-product-pick">
-          <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(p.id) ? 'checked' : ''}>
+          <input type="checkbox" class="recipe-product-cb" value="${p.id}" ${selected.has(Number(p.id)) ? 'checked' : ''}>
           ${escapeHtml(p.name)}
         </label>`).join('');
     return `
@@ -2532,9 +2532,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=372');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=373');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=372');
+    const { navigateToWorkspace } = await import('../app.js?v=373');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');

@@ -1,17 +1,19 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=372';
+} from './kitchen-db.js?v=373';
 import {
   saveRunPortionIngredientBatches,
   saveRunStepPortionIngredientBatches,
   getProductionRun,
   getRunPortionLogs,
   getStepPortionBatches,
-} from './db.js?v=372';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=372';
-import { openModal, closeModal } from './modal.js?v=372';
-import { requestAutoBackupNow } from './backup-service.js?v=372';
+  getSuggestedPackagingBatchNumbers,
+  lookupPackagingBatchSuggestion,
+} from './db.js?v=373';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=373';
+import { openModal, closeModal } from './modal.js?v=373';
+import { requestAutoBackupNow } from './backup-service.js?v=373';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
@@ -67,6 +69,7 @@ function packagingNumbersFieldHTML(row, index) {
     ? row.packagingBatchNumbers
     : [row.packagingBatchNumber || ''];
   const list = nums.length ? nums : [''];
+  const suggested = !!row.packagingSuggested;
   return `
     <div class="portion-packaging-numbers" data-index="${index}">
       <span class="portion-packaging-count-label">מספרי מנה (אריזה)</span>
@@ -84,6 +87,7 @@ function packagingNumbersFieldHTML(row, index) {
       <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-add" data-index="${index}">
         + הוסף מספר מנה
       </button>
+      ${suggested ? '<p class="form-hint portion-packaging-suggest-hint">הוצע לפי הרישום הקודם — אפשר לערוך (בדרך כלל +1 או אותו מספר)</p>' : ''}
     </div>`;
 }
 
@@ -105,6 +109,13 @@ function buildRunBatchListHTML(rows) {
     </ul>`;
 }
 
+function lastNonEmptyPackagingValue(wrap) {
+  const vals = [...(wrap?.querySelectorAll('.portion-ing-packaging') || [])]
+    .map((el) => String(el.value || '').trim())
+    .filter(Boolean);
+  return vals.length ? vals[vals.length - 1] : '';
+}
+
 function bindPackagingNumberControls(modalRoot) {
   const root = modalRoot || document;
   root.querySelectorAll('.portion-packaging-num-add').forEach((btn) => {
@@ -113,16 +124,20 @@ function bindPackagingNumberControls(modalRoot) {
       const wrap = root.querySelector(`.portion-packaging-numbers[data-index="${index}"] .portion-packaging-number-list`);
       if (!wrap) return;
       const numIndex = wrap.querySelectorAll('.portion-packaging-number-row').length;
+      const suggested = lastNonEmptyPackagingValue(wrap);
       const row = document.createElement('div');
       row.className = 'portion-packaging-number-row';
       row.innerHTML = `
         <input type="text" class="portion-ing-packaging" data-index="${index}" data-num="${numIndex}"
-          inputmode="text" autocomplete="off" placeholder="מספר על האריזה">
+          inputmode="text" autocomplete="off" placeholder="מספר על האריזה"
+          value="${suggested ? escapeHtml(suggested) : ''}">
         <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-remove"
           data-index="${index}" title="הסר מספר" aria-label="הסר מספר">×</button>`;
       wrap.appendChild(row);
       wrap.querySelectorAll('.portion-packaging-num-remove').forEach((b) => { b.disabled = false; });
-      row.querySelector('input')?.focus();
+      const input = row.querySelector('input');
+      input?.focus();
+      input?.select?.();
       row.querySelector('.portion-packaging-num-remove')?.addEventListener('click', onRemove);
     });
   });
@@ -259,23 +274,39 @@ export async function openRunPortionIngredientBatchesModal({
   }
 
   const existingMap = groupExistingBatchNumbers(existingBatches);
+  let suggestions = new Map();
+  try {
+    suggestions = await getSuggestedPackagingBatchNumbers({ runId: rid });
+  } catch {
+    suggestions = new Map();
+  }
+
   rows = rows.map((row) => {
     const saved = existingMap.get(Number(row.recipeIngredientId));
-    if (!saved) {
-      const fallback = row.packagingPortionCount != null && row.packagingPortionCount !== ''
-        ? [String(row.packagingPortionCount)]
-        : [''];
+    if (saved?.numbers?.length) {
       return {
         ...row,
-        packagingBatchNumbers: fallback,
-        packagingBatchNumber: fallback[0] || '',
+        packagingBatchNumbers: saved.numbers,
+        packagingBatchNumber: saved.numbers[0] || '',
+        rawMaterialId: saved.rawMaterialId || row.rawMaterialId,
+        packagingSuggested: false,
+      };
+    }
+    const suggested = lookupPackagingBatchSuggestion(row, suggestions);
+    if (suggested?.numbers?.length) {
+      return {
+        ...row,
+        packagingBatchNumbers: [...suggested.numbers],
+        packagingBatchNumber: suggested.numbers[0] || '',
+        rawMaterialId: suggested.rawMaterialId || row.rawMaterialId,
+        packagingSuggested: true,
       };
     }
     return {
       ...row,
-      packagingBatchNumbers: saved.numbers.length ? saved.numbers : [''],
-      packagingBatchNumber: saved.numbers[0] || '',
-      rawMaterialId: saved.rawMaterialId || row.rawMaterialId,
+      packagingBatchNumbers: [''],
+      packagingBatchNumber: '',
+      packagingSuggested: false,
     };
   });
 
@@ -290,6 +321,7 @@ export async function openRunPortionIngredientBatchesModal({
       <p class="form-hint" style="margin-top:0">
         לכל חומר גלם — רשום את <strong>מספר המנה</strong> שכתוב על האריזה
         (למעקב משרד הבריאות — לא כמות). אפשר להוסיף יותר ממספר אחד עם +.
+        אם כבר נרשם בעבר — יופיע המספר הקודם לעריכה.
       </p>
       ${buildRunBatchListHTML(rows)}`,
     footerHTML: `
@@ -299,6 +331,16 @@ export async function openRunPortionIngredientBatchesModal({
 
   const modalRoot = document.querySelector('.modal-portion-ingredients') || document;
   bindPackagingNumberControls(modalRoot);
+  // Focus first suggested field and select so editing (+1) is quick
+  const firstSuggested = modalRoot.querySelector('.portion-packaging-suggest-hint')
+    ?.closest('.portion-packaging-numbers')
+    ?.querySelector('.portion-ing-packaging');
+  if (firstSuggested) {
+    queueMicrotask(() => {
+      firstSuggested.focus();
+      firstSuggested.select?.();
+    });
+  }
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('save-run-portion-batches')?.addEventListener('click', async () => {
     const payload = rows.map((row, index) => {

@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=372';
-import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=372';
+import { db } from '../db.js?v=373';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=373';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -131,7 +131,8 @@ export async function remapFksToLocalIds(collection, payload) {
       continue;
     }
     if (typeof val === 'number' || (/^\d+$/.test(String(val)))) {
-      // Already local-ish; keep if meta exists, else keep number
+      // Coerce digit-strings to numbers so Dexie index equality matches local ids.
+      out[field] = Number(val);
       continue;
     }
     const meta = await getMetaBySyncId(String(val));

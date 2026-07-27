@@ -6,7 +6,7 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=372';
+} from '../db.js?v=373';
 import {
   getProductDetail,
   addProductRecipeComponent,
@@ -20,12 +20,12 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=372';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=372';
-import { openModal, closeModal } from '../modal.js?v=372';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=372';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=372';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=372';
+} from '../kitchen-db.js?v=373';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=373';
+import { openModal, closeModal } from '../modal.js?v=373';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=373';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=373';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=373';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -581,7 +581,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=372');
+    const { navigate } = await import('../app.js?v=373');
     navigate('backup');
   });
 
@@ -874,6 +874,15 @@ function buildProductDetailHTML(detail, {
       </div>`
     : '';
 
+  const linkedRecipesChips = linkedRecipes.length
+    ? `<div class="product-detail-linked-recipes">
+        <p class="form-hint" style="margin:0 0 6px">שיוך למתכונים:</p>
+        <div class="product-detail-linked-recipes-list">
+          ${linkedRecipes.map((r) => `<span class="recipe-meta-pill">${escapeHtml(r.name)}</span>`).join('')}
+        </div>
+      </div>`
+    : '';
+
   const recipeOptions = availableRecipes.length
     ? availableRecipes.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')
     : '<option value="" disabled>— אין מתכונים זמינים —</option>';
@@ -924,7 +933,7 @@ function buildProductDetailHTML(detail, {
     ? `<button type="button" class="btn btn-secondary btn-sm" id="product-switch-manual-cost" style="margin-top:10px">בטל — עבור להזנה ידנית</button>`
     : `<button type="button" class="btn btn-primary btn-sm" id="product-apply-recommended-cost" style="margin-top:10px">הפעל עלות מהמתכונים</button>`;
 
-  const linkedFlowIds = new Set(linkedFlows.map((row) => row.flow.id));
+  const linkedFlowIds = new Set(linkedFlows.map((row) => Number(row.flow.id)).filter(Boolean));
   const flowCheckboxes = candidateFlows.length
     ? candidateFlows.map((f) => `
         <label class="product-flow-link-item">
@@ -953,6 +962,7 @@ function buildProductDetailHTML(detail, {
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="הרכב מוצר">
         <summary class="recipe-sheet-section-title product-detail-collapse-summary">הרכב מוצר · מתכונים ומנות</summary>
+        ${linkedRecipesChips}
         ${quickAddBanner}
         <div class="product-composition-list">${compositionRows}</div>
         <div class="product-composition-add">

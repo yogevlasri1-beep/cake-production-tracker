@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=372';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=373';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=372';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=372';
+} from './validators.js?v=373';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=373';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1187,7 +1187,54 @@ export async function getRecipeProductLinks(recipeId) {
   const rid = sanitizeProductId(recipeId);
   if (!rid) return [];
   const links = await db.recipeProductLinks.where('recipeId').equals(rid).toArray();
-  return links.map((l) => l.productId);
+  return [...new Set(links.map((l) => Number(l.productId)).filter(Boolean))];
+}
+
+/** מוודא שיוך מתכון↔מוצר (בלי למחוק שיוכים קיימים) */
+export async function ensureRecipeProductLink(recipeId, productId, { syncPortions = true } = {}) {
+  const rid = sanitizeProductId(recipeId);
+  const pid = sanitizeProductId(productId);
+  if (!rid || !pid || !db.recipeProductLinks) return false;
+  const existing = await db.recipeProductLinks.where('[recipeId+productId]').equals([rid, pid]).first();
+  if (existing) return false;
+  const siblings = await db.recipeProductLinks.where('recipeId').equals(rid).toArray();
+  if (siblings.some((l) => Number(l.productId) === pid)) return false;
+  await db.recipeProductLinks.add({ recipeId: rid, productId: pid });
+  const recipe = await db.recipes.get(rid);
+  if (recipe && !recipe.linkedProductId) {
+    await db.recipes.update(rid, { linkedProductId: pid });
+  }
+  if (syncPortions) await syncRecipePortionPresets(rid);
+  return true;
+}
+
+/**
+ * משחזר שיוכי recipeProductLinks מתוך הרכב מוצר (productRecipeComponents)
+ * לרשומות ישנות שנשמרו רק בהרכב.
+ */
+export async function repairRecipeProductLinksFromComposition() {
+  if (!db.productRecipeComponents || !db.recipeProductLinks) return { added: 0 };
+  const rows = await db.productRecipeComponents.toArray();
+  let added = 0;
+  const touchedRecipes = new Set();
+  for (const row of rows) {
+    const rid = sanitizeProductId(row.recipeId);
+    const pid = sanitizeProductId(row.productId);
+    if (!rid || !pid) continue;
+    // Normalize string FKs left by older sync pulls
+    if (Number(row.recipeId) !== rid || Number(row.productId) !== pid) {
+      await db.productRecipeComponents.update(row.id, { recipeId: rid, productId: pid });
+    }
+    const created = await ensureRecipeProductLink(rid, pid, { syncPortions: false });
+    if (created) {
+      added++;
+      touchedRecipes.add(rid);
+    }
+  }
+  for (const rid of touchedRecipes) {
+    await syncRecipePortionPresets(rid);
+  }
+  return { added };
 }
 
 export async function setRecipeProductLinks(recipeId, productIds) {
@@ -1261,25 +1308,34 @@ export async function getRecipes(categoryId) {
 export async function getRecipe(id) {
   const recipe = await db.recipes.get(Number(id));
   if (!recipe) return null;
-  const [ingredients, linkedProductIds, linkedProductCategoryIds, linkedProductGroupIds] = await Promise.all([
+  const [ingredients, linkedProductIds, linkedProductCategoryIds, linkedProductGroupIds, compositionRows] = await Promise.all([
     db.recipeIngredients.where('recipeId').equals(recipe.id).toArray(),
     getRecipeProductLinks(recipe.id),
     getRecipeProductCategoryLinks(recipe.id),
     getRecipeProductGroupLinks(recipe.id),
+    db.productRecipeComponents
+      ? db.productRecipeComponents.where('recipeId').equals(recipe.id).toArray()
+      : Promise.resolve([]),
   ]);
   ingredients.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  const fromComposition = (compositionRows || [])
+    .map((c) => Number(c.productId))
+    .filter(Boolean);
+  const mergedProductIds = [...new Set([
+    ...linkedProductIds.map(Number).filter(Boolean),
+    ...(recipe.linkedProductId ? [Number(recipe.linkedProductId)] : []),
+    ...fromComposition,
+  ].filter(Boolean))];
   return {
     ...recipe,
     ingredients,
-    linkedProductIds: linkedProductIds.length
-      ? linkedProductIds
-      : (recipe.linkedProductId ? [recipe.linkedProductId] : []),
+    linkedProductIds: mergedProductIds,
     linkedProductCategoryIds: linkedProductCategoryIds.length
-      ? linkedProductCategoryIds
-      : (recipe.linkedProductCategoryId ? [recipe.linkedProductCategoryId] : []),
+      ? linkedProductCategoryIds.map(Number).filter(Boolean)
+      : (recipe.linkedProductCategoryId ? [Number(recipe.linkedProductCategoryId)] : []),
     linkedProductGroupIds: linkedProductGroupIds.length
-      ? linkedProductGroupIds
-      : (recipe.linkedProductGroupId ? [recipe.linkedProductGroupId] : []),
+      ? linkedProductGroupIds.map(Number).filter(Boolean)
+      : (recipe.linkedProductGroupId ? [Number(recipe.linkedProductGroupId)] : []),
   };
 }
 
@@ -2533,13 +2589,16 @@ export async function addProductRecipeComponent({ productId, recipeId, weightGra
   const wg = weightGrams != null && weightGrams !== ''
     ? sanitizeQuantity(weightGrams, { allowZero: false })
     : null;
-  return db.productRecipeComponents.add({
+  const id = await db.productRecipeComponents.add({
     productId: pid,
     recipeId: rid,
     weightGrams: wg,
     notes: String(notes || '').trim().slice(0, 500),
     sortOrder: maxOrder,
   });
+  // Keep recipe↔product association in sync so links show in recipes / portions / flows
+  await ensureRecipeProductLink(rid, pid);
+  return id;
 }
 
 export async function updateProductRecipeComponent(id, patch) {
@@ -2646,27 +2705,36 @@ export async function getRecipesForProduct(productId) {
   if (!pid) return [];
   const recipeIds = new Set();
   const links = await db.recipeProductLinks.where('productId').equals(pid).toArray();
-  for (const l of links) recipeIds.add(l.recipeId);
+  for (const l of links) recipeIds.add(Number(l.recipeId));
   const legacy = await db.recipes.where('linkedProductId').equals(pid).toArray();
-  for (const r of legacy) recipeIds.add(r.id);
+  for (const r of legacy) recipeIds.add(Number(r.id));
+
+  if (db.productRecipeComponents) {
+    const comps = await db.productRecipeComponents.where('productId').equals(pid).toArray();
+    for (const c of comps) {
+      const rid = Number(c.recipeId);
+      if (rid) recipeIds.add(rid);
+    }
+  }
 
   const product = await db.products.get(pid);
   if (product?.categoryId) {
     const catLinks = await db.recipeProductCategoryLinks.where('categoryId').equals(product.categoryId).toArray();
-    for (const l of catLinks) recipeIds.add(l.recipeId);
+    for (const l of catLinks) recipeIds.add(Number(l.recipeId));
     const catRecipes = await db.recipes.where('linkedProductCategoryId').equals(product.categoryId).toArray();
-    for (const r of catRecipes) recipeIds.add(r.id);
+    for (const r of catRecipes) recipeIds.add(Number(r.id));
     const cat = await db.categories.get(product.categoryId);
     if (cat?.groupId) {
       const groupLinks = await db.recipeProductGroupLinks.where('groupId').equals(cat.groupId).toArray();
-      for (const l of groupLinks) recipeIds.add(l.recipeId);
+      for (const l of groupLinks) recipeIds.add(Number(l.recipeId));
       const groupRecipes = await db.recipes.where('linkedProductGroupId').equals(cat.groupId).toArray();
-      for (const r of groupRecipes) recipeIds.add(r.id);
+      for (const r of groupRecipes) recipeIds.add(Number(r.id));
     }
   }
 
   const recipes = [];
   for (const rid of recipeIds) {
+    if (!rid) continue;
     const recipe = await getRecipe(rid);
     if (recipe) recipes.push(recipe);
   }
@@ -3709,37 +3777,48 @@ export function buildMergedMaterialSynonyms(keep, others = []) {
 }
 
 /** ממלא שדות חסרים ביעד מתוך רשומות מאוחדות — לא דורס ערכים קיימים ביעד */
-export function materialFieldFillPatch(keep, others) {
+export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffers = false } = {}) {
   const patch = {};
+  const keepSup = Number(keep.supplierId) || 0;
+  const fillOthers = preserveCrossSupplierOffers
+    ? (others || []).filter((o) => (Number(o.supplierId) || 0) === keepSup)
+    : (others || []);
+  const fieldSources = preserveCrossSupplierOffers
+    ? (others || [])
+    : fillOthers;
+
   if (!keep.packageWeightGrams) {
-    const from = others.find((o) => o.packageWeightGrams);
+    const from = fieldSources.find((o) => o.packageWeightGrams);
     if (from) patch.packageWeightGrams = from.packageWeightGrams;
   }
   if (sanitizeProcessedPricePerKg(keep.processedPricePerKg) == null) {
-    const from = others.find((o) => sanitizeProcessedPricePerKg(o.processedPricePerKg) != null);
+    const from = fieldSources.find((o) => sanitizeProcessedPricePerKg(o.processedPricePerKg) != null);
     if (from) patch.processedPricePerKg = from.processedPricePerKg;
   }
-  if (!keep.supplierId) {
-    const from = others.find((o) => o.supplierId);
+  // אל תעתיק ספק מהצעה אחרת כששומרים הצעות ספקים נפרדות
+  if (!keep.supplierId && !preserveCrossSupplierOffers) {
+    const from = fillOthers.find((o) => o.supplierId);
     if (from) patch.supplierId = from.supplierId;
   }
   if (!String(keep.unit || '').trim()) {
-    const from = others.find((o) => String(o.unit || '').trim());
+    const from = fieldSources.find((o) => String(o.unit || '').trim());
     if (from) patch.unit = from.unit;
   }
   if (!keep.supplierCategoryId) {
-    const from = others.find((o) => o.supplierCategoryId);
+    const from = fieldSources.find((o) => o.supplierCategoryId);
     if (from) patch.supplierCategoryId = from.supplierCategoryId;
   }
-  if (!keep.isRecipeDefault && others.some((o) => o.isRecipeDefault)) {
+  if (!keep.isRecipeDefault && (others || []).some((o) => o.isRecipeDefault)) {
     patch.isRecipeDefault = true;
   }
   if ((Number(keep.unitPrice) || 0) <= 0) {
-    const from = others.find((o) => (Number(o.unitPrice) || 0) > 0);
+    // מחיר חי של יעד — רק מאותו ספק (או ממיזוג מלא), לא מהצעת ספק אחר
+    const pricePool = preserveCrossSupplierOffers ? fillOthers : (others || []);
+    const from = pricePool.find((o) => (Number(o.unitPrice) || 0) > 0);
     if (from) patch.unitPrice = from.unitPrice;
   }
   if (!keep.packagingKind) {
-    const from = others.find((o) => o.packagingKind);
+    const from = fieldSources.find((o) => o.packagingKind);
     if (from) {
       patch.packagingKind = from.packagingKind;
       if (from.packUnitsCount != null) patch.packUnitsCount = from.packUnitsCount;
@@ -3749,21 +3828,21 @@ export function materialFieldFillPatch(keep, others) {
     }
   } else {
     if (keep.packUnitsCount == null) {
-      const from = others.find((o) => o.packUnitsCount != null);
+      const from = fieldSources.find((o) => o.packUnitsCount != null);
       if (from) patch.packUnitsCount = from.packUnitsCount;
     }
     if (keep.packProductsPerUnit == null) {
-      const from = others.find((o) => o.packProductsPerUnit != null);
+      const from = fieldSources.find((o) => o.packProductsPerUnit != null);
       if (from) patch.packProductsPerUnit = from.packProductsPerUnit;
     }
     if (!keep.packLinkedProductId && !keep.packLinkedCategoryId) {
-      const from = others.find((o) => o.packLinkedProductId || o.packLinkedCategoryId);
+      const from = fieldSources.find((o) => o.packLinkedProductId || o.packLinkedCategoryId);
       if (from?.packLinkedProductId) patch.packLinkedProductId = from.packLinkedProductId;
       else if (from?.packLinkedCategoryId) patch.packLinkedCategoryId = from.packLinkedCategoryId;
     }
   }
   if (!keep.isPortion) {
-    const from = others.find((o) => o.isPortion && getMaterialPortionProductIds(o).length);
+    const from = fieldSources.find((o) => o.isPortion && getMaterialPortionProductIds(o).length);
     if (from) {
       const fromPids = getMaterialPortionProductIds(from);
       patch.isPortion = true;
@@ -3772,7 +3851,7 @@ export function materialFieldFillPatch(keep, others) {
       if (from.portionWeightKg != null) patch.portionWeightKg = from.portionWeightKg;
     }
   } else if (keep.portionWeightKg == null) {
-    const from = others.find((o) => o.portionWeightKg != null);
+    const from = fieldSources.find((o) => o.portionWeightKg != null);
     if (from) patch.portionWeightKg = from.portionWeightKg;
   }
   return patch;
@@ -3922,10 +4001,39 @@ async function dedupeRecipeIngredientsForMaterial(keep) {
   }
 }
 
+function materialSupplierKey(mat) {
+  return Number(mat?.supplierId) || 0;
+}
+
+/**
+ * ספקים שונים לאותו מוצר — משאירים הצעה נפרדת תחת שם היעד עם המחיר וההיסטוריה שלה.
+ */
+async function alignCrossSupplierMaterialOffer(keepMat, fromMat) {
+  if (!keepMat || !fromMat || keepMat.id === fromMat.id) return;
+  const keepName = keepMat.name;
+  const fromName = fromMat.name;
+  const patch = {};
+  if (normalizeMaterialKey(fromName) !== normalizeMaterialKey(keepName)) {
+    patch.name = keepName;
+  }
+  if (fromMat.isRecipeDefault) {
+    patch.isRecipeDefault = false;
+  }
+  if (!fromMat.supplierCategoryId && keepMat.supplierCategoryId) {
+    patch.supplierCategoryId = keepMat.supplierCategoryId;
+  }
+  if (Object.keys(patch).length) {
+    await db.rawMaterials.update(fromMat.id, patch);
+  }
+  if (normalizeMaterialKey(fromName) !== normalizeMaterialKey(keepName)) {
+    await renameRecipeIngredientsMaterialName(fromName, keepName);
+  }
+}
+
 /**
  * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
- * נשארת רשומה אחת בלבד: שם היעד נשאר; שדות חסרים + מילים נרדפות + כל היסטוריית
- * המחירים עוברים ליעד; מתכונים ושאר הקישורים מוסבים ליעד; הרשומות האחרות נמחקות.
+ * - אותו ספק (או שניהם בלי ספק): מתמוגגים לרשומת היעד (היסטוריה + קישורים).
+ * - ספקים שונים: נשארות הצעות נפרדות תחת שם היעד — כל ספק שומר מחיר והיסטוריה.
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -3942,17 +4050,29 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   }
   if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
 
+  const keepSup = materialSupplierKey(keepMat);
+  const sameSupplierOthers = others.filter((m) => materialSupplierKey(m) === keepSup);
+  const crossSupplierOthers = others.filter((m) => materialSupplierKey(m) !== keepSup);
+  const hasCrossOffers = crossSupplierOthers.length > 0;
+
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
-  const fillPatch = materialFieldFillPatch(keepMat, others);
+  const fillPatch = materialFieldFillPatch(keepMat, others, {
+    preserveCrossSupplierOffers: hasCrossOffers,
+  });
   const shouldSetDefault = !!fillPatch.isRecipeDefault;
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
     : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
 
+  const preservedOfferIds = [];
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    for (const mat of others) {
+    for (const mat of sameSupplierOthers) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
       await mergeMaterialIntoKeep(keep, mat.id);
+    }
+    for (const mat of crossSupplierOthers) {
+      await alignCrossSupplierMaterialOffer(keepMat, mat);
+      preservedOfferIds.push(mat.id);
     }
 
     const patch = { ...fillPatch, synonyms };
@@ -3969,12 +4089,18 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   if (preferredUnitPrice != null) {
     await db.rawMaterials.update(keep, { unitPrice: preferredUnitPrice });
   }
+  for (const oid of preservedOfferIds) {
+    await syncRawMaterialLatestPrice(oid);
+  }
   if (fillPatch.isPortion) {
     await syncRawMaterialPortionPreset(keep);
   }
   await syncRawMaterialsActiveFromRecipes();
   await syncRecipesAffectedByMaterial(keep);
-  return keep;
+  for (const oid of preservedOfferIds) {
+    await syncRecipesAffectedByMaterial(oid);
+  }
+  return { keepId: keep, preservedOfferIds };
 }
 
 /** שומר מספר רשומות (ספקים) — לא מסומנות מאוחדות לרשומת יעד מתאימה */

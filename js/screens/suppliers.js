@@ -22,13 +22,13 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=372';
-import { getProducts, getCategories } from '../db.js?v=372';
-import { parseSupplierFile } from '../supplier-import.js?v=372';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=372';
-import { openModal, closeModal } from '../modal.js?v=372';
-import { requestAutoBackupNow } from '../backup-service.js?v=372';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=372';
+} from '../kitchen-db.js?v=373';
+import { getProducts, getCategories } from '../db.js?v=373';
+import { parseSupplierFile } from '../supplier-import.js?v=373';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=373';
+import { openModal, closeModal } from '../modal.js?v=373';
+import { requestAutoBackupNow } from '../backup-service.js?v=373';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=373';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -680,9 +680,9 @@ async function openMergeSelectedMaterialsModal(container) {
     modalClass: 'modal-merge-selected-mats',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0;line-height:1.5">
-        בחר 2 חומרים או יותר — גם עם שמות שונים. נשארת רשומה אחת בלבד: הרשומה המסומנת כ«יעד»
-        מקבלת את כל המידע מהשאר (שדות חסרים, מילים נרדפות, מחירים והיסטוריה, מתכונים, אריזה/מנה)
-        והרשומות האחרות נמחקות.
+        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» קובעת את שם המוצר.
+        אם לספקים שונים (למשל סוכר לוויאני + סוכר פוליבה) — נשמרות <strong>הצעות נפרדות</strong>
+        תחת אותו שם, כולל מחיר והיסטוריה של כל ספק. רשומות מאותו ספק מתמזגות ליעד.
       </p>
       <div class="form-group" style="margin-bottom:8px">
         <input type="search" id="manual-mat-merge-search" placeholder="חיפוש לפי שם / מילה נרדפת / ספק..." autocomplete="off">
@@ -733,12 +733,24 @@ async function openMergeSelectedMaterialsModal(container) {
     const keepId = Number(document.querySelector('.manual-mat-keep-radio:checked')?.value);
     const keep = mats.find((m) => m.id === keepId) || mats[0];
     const others = mats.filter((m) => m.id !== keep.id);
+    const keepSup = Number(keep.supplierId) || 0;
+    const sameSup = others.filter((m) => (Number(m.supplierId) || 0) === keepSup);
+    const crossSup = others.filter((m) => (Number(m.supplierId) || 0) !== keepSup);
     const syns = buildMergedMaterialSynonyms(keep, others);
     const synText = syns.length ? syns.join(' · ') : '—';
-    previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong>
-      · מאוחדים: ${others.length}
-      · מילים נרדפות אחרי איחוד: ${escapeHtml(synText)}
-      · שדות חסרים, מחירים והיסטוריה יועברו ליעד; הרשומות האחרות יימחקו`;
+    const keepSupName = keep.supplierId ? (supMap.get(keep.supplierId) || 'ספק') : 'ללא ספק';
+    const crossNames = crossSup.map((m) => {
+      const s = m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ללא ספק';
+      return `${m.name} (${s})`;
+    });
+    previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong> · ${escapeHtml(keepSupName)}
+      · מילים נרדפות: ${escapeHtml(synText)}
+      ${crossSup.length
+    ? `<br>הצעות ספקים שיישמרו תחת «${escapeHtml(keep.name)}»: ${escapeHtml(crossNames.join(' · '))} — כולל מחיר והיסטוריה`
+    : ''}
+      ${sameSup.length
+    ? `<br>רשומות מאותו ספק שיתמזגו ליעד: ${sameSup.length}`
+    : (crossSup.length ? '' : '<br>הרשומות האחרות יתמזגו ליעד')}`;
   }
 
   function bindList() {
@@ -791,9 +803,12 @@ async function openMergeSelectedMaterialsModal(container) {
       btn.textContent = 'מאחד...';
     }
     try {
-      await mergeSelectedRawMaterials(keepId, mergeIds);
+      const result = await mergeSelectedRawMaterials(keepId, mergeIds);
       closeModal();
-      showToast('חומרים אוחדו ✓');
+      const preserved = result?.preservedOfferIds?.length || 0;
+      showToast(preserved
+        ? `אוחד ✓ · ${preserved} הצעות ספק נשמרו עם מחיר והיסטוריה`
+        : 'חומרים אוחדו ✓');
       requestAutoBackupNow().catch(() => {});
       renderSuppliers(container);
     } catch (err) {

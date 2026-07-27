@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=372';
+import { db, getSetting, setSetting } from './db.js?v=373';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=372';
+} from './supabase-backup.js?v=373';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=372';
+} from './sync/collections.js?v=373';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,7 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=372';
+} from './sync/id-map.js?v=373';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=373';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -48,7 +49,7 @@ const DEFAULT_LIVE = {
 };
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 4;
+const DEDUPE_VERSION = 6;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -341,6 +342,11 @@ function compareDedupeSurvivors(collection, a, b) {
     const aMat = a.rawMaterialId != null && a.rawMaterialId !== '' ? 1 : 0;
     const bMat = b.rawMaterialId != null && b.rawMaterialId !== '' ? 1 : 0;
     if (bMat !== aMat) return bMat - aMat;
+  }
+  if (collection === 'productionEntries') {
+    const aRun = a.runId != null && a.runId !== '' ? 1 : 0;
+    const bRun = b.runId != null && b.runId !== '' ? 1 : 0;
+    if (bRun !== aRun) return bRun - aRun;
   }
   return (a.id - b.id);
 }
@@ -708,9 +714,11 @@ export async function startLiveSync() {
   if (pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
     try {
       const result = await dedupeLocalSyncCollections();
+      const bridge = await repairRecipeProductLinksFromComposition();
       await flushSyncQueue();
       await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
       if (result.removed) console.info('live sync local dedupe removed', result.removed);
+      if (bridge.added) console.info('live sync bridged recipe-product links', bridge.added);
     } catch (err) {
       console.warn('live sync local dedupe', err);
     }

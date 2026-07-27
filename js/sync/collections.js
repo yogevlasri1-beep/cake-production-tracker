@@ -372,12 +372,20 @@ export function rowFingerprint(collection, row) {
  * Looser fingerprint used only by local/cloud dedupe. For recipe ingredients,
  * two copies of the same line that differ only in linked material are treated
  * as duplicates (post-merge bug); pull-match still uses rowFingerprint.
+ * For production entries, ignore runId so null-run twins of a run-linked row
+ * (left by orphan-run cleanup) collapse without wiping legitimate different qtys.
  */
 export function rowDedupeFingerprint(collection, row) {
   if (!row) return '';
   if (collection === 'recipeIngredients') {
     const n = normName(row.name);
     return `${collection}|${row.recipeId ?? ''}|${n}|${row.sortOrder ?? ''}`;
+  }
+  if (collection === 'productionEntries') {
+    const date = row.date ?? '';
+    const pid = Number(row.productId) || row.productId || '';
+    const qty = row.quantity ?? '';
+    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}` : '';
   }
   return rowFingerprint(collection, row);
 }
