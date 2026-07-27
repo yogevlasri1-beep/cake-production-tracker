@@ -384,7 +384,8 @@ export function rowDedupeFingerprint(collection, row) {
   if (collection === 'productionEntries') {
     const date = row.date ?? '';
     const pid = Number(row.productId) || row.productId || '';
-    const qty = row.quantity ?? '';
+    const qtyNum = Number(row.quantity);
+    const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
     return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}` : '';
   }
   return rowFingerprint(collection, row);

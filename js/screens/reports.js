@@ -10,31 +10,31 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=373';
+} from '../db.js?v=374';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=373';
+} from '../utils.js?v=374';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=373';
-import { openModal, closeModal } from '../modal.js?v=373';
+} from '../export.js?v=374';
+import { openModal, closeModal } from '../modal.js?v=374';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=373';
-import { isSheetsConfigured } from '../google-sheets.js?v=373';
+} from '../sheets-flow.js?v=374';
+import { isSheetsConfigured } from '../google-sheets.js?v=374';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=373';
-import { defaultColorForIndex } from '../chart.js?v=373';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=373';
+} from '../calc.js?v=374';
+import { defaultColorForIndex } from '../chart.js?v=374';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=374';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=373';
+} from '../purchasing-db.js?v=374';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -2169,12 +2169,13 @@ async function renderProductionRunsHTML(productionRuns, ctx, catMap, productMap,
     ${''}`;
 }
 
-function buildProductRows(products, totals, categories, reportType) {
+function buildProductRows(products, totals, categories) {
   const rows = [];
   for (const p of sortProductsForReport(products, categories)) {
     const { qty, value } = productProductionValue(p, totals.byProduct);
     const costs = productProductionCost(p, totals.byProduct);
-    if (qty === 0 && (reportType === 'day' || reportType === 'week')) continue;
+    // Monthly / period reports previously listed the full catalog at qty 0.
+    if (qty === 0) continue;
     rows.push({ product: p, qty, value, ...costs });
   }
   return rows;

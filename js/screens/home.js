@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=373';
+} from '../db.js?v=374';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=373';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=373';
+} from '../utils.js?v=374';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=374';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=373';
-import { requestAutoBackupNow } from '../backup-service.js?v=373';
+} from '../calc.js?v=374';
+import { requestAutoBackupNow } from '../backup-service.js?v=374';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -153,7 +153,8 @@ function sortProductionEntries(entries, productMap, categories) {
 }
 
 function buildProductionEntriesListHTML(entries, productMap, categories, catMap, { showDelete = false } = {}) {
-  const sorted = sortProductionEntries(entries, productMap, categories);
+  const sorted = sortProductionEntries(entries, productMap, categories)
+    .filter((entry) => mapGetById(productMap, entry.productId));
   if (sorted.length === 0) {
     return '<p class="report-empty">אין רישומי ייצור</p>';
   }
@@ -164,7 +165,7 @@ function buildProductionEntriesListHTML(entries, productMap, categories, catMap,
 
   for (const entry of sorted) {
     const product = mapGetById(productMap, entry.productId);
-    const { qty, value } = productProductionValue(product || { id: entry.productId }, { [entry.productId]: entry.quantity });
+    const { qty, value } = productProductionValue(product, { [Number(product.id)]: entry.quantity });
     const monthKey = monthKeyFromDate(entry.date);
     const catName = catMap.get(product?.categoryId) || '';
 
@@ -183,7 +184,7 @@ function buildProductionEntriesListHTML(entries, productMap, categories, catMap,
     html += `
       <div class="list-item home-prod-entry" data-entry-id="${entry.id}">
         <div class="list-item-info">
-          <div class="list-item-name">${escapeHtml(product?.name || 'מוצר לא ידוע')}</div>
+          <div class="list-item-name">${escapeHtml(product.name)}</div>
           <div class="list-item-meta">
             ${catName ? `<span class="category-chip">${escapeHtml(catName)}</span> · ` : ''}
             ${formatDate(entry.date)} · ${formatProductQuantity(product, qty)} · ${formatMoney(value)}
@@ -199,7 +200,7 @@ function buildProductionEntriesListHTML(entries, productMap, categories, catMap,
   const totalQty = sorted.reduce((s, e) => s + (Number(e.quantity) || 0), 0);
   const totalVal = sorted.reduce((s, e) => {
     const p = mapGetById(productMap, e.productId);
-    return s + productProductionValue(p || {}, { [e.productId]: e.quantity }).value;
+    return s + productProductionValue(p || {}, { [Number(p?.id)]: e.quantity }).value;
   }, 0);
 
   return `
@@ -282,10 +283,23 @@ function buildCategoryHistoryHTML(entries, productMap, categories, category, cat
 }
 
 async function renderCategoryHistory(container, categoryId) {
-  const [categories, allProducts, entries] = await Promise.all([
+  const today = todayISO();
+  const { year: curY, month: curM } = currentMonth();
+  const defaultMonth = `${curY}-${String(curM).padStart(2, '0')}`;
+  const viewMode = container.dataset.homeViewMode || 'day';
+  const selectedDay = container.dataset.homeDay || today;
+  const selectedMonth = parseMonthValue(container.dataset.homeMonth || monthFromDay(selectedDay) || defaultMonth);
+  const isDay = viewMode === 'day';
+  const periodLabel = isDay
+    ? formatDateHebrew(selectedDay)
+    : monthLabel(selectedMonth.year, selectedMonth.month);
+
+  const [categories, allProducts, periodEntries] = await Promise.all([
     getCategories(),
     getProducts(),
-    getEntriesForCategory(categoryId),
+    isDay
+      ? getEntriesForDate(selectedDay)
+      : getEntriesForMonth(selectedMonth.year, selectedMonth.month),
   ]);
 
   const category = categories.find((c) => Number(c.id) === Number(categoryId));
@@ -296,10 +310,10 @@ async function renderCategoryHistory(container, categoryId) {
 
   const productMap = buildProductMap(allProducts);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
-  const body = buildCategoryHistoryHTML(entries, productMap, categories, category, catMap);
+  const body = buildCategoryHistoryHTML(periodEntries, productMap, categories, category, catMap);
 
   document.getElementById('page-title').textContent = category.name;
-  document.getElementById('page-subtitle').textContent = 'היסטוריית ייצור';
+  document.getElementById('page-subtitle').textContent = `היסטוריית ייצור · ${periodLabel}`;
 
   container.innerHTML = `
     <button type="button" class="btn btn-secondary btn-sm history-back-btn" id="history-back">← חזרה לבית</button>
@@ -307,7 +321,7 @@ async function renderCategoryHistory(container, categoryId) {
       <div class="section-header" style="margin-bottom:8px">
         <span class="category-chip" style="${categoryChipStyle(category.color, category.id)}">${escapeHtml(category.name)}</span>
       </div>
-      <p class="form-hint" style="margin-bottom:12px">לחץ 🗑 למחיקת רישום</p>
+      <p class="form-hint" style="margin-bottom:12px">${escapeHtml(periodLabel)} · לחץ 🗑 למחיקת רישום</p>
       ${body}
     </div>`;
 
@@ -353,7 +367,7 @@ function renderHomeQtyValueTotalsRow(label, qty, value) {
 async function buildCategorySections(categories, allProducts, activeProducts, totals, targetPeriod, periodLabel, isDay) {
   let html = '';
   for (const cat of categories) {
-    const { qty, value: catValue } = sumCategoryTotals(cat.id, allProducts, totals.byProduct);
+    const { qty, value: catValue } = sumCategoryTotals(cat.id, activeProducts, totals.byProduct);
     if (qty === 0) continue;
     const catTarget = await getTarget('category', cat.id, targetPeriod);
     const catPct = pct(qty, catTarget);
@@ -625,7 +639,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=373');
+    const { navigate } = await import('../app.js?v=374');
     navigate('process');
   };
 
@@ -650,7 +664,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=373');
+    const { navigate } = await import('../app.js?v=374');
     navigate('backup');
   });
 
