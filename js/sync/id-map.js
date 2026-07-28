@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=374';
-import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=374';
+import { db } from '../db.js?v=375';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=375';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -78,6 +78,15 @@ export async function remapFksToSyncIds(collection, row) {
       out[field] = val;
       continue;
     }
+    // Only remap when the target record exists — otherwise ensureSyncId would
+    // mint a phantom UUID and orphan the FK in the cloud.
+    const target = db[targetCollection]
+      ? await db[targetCollection].get(Number(val))
+      : null;
+    if (!target) {
+      out[field] = null;
+      continue;
+    }
     const syncId = await ensureSyncId(targetCollection, val);
     out[field] = syncId || null;
   }
@@ -93,6 +102,10 @@ export async function remapFksToSyncIds(collection, row) {
         mapped.push(val);
         continue;
       }
+      const target = db[targetCollection]
+        ? await db[targetCollection].get(Number(val))
+        : null;
+      if (!target) continue;
       const syncId = await ensureSyncId(targetCollection, val);
       if (syncId) mapped.push(syncId);
     }

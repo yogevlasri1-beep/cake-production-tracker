@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=374';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=374';
-import { defaultColorForIndex } from './chart.js?v=374';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=374';
+} from './validators.js?v=375';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=375';
+import { defaultColorForIndex } from './chart.js?v=375';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=375';
 
 export { ValidationError };
 
@@ -4432,7 +4432,8 @@ export async function addRunStepProductionEntry(runId, stepIndex, { date, produc
     }
   }
 
-  const entryId = await addProductionEntry({ date, productId, quantity, runId, stepIndex });
+  const entryDate = date && isValidISODate(date) ? date : (run.date || todayISOFromDate());
+  const entryId = await addProductionEntry({ date: entryDate, productId, quantity, runId, stepIndex });
   const ids = [...(step.productionEntryIds || []), entryId];
   await db.runStepStates.update(step.id, { productionEntryIds: ids });
   return entryId;
@@ -4474,6 +4475,57 @@ export async function getRunProductionEntries(runId) {
   return entries;
 }
 
+/**
+ * Sticky "today" dates on old production runs leaked entries into later months.
+ * Realign linked entries to their run's date when the calendar month differs.
+ * Also drop ghost runIds that point at missing runs when a twin already exists.
+ */
+export async function repairProductionEntryMonthAttribution() {
+  const [entries, runs] = await Promise.all([
+    db.productionEntries.toArray(),
+    db.productionRuns.toArray(),
+  ]);
+  const runById = new Map(runs.map((r) => [Number(r.id), r]));
+
+  let realigned = 0;
+  let clearedOrphans = 0;
+  let removedOrphans = 0;
+
+  for (const entry of entries) {
+    const rid = sanitizeProductId(entry.runId);
+    if (!rid) continue; // UUID / unresolved FK — leave for sync remap
+    const run = runById.get(rid);
+    if (run) {
+      if (!isValidISODate(run.date) || !isValidISODate(entry.date)) continue;
+      if (entry.date.slice(0, 7) === run.date.slice(0, 7)) continue;
+      await db.productionEntries.update(entry.id, { date: run.date });
+      realigned++;
+      continue;
+    }
+
+    // Orphan numeric runId (missing run): remove if twin exists, else clear the broken FK.
+    const qtyNum = Number(entry.quantity);
+    const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(entry.quantity ?? '');
+    const hasTwin = entries.some((other) => {
+      if (other.id === entry.id || !isValidISODate(other.date)) return false;
+      const otherRid = sanitizeProductId(other.runId);
+      if (!otherRid || !runById.has(otherRid)) return false;
+      const otherQty = Number(other.quantity);
+      const oq = Number.isFinite(otherQty) ? String(otherQty) : String(other.quantity ?? '');
+      return other.productId === entry.productId && oq === qty;
+    });
+    if (hasTwin) {
+      await deleteProductionEntryFully(entry.id);
+      removedOrphans++;
+    } else {
+      await db.productionEntries.update(entry.id, { runId: null });
+      clearedOrphans++;
+    }
+  }
+
+  return { realigned, clearedOrphans, removedOrphans };
+}
+
 export async function getEntriesForDate(date) {
   return db.productionEntries.where('date').equals(date).toArray();
 }
@@ -4481,12 +4533,12 @@ export async function getEntriesForDate(date) {
 export async function getEntriesForMonth(year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`;
   const all = await db.productionEntries.toArray();
-  return all.filter((e) => e.date.startsWith(prefix));
+  return all.filter((e) => isValidISODate(e.date) && e.date.startsWith(prefix));
 }
 
 export async function getEntriesInRange(from, to) {
   const all = await db.productionEntries.toArray();
-  return all.filter((e) => e.date >= from && e.date <= to);
+  return all.filter((e) => isValidISODate(e.date) && e.date >= from && e.date <= to);
 }
 
 export async function getEntriesForCategory(categoryId) {

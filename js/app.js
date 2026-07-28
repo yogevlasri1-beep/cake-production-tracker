@@ -1,19 +1,19 @@
-import { initDB } from './db.js?v=374';
-import { renderHome, homeMeta } from './screens/home.js?v=374';
-import { renderProducts, productsMeta } from './screens/products.js?v=374';
-import { renderManager, managerMeta } from './screens/manager.js?v=374';
-import { renderProcess, processMeta } from './screens/process.js?v=374';
-import { renderReports, reportsMeta } from './screens/reports.js?v=374';
-import { renderBackup, backupMeta } from './screens/backup.js?v=374';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=374';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=374';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=374';
-import { initIOSInstallPrompt } from './ios-install.js?v=374';
-import { initNetworkCheck } from './network.js?v=374';
-import { registerServiceWorker } from './sw-register.js?v=374';
-import { APP_VERSION } from './version.js?v=374';
-import { showToast } from './utils.js?v=374';
-import './modal.js?v=374';
+import { initDB } from './db.js?v=375';
+import { renderHome, homeMeta } from './screens/home.js?v=375';
+import { renderProducts, productsMeta } from './screens/products.js?v=375';
+import { renderManager, managerMeta } from './screens/manager.js?v=375';
+import { renderProcess, processMeta } from './screens/process.js?v=375';
+import { renderReports, reportsMeta } from './screens/reports.js?v=375';
+import { renderBackup, backupMeta } from './screens/backup.js?v=375';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=375';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=375';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=375';
+import { initIOSInstallPrompt } from './ios-install.js?v=375';
+import { initNetworkCheck } from './network.js?v=375';
+import { registerServiceWorker } from './sw-register.js?v=375';
+import { APP_VERSION } from './version.js?v=375';
+import { showToast } from './utils.js?v=375';
+import './modal.js?v=375';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -151,6 +151,8 @@ async function navigate(screen) {
     delete main.dataset.homeProductionList;
     delete main.dataset.view;
     delete main.dataset.runId;
+    delete main.dataset.runProdDate;
+    delete main.dataset.runProdDateRunId;
   } else {
     delete main.dataset.homeProductionList;
   }
@@ -180,6 +182,8 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
     if (btn.dataset.screen === 'process') {
       delete main.dataset.view;
       delete main.dataset.runId;
+      delete main.dataset.runProdDate;
+      delete main.dataset.runProdDateRunId;
     }
     navigate(btn.dataset.screen);
   });
@@ -193,11 +197,11 @@ async function boot() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=374');
+        const { forceAppUpdate } = await import('./sw-register.js?v=375');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=374').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=375').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -216,14 +220,14 @@ async function boot() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=374');
+    } = await import('./supabase-sync.js?v=375');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=374');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=375');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
