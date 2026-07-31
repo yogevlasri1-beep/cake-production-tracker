@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=380';
+import { db, getSetting, setSetting } from './db.js?v=381';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=380';
+} from './supabase-backup.js?v=381';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=380';
+} from './sync/collections.js?v=381';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=380';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=380';
+} from './sync/id-map.js?v=381';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=381';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -251,10 +251,18 @@ export async function flushSyncQueue() {
   return { flushed };
 }
 
-async function findLocalByFingerprint(collection, fingerprint) {
+async function findLocalByFingerprint(collection, fingerprint, { syncId = null } = {}) {
   if (!fingerprint || !db[collection]) return null;
   const rows = await db[collection].toArray();
-  return rows.find((r) => rowFingerprint(collection, r) === fingerprint) || null;
+  const matches = rows.filter((r) => rowFingerprint(collection, r) === fingerprint);
+  for (const row of matches) {
+    const meta = await getMetaByLocal(collection, row.id);
+    // A local row already claimed by another cloud row must not be reused: two cloud
+    // rows can share a fingerprint (same product and date, no run), and only one
+    // mapping fits per local row, so the second one would vanish without a trace.
+    if (!meta?.syncId || meta.syncId === syncId) return row;
+  }
+  return null;
 }
 
 /** Retarget FK fields that point at fromLocalId → toLocalId within one device. */
@@ -419,7 +427,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
   // Match existing local row by fingerprint to avoid duplicates from multi-device seed
   if (!existingMeta) {
     const fp = rowFingerprint(collection, payload);
-    const match = await findLocalByFingerprint(collection, fp);
+    const match = await findLocalByFingerprint(collection, fp, { syncId });
     if (match) {
       existingMeta = {
         collection,
