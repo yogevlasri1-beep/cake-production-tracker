@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=378';
+import { db, getSetting, setSetting } from './db.js?v=379';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=378';
+} from './supabase-backup.js?v=379';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=378';
+} from './sync/collections.js?v=379';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=378';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=378';
+} from './sync/id-map.js?v=379';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=379';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -523,6 +523,9 @@ export function seedLocalDataToSupabase(options = {}) {
   return seedInFlight;
 }
 
+/** Rows per POST. One request per row made a full seed take ~30 minutes. */
+const SEED_CHUNK_SIZE = 200;
+
 async function runSeed({ force = false } = {}) {
   const live = await getLiveSyncSettings();
   if (live.seedDone && !force) return { seeded: 0, skipped: true };
@@ -530,18 +533,48 @@ async function runSeed({ force = false } = {}) {
   if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
 
   const deviceId = await getOrCreateDeviceId();
+  const kitchenId = KITCHEN_ID || BACKUP_SCOPE_ID;
   let seeded = 0;
+
   for (const collection of orderedCollections()) {
     const table = db[collection];
     if (!table) continue;
     const rows = await table.toArray();
+    if (!rows.length) continue;
+
+    const cloudRows = [];
     for (const row of rows) {
       const localKey = localKeyOf(collection, row);
       if (!localKey) continue;
-      await pushUpsert(cfg, collection, localKey, deviceId);
-      seeded++;
+      const updatedAt = new Date().toISOString();
+      // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
+      const syncId = await ensureSyncId(collection, localKey, { updatedAt });
+      if (!syncId) continue;
+      const payload = await remapFksToSyncIds(collection, row);
+      if (collection === 'settings') payload.key = row.key;
+      cloudRows.push({
+        id: syncId,
+        kitchen_id: kitchenId,
+        payload,
+        updated_at: updatedAt,
+        deleted_at: null,
+        device_id: deviceId,
+      });
+    }
+    if (!cloudRows.length) continue;
+
+    const tableName = tableOf(collection);
+    for (let i = 0; i < cloudRows.length; i += SEED_CHUNK_SIZE) {
+      const chunk = cloudRows.slice(i, i + SEED_CHUNK_SIZE);
+      await supabaseFetch(cfg, `/${tableName}?on_conflict=id`, {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: chunk,
+      });
+      seeded += chunk.length;
     }
   }
+
   await saveLiveSyncSettings({
     lastPushAt: new Date().toISOString(),
     lastError: null,

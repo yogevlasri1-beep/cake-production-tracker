@@ -4,9 +4,9 @@ import {
   weekRange,
   monthRange,
   roundMoney,
-} from './calc.js?v=378';
-import { loadXLSX } from './xlsx-loader.js?v=378';
-import { downloadBlob, toastAfterDownload } from './download.js?v=378';
+} from './calc.js?v=379';
+import { loadXLSX } from './xlsx-loader.js?v=379';
+import { downloadBlob, toastAfterDownload } from './download.js?v=379';
 
 async function writeWorkbook(wb, filename) {
   const XLSX = await loadXLSX();
