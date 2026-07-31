@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=379';
+import { db, getSetting, setSetting } from './db.js?v=380';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=379';
+} from './supabase-backup.js?v=380';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=379';
+} from './sync/collections.js?v=380';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=379';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=379';
+} from './sync/id-map.js?v=380';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=380';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -382,7 +382,12 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
   }
 
   if (existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
-    return false;
+    // Only trust the timestamp when the row it maps to is actually here. A mapping
+    // can outlive its row (partial wipe, restore, interrupted pull), and skipping on
+    // timestamp alone would hide that row from this device for good. A tombstoned
+    // mapping is different: the row is missing on purpose, so leave it missing.
+    if (existingMeta.deletedAt) return false;
+    if (await readLocalRecord(collection, existingMeta.localKey)) return false;
   }
 
   const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});
@@ -430,10 +435,19 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     if (existingMeta) {
       const localId = Number(existingMeta.localKey);
       const { id: _drop, ...rest } = payload;
-      await db[collection].update(localId, rest);
+      let localKey = existingMeta.localKey;
+      const updated = Number.isFinite(localId) ? await db[collection].update(localId, rest) : 0;
+      if (!updated) {
+        // Re-create under the same local id where possible, so numeric FKs on rows
+        // that survived keep resolving to it.
+        const addedId = Number.isFinite(localId)
+          ? await db[collection].add({ ...rest, id: localId })
+          : await db[collection].add(rest);
+        localKey = String(addedId);
+      }
       await upsertMeta({
         collection,
-        localKey: existingMeta.localKey,
+        localKey,
         syncId,
         updatedAt: remoteUpdated,
       });
