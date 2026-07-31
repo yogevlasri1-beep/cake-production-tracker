@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=381';
+import { db, getSetting, setSetting } from './db.js?v=382';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=381';
+} from './supabase-backup.js?v=382';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=381';
+} from './sync/collections.js?v=382';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=381';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=381';
+} from './sync/id-map.js?v=382';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=382';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -615,8 +615,14 @@ export async function resetLocalSyncState() {
   await db.syncMeta.clear();
   // Mark the repair passes as already done: a restored backup is known-good, and
   // re-running dedupe over it is what corrupted the data in the first place.
+  // seedDone stays true on purpose. A reset means "re-link this device to the
+  // cloud", never "upload what is here": with the id map cleared, every local row
+  // looks unlinked, and rows the fingerprint cannot identify (anything keyed by a
+  // pair of ids rather than a name) would be pushed as new and duplicate the cloud.
+  // lastPullAt is cleared instead, so the next tick re-pulls everything and rebuilds
+  // the map from the cloud side.
   await saveLiveSyncSettings({
-    seedDone: false,
+    seedDone: true,
     dedupeDone: true,
     dedupeVersion: DEDUPE_VERSION,
     repairVersion: REPAIR_VERSION,
