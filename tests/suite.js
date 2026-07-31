@@ -19,7 +19,7 @@ import {
   canUploadToSupabase,
 } from '../js/supabase-backup.js?v=383';
 import { isAutoBackupDue } from '../js/backup-service.js?v=383';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=383';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=383';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=383';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
@@ -378,6 +378,18 @@ export async function runAllTests() {
     assertEqual(computeIngredientLineCost({ quantity: 500, unitKind: 'g' }, mat), 9.25);
     const noPackage = { id: 2, name: 'מרגרינה', unitPrice: 6.9, packageWeightGrams: null };
     assertEqual(computeIngredientLineCost({ quantity: 2, unitKind: 'l' }, noPackage), 13.8);
+  });
+
+  test('isFreeMaterial — מים וקרח הם עלות אפס ולא מחיר חסר', () => {
+    const water = { id: 1, name: 'מים', unitPrice: 0, isFree: true };
+    assertOk(isFreeMaterial(water));
+    assertEqual(getMaterialEffectivePricePerKg(water), 0);
+    assertEqual(computeIngredientLineCost({ quantity: 20, unitKind: 'l' }, water), 0);
+    const missing = { id: 2, name: 'גזר', unitPrice: 0 };
+    assertOk(!isFreeMaterial(missing));
+    assertEqual(getMaterialEffectivePricePerKg(missing), null);
+    const priced = { id: 3, name: 'סוכר', unitPrice: 67.5, packageWeightGrams: 25000, isFree: true };
+    assertEqual(getMaterialEffectivePricePerKg(priced), 0);
   });
 
   test('buildMergedMaterialSynonyms — שמות שונים הופכים למילים נרדפות', () => {

@@ -1960,7 +1960,13 @@ export function getMaterialPurchasePricePerKg(mat) {
   return unitPrice > 0 ? unitPrice : null;
 }
 
+/** חומרים כמו מים וקרח — עלות אפס אמיתית, לא מחיר חסר */
+export function isFreeMaterial(mat) {
+  return !!mat?.isFree;
+}
+
 export function getMaterialEffectivePricePerKg(mat) {
+  if (isFreeMaterial(mat)) return 0;
   const processed = sanitizeProcessedPricePerKg(mat?.processedPricePerKg);
   if (processed != null) return processed;
   return getMaterialPurchasePricePerKg(mat);
@@ -3309,7 +3315,7 @@ export function rawMaterialPricingFromPerKg({ pricePerKg, packageWeightKg } = {}
 
 export async function addRawMaterial({
   supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
-  processedPricePerKg,
+  processedPricePerKg, isFree,
   packagingKind, packUnitsCount, packProductsPerUnit,
   packLinkedProductId, packLinkedCategoryId,
   synonyms,
@@ -3344,6 +3350,7 @@ export async function addRawMaterial({
     processedPricePerKg: simplePricing
       ? null
       : sanitizeProcessedPricePerKg(processedPricePerKg),
+    isFree: !simplePricing && !!isFree,
     synonyms: sanitizeMaterialSynonyms(synonyms),
     ...packaging,
     active: simplePricing,
@@ -3382,6 +3389,7 @@ export async function updateRawMaterial(id, patch) {
   if ('processedPricePerKg' in data) {
     data.processedPricePerKg = sanitizeProcessedPricePerKg(data.processedPricePerKg);
   }
+  if ('isFree' in data) data.isFree = !!data.isFree;
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
     || 'packLinkedProductId' in data || 'packLinkedCategoryId' in data) {

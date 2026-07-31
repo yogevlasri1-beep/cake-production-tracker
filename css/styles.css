@@ -5684,15 +5684,84 @@ table.report-table tfoot td {
 }
 
 .recipe-ing-row {
-  display: grid !important;
+  display: grid;
   grid-template-columns: 1fr 80px 72px 6.5rem 2.5rem;
   gap: 8px;
   align-items: center;
+  margin-bottom: 6px;
 }
 
 .recipe-ing-row .recipe-ing-name {
   min-width: 0;
   text-align: right;
+}
+
+/* השדות חייבים min-width אפס, אחרת הם גולשים מהעמודה ונדרסים זה על זה */
+.recipe-ing-row .ing-qty,
+.recipe-ing-row .ing-unit {
+  width: 100%;
+  min-width: 0;
+  padding: 9px 8px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  background: var(--surface);
+}
+
+.recipe-ing-row .del-ing {
+  padding: 6px;
+  min-width: 0;
+}
+
+.recipe-add-ing-row #new-ing-qty,
+.recipe-add-ing-row #new-ing-unit {
+  flex: 0 0 76px;
+  min-width: 0;
+}
+
+.recipe-add-ing-row .mat-search-wrap,
+.recipe-add-ing-row #new-ing-name {
+  flex: 1 1 45%;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .recipe-ingredients-header {
+    display: none;
+  }
+
+  .recipe-ing-row {
+    grid-template-columns: 1fr 76px 68px 2.25rem;
+    grid-template-areas:
+      "name name name name"
+      "cost qty  unit del";
+    row-gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .recipe-ing-row .recipe-ing-identity {
+    grid-area: name;
+  }
+
+  .recipe-ing-row .ing-qty {
+    grid-area: qty;
+  }
+
+  .recipe-ing-row .ing-unit {
+    grid-area: unit;
+  }
+
+  .recipe-ing-row .recipe-ing-line-cost {
+    grid-area: cost;
+    align-self: center;
+  }
+
+  .recipe-ing-row .del-ing {
+    grid-area: del;
+  }
 }
 
 .recipe-ing-line-cost {
@@ -9689,6 +9758,57 @@ body.supplier-drag-active {
 
 .ing-price-option-meta {
   font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.ing-mat-browse {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 42vh;
+  overflow-y: auto;
+  margin-top: 6px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-alt, #f8fafc);
+  -webkit-overflow-scrolling: touch;
+}
+
+.ing-mat-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  text-align: right;
+  font: inherit;
+}
+
+.ing-mat-option:hover,
+.ing-mat-option:focus-visible {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+  outline: none;
+}
+
+.ing-mat-option.active {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+}
+
+.ing-mat-option-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.ing-mat-option-meta {
+  font-size: 0.78rem;
   color: var(--text-muted);
 }
 

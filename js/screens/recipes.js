@@ -29,7 +29,8 @@ import {
   buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost,
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
-  materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
+  materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
+  normalizeMaterialKey,
 } from '../kitchen-db.js?v=383';
 import { getProducts, getProductsCatalogLayout } from '../db.js?v=383';
 import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=383';
@@ -2406,6 +2407,7 @@ function buildRecipeMaterialContext(mats, suppliers) {
 
 function ingredientMaterialHasPrice(mat) {
   if (!mat) return false;
+  if (isFreeMaterial(mat)) return true;
   const effective = getMaterialEffectivePricePerKg(mat);
   if (effective != null && effective > 0) return true;
   return (Number(mat.unitPrice) || 0) > 0;
@@ -2445,7 +2447,9 @@ function resolveIngredientDisplay(ing, ctx) {
   let badge = 'לא משויך לספקים';
   if (mat) {
     const supName = ctx.supMap.get(mat.supplierId) || 'ספק';
-    if (status === 'no-price') {
+    if (isFreeMaterial(mat)) {
+      badge = 'ללא עלות';
+    } else if (status === 'no-price') {
       badge = `משויך · ללא מחיר · ${supName}`;
     } else if (priceSource === 'max') {
       badge = usedRecipeDefault
@@ -2504,7 +2508,7 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
   const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
   const { lineCost, badge, mat, status } = resolveIngredientDisplay(ing, ctx);
   return `
-    <div class="filter-row recipe-ing-row" style="margin-bottom:6px;align-items:center" data-ing-id="${ing.id}" data-ing-status="${status}">
+    <div class="recipe-ing-row" data-ing-id="${ing.id}" data-ing-status="${status}">
       <div class="recipe-ing-identity">
         ${ingredientStatusDotHTML(status, {
     asButton: true,
@@ -2516,8 +2520,8 @@ function renderRecipeIngredientRowHTML(ing, ctx) {
           <span class="recipe-ing-price-meta">${escapeHtml(badge)} · בחירת חומר וספק</span>
         </button>
       </div>
-      <input type="number" class="ing-qty" min="0.001" step="0.001" value="${formatRecipeQuantity(ing.quantity)}" style="width:80px">
-      <select class="ing-unit" style="width:72px">
+      <input type="number" class="ing-qty" min="0.001" step="0.001" value="${formatRecipeQuantity(ing.quantity)}">
+      <select class="ing-unit">
         ${RECIPE_WEIGHT_UNITS.map((u) => `
           <option value="${u.id}" ${kind === u.id ? 'selected' : ''}>${u.label}</option>`).join('')}
       </select>
@@ -2578,17 +2582,14 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
     title: `בחירת חומר גלם וספק`,
     modalClass: 'modal-ingredient-edit',
     bodyHTML: `
-      <p class="form-hint ingredient-edit-intro">בחר חומר גלם מספקים, ואז בחר ספק/מחיר מההצעות למטה.</p>
+      <p class="form-hint ingredient-edit-intro">בחר חומר גלם מרשימת הספקים, ואז בחר ספק/מחיר מההצעות למטה.</p>
       <div class="form-group" style="margin-top:0">
         <label for="change-ing-mat-search">1 · חומר גלם מספקים</label>
-        <div class="mat-search-wrap" style="position:relative">
-          <input type="text" id="change-ing-mat-search" value="${escapeHtml(currentMat?.name || ing.name)}" placeholder="חפש לפי שם חומר גלם..." autocomplete="off">
-          <input type="hidden" id="change-ing-mat-id" value="${currentMat?.id || ''}">
-          <ul class="mat-search-list hidden" id="change-ing-mat-list"></ul>
-        </div>
-        <p class="form-hint">הקלד לחיפוש — לחץ על תוצאה לבחירה מיידית</p>
+        <input type="search" id="change-ing-mat-search" placeholder="חפש לפי שם חומר, ספק או מילה נרדפת..." autocomplete="off">
+        <p class="form-hint" id="change-ing-mat-count"></p>
+        <div class="ing-mat-browse" id="change-ing-mat-browse"></div>
       </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">החל לפי שם בשדה (ללא בחירה מהרשימה)</button>
+      <button type="button" class="btn btn-secondary btn-sm" id="change-ing-mat-btn" style="width:100%;margin-bottom:16px">שמור את השם שהוקלד ללא שיוך לספק</button>
       <hr style="border:none;border-top:1px solid var(--border);margin:0 0 16px">
       <p class="form-hint" style="margin-top:0"><strong>2 · ספק / מחיר</strong> ל<strong>${escapeHtml(ing.name)}</strong> — ${defaultMat ? `ברירת מחדל: ${escapeHtml(defaultSupName)}` : 'ברירת מחדל: המחיר הגבוה ביותר'} · ניתן לבחור ספק אחר לעקיפה במתכון זה</p>
       <div class="ing-price-picker">
@@ -2636,23 +2637,20 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
     }
   };
 
-  bindMaterialSearchRich(
+  bindIngredientMaterialBrowser({
     mats,
-    suppliers,
-    document.getElementById('change-ing-mat-search'),
-    document.getElementById('change-ing-mat-id'),
-    document.getElementById('change-ing-mat-list'),
-    { onPick: (mat) => { applyMaterialSelection(mat); } },
-  );
+    supMap: ctx.supMap,
+    currentMatId: currentMat?.id || null,
+    ingredientName: ing.name,
+    onPick: (mat) => { applyMaterialSelection(mat); },
+  });
 
   document.getElementById('change-ing-mat-btn')?.addEventListener('click', async () => {
-    const matId = Number(document.getElementById('change-ing-mat-id')?.value);
     const searchName = document.getElementById('change-ing-mat-search')?.value.trim();
-    let mat = mats.find((m) => m.id === matId);
-    if (!mat && searchName) {
-      mat = mats.find((m) => m.name === searchName)
-        || mats.find((m) => m.name.toLowerCase() === searchName.toLowerCase());
-    }
+    const mat = searchName
+      ? (mats.find((m) => m.name === searchName)
+        || mats.find((m) => m.name.toLowerCase() === searchName.toLowerCase()))
+      : null;
     const newName = mat?.name || searchName;
     if (!newName) return showToast('בחר או הזן שם חומר');
     if (newName === ing.name && !mat) return showToast('אותו חומר');
@@ -2691,6 +2689,67 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
 function materialComparisonPriceDisplay(mat) {
   const ppk = computePricePerKg(mat?.unitPrice, mat?.packageWeightGrams);
   return ppk != null ? ppk : (Number(mat?.unitPrice) || 0);
+}
+
+function ingredientMaterialOptionHTML(mat, { supplierName, isCurrent }) {
+  const perKg = getMaterialEffectivePricePerKg(mat);
+  const price = isFreeMaterial(mat)
+    ? 'ללא עלות'
+    : (perKg != null && perKg > 0 ? `${formatMoney(perKg)}/ק"ג` : 'ללא מחיר');
+  const synonyms = getMaterialSynonyms(mat);
+  const alias = synonyms.length ? ` · גם: ${synonyms.slice(0, 2).join(', ')}` : '';
+  return `
+    <button type="button" class="ing-mat-option${isCurrent ? ' active' : ''}" data-id="${mat.id}">
+      <span class="ing-mat-option-name">${escapeHtml(mat.name)}${isCurrent ? ' ✓' : ''}</span>
+      <span class="ing-mat-option-meta">${escapeHtml(supplierName || 'ללא ספק')} · ${escapeHtml(price)}${escapeHtml(alias)}</span>
+    </button>`;
+}
+
+/** רשימת חומרי גלם גלויה עם חיפוש חי — במקום תפריט שנפתח רק בהקלדה */
+function bindIngredientMaterialBrowser({ mats, supMap, currentMatId, ingredientName, onPick }) {
+  const searchEl = document.getElementById('change-ing-mat-search');
+  const listEl = document.getElementById('change-ing-mat-browse');
+  const countEl = document.getElementById('change-ing-mat-count');
+  if (!searchEl || !listEl) return;
+
+  const supplierNameOf = (mat) => supMap.get(mat.supplierId) || '';
+  const nameKey = normalizeMaterialKey(ingredientName || '');
+  // החומר המשויך ואלה ששמם תואם עולים לראש, כדי שההתאמה הסבירה תהיה מיד מול העיניים
+  const rank = (mat) => {
+    if (mat.id === currentMatId) return 0;
+    if (nameKey && normalizeMaterialKey(mat.name) === nameKey) return 1;
+    return 2;
+  };
+  const ordered = [...mats].sort((a, b) => (
+    rank(a) - rank(b) || a.name.localeCompare(b.name, 'he')
+  ));
+
+  const render = (query = '') => {
+    const term = query.trim();
+    const filtered = term
+      ? ordered.filter((m) => materialMatchesSearch(m, term, { supplierName: supplierNameOf(m) }))
+      : ordered;
+    if (countEl) {
+      countEl.textContent = filtered.length
+        ? `${filtered.length} חומרי גלם — לחץ לשיוך מיידי`
+        : 'לא נמצאו התאמות';
+    }
+    listEl.innerHTML = filtered.length
+      ? filtered.map((m) => ingredientMaterialOptionHTML(m, {
+        supplierName: supplierNameOf(m),
+        isCurrent: m.id === currentMatId,
+      })).join('')
+      : '<p class="form-hint" style="padding:12px">אין חומר גלם תואם. אפשר לשמור את השם שהוקלד בלי שיוך.</p>';
+  };
+
+  searchEl.addEventListener('input', () => render(searchEl.value));
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('.ing-mat-option');
+    if (!btn) return;
+    const mat = mats.find((m) => m.id === Number(btn.dataset.id));
+    if (mat && onPick) onPick(mat);
+  });
+  render();
 }
 
 function refreshRecipeIngredientCosts(baseIngredients, ctx) {
@@ -4136,15 +4195,15 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         <label>חומרי גלם</label>
         ${ingredients.length ? `${renderRecipeIngredientsHeaderHTML()}${ingredients.map((ing) => renderRecipeIngredientRowHTML(ing, matCtx)).join('')}` : '<p class="form-hint">אין חומרים</p>'}
         ${ingredients.length ? `<div id="recipe-ing-total" class="recipe-ingredients-total">${renderRecipeCostAndWeightHTML(ingredients, recipe, matCtx)}</div>` : ''}
-        <div class="filter-row" style="margin-top:8px">
-          <div class="mat-search-wrap" style="flex:1;position:relative">
+        <div class="filter-row recipe-add-ing-row" style="margin-top:8px">
+          <div class="mat-search-wrap" style="position:relative">
             <input type="text" id="new-ing-mat-search" placeholder="חפש חומר גלם..." autocomplete="off">
             <input type="hidden" id="new-ing-mat" value="">
             <ul class="mat-search-list hidden" id="new-ing-mat-list"></ul>
           </div>
-          <input type="text" id="new-ing-name" placeholder="שם ידני" style="flex:1">
-          <input type="number" id="new-ing-qty" min="0.001" step="0.001" placeholder="כמות" style="width:72px">
-          <select id="new-ing-unit" style="width:72px">
+          <input type="text" id="new-ing-name" placeholder="שם ידני">
+          <input type="number" id="new-ing-qty" min="0.001" step="0.001" placeholder="כמות">
+          <select id="new-ing-unit">
             ${RECIPE_WEIGHT_UNITS.map((u) => `<option value="${u.id}">${u.label}</option>`).join('')}
           </select>
           <button type="button" class="btn btn-secondary btn-sm" id="add-ing-btn">+</button>

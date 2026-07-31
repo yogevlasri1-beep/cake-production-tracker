@@ -1848,6 +1848,13 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
     <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
       <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
     </div>
+    <div class="form-group">
+      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="mat-is-free"${mat?.isFree ? ' checked' : ''}>
+        <span>חומר ללא עלות</span>
+      </label>
+      <p class="form-hint">למשל מים או קרח — לא ייחשב כחומר שחסר לו מחיר</p>
+    </div>
     <div class="form-group"><label>יחידת רכישה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>`)}
     <div class="form-group"><label>ספק</label>
       <select id="mat-supplier"><option value="">—</option>
@@ -1984,6 +1991,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         supplierId: document.getElementById('mat-supplier')?.value || null,
         packageWeightGrams: simplePrice ? null : pricing.packageWeightGrams,
         processedPricePerKg: simplePrice ? null : document.getElementById('mat-processed-price')?.value,
+        isFree: !simplePrice && !!document.getElementById('mat-is-free')?.checked,
         synonyms: readMaterialSynonymsFromForm(),
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
