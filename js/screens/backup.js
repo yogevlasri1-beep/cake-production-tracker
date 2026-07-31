@@ -18,12 +18,12 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=377';
-import { describeDownloadMethod } from '../download.js?v=377';
-import { showToast, escapeHtml } from '../utils.js?v=377';
-import { openModal, closeModal } from '../modal.js?v=377';
-import { APP_VERSION } from '../version.js?v=377';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=377';
+} from '../backup-service.js?v=378';
+import { describeDownloadMethod } from '../download.js?v=378';
+import { showToast, escapeHtml } from '../utils.js?v=378';
+import { openModal, closeModal } from '../modal.js?v=378';
+import { APP_VERSION } from '../version.js?v=378';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=378';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -397,7 +397,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
     try {
-      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=377');
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=378');
       await setLiveSyncEnabled(e.target.checked);
       showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
       renderBackup(container, { navigate });
@@ -411,7 +411,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=377');
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=378');
       const pushed = await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
@@ -429,7 +429,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=377');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=378');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
@@ -447,7 +447,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=377');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=378');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -464,7 +464,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=377');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=378');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });
