@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=382';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=383';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=382';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=382';
+} from './validators.js?v=383';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=383';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2032,17 +2032,10 @@ export function computeIngredientLineCost(ing, mat) {
   const qty = Number(ing?.quantity) || 0;
   if (!mat || qty <= 0) return 0;
   const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
-  const unitPrice = Number(mat.unitPrice) || 0;
-  const perKg = getMaterialEffectivePricePerKg(mat);
-  if (kind === 'g') {
-    const rate = perKg ?? unitPrice;
-    return roundQty((qty / 1000) * rate);
-  }
-  if (kind === 'kg') {
-    const rate = perKg ?? unitPrice;
-    return roundQty(qty * rate);
-  }
-  return roundQty(qty * unitPrice);
+  // A litre is billed as a kilo. At the densities in use here the gap is a few percent,
+  // while charging unitPrice per litre would be off by the size of the whole package.
+  const rate = getMaterialEffectivePricePerKg(mat) ?? (Number(mat.unitPrice) || 0);
+  return roundQty(kind === 'g' ? (qty / 1000) * rate : qty * rate);
 }
 
 export async function computeRecipeMaterialsCost(ingredients, materials) {

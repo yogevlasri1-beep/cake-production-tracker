@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=382';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=383';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=382';
+} from '../js/validators.js?v=383';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=382';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=382';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=382';
+} from '../js/calc.js?v=383';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=383';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=383';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,16 +17,18 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=382';
-import { isAutoBackupDue } from '../js/backup-service.js?v=382';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=382';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=382';
+} from '../js/supabase-backup.js?v=383';
+import { isAutoBackupDue } from '../js/backup-service.js?v=383';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=383';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=383';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
-} from '../js/supplier-import.js?v=382';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=382';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=382';
+  detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
+  PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
+} from '../js/supplier-import.js?v=383';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=383';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=383';
 
 export async function runAllTests() {
   /* validators */
@@ -327,6 +329,57 @@ export async function runAllTests() {
     assertEqual(pinned.priceSource, 'supplier');
   });
 
+  test('detectImportPriceBasis — מזהה מחירון שרשם מחיר לק"ג', () => {
+    // מחירון 28.6: מספרים קטנים מול אריזות גדולות, ולכן המחיר לק"ג יוצא אגורות
+    const perKgSheet = [
+      { materialName: 'מלח', price: 1.8, packageWeightGrams: 12000 },
+      { materialName: 'שומן קוקוס', price: 11, packageWeightGrams: 25000 },
+      { materialName: 'עמילן נמס', price: 15, packageWeightGrams: 15000 },
+      { materialName: 'קרם פטסייר', price: 17.9, packageWeightGrams: 8000 },
+    ];
+    assertEqual(detectImportPriceBasis(perKgSheet), PRICE_BASIS_PER_KG);
+
+    const packageSheet = [
+      { materialName: 'ביצים מעורב', price: 277.5, packageWeightGrams: 15000 },
+      { materialName: 'סולת', price: 132.5, packageWeightGrams: 25000 },
+      { materialName: 'קוקוס', price: 635.6, packageWeightGrams: 45400 },
+      { materialName: 'מחית תפוחים', price: 136, packageWeightGrams: 17000 },
+    ];
+    assertEqual(detectImportPriceBasis(packageSheet), PRICE_BASIS_PACKAGE);
+
+    // בלי מספיק שורות משמעותיות נשארים בהתנהגות הקיימת
+    assertEqual(detectImportPriceBasis([{ materialName: 'סוכר', price: 2.7 }]), PRICE_BASIS_PACKAGE);
+    assertEqual(detectImportPriceBasis([]), PRICE_BASIS_PACKAGE);
+  });
+
+  test('applyImportPriceBasis — מחיר לק"ג הופך למחיר אריזה', () => {
+    const entries = [
+      { materialName: 'מלח', price: 1.8, packageWeightGrams: 12000 },
+      { materialName: 'מרגרינה', price: 6.9, packageWeightGrams: null },
+      { materialName: 'ריק', price: null, packageWeightGrams: 5000 },
+    ];
+    const converted = applyImportPriceBasis(entries, PRICE_BASIS_PER_KG);
+    assertEqual(converted[0].price, 21.6);
+    assertEqual(converted[1].price, 6.9);
+    assertEqual(converted[2].price, null);
+    assertEqual(applyImportPriceBasis(entries, PRICE_BASIS_PACKAGE)[0].price, 1.8);
+
+    const sample = previewImportPriceBasis(entries, PRICE_BASIS_PER_KG)[0];
+    assertEqual(sample.pricePerKg, 1.8);
+    assertEqual(sample.packagePrice, 21.6);
+    assertEqual(previewImportPriceBasis(entries, PRICE_BASIS_PACKAGE)[0].pricePerKg, 0.15);
+  });
+
+  test('computeIngredientLineCost — שורה בליטרים מתומחרת לפי המחיר לק"ג', () => {
+    const mat = { id: 1, name: 'ביצים מעורב', unitPrice: 277.5, packageWeightGrams: 15000 };
+    assertEqual(computeIngredientLineCost({ quantity: 6, unitKind: 'l' }, mat), 111);
+    assertEqual(computeIngredientLineCost({ quantity: 6, unit: 'ליטר' }, mat), 111);
+    assertEqual(computeIngredientLineCost({ quantity: 1.5, unitKind: 'kg' }, mat), 27.75);
+    assertEqual(computeIngredientLineCost({ quantity: 500, unitKind: 'g' }, mat), 9.25);
+    const noPackage = { id: 2, name: 'מרגרינה', unitPrice: 6.9, packageWeightGrams: null };
+    assertEqual(computeIngredientLineCost({ quantity: 2, unitKind: 'l' }, noPackage), 13.8);
+  });
+
   test('buildMergedMaterialSynonyms — שמות שונים הופכים למילים נרדפות', () => {
     const keep = { id: 1, name: 'סוכר', synonyms: ['סכר'] };
     const others = [
@@ -387,6 +440,63 @@ export async function runAllTests() {
       rowFingerprint('productFlowLinks', { productId: '5', flowId: '3' }),
       rowFingerprint('productFlowLinks', { productId: 5, flowId: 3 }),
     );
+  });
+
+  test('rowFingerprint — לכל טבלת קישור יש מזהה השוואה', () => {
+    const rows = {
+      targets: { scope: 'product', scopeId: 4, period: '2026-07' },
+      processLogs: { date: '2026-07-21', categoryId: 2, activity: 'ניקיון' },
+      activityPresets: { name: 'שטיפה', categoryId: 2 },
+      flowPortionPresets: { flowId: 3, name: 'מנה', sortOrder: 1 },
+      groupPortionPresets: { name: 'מנה', categoryGroupId: 1, sourceRecipeId: 8 },
+      groupPreparations: { name: 'הכנה', categoryGroupId: 1, categoryId: 2 },
+      checklistTasks: { name: 'בדיקה', categoryGroupId: 1, categoryId: 2 },
+      flowChecklistItems: { flowId: 3, checklistTaskId: 9 },
+      flowCleaningTasks: { flowId: 3, name: 'ניקוי תנור' },
+      productPreparations: { productId: 5, name: 'הפשרה' },
+      bakingProfileProducts: { bakingProfileId: 2, productId: 5 },
+      productionMachineFields: { machineId: 1, name: 'טמפרטורה' },
+      productionMachineProducts: { machineId: 1, targetType: 'product', productId: 5 },
+      productionMachineProductValues: { assignmentId: 4, fieldId: 6 },
+      supplierShortages: { supplierId: 2, rawMaterialId: 11 },
+      weeklyProductionPlanItems: { planId: 3, productId: 5 },
+      managerPlans: { planType: 'weekly', anchorDate: '2026-07-20' },
+      managerPlanItems: {
+        planType: 'weekly', anchorDate: '2026-07-20', dayOffset: 1, itemKind: 'text', label: 'לבדוק מלאי',
+      },
+      managerTasks: { createdAt: '2026-07-21T08:00:00', department: 'bakery', title: 'לתקן מיקסר' },
+      managerIncidents: { createdAt: '2026-07-21T08:00:00', department: 'bakery', title: 'תקלה' },
+      managerShiftNotes: { createdAt: '2026-07-21T08:00:00', date: '2026-07-21', department: 'bakery' },
+      managerEmployees: { name: 'דנה', responsibilityAreaId: 3 },
+      departmentCleaningTasks: { listId: 2, name: 'רצפה' },
+      purchaseItems: { name: 'שקיות', categoryId: 4 },
+    };
+    for (const [collection, row] of Object.entries(rows)) {
+      assertOk(isSyncCollection(collection), `${collection} אמור להיות בטבלאות הסנכרון`);
+      assertOk(rowFingerprint(collection, row), `${collection} חייב מזהה השוואה`);
+    }
+  });
+
+  test('rowFingerprint — טבלאות ניהול מפרידות בין שורות שונות', () => {
+    const task = { createdAt: '2026-07-21T08:00:00', department: 'bakery', title: 'לתקן מיקסר' };
+    assertOk(
+      rowFingerprint('managerTasks', task)
+        !== rowFingerprint('managerTasks', { ...task, createdAt: '2026-07-21T09:00:00' }),
+      'שתי משימות בשעות שונות אינן אותה שורה',
+    );
+    assertOk(
+      rowFingerprint('managerTasks', task) !== rowFingerprint('managerIncidents', task),
+      'משימה ותקלה לא מתמזגות',
+    );
+    const item = {
+      planType: 'weekly', anchorDate: '2026-07-20', dayOffset: 1, itemKind: 'text', label: 'לבדוק מלאי',
+    };
+    assertOk(
+      rowFingerprint('managerPlanItems', item)
+        !== rowFingerprint('managerPlanItems', { ...item, dayOffset: 2 }),
+      'אותו טקסט ביום אחר אינו אותה שורה',
+    );
+    assertEqual(rowFingerprint('managerTasks', { department: 'bakery', title: 'ללא זמן' }), '');
   });
 
   test('rowDedupeFingerprint — רישומי ייצור מתעלמים מ-runId', () => {
@@ -825,7 +935,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=382');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=383');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

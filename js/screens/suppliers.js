@@ -22,13 +22,16 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=382';
-import { getProducts, getCategories } from '../db.js?v=382';
-import { parseSupplierFile } from '../supplier-import.js?v=382';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=382';
-import { openModal, closeModal } from '../modal.js?v=382';
-import { requestAutoBackupNow } from '../backup-service.js?v=382';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=382';
+} from '../kitchen-db.js?v=383';
+import { getProducts, getCategories } from '../db.js?v=383';
+import {
+  parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
+  PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
+} from '../supplier-import.js?v=383';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=383';
+import { openModal, closeModal } from '../modal.js?v=383';
+import { requestAutoBackupNow } from '../backup-service.js?v=383';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=383';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2195,11 +2198,24 @@ function bindImportUndoButton(host, container) {
   });
 }
 
+function renderPriceBasisSamplesHTML(entries, basis) {
+  const samples = previewImportPriceBasis(entries, basis);
+  if (!samples.length) {
+    return '<p class="form-hint">בקובץ הזה אין אריזות מעל קילו, ולכן שתי האפשרויות נותנות אותה תוצאה.</p>';
+  }
+  return `
+    <ul class="import-supplier-preview">
+      ${samples.map((s) => `
+        <li><strong>${escapeHtml(s.materialName)}</strong> · אריזה ${formatWeightGrams(s.packageWeightGrams)} · ${formatMoney(s.packagePrice)} לאריזה · <strong>${formatMoney(s.pricePerKg)}/ק"ג</strong></li>`).join('')}
+    </ul>`;
+}
+
 function openImportPreview(container, parsed, categories, defaultCatId, fileName = '') {
   const { entries, format, sheets } = parsed;
   const preview = entries.slice(0, 12);
   const uniqueMaterials = new Set(entries.map((e) => e.materialName)).size;
   const uniqueSuppliers = new Set(entries.map((e) => e.supplierName)).size;
+  const detectedBasis = detectImportPriceBasis(entries);
   const sheetsBlock = format === 'supplier_sheets' && sheets?.length
     ? `<p class="form-hint" style="margin-top:8px">גיליונות (${sheets.length}): ${sheets.map((s) => `${escapeHtml(s.name)} (${s.entries})`).join(' · ')}</p>`
     : '';
@@ -2209,6 +2225,15 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
     bodyHTML: `
       <p class="form-hint">${uniqueMaterials} חומרים · ${uniqueSuppliers} ספקים · ייווצרו/יעודכנו מחירים והיסטוריה</p>
       ${sheetsBlock}
+      <div class="form-group">
+        <label>עמודת המחיר בקובץ</label>
+        <select id="import-price-basis">
+          <option value="${PRICE_BASIS_PACKAGE}"${detectedBasis === PRICE_BASIS_PACKAGE ? ' selected' : ''}>מחיר לאריזה שלמה</option>
+          <option value="${PRICE_BASIS_PER_KG}"${detectedBasis === PRICE_BASIS_PER_KG ? ' selected' : ''}>מחיר לק"ג</option>
+        </select>
+        <p class="form-hint">בדוק שהמחיר לק"ג למטה נראה הגיוני — בחירה שגויה מכפילה או מחלקת את עלות המתכונים במשקל האריזה.</p>
+      </div>
+      <div id="import-price-basis-samples">${renderPriceBasisSamplesHTML(entries, detectedBasis)}</div>
       <div class="form-group">
         <label>קטגוריית ברירת מחדל לספקים חדשים</label>
         <select id="import-sup-cat">
@@ -2224,10 +2249,15 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="confirm-sup-import">ייבוא ✓</button>`,
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('import-price-basis')?.addEventListener('change', (e) => {
+    const host = document.getElementById('import-price-basis-samples');
+    if (host) host.innerHTML = renderPriceBasisSamplesHTML(entries, e.target.value);
+  });
   document.getElementById('confirm-sup-import')?.addEventListener('click', async () => {
     try {
       const catId = Number(document.getElementById('import-sup-cat')?.value);
-      const { stats } = await importSupplierExcelEntries(entries, {
+      const basis = document.getElementById('import-price-basis')?.value || PRICE_BASIS_PACKAGE;
+      const { stats } = await importSupplierExcelEntries(applyImportPriceBasis(entries, basis), {
         defaultCategoryId: catId,
         fileHint: fileName || '',
       });

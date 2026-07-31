@@ -363,6 +363,69 @@ export function rowFingerprint(collection, row) {
       return `${collection}|${row.flowId}|${row.sortOrder ?? ''}|${n}`;
     case 'flows':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.categoryGroupId ?? ''}` : '';
+    case 'targets':
+      return row.scope ? `${collection}|${row.scope}|${row.scopeId ?? ''}|${row.period ?? ''}` : '';
+    case 'processLogs':
+      return row.date ? `${collection}|${row.date}|${row.categoryId ?? ''}|${normName(row.activity)}` : '';
+    case 'activityPresets':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+    case 'flowPortionPresets':
+      return row.flowId != null ? `${collection}|${row.flowId}|${n}|${row.sortOrder ?? ''}` : '';
+    case 'groupPortionPresets':
+      return n
+        ? `${collection}|${n}|${row.categoryGroupId ?? ''}|${row.sourceRecipeId ?? ''}|${row.sourceRawMaterialId ?? ''}`
+        : '';
+    case 'groupPreparations':
+    case 'checklistTasks':
+      return n ? `${collection}|${n}|${row.categoryGroupId ?? ''}|${row.categoryId ?? ''}` : '';
+    case 'flowChecklistItems':
+      return row.flowId != null ? `${collection}|${row.flowId}|${row.checklistTaskId ?? ''}` : '';
+    case 'flowCleaningTasks':
+      return row.flowId != null ? `${collection}|${row.flowId}|${n}` : '';
+    case 'productPreparations':
+      return row.productId != null ? `${collection}|${row.productId}|${n}` : '';
+    case 'bakingProfileProducts':
+      return row.bakingProfileId != null
+        ? `${collection}|${row.bakingProfileId}|${row.productId ?? ''}`
+        : '';
+    case 'productionMachineFields':
+      return row.machineId != null ? `${collection}|${row.machineId}|${n}` : '';
+    case 'productionMachineProducts':
+      return row.machineId != null
+        ? `${collection}|${row.machineId}|${row.targetType ?? ''}|${row.productId ?? ''}|${row.categoryId ?? ''}|${row.categoryGroupId ?? ''}|${row.recipeId ?? ''}`
+        : '';
+    case 'productionMachineProductValues':
+      return row.assignmentId != null ? `${collection}|${row.assignmentId}|${row.fieldId ?? ''}` : '';
+    case 'supplierShortages':
+      return row.rawMaterialId != null
+        ? `${collection}|${row.supplierId ?? ''}|${row.rawMaterialId}`
+        : '';
+    case 'weeklyProductionPlanItems':
+      return row.planId != null ? `${collection}|${row.planId}|${row.productId ?? ''}` : '';
+    case 'managerPlans':
+      return row.planType ? `${collection}|${row.planType}|${row.anchorDate ?? ''}` : '';
+    // Manager rows carry free text under title/label rather than name, so the
+    // name-only default left them without any fingerprint at all — the reason a
+    // reset could push them to the cloud a second time.
+    case 'managerPlanItems':
+      return row.planType
+        ? `${collection}|${row.planType}|${row.anchorDate ?? ''}|${row.dayOffset ?? ''}|${row.itemKind ?? ''}|${normName(row.label)}`
+        : '';
+    case 'managerTasks':
+    case 'managerIncidents':
+      return row.createdAt
+        ? `${collection}|${row.createdAt}|${row.department ?? ''}|${normName(row.title)}`
+        : '';
+    case 'managerShiftNotes':
+      return row.createdAt
+        ? `${collection}|${row.createdAt}|${row.date ?? ''}|${row.department ?? ''}`
+        : '';
+    case 'managerEmployees':
+      return n ? `${collection}|${n}|${row.responsibilityAreaId ?? ''}` : '';
+    case 'departmentCleaningTasks':
+      return row.listId != null ? `${collection}|${row.listId}|${n}` : '';
+    case 'purchaseItems':
+      return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
     default:
       return n ? `${collection}|${n}` : '';
   }

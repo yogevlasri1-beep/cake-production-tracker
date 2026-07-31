@@ -1,5 +1,5 @@
-import { loadXLSX } from './xlsx-loader.js?v=382';
-import { todayISO } from './utils.js?v=382';
+import { loadXLSX } from './xlsx-loader.js?v=383';
+import { todayISO } from './utils.js?v=383';
 
 const MATERIAL_ALIASES = ['חומר גלם', 'חומר', 'מוצר', 'material', 'שם', 'פריט', 'תיאור'];
 const SUPPLIER_ALIASES = ['ספק', 'supplier', 'שם ספק'];
@@ -444,6 +444,68 @@ function parseWorkbookSheets(wb, XLSX) {
     return { entries: allEntries, format: 'supplier_sheets', sheets };
   }
   return null;
+}
+
+export const PRICE_BASIS_PACKAGE = 'package';
+export const PRICE_BASIS_PER_KG = 'perKg';
+
+/** שורות שבהן שתי השיטות נותנות תוצאה שונה — אריזה של קילו ומטה זהה בשתיהן */
+function priceBasisSamples(entries) {
+  return (entries || [])
+    .filter((e) => Number(e?.price) > 0 && Number(e?.packageWeightGrams) > 1000)
+    .map((e) => ({
+      materialName: e.materialName,
+      price: Number(e.price),
+      packageWeightGrams: Number(e.packageWeightGrams),
+      perKgIfPackage: Math.round((Number(e.price) / (Number(e.packageWeightGrams) / 1000)) * 100) / 100,
+    }));
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * מנחש אם עמודת המחיר היא מחיר אריזה או מחיר לק"ג.
+ * מחיר אריזה של שק גדול הוא מאות שקלים, ולכן המחיר לק"ג שנגזר ממנו סביר; מחיר לק"ג
+ * שנשמר בטעות כמחיר אריזה מתחלק שוב במשקל ויוצא אגורות. החציון מפריד בין השניים.
+ */
+export function detectImportPriceBasis(entries) {
+  const samples = priceBasisSamples(entries);
+  if (samples.length < 3) return PRICE_BASIS_PACKAGE;
+  const mid = median(samples.map((s) => s.perKgIfPackage));
+  return mid != null && mid < 3 ? PRICE_BASIS_PER_KG : PRICE_BASIS_PACKAGE;
+}
+
+/** שורות לדוגמה להצגה במסך האישור, עם המחיר לק"ג שייצא בפועל */
+export function previewImportPriceBasis(entries, basis, limit = 3) {
+  const samples = priceBasisSamples(entries);
+  const perKg = basis === PRICE_BASIS_PER_KG;
+  return samples.slice(0, limit).map((s) => ({
+    materialName: s.materialName,
+    packageWeightGrams: s.packageWeightGrams,
+    pricePerKg: perKg ? s.price : s.perKgIfPackage,
+    packagePrice: perKg
+      ? Math.round(s.price * (s.packageWeightGrams / 1000) * 100) / 100
+      : s.price,
+  }));
+}
+
+/**
+ * מתרגם את המחירים למחיר אריזה, שזה מה שהמערכת שומרת. שורה בלי משקל אריזה נשארת
+ * כמות שהיא: שם המחיר משמש ממילא כמחיר לק"ג.
+ */
+export function applyImportPriceBasis(entries, basis) {
+  if (basis !== PRICE_BASIS_PER_KG) return entries || [];
+  return (entries || []).map((e) => {
+    const grams = Number(e?.packageWeightGrams);
+    const price = Number(e?.price);
+    if (!Number.isFinite(grams) || grams <= 0 || !Number.isFinite(price) || price <= 0) return e;
+    return { ...e, price: Math.round(price * (grams / 1000) * 100) / 100 };
+  });
 }
 
 export async function parseSupplierFile(file) {
