@@ -30,19 +30,19 @@ import {
   computeRecipeMaterialsCost, getIngredientPriceSource, getMaterialsByIngredientName,
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg,
-} from '../kitchen-db.js?v=375';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=375';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=375';
-import { renderRecipesMachines } from '../recipes-machines.js?v=375';
-import { renderRecipesPortions } from '../recipes-portions.js?v=375';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=375';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=375';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=375';
-import { openModal, closeModal } from '../modal.js?v=375';
+} from '../kitchen-db.js?v=376';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=376';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=376';
+import { renderRecipesMachines } from '../recipes-machines.js?v=376';
+import { renderRecipesPortions } from '../recipes-portions.js?v=376';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=376';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=376';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=376';
+import { openModal, closeModal } from '../modal.js?v=376';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=375';
-import { defaultColorForIndex } from '../chart.js?v=375';
+} from '../product-drag.js?v=376';
+import { defaultColorForIndex } from '../chart.js?v=376';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2532,9 +2532,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=375');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=376');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=375');
+    const { navigateToWorkspace } = await import('../app.js?v=376');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');

@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting, repairProductionEntryMonthAttribution } from './db.js?v=375';
+import { db, getSetting, setSetting } from './db.js?v=376';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=375';
+} from './supabase-backup.js?v=376';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=375';
+} from './sync/collections.js?v=376';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=375';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=375';
+} from './sync/id-map.js?v=376';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=376';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -538,6 +538,30 @@ export async function seedLocalDataToSupabase({ force = false } = {}) {
 }
 
 /**
+ * Drop every local↔cloud id mapping and pending op, so the next seed uploads
+ * the local database as brand new rows. Required after restoring a JSON backup
+ * or wiping the cloud tables: the old mappings point at rows that no longer
+ * exist, and pushing to them would resurrect stale records.
+ */
+export async function resetLocalSyncState() {
+  await db.syncQueue.clear();
+  await db.syncMeta.clear();
+  // Mark the repair passes as already done: a restored backup is known-good, and
+  // re-running dedupe over it is what corrupted the data in the first place.
+  await saveLiveSyncSettings({
+    seedDone: false,
+    dedupeDone: true,
+    dedupeVersion: DEDUPE_VERSION,
+    repairVersion: REPAIR_VERSION,
+    lastPullAt: null,
+    lastPushAt: null,
+    lastError: null,
+    pendingCount: 0,
+  });
+  return { cleared: true };
+}
+
+/**
  * Mutations observed by the middleware wait here until the surrounding Dexie
  * transaction commits. Writing to syncQueue/syncMeta from inside the mutate
  * hook would touch tables outside the transaction scope and break callers that
@@ -715,14 +739,10 @@ export async function startLiveSync() {
     try {
       const result = await dedupeLocalSyncCollections();
       const bridge = await repairRecipeProductLinksFromComposition();
-      const monthFix = await repairProductionEntryMonthAttribution();
       await flushSyncQueue();
       await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
       if (result.removed) console.info('live sync local dedupe removed', result.removed);
       if (bridge.added) console.info('live sync bridged recipe-product links', bridge.added);
-      if (monthFix.realigned || monthFix.removedOrphans || monthFix.clearedOrphans) {
-        console.info('live sync production month repair', monthFix);
-      }
     } catch (err) {
       console.warn('live sync local dedupe', err);
     }
