@@ -7,7 +7,7 @@ import {
   setFlowStepOrderForFlow, copyDefaultFlowStepsToFlow, ensureFlowProductionStep,
   getFlowPortionPresets, getGroupPortionPresets, addGroupPortionPreset, updateGroupPortionPreset, deleteGroupPortionPreset,
   getFlowPreparations, addFlowPreparation, deleteFlowPreparation, setFlowPreparationOrder, importFlowPreparationsFromActivityPresets,
-  getAvailableChecklistTasksForFlow, linkChecklistTaskToFlow,
+  getAvailableChecklistTasksForFlow, linkChecklistTaskToFlow, repairLocalChecklistDuplicates,
   getFlowCleaningTasks, addFlowCleaningTask, deleteFlowCleaningTask, setFlowCleaningTaskOrder,
   startProductionRun, getProductionRun, getProductionRunsForDate, getActiveProductionRuns,
   getAllProductionRuns,
@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=391';
+} from '../db.js?v=392';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=391').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=392').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=391';
-import { openModal, closeModal } from '../modal.js?v=391';
-import { requestAutoBackupNow } from '../backup-service.js?v=391';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=391';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=391';
-import { materialMatchesSearch } from '../kitchen-db.js?v=391';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=392';
+import { openModal, closeModal } from '../modal.js?v=392';
+import { requestAutoBackupNow } from '../backup-service.js?v=392';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=392';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=392';
+import { materialMatchesSearch } from '../kitchen-db.js?v=392';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1872,8 +1872,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=391');
-    const { db } = await import('../db.js?v=391');
+    const { getRecipe } = await import('../kitchen-db.js?v=392');
+    const { db } = await import('../db.js?v=392');
     const blocks = [];
 
     for (const row of rows) {
@@ -2697,7 +2697,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=391');
+    const kitchen = await import('../kitchen-db.js?v=392');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3843,9 +3843,22 @@ async function renderManageView(container, ctx) {
   if (activeFlow) {
     await ensureFlowProductionStep(activeFlow.id);
   }
+  // ניקוי חד-פעמי לסשן: כפילויות צ׳קליסט שנצברו מסנכרון ישן
+  if (!container.dataset.checklistRepairDone) {
+    try {
+      const repaired = await repairLocalChecklistDuplicates();
+      container.dataset.checklistRepairDone = '1';
+      if (repaired.removedTasks || repaired.removedLinks) {
+        showToast(`נוקו כפילויות בצ׳קליסט (${(repaired.removedTasks || 0) + (repaired.removedLinks || 0)})`);
+      }
+    } catch (err) {
+      console.warn('checklist repair failed', err);
+      container.dataset.checklistRepairDone = '1';
+    }
+  }
   const [steps, flowPreps, flowCleaningTasks, availableChecklistTasks, portionPresets, linkedProducts, candidateProducts] = await Promise.all([
     activeFlow ? getFlowStepsForFlow(activeFlow.id) : Promise.resolve([]),
-    activeFlow ? getFlowPreparations(activeFlow.id) : Promise.resolve([]),
+    activeFlow ? getFlowPreparations(activeFlow.id, { pruneDuplicates: true }) : Promise.resolve([]),
     activeFlow ? getFlowCleaningTasks(activeFlow.id) : Promise.resolve([]),
     activeFlow ? getAvailableChecklistTasksForFlow(activeFlow.id) : Promise.resolve([]),
     portionManageGroupId ? getGroupPortionPresets(portionManageGroupId) : Promise.resolve([]),

@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=391';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=392';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=391';
+} from '../js/validators.js?v=392';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=391';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=391';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=391';
+} from '../js/calc.js?v=392';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=392';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=392';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,19 +17,19 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=391';
-import { isAutoBackupDue } from '../js/backup-service.js?v=391';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=391';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=391';
+} from '../js/supabase-backup.js?v=392';
+import { isAutoBackupDue } from '../js/backup-service.js?v=392';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=392';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=392';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=391';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=391';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=391';
-import { runStepsAllCompleted, findNextIncompleteStepIndex } from '../js/db.js?v=391';
+} from '../js/supplier-import.js?v=392';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=392';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=392';
+import { runStepsAllCompleted, findNextIncompleteStepIndex } from '../js/db.js?v=392';
 
 export async function runAllTests() {
   /* validators */
@@ -512,6 +512,33 @@ export async function runAllTests() {
     assertEqual(rowFingerprint('managerTasks', { department: 'bakery', title: 'ללא זמן' }), '');
   });
 
+  test('rowDedupeFingerprint — משימות צ׳קליסט לפי שם+קבוצה+קטגוריה', () => {
+    const a = rowDedupeFingerprint('checklistTasks', {
+      name: 'הכנת בצק', categoryGroupId: 1, categoryId: 5,
+    });
+    const b = rowDedupeFingerprint('checklistTasks', {
+      name: ' הכנת בצק ', categoryGroupId: 1, categoryId: 5,
+    });
+    assertEqual(a, b);
+    assertOk(
+      rowDedupeFingerprint('checklistTasks', {
+        name: 'הכנת בצק', categoryGroupId: 1, categoryId: 5,
+      }) !== rowDedupeFingerprint('checklistTasks', {
+        name: 'הכנת בצק', categoryGroupId: 1, categoryId: 9,
+      }),
+    );
+  });
+
+  test('rowDedupeFingerprint — צ׳קליסט ריצה לפי שם ולא לפי id משימה', () => {
+    const a = rowDedupeFingerprint('runPreparationChecks', {
+      runId: 3, flowPreparationId: 10, name: 'הכנת בצק',
+    });
+    const b = rowDedupeFingerprint('runPreparationChecks', {
+      runId: 3, flowPreparationId: 99, name: 'הכנת בצק',
+    });
+    assertEqual(a, b);
+  });
+
   test('rowDedupeFingerprint — רישומי ייצור מתעלמים מ-runId', () => {
     const withRun = rowDedupeFingerprint('productionEntries', {
       date: '2026-07-21', productId: 5, quantity: 1050, runId: 9,
@@ -948,7 +975,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=391');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=392');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

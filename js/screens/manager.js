@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=391';
+} from '../db.js?v=392';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=391';
-import { openModal, closeModal } from '../modal.js?v=391';
-import { renderTargets } from './targets.js?v=391';
-import { renderPurchasingInManager } from './purchasing.js?v=391';
-import { forceAppUpdate } from '../sw-register.js?v=391';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=391';
+} from '../utils.js?v=392';
+import { openModal, closeModal } from '../modal.js?v=392';
+import { renderTargets } from './targets.js?v=392';
+import { renderPurchasingInManager } from './purchasing.js?v=392';
+import { forceAppUpdate } from '../sw-register.js?v=392';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=392';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=391';
+} from '../daily-plan-export.js?v=392';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -377,11 +377,15 @@ function renderPlanProductSelectHTML(products, layout) {
 }
 
 function checklistDedupeKey(item) {
+  const raw = String(item.label || '').trim();
+  const bare = raw.includes(' · ') ? raw.split(' · ').slice(-1)[0] : raw;
+  const labelKey = bare.toLocaleLowerCase('he');
   if (item.itemKind === 'flow_preparation') {
-    return `prep:${item.flowId || ''}:${item.flowPreparationId || item.label}`;
+    // לפי טקסט — לא לפי id (כפילויות מסנכרון נוצרות עם id שונה ואותו שם)
+    return `prep:${item.flowId || ''}:${labelKey || item.flowPreparationId || ''}`;
   }
   if (item.itemKind === 'flow_cleaning') {
-    return `clean:${item.flowId || ''}:${item.flowCleaningTaskId || item.label}`;
+    return `clean:${item.flowId || ''}:${labelKey || item.flowCleaningTaskId || ''}`;
   }
   return `other:${item.id}`;
 }
@@ -708,7 +712,7 @@ function renderProductCentricPlanHTML(items, products, {
         prepRows.join(''),
         { clearKinds: ['flow_preparation'], clearLabel: 'הסר משימות מהתוכנית', dayOffset },
       ),
-      { count: preparations.length, className: 'manager-plan-section', defaultOpen: true },
+      { count: prepGrouped.groups.reduce((n, g) => n + g.items.length, 0) + prepGrouped.orphans.length, className: 'manager-plan-section', defaultOpen: true },
     );
   }
 

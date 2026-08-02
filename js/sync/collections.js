@@ -95,8 +95,18 @@ export const COLLECTION_FKS = {
   productionRuns: { categoryId: 'categories', productId: 'products', flowId: 'flows' },
   runStepStates: { runId: 'productionRuns' },
   productPreparations: { productId: 'products' },
-  runPreparationChecks: { runId: 'productionRuns', flowPreparationId: 'groupPreparations' },
+  // flowPreparationId stores checklistTasks.id (legacy name kept for compatibility)
+  runPreparationChecks: { runId: 'productionRuns', flowPreparationId: 'checklistTasks' },
   runCleaningChecks: { runId: 'productionRuns', flowCleaningTaskId: 'flowCleaningTasks' },
+  managerPlanItems: {
+    flowId: 'flows',
+    flowPreparationId: 'checklistTasks',
+    flowCleaningTaskId: 'flowCleaningTasks',
+    flowStepId: 'flowSteps',
+    productId: 'products',
+    categoryId: 'categories',
+    categoryGroupId: 'categoryGroups',
+  },
   recipeGroups: { linkedCategoryGroupId: 'categoryGroups' },
   recipeCategories: { groupId: 'recipeGroups', linkedCategoryId: 'categories' },
   recipes: {
@@ -450,6 +460,30 @@ export function rowDedupeFingerprint(collection, row) {
     const qtyNum = Number(row.quantity);
     const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
     return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}` : '';
+  }
+  // ספריית משימות: אותו שם באותה קבוצה (+קטגוריה) = כפילות, גם אם נוצרו ממכשירים שונים
+  if (collection === 'checklistTasks') {
+    const n = normName(row.name);
+    if (!n) return '';
+    return `${collection}|${n}|${row.categoryGroupId ?? ''}|${row.categoryId ?? ''}`;
+  }
+  // צ׳קליסט ריצה: אותו טקסט באותו תהליך = כפילות (גם עם task id שונה)
+  if (collection === 'runPreparationChecks') {
+    const n = normName(row.name);
+    return row.runId != null && n ? `${collection}|${row.runId}|${n}` : '';
+  }
+  // תוכנית יומית: אותה משימת הכנה באותו יום/תזרים
+  if (collection === 'managerPlanItems' && row.itemKind === 'flow_preparation') {
+    const n = normName(row.label);
+    return row.planType && n
+      ? `${collection}|prep|${row.planType}|${row.anchorDate ?? ''}|${row.dayOffset ?? ''}|${row.flowId ?? ''}|${n}`
+      : '';
+  }
+  if (collection === 'managerPlanItems' && row.itemKind === 'flow_cleaning') {
+    const n = normName(row.label);
+    return row.planType && n
+      ? `${collection}|clean|${row.planType}|${row.anchorDate ?? ''}|${row.dayOffset ?? ''}|${row.flowId ?? ''}|${n}`
+      : '';
   }
   return rowFingerprint(collection, row);
 }

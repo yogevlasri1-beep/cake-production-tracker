@@ -4903,12 +4903,51 @@ function mapFlowChecklistItem(link, task) {
   };
 }
 
+function checklistNameKey(name) {
+  return String(name || '').trim().toLocaleLowerCase('he');
+}
+
+/** מחלץ שם משימה מתווית תוכנית שעשויה לכלול קידומת «שם תזרים · » */
+function checklistLabelTaskKey(label) {
+  const raw = String(label || '');
+  const bare = raw.includes(' · ') ? raw.split(' · ').slice(-1)[0] : raw;
+  return checklistNameKey(bare);
+}
+
+/** מסיר כפילויות שם מתוך רשימה (שומר את הראשונה לפי סדר) */
+function dedupeChecklistRowsByName(rows, nameField = 'name') {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const key = checklistNameKey(row?.[nameField]);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
+/** כפילות בספרייה = אותו שם + אותה קטגוריה (לא ממזגים בין קטגוריות) */
+function dedupeChecklistLibraryRows(rows) {
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const n = checklistNameKey(row?.name);
+    if (!n) continue;
+    const key = `${n}|${row.categoryId ?? ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(row);
+  }
+  return out;
+}
+
 export async function getChecklistTaskLibrary(categoryGroupId) {
   const gid = sanitizeProductId(categoryGroupId);
   if (!gid) return [];
   const rows = await db.checklistTasks.where('categoryGroupId').equals(gid).toArray();
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
-  return rows;
+  return dedupeChecklistLibraryRows(rows);
 }
 
 export async function getChecklistLibraryForFlow(flowId) {
@@ -4932,22 +4971,112 @@ export async function getAvailableChecklistTasksForFlow(flowId) {
   return library.filter((t) => !linkedIds.has(t.id));
 }
 
-export async function getFlowPreparations(flowId) {
+export async function getFlowPreparations(flowId, { pruneDuplicates = false } = {}) {
   const fid = sanitizeProductId(flowId);
   if (!fid) return [];
   const links = await db.flowChecklistItems.where('flowId').equals(fid).toArray();
   links.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   const result = [];
+  const seenNames = new Set();
+  const pruneIds = [];
   for (const link of links) {
     // After a bad sync remaps, checklistTaskId can be null/NaN — Dexie throws
     // "Invalid argument to (Table).get" on those; skip the broken link.
     const tid = sanitizeProductId(link.checklistTaskId);
-    if (!tid) continue;
+    if (!tid) {
+      if (pruneDuplicates) pruneIds.push(link.id);
+      continue;
+    }
     const task = await db.checklistTasks.get(tid);
-    if (!task) continue;
+    if (!task) {
+      if (pruneDuplicates) pruneIds.push(link.id);
+      continue;
+    }
+    const nameKey = checklistNameKey(task.name);
+    if (!nameKey) continue;
+    if (seenNames.has(nameKey)) {
+      if (pruneDuplicates) pruneIds.push(link.id);
+      continue;
+    }
+    seenNames.add(nameKey);
     result.push(mapFlowChecklistItem(link, task));
   }
+  if (pruneIds.length) {
+    await db.transaction('rw', db.flowChecklistItems, async () => {
+      for (const id of pruneIds) await db.flowChecklistItems.delete(id);
+    });
+  }
   return result;
+}
+
+/**
+ * ניקוי מקומי של כפילויות צ׳קליסט (בלי תלות בסנכרון ענן).
+ * מוחק קישורי תזרים כפולים ומשימות ספרייה כפולות באותה קבוצה+קטגוריה+שם.
+ */
+export async function repairLocalChecklistDuplicates() {
+  let removedLinks = 0;
+  let removedTasks = 0;
+  const flows = await db.flows.toArray();
+  for (const flow of flows) {
+    const before = await db.flowChecklistItems.where('flowId').equals(flow.id).count();
+    await getFlowPreparations(flow.id, { pruneDuplicates: true });
+    const after = await db.flowChecklistItems.where('flowId').equals(flow.id).count();
+    removedLinks += Math.max(0, before - after);
+  }
+
+  const tasks = await db.checklistTasks.toArray();
+  const groups = new Map();
+  for (const t of tasks) {
+    const key = `${checklistNameKey(t.name)}|${t.categoryGroupId ?? ''}|${t.categoryId ?? ''}`;
+    if (!checklistNameKey(t.name)) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => a.id - b.id);
+    const keep = list[0];
+    for (const drop of list.slice(1)) {
+      const dropLinks = await db.flowChecklistItems.where('checklistTaskId').equals(drop.id).toArray();
+      for (const link of dropLinks) {
+        const existing = await db.flowChecklistItems
+          .where('[flowId+checklistTaskId]')
+          .equals([link.flowId, keep.id])
+          .first();
+        if (existing) await db.flowChecklistItems.delete(link.id);
+        else await db.flowChecklistItems.update(link.id, { checklistTaskId: keep.id });
+      }
+      const dropChecks = await db.runPreparationChecks.where('flowPreparationId').equals(drop.id).toArray();
+      for (const check of dropChecks) {
+        const existing = await db.runPreparationChecks
+          .where('[runId+flowPreparationId]')
+          .equals([check.runId, keep.id])
+          .first();
+        if (existing) {
+          if (check.checked && !existing.checked) {
+            await db.runPreparationChecks.update(existing.id, {
+              checked: true,
+              checkedAt: check.checkedAt || nowISO(),
+            });
+          }
+          await db.runPreparationChecks.delete(check.id);
+        } else {
+          await db.runPreparationChecks.update(check.id, { flowPreparationId: keep.id });
+        }
+      }
+      if (db.managerPlanItems) {
+        const items = await db.managerPlanItems
+          .filter((i) => Number(i.flowPreparationId) === drop.id)
+          .toArray();
+        for (const item of items) {
+          await db.managerPlanItems.update(item.id, { flowPreparationId: keep.id });
+        }
+      }
+      await db.checklistTasks.delete(drop.id);
+      removedTasks++;
+    }
+  }
+  return { removedLinks, removedTasks };
 }
 
 async function findOrCreateChecklistTask(categoryGroupId, name, categoryId = null) {
@@ -4955,13 +5084,22 @@ async function findOrCreateChecklistTask(categoryGroupId, name, categoryId = nul
   const trimmed = sanitizeName(name, 80);
   if (!gid || !trimmed) return null;
   const cid = categoryId ? sanitizeProductId(categoryId) : null;
-  const library = await getChecklistTaskLibrary(gid);
+  // קוראים ישירות מהטבלה (בלי dedupe תצוגה) כדי למצוא כפילות אמיתיות
+  const library = await db.checklistTasks.where('categoryGroupId').equals(gid).toArray();
+  const nameKey = checklistNameKey(trimmed);
   const existing = library.find((t) => {
-    if (t.name !== trimmed) return false;
-    if (cid) return Number(t.categoryId) === cid;
-    return !t.categoryId;
+    if (checklistNameKey(t.name) !== nameKey) return false;
+    if (cid) return Number(t.categoryId) === cid || !t.categoryId;
+    return !t.categoryId || Number(t.categoryId) === cid;
   });
-  if (existing) return existing;
+  if (existing) {
+    // אם מצאנו עותק בלי categoryId ויש לנו cid — משלימים
+    if (cid && !existing.categoryId) {
+      await db.checklistTasks.update(existing.id, { categoryId: cid });
+      existing.categoryId = cid;
+    }
+    return existing;
+  }
   const maxOrder = library.reduce((m, t) => Math.max(m, t.sortOrder ?? 0), 0);
   const taskId = await db.checklistTasks.add({
     categoryGroupId: gid,
@@ -4983,6 +5121,11 @@ export async function linkChecklistTaskToFlow(flowId, checklistTaskId) {
     .equals([fid, tid])
     .first();
   if (existing) return mapFlowChecklistItem(existing, task);
+
+  // מונע קישור משימה עם אותו שם שכבר קיים בתזרים (גם עם id אחר)
+  const already = (await getFlowPreparations(fid))
+    .find((p) => checklistNameKey(p.name) === checklistNameKey(task.name));
+  if (already) return already;
 
   const links = await db.flowChecklistItems.where('flowId').equals(fid).toArray();
   const maxOrder = links.reduce((m, l) => Math.max(m, l.sortOrder ?? 0), 0);
@@ -5099,22 +5242,34 @@ export async function ensureRunPreparationChecks(runId) {
   const run = await db.productionRuns.get(rid);
   if (!run?.flowId) return [];
 
-  const preps = await getFlowPreparations(run.flowId);
+  const preps = await getFlowPreparations(run.flowId, { pruneDuplicates: true });
   const existing = await getRunPreparationChecks(rid);
   const byPrepId = new Map(
     existing.filter((c) => c.flowPreparationId).map((c) => [c.flowPreparationId, c]),
   );
+  const byName = new Map();
+  for (const c of existing) {
+    const key = checklistNameKey(c.name);
+    if (!key) continue;
+    const prev = byName.get(key);
+    if (!prev || (c.checked && !prev.checked) || c.id < prev.id) byName.set(key, c);
+  }
 
   await db.transaction('rw', db.runPreparationChecks, async () => {
     for (const prep of preps) {
       const taskId = prep.checklistTaskId;
-      const ex = byPrepId.get(taskId);
+      const nameKey = checklistNameKey(prep.name);
+      const ex = byPrepId.get(taskId) || (nameKey ? byName.get(nameKey) : null);
       if (ex) {
-        if (ex.name !== prep.name || ex.sortOrder !== prep.sortOrder) {
-          await db.runPreparationChecks.update(ex.id, { name: prep.name, sortOrder: prep.sortOrder ?? 0 });
-        }
+        const patch = {};
+        if (ex.name !== prep.name) patch.name = prep.name;
+        if (ex.sortOrder !== prep.sortOrder) patch.sortOrder = prep.sortOrder ?? 0;
+        if (ex.flowPreparationId !== taskId) patch.flowPreparationId = taskId;
+        if (Object.keys(patch).length) await db.runPreparationChecks.update(ex.id, patch);
+        byPrepId.set(taskId, ex);
+        if (nameKey) byName.set(nameKey, ex);
       } else {
-        await db.runPreparationChecks.add({
+        const id = await db.runPreparationChecks.add({
           runId: rid,
           flowPreparationId: taskId,
           name: prep.name,
@@ -5122,11 +5277,36 @@ export async function ensureRunPreparationChecks(runId) {
           checked: false,
           checkedAt: null,
         });
+        const row = {
+          id, runId: rid, flowPreparationId: taskId, name: prep.name,
+          sortOrder: prep.sortOrder ?? 0, checked: false, checkedAt: null,
+        };
+        byPrepId.set(taskId, row);
+        if (nameKey) byName.set(nameKey, row);
+      }
+    }
+
+    // מוחק כפילויות שם שנשארו בתהליך (מסנכרון ישן)
+    const keepIds = new Set([...byName.values()].map((c) => c.id));
+    for (const c of existing) {
+      const key = checklistNameKey(c.name);
+      if (!key) continue;
+      if (keepIds.has(c.id)) continue;
+      const keeper = byName.get(key);
+      if (keeper && keeper.id !== c.id) {
+        if (c.checked && !keeper.checked) {
+          await db.runPreparationChecks.update(keeper.id, {
+            checked: true,
+            checkedAt: c.checkedAt || nowISO(),
+          });
+          keeper.checked = true;
+        }
+        await db.runPreparationChecks.delete(c.id);
       }
     }
   });
 
-  return getRunPreparationChecks(rid);
+  return getRunPreparationChecks(rid).then(dedupeChecklistRowsByName);
 }
 
 export async function setRunPreparationChecked(checkId, checked) {
@@ -8743,7 +8923,10 @@ export async function addManagerPlanProductWithChecklists({
     const existingPrepKeys = new Set(
       freshSameDay
         .filter((i) => i.itemKind === 'flow_preparation' && i.flowId === flow.id)
-        .map((i) => i.flowPreparationId),
+        .flatMap((i) => [
+          String(i.flowPreparationId || ''),
+          checklistLabelTaskKey(i.label),
+        ].filter(Boolean)),
     );
     const existingCleanKeys = new Set(
       freshSameDay
@@ -8756,7 +8939,11 @@ export async function addManagerPlanProductWithChecklists({
     const rows = [];
 
     for (const prep of preps) {
-      if (existingPrepKeys.has(prep.checklistTaskId)) continue;
+      const prepNameKey = checklistNameKey(prep.name);
+      if (
+        existingPrepKeys.has(String(prep.checklistTaskId))
+        || (prepNameKey && existingPrepKeys.has(prepNameKey))
+      ) continue;
       rows.push({
         planType,
         anchorDate,
@@ -8772,6 +8959,8 @@ export async function addManagerPlanProductWithChecklists({
         done: false,
         sortOrder: sortOrder++,
       });
+      existingPrepKeys.add(String(prep.checklistTaskId));
+      if (prepNameKey) existingPrepKeys.add(prepNameKey);
     }
 
     for (const task of cleaningTasks) {
@@ -8875,6 +9064,11 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
   const existingPrepIds = new Set(
     existingItems.filter((i) => i.itemKind === 'flow_preparation' && i.flowPreparationId).map((i) => i.flowPreparationId),
   );
+  const existingPrepNames = new Set(
+    existingItems
+      .filter((i) => i.itemKind === 'flow_preparation')
+      .map((i) => `${i.flowId || ''}|${checklistLabelTaskKey(i.label)}`),
+  );
 
   let sortOrder = existingItems.length
     ? Math.max(...existingItems.map((i) => i.sortOrder ?? 0)) + 1
@@ -8886,7 +9080,7 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
     const categoryGroupId = flow.groupId || flow.categoryGroupId || null;
     const [steps, preps] = await Promise.all([
       getFlowStepsForFlow(flow.id),
-      getFlowPreparations(flow.id),
+      getFlowPreparations(flow.id, { pruneDuplicates: true }),
     ]);
 
     for (const step of steps) {
@@ -8911,7 +9105,8 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
     }
 
     for (const prep of preps) {
-      if (existingPrepIds.has(prep.checklistTaskId)) continue;
+      const nameKey = `${flow.id}|${checklistNameKey(prep.name)}`;
+      if (existingPrepIds.has(prep.checklistTaskId) || existingPrepNames.has(nameKey)) continue;
       rows.push({
         planType,
         anchorDate,
@@ -8928,6 +9123,7 @@ export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, d
         sortOrder: sortOrder++,
       });
       existingPrepIds.add(prep.checklistTaskId);
+      existingPrepNames.add(nameKey);
     }
   }
 
@@ -9028,14 +9224,14 @@ export async function addManagerPlanFlowChecklists({
 
   const offset = Number(dayOffset) || 0;
   const [preps, cleaningTasks, existing] = await Promise.all([
-    getFlowPreparations(fid),
+    getFlowPreparations(fid, { pruneDuplicates: true }),
     getFlowCleaningTasks(fid),
     getManagerPlanItems(planType, anchorDate),
   ]);
   const sameDay = existing.filter((i) => (i.dayOffset ?? 0) === offset);
   const existingPrep = new Set(
     sameDay.filter((i) => i.itemKind === 'flow_preparation' && i.flowId === fid)
-      .map((i) => i.flowPreparationId),
+      .flatMap((i) => [String(i.flowPreparationId || ''), checklistLabelTaskKey(i.label)].filter(Boolean)),
   );
   const existingClean = new Set(
     sameDay.filter((i) => i.itemKind === 'flow_cleaning' && i.flowId === fid)
@@ -9054,7 +9250,11 @@ export async function addManagerPlanFlowChecklists({
   const rows = [];
 
   for (const prep of preps) {
-    if (existingPrep.has(prep.checklistTaskId)) continue;
+    const prepNameKey = checklistNameKey(prep.name);
+    if (
+      existingPrep.has(String(prep.checklistTaskId))
+      || (prepNameKey && existingPrep.has(prepNameKey))
+    ) continue;
     rows.push({
       planType,
       anchorDate,
@@ -9070,6 +9270,8 @@ export async function addManagerPlanFlowChecklists({
       done: false,
       sortOrder: sortOrder++,
     });
+    existingPrep.add(String(prep.checklistTaskId));
+    if (prepNameKey) existingPrep.add(prepNameKey);
   }
   for (const task of cleaningTasks) {
     if (existingClean.has(task.id)) continue;

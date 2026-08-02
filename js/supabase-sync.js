@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=391';
+import { db, getSetting, setSetting } from './db.js?v=392';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -10,7 +10,7 @@ import {
   buildSupabaseHeaders,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=391';
+} from './supabase-backup.js?v=392';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +22,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=391';
+} from './sync/collections.js?v=392';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +32,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=391';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=391';
+} from './sync/id-map.js?v=392';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=392';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -49,7 +49,7 @@ const DEFAULT_LIVE = {
 };
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 8;
+const DEDUPE_VERSION = 9;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -322,25 +322,18 @@ export async function dedupeLocalSyncCollections() {
       list.sort((a, b) => compareDedupeSurvivors(collection, a, b));
       const keep = list[0];
       for (const drop of list.slice(1)) {
-        await retargetLocalForeignKeys(collection, drop.id, keep.id);
-        const dropKey = localKeyOf(collection, drop);
-        const dropMeta = await getMetaByLocal(collection, dropKey);
-        applyingRemote = true;
-        try {
-          await db[collection].delete(drop.id);
-        } finally {
-          applyingRemote = false;
-        }
-        if (dropMeta?.syncId) {
-          await markMetaDeleted(collection, dropKey, new Date().toISOString());
-          await enqueue({ type: 'delete', collection, localKey: dropKey });
+        if (collection === 'checklistTasks') {
+          await mergeChecklistTaskInto(keep.id, drop.id);
         } else {
-          await db.syncMeta.where('[collection+localKey]').equals([collection, dropKey]).delete();
+          await retargetLocalForeignKeys(collection, drop.id, keep.id);
         }
+        await deleteLocalDuplicateRow(collection, drop);
         removed++;
       }
     }
   }
+  // מעבר נוסף: קישורי תזרים עם שמות משימה זהים (אחרי מיזוג ids)
+  removed += await dedupeFlowChecklistLinksByName();
   return { removed };
 }
 
@@ -356,7 +349,136 @@ function compareDedupeSurvivors(collection, a, b) {
     const bRun = b.runId != null && b.runId !== '' ? 1 : 0;
     if (bRun !== aRun) return bRun - aRun;
   }
+  if (collection === 'runPreparationChecks' || collection === 'runCleaningChecks') {
+    const aChecked = a.checked ? 1 : 0;
+    const bChecked = b.checked ? 1 : 0;
+    if (bChecked !== aChecked) return bChecked - aChecked;
+  }
+  if (collection === 'managerPlanItems') {
+    const aDone = a.done ? 1 : 0;
+    const bDone = b.done ? 1 : 0;
+    if (bDone !== aDone) return bDone - aDone;
+  }
+  if (collection === 'checklistTasks') {
+    // עדיפות למשימה עם categoryId (אחרי מיגרציה) על פני עותק ישן בלי קטגוריה
+    const aCat = a.categoryId != null && a.categoryId !== '' ? 1 : 0;
+    const bCat = b.categoryId != null && b.categoryId !== '' ? 1 : 0;
+    if (bCat !== aCat) return bCat - aCat;
+  }
   return (a.id - b.id);
+}
+
+/**
+ * מיזוג משימת צ׳קליסט כפולה: מעביר קישורים/צ׳קים ל-keep, מוחק כפילויות
+ * שאי אפשר לעדכן בגלל אינדקס ייחודי [flowId+checklistTaskId] / [runId+flowPreparationId].
+ */
+async function mergeChecklistTaskInto(keepId, dropId) {
+  const keep = Number(keepId);
+  const drop = Number(dropId);
+  if (!keep || !drop || keep === drop) return;
+
+  const dropLinks = await db.flowChecklistItems.where('checklistTaskId').equals(drop).toArray();
+  for (const link of dropLinks) {
+    const existing = await db.flowChecklistItems
+      .where('[flowId+checklistTaskId]')
+      .equals([link.flowId, keep])
+      .first();
+    if (existing) {
+      await deleteLocalDuplicateRow('flowChecklistItems', link);
+    } else {
+      await db.flowChecklistItems.update(link.id, { checklistTaskId: keep });
+      await enqueueUpsert('flowChecklistItems', link.id);
+    }
+  }
+
+  const dropChecks = await db.runPreparationChecks.where('flowPreparationId').equals(drop).toArray();
+  for (const check of dropChecks) {
+    const existing = await db.runPreparationChecks
+      .where('[runId+flowPreparationId]')
+      .equals([check.runId, keep])
+      .first();
+    if (existing) {
+      if (check.checked && !existing.checked) {
+        await db.runPreparationChecks.update(existing.id, {
+          checked: true,
+          checkedAt: check.checkedAt || new Date().toISOString(),
+        });
+        await enqueueUpsert('runPreparationChecks', existing.id);
+      }
+      await deleteLocalDuplicateRow('runPreparationChecks', check);
+    } else {
+      await db.runPreparationChecks.update(check.id, { flowPreparationId: keep });
+      await enqueueUpsert('runPreparationChecks', check.id);
+    }
+  }
+
+  if (db.managerPlanItems) {
+    const planItems = await db.managerPlanItems
+      .filter((i) => Number(i.flowPreparationId) === drop)
+      .toArray();
+    for (const item of planItems) {
+      await db.managerPlanItems.update(item.id, { flowPreparationId: keep });
+      await enqueueUpsert('managerPlanItems', item.id);
+    }
+  }
+}
+
+async function deleteLocalDuplicateRow(collection, row) {
+  const dropKey = localKeyOf(collection, row);
+  const dropMeta = await getMetaByLocal(collection, dropKey);
+  applyingRemote = true;
+  try {
+    await db[collection].delete(row.id);
+  } finally {
+    applyingRemote = false;
+  }
+  if (dropMeta?.syncId) {
+    await markMetaDeleted(collection, dropKey, new Date().toISOString());
+    await enqueue({ type: 'delete', collection, localKey: dropKey });
+  } else {
+    await db.syncMeta.where('[collection+localKey]').equals([collection, dropKey]).delete();
+  }
+}
+
+/**
+ * אחרי מיזוג משימות: מסיר קישורי תזרים כפולים לאותו שם משימה באותו תזרים.
+ */
+async function dedupeFlowChecklistLinksByName() {
+  let removed = 0;
+  if (!db.flowChecklistItems || !db.checklistTasks) return removed;
+  const links = await db.flowChecklistItems.toArray();
+  const byFlow = new Map();
+  for (const link of links) {
+    if (!byFlow.has(link.flowId)) byFlow.set(link.flowId, []);
+    byFlow.get(link.flowId).push(link);
+  }
+  for (const flowLinks of byFlow.values()) {
+    const seen = new Map(); // normName → keep link
+    const sorted = [...flowLinks].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+    for (const link of sorted) {
+      const tid = Number(link.checklistTaskId);
+      if (!tid) {
+        await deleteLocalDuplicateRow('flowChecklistItems', link);
+        removed++;
+        continue;
+      }
+      const task = await db.checklistTasks.get(tid);
+      if (!task) {
+        await deleteLocalDuplicateRow('flowChecklistItems', link);
+        removed++;
+        continue;
+      }
+      const key = String(task.name || '').trim().toLocaleLowerCase('he');
+      if (!key) continue;
+      if (!seen.has(key)) {
+        seen.set(key, link);
+        continue;
+      }
+      await deleteLocalDuplicateRow('flowChecklistItems', link);
+      removed++;
+    }
+  }
+  return removed;
 }
 
 async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false } = {}) {
