@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=390';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=390';
-import { defaultColorForIndex } from './chart.js?v=390';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=390';
+} from './validators.js?v=391';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=391';
+import { defaultColorForIndex } from './chart.js?v=391';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=391';
 
 export { ValidationError };
 
@@ -6452,6 +6452,43 @@ function defaultStepStartedAt(run, stepIndex, step) {
   return prev?.completedAt || run.startedAt || nowISO();
 }
 
+/** מחזיר true אם לכל השלבים יש status === 'completed' */
+export function runStepsAllCompleted(steps) {
+  return Array.isArray(steps) && steps.length > 0 && steps.every((s) => s.status === 'completed');
+}
+
+/**
+ * אם כל השלבים הושלמו והתזרים עדיין פעיל — מסמן אותו כהושלם.
+ * משחזר תזרימים שנתקעו (למשל אחרי שמירת זמנים בלי לחיצה על ✓).
+ * @returns {Promise<boolean>} האם התזרים סומן כהושלם עכשיו
+ */
+async function finalizeProductionRunIfComplete(run, { completedAt } = {}) {
+  if (!run?.id || run.status === 'completed') return false;
+  if (!runStepsAllCompleted(run.steps)) return false;
+  const finishedAt = completedAt || nowISO();
+  await db.productionRuns.update(run.id, {
+    status: 'completed',
+    currentStepIndex: run.steps.length,
+    completedAt: run.completedAt || finishedAt,
+  });
+  run.status = 'completed';
+  run.currentStepIndex = run.steps.length;
+  run.completedAt = run.completedAt || finishedAt;
+  return true;
+}
+
+/** מוצא את אינדקס השלב הבא שלא הושלם (pending/active), או -1 */
+export function findNextIncompleteStepIndex(steps, afterIndex = -1) {
+  if (!Array.isArray(steps)) return -1;
+  for (let i = afterIndex + 1; i < steps.length; i++) {
+    if (steps[i]?.status !== 'completed') return i;
+  }
+  for (let i = 0; i <= afterIndex && i < steps.length; i++) {
+    if (steps[i]?.status !== 'completed') return i;
+  }
+  return -1;
+}
+
 export async function startProductionRun({
   date, batchNumber, categoryId, categoryIds, productId, categoryGroupId,
   scopeMode, portionUnit, portionSize, portionCount, flowId,
@@ -6652,6 +6689,11 @@ async function normalizeRunProductionSteps(run) {
         byName.tracksProduction = true;
         changed = true;
       } else if (!byName) {
+        // אם כל השלבים הקיימים הושלמו — מסיימים לפני הוספת שלב תיעוד,
+        // כדי שלא יישאר תזרים "פעיל" עם שלב חדש שלא ניתן לסיים בקלות
+        if (run.status !== 'completed' && runStepsAllCompleted(run.steps)) {
+          await finalizeProductionRunIfComplete(run);
+        }
         const newIndex = run.steps.length;
         const stepId = await db.runStepStates.add({
           runId: run.id,
@@ -6714,7 +6756,11 @@ export async function getProductionRun(runId, { normalize = true } = {}) {
   const steps = await db.runStepStates.where('runId').equals(runId).toArray();
   steps.sort((a, b) => a.stepIndex - b.stepIndex);
   const result = { ...run, steps };
-  if (normalize) await normalizeRunProductionSteps(result);
+  if (normalize) {
+    await normalizeRunProductionSteps(result);
+    // שחזור: כל השלבים הושלמו אבל התזרים נשאר "פעיל"
+    await finalizeProductionRunIfComplete(result);
+  }
   return result;
 }
 
@@ -6777,7 +6823,8 @@ export async function getActiveProductionRuns() {
   const runs = await db.productionRuns.where('status').equals('active').toArray();
   runs.sort((a, b) => (b.startedAt || '').localeCompare(a.startedAt || '') || b.id - a.id);
   const full = await Promise.all(runs.map((r) => getProductionRun(r.id)));
-  return full.filter(Boolean);
+  // getProductionRun עלול לשחזר תזרימים שכל שלביהם הושלמו — מסננים אותם
+  return full.filter((r) => r && r.status === 'active');
 }
 
 /** כל תהליכי היצור — ממוינים לפי תאריך (חדש → ישן) */
@@ -7640,9 +7687,10 @@ export async function completeRunStep(runId, stepIndex, {
     }
     await db.runStepStates.update(step.id, stepPatch);
 
-    const updatedStatuses = run.steps.map((s, i) => (i === stepIndex ? 'completed' : s.status));
-    const allCompleted = updatedStatuses.every((status) => status === 'completed');
-    const wasSequential = stepIndex === run.currentStepIndex;
+    const updatedSteps = run.steps.map((s, i) => (
+      i === stepIndex ? { ...s, status: 'completed' } : s
+    ));
+    const allCompleted = runStepsAllCompleted(updatedSteps);
 
     if (allCompleted) {
       await db.productionRuns.update(runId, {
@@ -7650,14 +7698,21 @@ export async function completeRunStep(runId, stepIndex, {
         currentStepIndex: run.steps.length,
         completedAt: nowISO(),
       });
-    } else if (wasSequential) {
-      const nextIndex = stepIndex + 1;
-      await db.productionRuns.update(runId, { currentStepIndex: nextIndex });
-      const nextStep = run.steps[nextIndex];
-      if (nextStep && nextStep.status === 'pending') {
-        await db.runStepStates.update(nextStep.id, {
+    } else {
+      // מפעיל את השלב הבא שלא הושלם (גם אם דילגו / הפעלה מקבילה)
+      const nextIndex = findNextIncompleteStepIndex(updatedSteps, stepIndex);
+      if (nextIndex >= 0) {
+        const nextStep = updatedSteps[nextIndex];
+        const patch = {};
+        if (nextStep.status === 'pending') {
+          patch.status = 'active';
+          patch.startedAt = nextStep.startedAt || nowISO();
+          await db.runStepStates.update(nextStep.id, patch);
+        }
+        const newCurrent = Math.max(run.currentStepIndex ?? 0, nextIndex);
+        await db.productionRuns.update(runId, {
+          currentStepIndex: newCurrent,
           status: 'active',
-          startedAt: nextStep.startedAt || nowISO(),
         });
       }
     }
@@ -7741,7 +7796,8 @@ export async function updateRunStepFields(runId, stepIndex, {
       completedTime !== undefined ? completedTime : undefined,
       step.completedAt,
     );
-    if (step.status !== 'completed' && step.status !== 'active') {
+    // שמירת תאריך סיום על שלב ממתין — מסמנת אותו כהושלם
+    if (step.status !== 'completed' && step.status !== 'active' && patch.completedAt) {
       patch.status = 'completed';
     }
   }
@@ -7749,7 +7805,12 @@ export async function updateRunStepFields(runId, stepIndex, {
   const nextCompleted = patch.completedAt !== undefined ? patch.completedAt : step.completedAt;
   validateStepTimes(run, stepIndex, { startedAtIso: nextStarted, completedAtIso: nextCompleted }, step);
   if (!Object.keys(patch).length) return;
-  return db.runStepStates.update(step.id, patch);
+  await db.runStepStates.update(step.id, patch);
+  // אם כל השלבים הושלמו דרך שמירת זמנים — מסיימים את התזרים (מונע תקיעה ב"פעיל")
+  if (patch.status === 'completed' || step.status === 'completed') {
+    const refreshed = await getProductionRun(runId, { normalize: false });
+    if (refreshed) await finalizeProductionRunIfComplete(refreshed);
+  }
 }
 
 /** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרim העדכניות (שלבים, דגלים, שמות) */
@@ -7757,6 +7818,11 @@ export async function syncProductionRunWithFlow(runId) {
   const run = await getProductionRun(runId, { normalize: false });
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (!run.flowId) return { updated: false, reason: 'no-flow' };
+
+  // שחזור תזרים שכל שלביו הושלמו לפני שמוסיפים שלבים מהתבנית
+  if (await finalizeProductionRunIfComplete(run)) {
+    /* run.status מעודכן בזיכרון */
+  }
 
   await ensureFlowProductionStep(run.flowId);
   const flow = await db.flows.get(run.flowId);
@@ -7799,7 +7865,7 @@ export async function syncProductionRunWithFlow(runId) {
           status: stepStatus,
           startedAt: stepStatus === 'active' ? nowISO() : null,
           completedAt: stepStatus === 'completed'
-            ? (run.completedAt || (i === run.currentStepIndex ? null : nowISO()))
+            ? (run.completedAt || nowISO())
             : null,
           notes: '',
           issues: '',

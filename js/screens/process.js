@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=390';
+} from '../db.js?v=391';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=390').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=391').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=390';
-import { openModal, closeModal } from '../modal.js?v=390';
-import { requestAutoBackupNow } from '../backup-service.js?v=390';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=390';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=390';
-import { materialMatchesSearch } from '../kitchen-db.js?v=390';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=391';
+import { openModal, closeModal } from '../modal.js?v=391';
+import { requestAutoBackupNow } from '../backup-service.js?v=391';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=391';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=391';
+import { materialMatchesSearch } from '../kitchen-db.js?v=391';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -544,9 +544,10 @@ function runTitle(run, catMap, productMap, groupMap) {
 }
 
 function stepVisualState(stepIndex, currentIndex, totalSteps, stepStatus) {
+  // רק status אמיתי קובע "הושלם" — לא currentIndex
+  // (אחרת שלבים שדולגו אחרי "הפעל שלב" נראים כהושלמו בלי אפשרות להשלים)
   if (stepStatus === 'completed') return 'done';
   if (stepStatus === 'active') return 'active';
-  if (stepIndex < currentIndex) return 'done';
   if (stepIndex === currentIndex) return 'active';
   if (stepIndex === currentIndex + 1) return 'next';
   return 'future';
@@ -1161,7 +1162,8 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
   const isStepActive = step.status === 'active';
   const stepUnlocked = isStepActive || step.status === 'completed' || stepIndex <= currentIndex || run?.status === 'completed';
   const runActive = run?.status === 'active';
-  const canActivate = runActive && step.status === 'pending' && !isDone;
+  // שלב ממתין תמיד ניתן להפעלה — גם אם currentIndex כבר עבר אותו
+  const canActivate = runActive && step.status === 'pending';
   const useTopProductionPanel = productionStepIdx >= 0 && productionCtx;
   const canEditCompleted = runActive && isDone;
   const timersOn = stepTimersEnabled(run);
@@ -1870,8 +1872,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=390');
-    const { db } = await import('../db.js?v=390');
+    const { getRecipe } = await import('../kitchen-db.js?v=391');
+    const { db } = await import('../db.js?v=391');
     const blocks = [];
 
     for (const row of rows) {
@@ -2695,7 +2697,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=390');
+    const kitchen = await import('../kitchen-db.js?v=391');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -2883,11 +2885,22 @@ async function renderRunView(container, runId, ctx) {
     },
   )}
 
+    ${(() => {
+    const incompleteCount = run.steps.filter((s) => s.status !== 'completed').length;
+    const allStepsDone = run.steps.length > 0 && incompleteCount === 0;
+    const showFinishRun = run.status === 'active' && allStepsDone;
+    const showCompleteAll = run.status === 'active' && incompleteCount > 0;
+    const stepsDefaultOpen = run.status === 'active' && (incompleteCount > 0 || showFinishRun);
+    return `${showFinishRun ? `
+    <div class="card flow-finish-run-card">
+      <p class="form-hint">כל השלבים הושלמו — לחץ לסיום התזרים.</p>
+      <button type="button" class="btn btn-primary" id="finish-active-run" style="width:100%">✓ סיים תזרים</button>
+    </div>` : ''}
     ${renderCollapsibleRunCard(
     run.id,
     'steps',
-    `📋 שלבי התזרים (${run.steps.length})`,
-    `${run.status === 'active' && run.steps.some((s) => s.status !== 'completed') ? `
+    `📋 שלבי התזרים (${run.steps.length}${incompleteCount && run.status === 'active' ? ` · ${incompleteCount} נותרו` : ''})`,
+    `${showCompleteAll ? `
       <div class="flow-steps-bulk-actions">
         <button type="button" class="btn flow-complete-all-btn" id="complete-all-steps" title="סיים את כל השלבים" aria-label="סיים את כל השלבים">
           <span class="flow-complete-all-check" aria-hidden="true">✓</span>
@@ -2898,10 +2911,11 @@ async function renderRunView(container, runId, ctx) {
       ${run.steps.map((step, i) => renderTimelineStep(step, i, currentIndex, run.steps.length, portionPresets, run.status, editAllMode, run, productionCtx, productionStepIdx)).join('')}
     </div>`,
     {
-      defaultOpen: false,
+      defaultOpen: stepsDefaultOpen,
       className: 'flow-run-collapse--steps',
     },
-  )}
+  )}`;
+  })()}
 
     ${editAllMode ? `
       <div class="card">
@@ -2958,18 +2972,32 @@ async function renderRunView(container, runId, ctx) {
     }
   });
 
-  document.getElementById('complete-all-steps')?.addEventListener('click', async () => {
-    if (!confirm('לסיים את כל השלבים כעת?\nהתזרים יושלם ותירשם שעת סיום.')) return;
+  async function finishRunBulk({ confirmMessage, successMessage }) {
+    if (!confirm(confirmMessage)) return;
     try {
       await completeAllRunSteps(run.id);
       requestAutoBackupNow().catch(() => {});
-      showToast('כל השלבים הושלמו ✓');
+      showToast(successMessage);
       container.dataset.runId = String(run.id);
       container.dataset.view = 'run';
       renderProcess(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
+  }
+
+  document.getElementById('complete-all-steps')?.addEventListener('click', () => {
+    finishRunBulk({
+      confirmMessage: 'לסיים את כל השלבים כעת?\nהתזרים יושלם ותירשם שעת סיום.',
+      successMessage: 'כל השלבים הושלמו ✓',
+    });
+  });
+
+  document.getElementById('finish-active-run')?.addEventListener('click', () => {
+    finishRunBulk({
+      confirmMessage: 'לסיים את התזרים כעת?\nתירשם שעת סיום.',
+      successMessage: 'התזרים הושלם ✓',
+    });
   });
 
   document.getElementById('sync-run-flow')?.addEventListener('click', async () => {

@@ -3,18 +3,18 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=390';
+} from '../db.js?v=391';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=390';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=390';
+} from '../utils.js?v=391';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=391';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=390';
-import { requestAutoBackupNow } from '../backup-service.js?v=390';
+} from '../calc.js?v=391';
+import { requestAutoBackupNow } from '../backup-service.js?v=391';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -57,10 +57,16 @@ function homeTimelineSlot(step, role, emptyLabel) {
 }
 
 function buildHomeFlowTimeline(run) {
-  const idx = run.currentStepIndex;
-  const done = idx > 0 ? run.steps[idx - 1] : null;
-  const active = run.steps[idx] || null;
-  const next = idx < run.steps.length - 1 ? run.steps[idx + 1] : null;
+  const steps = run.steps || [];
+  const activeIdx = steps.findIndex((s) => s.status === 'active');
+  const idx = activeIdx >= 0
+    ? activeIdx
+    : Math.min(Math.max(0, run.currentStepIndex ?? 0), Math.max(0, steps.length - 1));
+  const done = steps.slice(0, idx).reverse().find((s) => s.status === 'completed')
+    || (idx > 0 ? steps[idx - 1] : null);
+  const active = steps[idx] || null;
+  const next = steps.slice(idx + 1).find((s) => s.status !== 'completed')
+    || (idx < steps.length - 1 ? steps[idx + 1] : null);
 
   return `
     <div class="home-flow-timeline-track">
@@ -106,7 +112,13 @@ function buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap) {
 }
 
 function idxDisplay(run) {
-  return `${run.currentStepIndex + 1}/${run.steps.length}`;
+  const total = run.steps?.length || 0;
+  if (!total) return '—';
+  const completed = run.steps.filter((s) => s.status === 'completed').length;
+  if (completed >= total) return `${total}/${total}`;
+  const activeIdx = run.steps.findIndex((s) => s.status === 'active');
+  const idx = activeIdx >= 0 ? activeIdx : Math.min(run.currentStepIndex ?? 0, total - 1);
+  return `${idx + 1}/${total}`;
 }
 
 function categoryChipStyle(color, id) {
@@ -639,7 +651,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=390');
+    const { navigate } = await import('../app.js?v=391');
     navigate('process');
   };
 
@@ -664,7 +676,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=390');
+    const { navigate } = await import('../app.js?v=391');
     navigate('backup');
   });
 

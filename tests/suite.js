@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=390';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=391';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=390';
+} from '../js/validators.js?v=391';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=390';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=390';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=390';
+} from '../js/calc.js?v=391';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=391';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=391';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,18 +17,19 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=390';
-import { isAutoBackupDue } from '../js/backup-service.js?v=390';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=390';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=390';
+} from '../js/supabase-backup.js?v=391';
+import { isAutoBackupDue } from '../js/backup-service.js?v=391';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=391';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=391';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=390';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=390';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=390';
+} from '../js/supplier-import.js?v=391';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=391';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=391';
+import { runStepsAllCompleted, findNextIncompleteStepIndex } from '../js/db.js?v=391';
 
 export async function runAllTests() {
   /* validators */
@@ -947,7 +948,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=390');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=391');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });
@@ -1228,6 +1229,33 @@ export async function runAllTests() {
     const filtered = filterManagerTasksByRange(tasks, '2026-02-01', '2026-02-28');
     assertEqual(filtered.length, 2);
     assertEqual(filtered.map((t) => t.id).join(','), '1,2');
+  });
+
+  test('runStepsAllCompleted — כל השלבים הושלמו', () => {
+    assertOk(runStepsAllCompleted([
+      { status: 'completed' },
+      { status: 'completed' },
+    ]));
+    assertOk(!runStepsAllCompleted([
+      { status: 'completed' },
+      { status: 'pending' },
+    ]));
+    assertOk(!runStepsAllCompleted([]));
+  });
+
+  test('findNextIncompleteStepIndex — מדלג על הושלמו ומוצא תקועים', () => {
+    const steps = [
+      { status: 'pending' },
+      { status: 'completed' },
+      { status: 'active' },
+      { status: 'pending' },
+    ];
+    assertEqual(findNextIncompleteStepIndex(steps, 2), 3);
+    assertEqual(findNextIncompleteStepIndex(steps, 3), 0);
+    assertEqual(findNextIncompleteStepIndex([
+      { status: 'completed' },
+      { status: 'completed' },
+    ], 0), -1);
   });
 
   await flushTests();
