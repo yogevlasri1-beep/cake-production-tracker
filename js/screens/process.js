@@ -21,27 +21,27 @@ import {
   addRunPortionLog, updateRunPortionLog, deleteRunPortionLog,
   addRunMaterialProcessingLog, deleteRunMaterialProcessingLog,
   computeRunMetrics, aggregateRunsMetrics,
-  getRunSettings, setRunSettings,
+  getRunSettings, setRunSettings, resolveNextBatchNumber,
   getRunProductionEntries, addRunStepProductionEntry, updateProductionEntry, removeRunStepProductionEntry,
   resolveProductionStepIndex,
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=392';
+} from '../db.js?v=393';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=392').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=393').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=392';
-import { openModal, closeModal } from '../modal.js?v=392';
-import { requestAutoBackupNow } from '../backup-service.js?v=392';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=392';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=392';
-import { materialMatchesSearch } from '../kitchen-db.js?v=392';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=393';
+import { openModal, closeModal } from '../modal.js?v=393';
+import { requestAutoBackupNow } from '../backup-service.js?v=393';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=393';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=393';
+import { materialMatchesSearch } from '../kitchen-db.js?v=393';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1872,8 +1872,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=392');
-    const { db } = await import('../db.js?v=392');
+    const { getRecipe } = await import('../kitchen-db.js?v=393');
+    const { db } = await import('../db.js?v=393');
     const blocks = [];
 
     for (const row of rows) {
@@ -2697,7 +2697,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=392');
+    const kitchen = await import('../kitchen-db.js?v=393');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -4707,7 +4707,10 @@ async function renderStartView(container, ctx) {
     || (selectedFlowId ? allFlowsOverview.find((f) => String(f.id) === String(selectedFlowId)) : null);
 
   const autoBatch = runSettings.autoBatchEnabled !== false;
-  const nextBatch = Math.max(1, Number(runSettings.nextBatchNumber) || 1);
+  const nextBatch = await resolveNextBatchNumber(runSettings.nextBatchNumber);
+  if (nextBatch !== Math.max(1, Number(runSettings.nextBatchNumber) || 1)) {
+    await setRunSettings({ nextBatchNumber: nextBatch });
+  }
 
   container.innerHTML = `
     <div class="card">
@@ -4795,7 +4798,7 @@ async function renderStartView(container, ctx) {
           <p class="form-hint" style="margin-bottom:8px">האצווה הבאה: <strong id="next-batch-label">${nextBatch}</strong></p>
           <label for="next-batch-number">מונה אצוות (הבא בתור)</label>
           <input type="number" id="next-batch-number" min="1" step="1" value="${nextBatch}">
-          <p class="form-hint">מספר האצווה יוקצה אוטומטית ויישמר בגיבוי</p>
+          <p class="form-hint">מספר האצווה יוקצה אוטומטית אחרי האחרונה שהתחלת, ויישמר בגיבוי</p>
         </div>
         <div id="manual-batch-fields" class="${autoBatch ? 'hidden' : ''}">
           <label for="batch-number">מספר אצווה (רשות)</label>
@@ -4896,7 +4899,8 @@ async function renderStartView(container, ctx) {
   });
 
   document.getElementById('next-batch-number')?.addEventListener('change', async (e) => {
-    const n = Math.max(1, Number(e.target.value) || 1);
+    const requested = Math.max(1, Number(e.target.value) || 1);
+    const n = await resolveNextBatchNumber(requested);
     e.target.value = String(n);
     await setRunSettings({ nextBatchNumber: n });
     const label = document.getElementById('next-batch-label');
@@ -4919,8 +4923,13 @@ async function renderStartView(container, ctx) {
     const autoEnabled = document.getElementById('auto-batch-enabled')?.checked !== false;
     let batchNumber = '';
     if (autoEnabled) {
-      const n = Math.max(1, Number(document.getElementById('next-batch-number')?.value) || 1);
+      const requested = Math.max(1, Number(document.getElementById('next-batch-number')?.value) || 1);
+      const n = await resolveNextBatchNumber(requested);
       await setRunSettings({ nextBatchNumber: n, autoBatchEnabled: true });
+      const input = document.getElementById('next-batch-number');
+      if (input) input.value = String(n);
+      const label = document.getElementById('next-batch-label');
+      if (label) label.textContent = String(n);
     } else {
       batchNumber = document.getElementById('batch-number')?.value.trim() || '';
     }

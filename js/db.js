@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=391';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=391';
-import { defaultColorForIndex } from './chart.js?v=391';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=391';
+} from './validators.js?v=393';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=393';
+import { defaultColorForIndex } from './chart.js?v=393';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=393';
 
 export { ValidationError };
 
@@ -3381,6 +3381,46 @@ export async function setRunSettings(patch) {
   await setSetting(RUN_SETTINGS_KEY, { ...current, ...patch });
 }
 
+/** מחלץ מספר אצווה מספרי ממחרוזת (למשל "55" או "אצווה 55"). */
+export function parseNumericBatchNumber(batchNumber) {
+  const s = String(batchNumber ?? '').trim();
+  if (!s) return null;
+  if (/^\d+$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  const m = s.match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** האצווה הבאה: אחרי המקסימום הקיים, ולא מתחת למונה שהמשתמש הגדיר. */
+export function computeNextBatchNumber(maxExisting, preferred = 1) {
+  const floor = Math.max(0, Number(maxExisting) || 0);
+  const want = Math.max(1, Number(preferred) || 1);
+  return Math.max(want, floor + 1);
+}
+
+export async function getMaxExistingBatchNumber() {
+  const runs = await db.productionRuns.toArray();
+  let max = 0;
+  for (const run of runs) {
+    const n = parseNumericBatchNumber(run.batchNumber);
+    if (n != null && n > max) max = n;
+  }
+  return max;
+}
+
+/** מספר האצווה הבא בתור — תמיד אחרי האצווה האחרונה שהתחלנו. */
+export async function resolveNextBatchNumber(preferred) {
+  const settingsPreferred = preferred != null
+    ? preferred
+    : (await getRunSettings()).nextBatchNumber;
+  const maxExisting = await getMaxExistingBatchNumber();
+  return computeNextBatchNumber(maxExisting, settingsPreferred);
+}
+
 export async function isDatabaseEmpty() {
   const [categories, entries] = await Promise.all([
     db.categories.count(),
@@ -6680,7 +6720,7 @@ export async function startProductionRun({
   const runSettings = await getRunSettings();
   let batch = String(batchNumber || '').trim().slice(0, 40);
   if (!batch && runSettings.autoBatchEnabled) {
-    batch = String(Math.max(1, Number(runSettings.nextBatchNumber) || 1));
+    batch = String(await resolveNextBatchNumber(runSettings.nextBatchNumber));
   }
 
   const gid = categoryGroupId ? Number(categoryGroupId) : null;
@@ -6834,7 +6874,9 @@ export async function startProductionRun({
       }
     }
     if (runSettings.autoBatchEnabled) {
-      const next = Math.max(1, Number(runSettings.nextBatchNumber) || 1) + 1;
+      const assigned = parseNumericBatchNumber(batch)
+        ?? Math.max(1, Number(runSettings.nextBatchNumber) || 1);
+      const next = Math.max(assigned + 1, (await getMaxExistingBatchNumber()) + 1);
       await db.settings.put({ key: RUN_SETTINGS_KEY, value: { ...runSettings, nextBatchNumber: next } });
     }
     return runId;

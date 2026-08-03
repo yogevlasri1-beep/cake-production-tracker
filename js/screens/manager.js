@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=392';
+} from '../db.js?v=393';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=392';
-import { openModal, closeModal } from '../modal.js?v=392';
-import { renderTargets } from './targets.js?v=392';
-import { renderPurchasingInManager } from './purchasing.js?v=392';
-import { forceAppUpdate } from '../sw-register.js?v=392';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=392';
+} from '../utils.js?v=393';
+import { openModal, closeModal } from '../modal.js?v=393';
+import { renderTargets } from './targets.js?v=393';
+import { renderPurchasingInManager } from './purchasing.js?v=393';
+import { forceAppUpdate } from '../sw-register.js?v=393';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=393';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=392';
+} from '../daily-plan-export.js?v=393';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
