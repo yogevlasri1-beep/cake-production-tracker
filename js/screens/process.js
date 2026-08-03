@@ -27,21 +27,21 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=393';
+} from '../db.js?v=394';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=393').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=394').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=393';
-import { openModal, closeModal } from '../modal.js?v=393';
-import { requestAutoBackupNow } from '../backup-service.js?v=393';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=393';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=393';
-import { materialMatchesSearch } from '../kitchen-db.js?v=393';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=394';
+import { openModal, closeModal } from '../modal.js?v=394';
+import { requestAutoBackupNow } from '../backup-service.js?v=394';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=394';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=394';
+import { materialMatchesSearch } from '../kitchen-db.js?v=394';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1193,7 +1193,7 @@ function renderTimelineStep(step, stepIndex, currentIndex, totalSteps, portionPr
         runEntries: productionCtx.runEntries,
         catMap: productionCtx.catMap,
         productMap: productionCtx.productMap,
-        canAdd: runActive,
+        canAdd: runActive || run?.status === 'completed',
         canManageEntries: true,
       });
     }
@@ -1872,8 +1872,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=393');
-    const { db } = await import('../db.js?v=393');
+    const { getRecipe } = await import('../kitchen-db.js?v=394');
+    const { db } = await import('../db.js?v=394');
     const blocks = [];
 
     for (const row of rows) {
@@ -2697,7 +2697,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=393');
+    const kitchen = await import('../kitchen-db.js?v=394');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -2777,7 +2777,7 @@ async function renderRunView(container, runId, ctx) {
       runEntries: productionCtx.runEntries,
       catMap: productionCtx.catMap,
       productMap: productionCtx.productMap,
-      canAdd: run.status === 'active',
+      canAdd: run.status === 'active' || run.status === 'completed',
       canManageEntries: true,
     })
     : '';
@@ -2843,13 +2843,19 @@ async function renderRunView(container, runId, ctx) {
     ${showTopProduction ? renderCollapsibleRunCard(
     run.id,
     'production',
-    `📦 תיעוד ייצור${run.status === 'active' ? ' — זמין תמיד' : ''}`,
+    `📦 תיעוד ייצור${run.status === 'active' || run.status === 'completed' ? ' — זמין תמיד' : ''}`,
     topProductionHTML,
     {
       defaultOpen: false,
       id: 'flow-production-anchor',
       className: 'flow-production-always-card flow-run-collapse--production',
-      hintHtml: `<p class="flow-production-always-hint">${run.status === 'active' ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב' : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'}</p>`,
+      hintHtml: `<p class="flow-production-always-hint">${
+        run.status === 'active'
+          ? 'אפשר לרשום ייצור בכל שלב בתהליך, גם לפני שמגיעים לשלב'
+          : run.status === 'completed'
+            ? 'אפשר להוסיף, לערוך ולמחוק רישומי ייצור גם אחרי סיום התזרים'
+            : 'רשימת כל הרישומים בתהליך זה — ניתן לערוך ולמחוק'
+      }</p>`,
     },
   ) : ''}
 

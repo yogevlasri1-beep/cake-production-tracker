@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=393';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=393';
-import { defaultColorForIndex } from './chart.js?v=393';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=393';
+} from './validators.js?v=394';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=394';
+import { defaultColorForIndex } from './chart.js?v=394';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=394';
 
 export { ValidationError };
 
@@ -4460,7 +4460,9 @@ async function collectProductionEntryIdsForRun(runId) {
 export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity }) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
-  if (run.status !== 'active') throw new ValidationError('התהליך לא פעיל');
+  if (run.status !== 'active' && run.status !== 'completed') {
+    throw new ValidationError('התהליך לא פעיל');
+  }
   const step = run.steps[stepIndex];
   if (!step) throw new ValidationError('שלב לא תקין');
   if (!step.tracksProduction) {
