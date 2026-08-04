@@ -70,6 +70,7 @@ export const COLLECTION_TABLE = {
   haccpFlowVerifications: 'sync_haccp_flow_verifications',
   haccpHazards: 'sync_haccp_hazards',
   haccpCcps: 'sync_haccp_ccps',
+  haccpCriticalLimits: 'sync_haccp_critical_limits',
   settings: 'sync_app_settings',
 };
 
@@ -167,6 +168,7 @@ export const COLLECTION_FKS = {
   haccpFlowVerifications: { planId: 'haccpPlans' },
   haccpHazards: { planId: 'haccpPlans', flowStepId: 'haccpFlowSteps' },
   haccpCcps: { planId: 'haccpPlans', flowStepId: 'haccpFlowSteps', hazardId: 'haccpHazards' },
+  haccpCriticalLimits: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
 };
 
 /**
@@ -267,6 +269,7 @@ export const SYNC_ORDER = [
   'haccpFlowVerifications',
   'haccpHazards',
   'haccpCcps',
+  'haccpCriticalLimits',
   'settings',
 ];
 
@@ -483,6 +486,10 @@ export function rowFingerprint(collection, row) {
     case 'haccpCcps':
       return row.planId != null
         ? `${collection}|${row.planId}|${row.flowStepId ?? ''}|${row.code || n}|${row.decision ?? ''}|${row.hazardId ?? ''}`
+        : '';
+    case 'haccpCriticalLimits':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.parameter ?? ''}|${row.operator ?? ''}|${row.value ?? ''}|${row.valueText ?? ''}`
         : '';
     default:
       return n ? `${collection}|${n}` : '';

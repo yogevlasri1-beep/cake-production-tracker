@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=401';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=401';
+import { db, ValidationError } from './db.js?v=402';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=402';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -12,7 +12,7 @@ export const HACCP_STEPS = [
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'available' },
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'available' },
   { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'available' },
-  { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'soon' },
+  { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'available' },
   { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'soon' },
   { id: 'corrective', label: 'פעולות מתקנות', chapter: '5.5', status: 'soon' },
   { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'soon' },
@@ -250,11 +250,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpFlowVerifications,
     db.haccpHazards,
     db.haccpCcps,
+    db.haccpCriticalLimits,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const limits = await db.haccpCriticalLimits.where('planId').equals(pid).toArray();
+      for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
       const ccps = await db.haccpCcps.where('planId').equals(pid).toArray();
       for (const c of ccps) await db.haccpCcps.delete(c.id);
       const hazards = await db.haccpHazards.where('planId').equals(pid).toArray();
@@ -655,15 +658,23 @@ export async function updateHaccpFlowStep(id, patch = {}) {
 export async function deleteHaccpFlowStep(id) {
   const sid = sanitizeProductId(id);
   if (!sid) return;
-  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, db.haccpCcps, async () => {
+  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, db.haccpCcps, db.haccpCriticalLimits, async () => {
     const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
     for (const h of hazards) {
       const linked = await db.haccpCcps.where('hazardId').equals(h.id).toArray();
-      for (const c of linked) await db.haccpCcps.delete(c.id);
+      for (const c of linked) {
+        const limits = await db.haccpCriticalLimits.where('ccpId').equals(c.id).toArray();
+        for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+        await db.haccpCcps.delete(c.id);
+      }
       await db.haccpHazards.delete(h.id);
     }
     const stepCcps = await db.haccpCcps.where('flowStepId').equals(sid).toArray();
-    for (const c of stepCcps) await db.haccpCcps.delete(c.id);
+    for (const c of stepCcps) {
+      const limits = await db.haccpCriticalLimits.where('ccpId').equals(c.id).toArray();
+      for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+      await db.haccpCcps.delete(c.id);
+    }
     await db.haccpFlowSteps.delete(sid);
   });
 }
@@ -1350,7 +1361,11 @@ export async function updateHaccpCcp(id, patch = {}) {
 export async function deleteHaccpCcp(id) {
   const cid = sanitizeProductId(id);
   if (!cid) return;
-  await db.haccpCcps.delete(cid);
+  await db.transaction('rw', db.haccpCcps, db.haccpCriticalLimits, async () => {
+    const limits = await db.haccpCriticalLimits.where('ccpId').equals(cid).toArray();
+    for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+    await db.haccpCcps.delete(cid);
+  });
 }
 
 /** יצירת קביעת CCP ממועמד מניתוח הסיכונים */
@@ -1397,5 +1412,244 @@ export async function seedSuggestedHazardsForStep(planId, flowStepId) {
     added += 1;
   }
   if (!added) throw new ValidationError('כל ההצעות לשלב זה כבר קיימות');
+  return added;
+}
+
+/** פרמטרים נפוצים לגבול קריטי במאפייה */
+export const HACCP_LIMIT_PARAMETERS = [
+  { id: 'core_temp', label: 'טמפרטורת ליבה', unitHint: '°C' },
+  { id: 'oven_temp', label: 'טמפרטורת תנור', unitHint: '°C' },
+  { id: 'time', label: 'זמן', unitHint: 'דק׳' },
+  { id: 'cooling_temp', label: 'טמפרטורת קירור', unitHint: '°C' },
+  { id: 'cooling_time', label: 'זמן קירור', unitHint: 'שעות' },
+  { id: 'storage_temp', label: 'טמפרטורת אחסון', unitHint: '°C' },
+  { id: 'ph', label: 'ערך הגבה (pH)', unitHint: '' },
+  { id: 'aw', label: 'פעילות מים (aw)', unitHint: '' },
+  { id: 'visual', label: 'בדיקה ויזואלית', unitHint: '' },
+  { id: 'other', label: 'אחר', unitHint: '' },
+];
+
+export const HACCP_LIMIT_OPERATORS = [
+  { id: 'gte', label: '≥ לפחות' },
+  { id: 'lte', label: '≤ לכל היותר' },
+  { id: 'eq', label: '= בדיוק' },
+  { id: 'between', label: 'בין (כולל)' },
+  { id: 'text', label: 'תיאור חופשי' },
+];
+
+export function haccpLimitParameterLabel(id) {
+  return HACCP_LIMIT_PARAMETERS.find((p) => p.id === id)?.label || id || '—';
+}
+
+export function haccpLimitOperatorLabel(id) {
+  return HACCP_LIMIT_OPERATORS.find((o) => o.id === id)?.label || id || '—';
+}
+
+function sanitizeLimitParameter(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_LIMIT_PARAMETERS.some((p) => p.id === id) ? id : 'other';
+}
+
+function sanitizeLimitOperator(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_LIMIT_OPERATORS.some((o) => o.id === id) ? id : 'gte';
+}
+
+export function formatCriticalLimit(limit) {
+  if (!limit) return '—';
+  const param = haccpLimitParameterLabel(limit.parameter);
+  if (limit.operator === 'text' || (!limit.value && limit.valueText)) {
+    return `${param}: ${limit.valueText || limit.limitStatement || '—'}`;
+  }
+  const unit = limit.unit ? ` ${limit.unit}` : '';
+  if (limit.operator === 'between') {
+    return `${param}: ${limit.value ?? '—'}–${limit.valueMax ?? '—'}${unit}`;
+  }
+  const op = { gte: '≥', lte: '≤', eq: '=' }[limit.operator] || limit.operator;
+  return `${param}: ${op} ${limit.value ?? '—'}${unit}`;
+}
+
+async function markPlanLimitsInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'flow', 'flow_verify', 'hazard', 'ccp', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'limits', status: 'in_progress' });
+  }
+}
+
+export async function getConfirmedHaccpCcps(planId) {
+  const rows = await getHaccpCcps(planId);
+  return rows.filter((r) => r.decision === 'ccp');
+}
+
+export async function getHaccpCriticalLimits(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpCriticalLimits.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getHaccpCriticalLimitsForCcp(ccpId) {
+  const cid = sanitizeProductId(ccpId);
+  if (!cid) return [];
+  const rows = await db.haccpCriticalLimits.where('ccpId').equals(cid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpCriticalLimit(planId, {
+  ccpId,
+  parameter = 'core_temp',
+  operator = 'gte',
+  value = '',
+  valueMax = '',
+  unit = '',
+  valueText = '',
+  justification = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  const cid = sanitizeProductId(ccpId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  if (!cid) throw new ValidationError('בחר CCP');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const ccp = await db.haccpCcps.get(cid);
+  if (!ccp || Number(ccp.planId) !== Number(pid) || ccp.decision !== 'ccp') {
+    throw new ValidationError('CCP מאושר לא נמצא בתכנית');
+  }
+
+  const op = sanitizeLimitOperator(operator);
+  const param = sanitizeLimitParameter(parameter);
+  const cleanValue = sanitizeTextField(value, 40);
+  const cleanMax = sanitizeTextField(valueMax, 40);
+  const cleanText = sanitizeTextField(valueText, 500);
+  const cleanUnit = sanitizeTextField(unit, 40);
+
+  if (op === 'text') {
+    if (!cleanText) throw new ValidationError('הזן תיאור הגבול הקריטי');
+  } else if (op === 'between') {
+    if (!cleanValue || !cleanMax) throw new ValidationError('הזן ערך מינימום ומקסימום');
+  } else if (!cleanValue) {
+    throw new ValidationError('הזן ערך לגבול הקריטי');
+  }
+
+  const row = {
+    planId: pid,
+    ccpId: cid,
+    parameter: param,
+    operator: op,
+    value: op === 'text' ? '' : cleanValue,
+    valueMax: op === 'between' ? cleanMax : '',
+    unit: op === 'text' ? '' : cleanUnit,
+    valueText: op === 'text' ? cleanText : '',
+    justification: sanitizeTextField(justification, 2000),
+    notes: sanitizeTextField(notes, 2000),
+  };
+  row.limitStatement = formatCriticalLimit(row);
+
+  const existing = await getHaccpCriticalLimits(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((l) => l.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpCriticalLimits.add({ ...row, sortOrder });
+  await markPlanLimitsInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpCriticalLimit(id, patch = {}) {
+  const lid = sanitizeProductId(id);
+  if (!lid) return;
+  const row = await db.haccpCriticalLimits.get(lid);
+  if (!row) throw new ValidationError('גבול קריטי לא נמצא');
+  const next = { ...row };
+
+  if (patch.ccpId !== undefined) {
+    const cid = sanitizeProductId(patch.ccpId);
+    if (!cid) throw new ValidationError('CCP לא תקין');
+    const ccp = await db.haccpCcps.get(cid);
+    if (!ccp || Number(ccp.planId) !== Number(row.planId) || ccp.decision !== 'ccp') {
+      throw new ValidationError('CCP מאושר לא נמצא');
+    }
+    next.ccpId = cid;
+  }
+  if (patch.parameter !== undefined) next.parameter = sanitizeLimitParameter(patch.parameter);
+  if (patch.operator !== undefined) next.operator = sanitizeLimitOperator(patch.operator);
+  if (patch.value !== undefined) next.value = sanitizeTextField(patch.value, 40);
+  if (patch.valueMax !== undefined) next.valueMax = sanitizeTextField(patch.valueMax, 40);
+  if (patch.unit !== undefined) next.unit = sanitizeTextField(patch.unit, 40);
+  if (patch.valueText !== undefined) next.valueText = sanitizeTextField(patch.valueText, 500);
+  if (patch.justification !== undefined) next.justification = sanitizeTextField(patch.justification, 2000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  if (next.operator === 'text') {
+    if (!next.valueText) throw new ValidationError('הזן תיאור הגבול הקריטי');
+    next.value = '';
+    next.valueMax = '';
+    next.unit = '';
+  } else if (next.operator === 'between') {
+    if (!next.value || !next.valueMax) throw new ValidationError('הזן ערך מינימום ומקסימום');
+    next.valueText = '';
+  } else {
+    if (!next.value) throw new ValidationError('הזן ערך לגבול הקריטי');
+    next.valueMax = '';
+    next.valueText = '';
+  }
+
+  next.limitStatement = formatCriticalLimit(next);
+  delete next.id;
+  await db.haccpCriticalLimits.update(lid, next);
+}
+
+export async function deleteHaccpCriticalLimit(id) {
+  const lid = sanitizeProductId(id);
+  if (!lid) return;
+  await db.haccpCriticalLimits.delete(lid);
+}
+
+/** הצעות גבולות נפוצות לפי סוג שלב של ה-CCP */
+export async function seedSuggestedLimitsForCcp(planId, ccpId) {
+  const pid = sanitizeProductId(planId);
+  const cid = sanitizeProductId(ccpId);
+  if (!pid || !cid) throw new ValidationError('בחר תכנית ו-CCP');
+  const ccp = await db.haccpCcps.get(cid);
+  if (!ccp || Number(ccp.planId) !== Number(pid) || ccp.decision !== 'ccp') {
+    throw new ValidationError('CCP מאושר לא נמצא');
+  }
+  const step = await db.haccpFlowSteps.get(ccp.flowStepId);
+  const kind = step?.stepKind || 'other';
+  const suggestionsByKind = {
+    baking: [
+      { parameter: 'core_temp', operator: 'gte', value: '75', unit: '°C', justification: 'השמדת פתוגנים בליבה' },
+      { parameter: 'time', operator: 'gte', value: '20', unit: 'דק׳', justification: 'זמן אפייה מינימלי לפי מוצר' },
+    ],
+    cooling: [
+      { parameter: 'cooling_temp', operator: 'lte', value: '5', unit: '°C', justification: 'יציאה מטווח הסכנה' },
+      { parameter: 'cooling_time', operator: 'lte', value: '4', unit: 'שעות', justification: 'קירור מהיר מספיק' },
+    ],
+    freezing: [
+      { parameter: 'storage_temp', operator: 'lte', value: '-18', unit: '°C', justification: 'שמירה בהקפאה' },
+    ],
+    storage_finished: [
+      { parameter: 'storage_temp', operator: 'lte', value: '5', unit: '°C', justification: 'אחסון בקירור' },
+    ],
+    packaging: [
+      { parameter: 'visual', operator: 'text', valueText: 'אריזה שלמה, סימון אלרגנים ותוקף תקינים', justification: 'בקרה ויזואלית באריזה' },
+    ],
+  };
+  const suggestions = suggestionsByKind[kind] || [
+    { parameter: 'other', operator: 'text', valueText: 'הגדר גבול מדיד לנקודת הבקרה', justification: '' },
+  ];
+
+  const existing = await getHaccpCriticalLimitsForCcp(cid);
+  const existingKeys = new Set(existing.map((l) => `${l.parameter}|${l.operator}|${l.value}|${l.valueText}`));
+  let added = 0;
+  for (const s of suggestions) {
+    const key = `${s.parameter}|${s.operator}|${s.value || ''}|${s.valueText || ''}`;
+    if (existingKeys.has(key)) continue;
+    await addHaccpCriticalLimit(pid, { ccpId: cid, ...s });
+    added += 1;
+  }
+  if (!added) throw new ValidationError('כל ההצעות ל-CCP זה כבר קיימות');
   return added;
 }

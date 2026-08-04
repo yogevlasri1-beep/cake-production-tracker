@@ -61,6 +61,17 @@ import {
   addHaccpCcpFromHazard,
   updateHaccpCcp,
   deleteHaccpCcp,
+  getConfirmedHaccpCcps,
+  getHaccpCriticalLimits,
+  addHaccpCriticalLimit,
+  updateHaccpCriticalLimit,
+  deleteHaccpCriticalLimit,
+  seedSuggestedLimitsForCcp,
+  HACCP_LIMIT_PARAMETERS,
+  HACCP_LIMIT_OPERATORS,
+  formatCriticalLimit,
+  haccpLimitParameterLabel,
+  haccpLimitOperatorLabel,
 } from '../haccp-db.js?v=401';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
@@ -111,6 +122,7 @@ export async function renderHaccp(container) {
   let hazards = [];
   let ccps = [];
   let ccpCandidates = [];
+  let criticalLimits = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -146,6 +158,13 @@ export async function renderHaccp(container) {
       getHaccpCcpCandidates(activePlan.id),
     ]);
   }
+  if (step.id === 'limits' && activePlan) {
+    [flowSteps, ccps, criticalLimits] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getConfirmedHaccpCcps(activePlan.id),
+      getHaccpCriticalLimits(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -163,6 +182,8 @@ export async function renderHaccp(container) {
     body = renderHazardSection(activePlan, flowSteps, hazards, groupMap);
   } else if (step.id === 'ccp') {
     body = renderCcpSection(activePlan, flowSteps, hazards, ccps, ccpCandidates, groupMap);
+  } else if (step.id === 'limits') {
+    body = renderLimitsSection(activePlan, flowSteps, ccps, criticalLimits, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -200,7 +221,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits,
   });
 }
 
@@ -260,12 +281,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: <strong>3.1–3.5</strong>, <strong>5.1</strong> ו־<strong>5.2 CCP</strong></li>
+        <li>השלבים הפעילים: עד <strong>5.3 גבולות קריטיים</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי ניתוח סיכונים — קבע CCP לפי עץ ההחלטות.</p>
+      <p class="haccp-hint">המלצה: אחרי קביעת CCP — הגדר גבול מדיד לכל נקודה.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="hazard">ניתוח סיכונים</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="ccp">נקודות CCP</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="ccp">נקודות CCP</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="limits">גבולות קריטיים</button>
       </div>
     </div>`;
 }
@@ -288,7 +309,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי קביעת CCP — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי גבולות בקרה קריטיים — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -1090,6 +1111,140 @@ function renderCcpSection(activePlan, flowSteps, hazards, ccps, candidates, grou
     </div>`;
 }
 
+function parameterOptions(selected = 'core_temp') {
+  return HACCP_LIMIT_PARAMETERS.map((p) =>
+    `<option value="${p.id}" ${selected === p.id ? 'selected' : ''}>${escapeHtml(p.label)}</option>`
+  ).join('');
+}
+
+function operatorOptions(selected = 'gte') {
+  return HACCP_LIMIT_OPERATORS.map((o) =>
+    `<option value="${o.id}" ${selected === o.id ? 'selected' : ''}>${escapeHtml(o.label)}</option>`
+  ).join('');
+}
+
+function renderLimitsSection(activePlan, flowSteps, confirmedCcps, limits, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.3 · גבולות בקרה קריטיים</div>
+        <p class="haccp-hint">בחר תכנית. הגבולות מוגדרים לכל CCP מאושר משלב 5.2.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const stepMap = new Map(flowSteps.map((s) => [s.id, s]));
+  if (!confirmedCcps.length) {
+    return `
+      <div class="card">
+        <div class="card-title">5.3 · גבולות קריטיים — ${escapeHtml(activePlan.name)}</div>
+        <p class="haccp-hint">אין CCP מאושרים. יש לקבוע קודם נקודות בקרה קריטיות ב־5.2.</p>
+        <button type="button" class="btn btn-primary" data-haccp-step="ccp">עבור ל־CCP</button>
+      </div>`;
+  }
+
+  const byCcp = new Map();
+  for (const l of limits) {
+    const key = Number(l.ccpId);
+    if (!byCcp.has(key)) byCcp.set(key, []);
+    byCcp.get(key).push(l);
+  }
+
+  const covered = confirmedCcps.filter((c) => (byCcp.get(Number(c.id)) || []).length).length;
+  const ccpOptions = confirmedCcps.map((c) =>
+    `<option value="${c.id}">${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+  ).join('');
+
+  const blocks = confirmedCcps.map((ccp) => {
+    const list = byCcp.get(Number(ccp.id)) || [];
+    const rows = list.length
+      ? list.map((l) => `
+          <div class="haccp-limit-row">
+            <div>
+              <div class="haccp-ccp-title">${escapeHtml(formatCriticalLimit(l))}</div>
+              ${l.justification ? `<div class="haccp-hazard-meta">${escapeHtml(l.justification)}</div>` : ''}
+            </div>
+            <div class="haccp-hazard-actions">
+              <button type="button" class="btn btn-secondary btn-sm haccp-limit-edit" data-id="${l.id}">ערוך</button>
+              <button type="button" class="btn btn-danger btn-sm haccp-limit-del" data-id="${l.id}">מחק</button>
+            </div>
+          </div>`).join('')
+      : `<p class="haccp-hint">אין גבולות ל-CCP זה עדיין.</p>`;
+
+    return `
+      <section class="haccp-limit-ccp">
+        <div class="haccp-hazard-step-head">
+          <div>
+            <strong>${escapeHtml(ccp.code || 'CCP')} · ${escapeHtml(ccp.name)}</strong>
+            <span class="haccp-hazard-meta"> · ${escapeHtml(stepMap.get(ccp.flowStepId)?.name || '')}
+              · ${escapeHtml(ccp.hazardDescription || '')}</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm haccp-limit-seed" data-ccp-id="${ccp.id}">
+            הצע גבולות
+          </button>
+        </div>
+        ${rows}
+      </section>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <div class="card-title">5.3 · גבולות בקרה קריטיים — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: לכל CCP יש להגדיר גבול קריטי מדיד (טמפרטורה, זמן, pH וכו׳)
+        שהחריגה ממנו הופכת את המוצר ללא בטוח. משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${limits.length}</strong> גבולות ·
+        כיסוי CCP: <strong>${covered}/${confirmedCcps.length}</strong>
+      </p>
+
+      <div class="haccp-limit-list">${blocks}</div>
+
+      <form id="haccp-limit-form" class="haccp-product-form haccp-limit-form">
+        <div class="card-title" style="font-size:1rem">הוספת גבול קריטי</div>
+        <div class="form-group">
+          <label for="haccp-limit-ccp">CCP</label>
+          <select id="haccp-limit-ccp">${ccpOptions}</select>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-limit-param">פרמטר</label>
+            <select id="haccp-limit-param">${parameterOptions('core_temp')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-limit-op">אופרטור</label>
+            <select id="haccp-limit-op">${operatorOptions('gte')}</select>
+          </div>
+        </div>
+        <div class="haccp-form-row" id="haccp-limit-value-row">
+          <div class="form-group">
+            <label for="haccp-limit-value">ערך</label>
+            <input type="text" id="haccp-limit-value" maxlength="40" placeholder="75">
+          </div>
+          <div class="form-group" id="haccp-limit-max-wrap" hidden>
+            <label for="haccp-limit-max">עד ערך</label>
+            <input type="text" id="haccp-limit-max" maxlength="40">
+          </div>
+          <div class="form-group">
+            <label for="haccp-limit-unit">יחידה</label>
+            <input type="text" id="haccp-limit-unit" maxlength="40" value="°C">
+          </div>
+        </div>
+        <div class="form-group" id="haccp-limit-text-wrap" hidden>
+          <label for="haccp-limit-text">תיאור הגבול</label>
+          <textarea id="haccp-limit-text" rows="2" maxlength="500"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-limit-justification">בסיס מדעי / הצדקה</label>
+          <textarea id="haccp-limit-justification" rows="2" maxlength="2000"
+            placeholder="מקור הגבול: ספרות, ניסוי, דרישה רגולטורית…"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">הוסף גבול</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -1850,6 +2005,168 @@ function bindHaccpEvents(container, ctx) {
             controlMeasure: document.getElementById('edit-ccp-control').value,
             justification: document.getElementById('edit-ccp-justification').value,
             ...readTreeAnswers('edit-ccp'),
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  function syncLimitFormMode(opSelectId = 'haccp-limit-op') {
+    const op = document.getElementById(opSelectId)?.value;
+    const maxWrap = document.getElementById('haccp-limit-max-wrap');
+    const textWrap = document.getElementById('haccp-limit-text-wrap');
+    const valueRow = document.getElementById('haccp-limit-value-row');
+    if (!op) return;
+    if (op === 'text') {
+      if (textWrap) textWrap.hidden = false;
+      if (valueRow) valueRow.hidden = true;
+    } else {
+      if (textWrap) textWrap.hidden = true;
+      if (valueRow) valueRow.hidden = false;
+      if (maxWrap) maxWrap.hidden = op !== 'between';
+    }
+  }
+
+  document.getElementById('haccp-limit-op')?.addEventListener('change', () => syncLimitFormMode());
+  document.getElementById('haccp-limit-param')?.addEventListener('change', () => {
+    const param = document.getElementById('haccp-limit-param')?.value;
+    const hint = HACCP_LIMIT_PARAMETERS.find((p) => p.id === param)?.unitHint;
+    const unitEl = document.getElementById('haccp-limit-unit');
+    if (unitEl && hint != null) unitEl.value = hint;
+  });
+  syncLimitFormMode();
+
+  document.getElementById('haccp-limit-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpCriticalLimit(ctx.activePlan.id, {
+        ccpId: document.getElementById('haccp-limit-ccp')?.value,
+        parameter: document.getElementById('haccp-limit-param')?.value,
+        operator: document.getElementById('haccp-limit-op')?.value,
+        value: document.getElementById('haccp-limit-value')?.value,
+        valueMax: document.getElementById('haccp-limit-max')?.value,
+        unit: document.getElementById('haccp-limit-unit')?.value,
+        valueText: document.getElementById('haccp-limit-text')?.value,
+        justification: document.getElementById('haccp-limit-justification')?.value,
+      });
+      showToast('גבול נוסף ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-limit-seed').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return;
+      try {
+        const n = await seedSuggestedLimitsForCcp(ctx.activePlan.id, btn.dataset.ccpId);
+        showToast(`נוספו ${n} הצעות ✓`);
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-limit-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק גבול קריטי?')) return;
+      try {
+        await deleteHaccpCriticalLimit(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-limit-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const limit = ctx.criticalLimits?.find((l) => String(l.id) === String(btn.dataset.id));
+      if (!limit) return;
+      const ccpOptions = (ctx.ccps || [])
+        .filter((c) => c.decision === 'ccp')
+        .map((c) =>
+          `<option value="${c.id}" ${Number(c.id) === Number(limit.ccpId) ? 'selected' : ''}>${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+        ).join('');
+      openModal({
+        title: 'עריכת גבול קריטי',
+        bodyHTML: `
+          <div class="form-group">
+            <label for="edit-limit-ccp">CCP</label>
+            <select id="edit-limit-ccp">${ccpOptions}</select>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-limit-param">פרמטר</label>
+              <select id="edit-limit-param">${parameterOptions(limit.parameter)}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-limit-op">אופרטור</label>
+              <select id="edit-limit-op">${operatorOptions(limit.operator)}</select>
+            </div>
+          </div>
+          <div class="haccp-form-row" id="edit-limit-value-row">
+            <div class="form-group">
+              <label for="edit-limit-value">ערך</label>
+              <input type="text" id="edit-limit-value" value="${escapeHtml(limit.value || '')}" maxlength="40">
+            </div>
+            <div class="form-group" id="edit-limit-max-wrap" ${limit.operator === 'between' ? '' : 'hidden'}>
+              <label for="edit-limit-max">עד ערך</label>
+              <input type="text" id="edit-limit-max" value="${escapeHtml(limit.valueMax || '')}" maxlength="40">
+            </div>
+            <div class="form-group">
+              <label for="edit-limit-unit">יחידה</label>
+              <input type="text" id="edit-limit-unit" value="${escapeHtml(limit.unit || '')}" maxlength="40">
+            </div>
+          </div>
+          <div class="form-group" id="edit-limit-text-wrap" ${limit.operator === 'text' ? '' : 'hidden'}>
+            <label for="edit-limit-text">תיאור</label>
+            <textarea id="edit-limit-text" rows="2" maxlength="500">${escapeHtml(limit.valueText || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-limit-justification">הצדקה</label>
+            <textarea id="edit-limit-justification" rows="2" maxlength="2000">${escapeHtml(limit.justification || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-limit">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      const syncEdit = () => {
+        const op = document.getElementById('edit-limit-op')?.value;
+        const maxWrap = document.getElementById('edit-limit-max-wrap');
+        const textWrap = document.getElementById('edit-limit-text-wrap');
+        const valueRow = document.getElementById('edit-limit-value-row');
+        if (op === 'text') {
+          if (textWrap) textWrap.hidden = false;
+          if (valueRow) valueRow.hidden = true;
+        } else {
+          if (textWrap) textWrap.hidden = true;
+          if (valueRow) valueRow.hidden = false;
+          if (maxWrap) maxWrap.hidden = op !== 'between';
+        }
+      };
+      document.getElementById('edit-limit-op')?.addEventListener('change', syncEdit);
+      syncEdit();
+      document.getElementById('save-edit-limit')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpCriticalLimit(limit.id, {
+            ccpId: document.getElementById('edit-limit-ccp').value,
+            parameter: document.getElementById('edit-limit-param').value,
+            operator: document.getElementById('edit-limit-op').value,
+            value: document.getElementById('edit-limit-value').value,
+            valueMax: document.getElementById('edit-limit-max').value,
+            unit: document.getElementById('edit-limit-unit').value,
+            valueText: document.getElementById('edit-limit-text').value,
+            justification: document.getElementById('edit-limit-justification').value,
           });
           closeModal();
           showToast('עודכן ✓');

@@ -607,9 +607,12 @@ export async function runAllTests() {
     assertEqual(WORKSPACES.haccp?.defaultScreen, 'haccp');
     assertOk(HACCP_STEPS.some((s) => s.id === 'hazard' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'ccp' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'limits' && s.status === 'available'));
     assertOk(isSyncCollection('haccpHazards'));
     assertOk(isSyncCollection('haccpCcps'));
+    assertOk(isSyncCollection('haccpCriticalLimits'));
     assertEqual(COLLECTION_TABLE.haccpCcps, 'sync_haccp_ccps');
+    assertEqual(COLLECTION_TABLE.haccpCriticalLimits, 'sync_haccp_critical_limits');
     assertEqual(
       rowFingerprint('haccpCcps', {
         planId: 7,
@@ -620,6 +623,21 @@ export async function runAllTests() {
         hazardId: 9,
       }),
       'haccpCcps|7|3|CCP-1|ccp|9',
+    );
+    assertEqual(
+      rowFingerprint('haccpCriticalLimits', {
+        planId: 7,
+        ccpId: 2,
+        parameter: 'core_temp',
+        operator: 'gte',
+        value: '75',
+        valueText: '',
+      }),
+      'haccpCriticalLimits|7|2|core_temp|gte|75|',
+    );
+    assertEqual(
+      formatCriticalLimit({ parameter: 'core_temp', operator: 'gte', value: '75', unit: '°C' }),
+      'טמפרטורת ליבה: ≥ 75 °C',
     );
   });
 
