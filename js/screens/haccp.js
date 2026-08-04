@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=397';
-import { escapeHtml, showToast } from '../utils.js?v=397';
-import { openModal, closeModal } from '../modal.js?v=397';
+import { getCategoryGroups } from '../db.js?v=398';
+import { escapeHtml, showToast } from '../utils.js?v=398';
+import { openModal, closeModal } from '../modal.js?v=398';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -11,7 +11,9 @@ import {
   HACCP_CONSUMPTION_MODES,
   HACCP_USE_CHANNELS,
   HACCP_SENSITIVE_GROUPS,
+  HACCP_FLOW_STEP_KINDS,
   haccpRoleLabel,
+  haccpFlowStepKindLabel,
   getHaccpTeamMembers,
   addHaccpTeamMember,
   updateHaccpTeamMember,
@@ -28,7 +30,15 @@ import {
   suggestCompositionForHaccpPlan,
   getHaccpIntendedUse,
   saveHaccpIntendedUse,
-} from '../haccp-db.js?v=397';
+  getHaccpFlowSteps,
+  addHaccpFlowStep,
+  updateHaccpFlowStep,
+  deleteHaccpFlowStep,
+  moveHaccpFlowStep,
+  seedDefaultHaccpFlowSteps,
+  listProductionFlowsForHaccpPlan,
+  importHaccpFlowFromProduction,
+} from '../haccp-db.js?v=398';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -72,6 +82,8 @@ export async function renderHaccp(container) {
   let productDesc = null;
   let familyProducts = [];
   let intendedUse = null;
+  let flowSteps = [];
+  let productionFlows = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -80,6 +92,12 @@ export async function renderHaccp(container) {
   }
   if (step.id === 'intended_use' && activePlan) {
     intendedUse = await getHaccpIntendedUse(activePlan.id);
+  }
+  if (step.id === 'flow' && activePlan) {
+    [flowSteps, productionFlows] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      listProductionFlowsForHaccpPlan(activePlan.id),
+    ]);
   }
 
   let body = '';
@@ -90,6 +108,8 @@ export async function renderHaccp(container) {
     body = renderProductSection(activePlan, productDesc, familyProducts, groupMap);
   } else if (step.id === 'intended_use') {
     body = renderIntendedUseSection(activePlan, intendedUse, groupMap);
+  } else if (step.id === 'flow') {
+    body = renderFlowSection(activePlan, flowSteps, productionFlows, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -126,7 +146,7 @@ export async function renderHaccp(container) {
       </div>
     </div>`;
 
-  bindHaccpEvents(container, { members, plans, groups, activePlan, productDesc });
+  bindHaccpEvents(container, { members, plans, groups, activePlan, productDesc, flowSteps, productionFlows });
 }
 
 function renderPlanPicker(plans, groups, activePlan, groupMap) {
@@ -185,14 +205,14 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: <strong>3.1 צוות</strong>, <strong>3.2 תיאור מוצר</strong>
-          ו־<strong>3.3 שימוש מיועד</strong></li>
+        <li>השלבים הפעילים: <strong>3.1–3.4</strong> (צוות, תיאור מוצר, שימוש מיועד, תרשים זרימה)</li>
       </ul>
-      <p class="haccp-hint">המלצה: הרכב צוות, צור תכנית למשפחה, מלא תיאור מוצר ואז שימוש מיועד.</p>
+      <p class="haccp-hint">המלצה: הרכב צוות → תכנית למשפחה → תיאור מוצר → שימוש מיועד → תרשים זרימה.</p>
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-primary" data-haccp-step="team">צוות HACCP</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="product">תיאור מוצר</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="intended_use">שימוש מיועד</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="flow">תרשים זרימה</button>
       </div>
     </div>`;
 }
@@ -215,7 +235,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי שימוש מיועד — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי תרשים הזרימה — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -428,6 +448,97 @@ function renderIntendedUseSection(activePlan, use, groupMap) {
 
         <button type="submit" class="btn btn-primary" id="haccp-save-intended">שמור שימוש מיועד</button>
       </form>
+    </div>`;
+}
+
+function renderFlowSection(activePlan, flowSteps, productionFlows, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">3.4 · תרשים זרימה</div>
+        <p class="haccp-hint">
+          תרשים הזרימה נשמר לפי משפחת מוצרים. בחר או צור תכנית למעלה ואז בנה את השלבים.
+        </p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const kindOptions = HACCP_FLOW_STEP_KINDS.map((k) =>
+    `<option value="${k.id}">${escapeHtml(k.label)}</option>`).join('');
+
+  const importOptions = productionFlows.length
+    ? productionFlows.map((f) =>
+      `<option value="${f.id}">${escapeHtml(f.name)} (${f.stepCount} שלבים)</option>`).join('')
+    : '';
+
+  const diagram = flowSteps.length
+    ? `
+      <ol class="haccp-flow-diagram">
+        ${flowSteps.map((s, i) => `
+          <li class="haccp-flow-node ${s.isCcpCandidate ? 'is-ccp' : ''}">
+            <div class="haccp-flow-node-index">${i + 1}</div>
+            <div class="haccp-flow-node-body">
+              <div class="haccp-flow-node-title">
+                ${escapeHtml(s.name)}
+                ${s.isCcpCandidate ? '<span class="badge">מועמד CCP</span>' : ''}
+              </div>
+              <div class="haccp-flow-node-kind">${escapeHtml(haccpFlowStepKindLabel(s.stepKind))}</div>
+              ${s.description ? `<div class="haccp-flow-node-desc">${escapeHtml(s.description)}</div>` : ''}
+            </div>
+            <div class="haccp-flow-node-actions">
+              <button type="button" class="btn btn-secondary btn-sm haccp-flow-up" data-id="${s.id}"
+                ${i === 0 ? 'disabled' : ''} title="למעלה">↑</button>
+              <button type="button" class="btn btn-secondary btn-sm haccp-flow-down" data-id="${s.id}"
+                ${i === flowSteps.length - 1 ? 'disabled' : ''} title="למטה">↓</button>
+              <button type="button" class="btn btn-secondary btn-sm haccp-flow-edit" data-id="${s.id}">ערוך</button>
+              <button type="button" class="btn btn-danger btn-sm haccp-flow-del" data-id="${s.id}">מחק</button>
+            </div>
+          </li>`).join('')}
+      </ol>`
+    : `<p class="haccp-hint">עדיין אין שלבים. הוסף ידנית, זרע ברירת מחדל למאפייה, או ייבא מתזרים ייצור.</p>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">3.4 · תרשים זרימה — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: תרשים של כל תהליכי הייצור למשפחה, כולל חומרי גלם, אריזות וזרימת המוצר במפעל.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+
+      <div class="haccp-flow-toolbar">
+        <button type="button" class="btn btn-secondary btn-sm" id="haccp-flow-seed"
+          ${flowSteps.length ? 'disabled' : ''}>זרע שלבי מאפייה</button>
+        <div class="haccp-inline-row haccp-flow-import">
+          <select id="haccp-flow-import-source" ${productionFlows.length ? '' : 'disabled'}>
+            <option value="">${productionFlows.length ? 'ייבוא מתזרים ייצור…' : 'אין תזרימי ייצור למשפחה'}</option>
+            ${importOptions}
+          </select>
+          <button type="button" class="btn btn-secondary btn-sm" id="haccp-flow-import"
+            ${productionFlows.length ? '' : 'disabled'}>ייבא</button>
+        </div>
+      </div>
+
+      ${diagram}
+
+      <div class="haccp-add-member haccp-flow-add">
+        <div class="form-group">
+          <label for="haccp-flow-name">שם שלב</label>
+          <input type="text" id="haccp-flow-name" maxlength="120" placeholder="למשל: אפייה">
+        </div>
+        <div class="form-group">
+          <label for="haccp-flow-kind">סוג שלב</label>
+          <select id="haccp-flow-kind">${kindOptions}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-flow-desc">תיאור קצר</label>
+          <input type="text" id="haccp-flow-desc" maxlength="1000" placeholder="אופציונלי">
+        </div>
+        <label class="haccp-check">
+          <input type="checkbox" id="haccp-flow-ccp">
+          <span>מועמד ל־CCP (לשלב 5.2)</span>
+        </label>
+        <button type="button" class="btn btn-primary" id="haccp-flow-add">הוסף שלב</button>
+      </div>
     </div>`;
 }
 
@@ -710,5 +821,139 @@ function bindHaccpEvents(container, ctx) {
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
+  });
+
+  document.getElementById('haccp-flow-add')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpFlowStep(ctx.activePlan.id, {
+        name: document.getElementById('haccp-flow-name')?.value,
+        stepKind: document.getElementById('haccp-flow-kind')?.value,
+        description: document.getElementById('haccp-flow-desc')?.value,
+        isCcpCandidate: document.getElementById('haccp-flow-ccp')?.checked,
+      });
+      showToast('שלב נוסף ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-flow-seed')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    try {
+      const n = await seedDefaultHaccpFlowSteps(ctx.activePlan.id);
+      showToast(`נוספו ${n} שלבי ברירת מחדל ✓`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-flow-import')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    const flowId = document.getElementById('haccp-flow-import-source')?.value;
+    if (!flowId) return showToast('בחר תזרים לייבוא');
+    let replace = false;
+    if (ctx.flowSteps?.length) {
+      replace = confirm('יש כבר שלבים בתרשים.\nאישור = החלפה מלאה\nביטול = הוספה בסוף התרשים');
+    }
+    try {
+      const n = await importHaccpFlowFromProduction(ctx.activePlan.id, flowId, { replace });
+      showToast(`יובאו ${n} שלבים ✓`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-flow-up').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return;
+      try {
+        await moveHaccpFlowStep(ctx.activePlan.id, btn.dataset.id, 'up');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-flow-down').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return;
+      try {
+        await moveHaccpFlowStep(ctx.activePlan.id, btn.dataset.id, 'down');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-flow-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק שלב מהתרשים?')) return;
+      try {
+        await deleteHaccpFlowStep(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-flow-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const step = ctx.flowSteps?.find((s) => String(s.id) === String(btn.dataset.id));
+      if (!step) return;
+      const kindOptions = HACCP_FLOW_STEP_KINDS.map((k) =>
+        `<option value="${k.id}" ${step.stepKind === k.id ? 'selected' : ''}>${escapeHtml(k.label)}</option>`
+      ).join('');
+      openModal({
+        title: 'עריכת שלב בתרשים',
+        bodyHTML: `
+          <div class="form-group">
+            <label for="edit-haccp-flow-name">שם</label>
+            <input type="text" id="edit-haccp-flow-name" value="${escapeHtml(step.name)}" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label for="edit-haccp-flow-kind">סוג</label>
+            <select id="edit-haccp-flow-kind">${kindOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-haccp-flow-desc">תיאור</label>
+            <input type="text" id="edit-haccp-flow-desc" value="${escapeHtml(step.description || '')}" maxlength="1000">
+          </div>
+          <div class="form-group">
+            <label for="edit-haccp-flow-notes">הערות</label>
+            <input type="text" id="edit-haccp-flow-notes" value="${escapeHtml(step.notes || '')}" maxlength="1000">
+          </div>
+          <label class="haccp-check">
+            <input type="checkbox" id="edit-haccp-flow-ccp" ${step.isCcpCandidate ? 'checked' : ''}>
+            <span>מועמד ל־CCP</span>
+          </label>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-haccp-flow-step">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-haccp-flow-step')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpFlowStep(step.id, {
+            name: document.getElementById('edit-haccp-flow-name').value,
+            stepKind: document.getElementById('edit-haccp-flow-kind').value,
+            description: document.getElementById('edit-haccp-flow-desc').value,
+            notes: document.getElementById('edit-haccp-flow-notes').value,
+            isCcpCandidate: document.getElementById('edit-haccp-flow-ccp').checked,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
   });
 }

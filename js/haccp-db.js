@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=397';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=397';
+import { db, ValidationError } from './db.js?v=398';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=398';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -8,7 +8,7 @@ export const HACCP_STEPS = [
   { id: 'team', label: 'צוות HACCP', chapter: '3.1', status: 'available' },
   { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'available' },
   { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'available' },
-  { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'soon' },
+  { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'available' },
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'soon' },
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'soon' },
   { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'soon' },
@@ -246,11 +246,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpPlans,
     db.haccpProductDescriptions,
     db.haccpIntendedUses,
+    db.haccpFlowSteps,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const steps = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
+      for (const s of steps) await db.haccpFlowSteps.delete(s.id);
       await db.haccpPlans.delete(pid);
     },
   );
@@ -516,4 +519,273 @@ export async function saveHaccpIntendedUse(planId, fields = {}) {
   const id = await db.haccpIntendedUses.add(next);
   await db.haccpPlans.update(pid, { currentStep: 'intended_use', status: 'in_progress' });
   return id;
+}
+
+/** סוגי שלבים בתרשים זרימה HACCP */
+export const HACCP_FLOW_STEP_KINDS = [
+  { id: 'receiving', label: 'קבלת חומ״ג / אריזות' },
+  { id: 'storage_raw', label: 'אחסון חומרי גלם' },
+  { id: 'prep', label: 'הכנה / שקילה' },
+  { id: 'mixing', label: 'ערבוב / לישה' },
+  { id: 'proofing', label: 'התפחה' },
+  { id: 'forming', label: 'עיצוב / מילוי' },
+  { id: 'baking', label: 'אפייה / טיפול תרמי' },
+  { id: 'cooling', label: 'קירור' },
+  { id: 'freezing', label: 'הקפאה' },
+  { id: 'packaging', label: 'אריזה' },
+  { id: 'storage_finished', label: 'אחסון מוצר מוגמר' },
+  { id: 'shipping', label: 'הפצה / משלוח' },
+  { id: 'other', label: 'אחר' },
+];
+
+export const DEFAULT_HACCP_FLOW_STEPS = [
+  { name: 'קבלת חומרי גלם ואריזות', stepKind: 'receiving' },
+  { name: 'אחסון חומרי גלם', stepKind: 'storage_raw' },
+  { name: 'הכנה ושקילה', stepKind: 'prep' },
+  { name: 'ערבוב / לישה', stepKind: 'mixing' },
+  { name: 'עיצוב / מילוי', stepKind: 'forming' },
+  { name: 'אפייה', stepKind: 'baking' },
+  { name: 'קירור', stepKind: 'cooling' },
+  { name: 'אריזה', stepKind: 'packaging' },
+  { name: 'אחסון מוצר מוגמר', stepKind: 'storage_finished' },
+  { name: 'הפצה / משלוח', stepKind: 'shipping' },
+];
+
+export function haccpFlowStepKindLabel(kindId) {
+  return HACCP_FLOW_STEP_KINDS.find((k) => k.id === kindId)?.label || kindId || '—';
+}
+
+function sanitizeFlowStepKind(kind) {
+  const id = String(kind || '').trim();
+  return HACCP_FLOW_STEP_KINDS.some((k) => k.id === id) ? id : 'other';
+}
+
+function guessFlowStepKind(name) {
+  const n = String(name || '').toLowerCase();
+  if (/קבל|ספק|משלוח.?נכנס|פריק/.test(n)) return 'receiving';
+  if (/אחסון.?חומ|מחסן.?חומ|קירור.?חומ/.test(n)) return 'storage_raw';
+  if (/שקיל|הכנת.?חומ|הכנה/.test(n)) return 'prep';
+  if (/ערבוב|ליש|מיקסר|לישה/.test(n)) return 'mixing';
+  if (/התפח|תפיח|proof/.test(n)) return 'proofing';
+  if (/עיצוב|מילוי|מריח|קישוט|פורם/.test(n)) return 'forming';
+  if (/אפי|תנור|טיגון|טיפול.?תרמי/.test(n)) return 'baking';
+  if (/קירור|צינון/.test(n)) return 'cooling';
+  if (/הקפא|מקפיא/.test(n)) return 'freezing';
+  if (/אריז/.test(n)) return 'packaging';
+  if (/אחסון.?מוצר|מחסן.?מוגמר|מלאי.?מוגמר/.test(n)) return 'storage_finished';
+  if (/הפצ|משלוח|שילוח|מכיר/.test(n)) return 'shipping';
+  return 'other';
+}
+
+async function markPlanFlowInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'flow', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpFlowSteps(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpFlowStep(planId, {
+  name,
+  stepKind = 'other',
+  description = '',
+  notes = '',
+  isCcpCandidate = false,
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית לפי משפחת מוצרים');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const cleanName = sanitizeName(name, 120);
+  if (!cleanName) throw new ValidationError('הזן שם שלב');
+
+  const existing = await getHaccpFlowSteps(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((s) => s.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpFlowSteps.add({
+    planId: pid,
+    name: cleanName,
+    stepKind: sanitizeFlowStepKind(stepKind),
+    description: sanitizeTextField(description, 1000),
+    notes: sanitizeTextField(notes, 1000),
+    isCcpCandidate: !!isCcpCandidate,
+    sortOrder,
+  });
+  await markPlanFlowInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpFlowStep(id, patch = {}) {
+  const sid = sanitizeProductId(id);
+  if (!sid) return;
+  const row = await db.haccpFlowSteps.get(sid);
+  if (!row) throw new ValidationError('שלב לא נמצא');
+  const next = {};
+  if (patch.name !== undefined) {
+    const cleanName = sanitizeName(patch.name, 120);
+    if (!cleanName) throw new ValidationError('הזן שם שלב');
+    next.name = cleanName;
+  }
+  if (patch.stepKind !== undefined) next.stepKind = sanitizeFlowStepKind(patch.stepKind);
+  if (patch.description !== undefined) next.description = sanitizeTextField(patch.description, 1000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 1000);
+  if (patch.isCcpCandidate !== undefined) next.isCcpCandidate = !!patch.isCcpCandidate;
+  if (!Object.keys(next).length) return;
+  await db.haccpFlowSteps.update(sid, next);
+}
+
+export async function deleteHaccpFlowStep(id) {
+  const sid = sanitizeProductId(id);
+  if (!sid) return;
+  await db.haccpFlowSteps.delete(sid);
+}
+
+export async function moveHaccpFlowStep(planId, stepId, direction) {
+  const pid = sanitizeProductId(planId);
+  const sid = sanitizeProductId(stepId);
+  if (!pid || !sid) return;
+  const steps = await getHaccpFlowSteps(pid);
+  const idx = steps.findIndex((s) => s.id === sid);
+  if (idx < 0) return;
+  const swapWith = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapWith < 0 || swapWith >= steps.length) return;
+
+  const a = steps[idx];
+  const b = steps[swapWith];
+  await db.transaction('rw', db.haccpFlowSteps, async () => {
+    await db.haccpFlowSteps.update(a.id, { sortOrder: b.sortOrder ?? swapWith + 1 });
+    await db.haccpFlowSteps.update(b.id, { sortOrder: a.sortOrder ?? idx + 1 });
+  });
+}
+
+/** מציב רשימת שלבים לפי סדר מזהים */
+export async function reorderHaccpFlowSteps(planId, orderedIds) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return;
+  const ids = Array.isArray(orderedIds)
+    ? orderedIds.map((x) => sanitizeProductId(x)).filter(Boolean)
+    : [];
+  await db.transaction('rw', db.haccpFlowSteps, async () => {
+    for (let i = 0; i < ids.length; i += 1) {
+      await db.haccpFlowSteps.update(ids[i], { sortOrder: i + 1 });
+    }
+  });
+}
+
+/** זורע תרשים ברירת מחדל למאפייה אם אין שלבים */
+export async function seedDefaultHaccpFlowSteps(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const existing = await getHaccpFlowSteps(pid);
+  if (existing.length) throw new ValidationError('כבר יש שלבים בתרשים — מחק או ערוך אותם');
+
+  await db.transaction('rw', db.haccpFlowSteps, db.haccpPlans, async () => {
+    for (let i = 0; i < DEFAULT_HACCP_FLOW_STEPS.length; i += 1) {
+      const step = DEFAULT_HACCP_FLOW_STEPS[i];
+      await db.haccpFlowSteps.add({
+        planId: pid,
+        name: step.name,
+        stepKind: step.stepKind,
+        description: '',
+        notes: '',
+        isCcpCandidate: false,
+        sortOrder: i + 1,
+      });
+    }
+    await markPlanFlowInProgress(plan);
+  });
+  return DEFAULT_HACCP_FLOW_STEPS.length;
+}
+
+/**
+ * תזרימי ייצור רלוונטיים למשפחת התכנית (קבוצה + קטגוריות בתוכה).
+ * משמש לייבוא שמות שלבים לתרשים HACCP — העתקה, לא קישור חי.
+ */
+export async function listProductionFlowsForHaccpPlan(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan?.categoryGroupId) return [];
+  const gid = Number(plan.categoryGroupId);
+  const categories = await db.categories.where('groupId').equals(gid).toArray();
+  const catIds = new Set(categories.map((c) => c.id));
+  const flows = await db.flows.toArray();
+  const relevant = flows.filter((f) =>
+    Number(f.categoryGroupId) === gid || catIds.has(Number(f.categoryId)));
+  const steps = await db.flowSteps.toArray();
+  const byFlow = new Map();
+  for (const s of steps) {
+    if (!s.flowId) continue;
+    if (!byFlow.has(s.flowId)) byFlow.set(s.flowId, []);
+    byFlow.get(s.flowId).push(s);
+  }
+  return relevant
+    .map((f) => {
+      const flowSteps = (byFlow.get(f.id) || [])
+        .filter((s) => !s.tracksProduction)
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+      return {
+        id: f.id,
+        name: f.name || 'תזרים',
+        stepCount: flowSteps.length,
+        stepNames: flowSteps.map((s) => s.name).filter(Boolean),
+      };
+    })
+    .filter((f) => f.stepCount > 0)
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+/** מייבא שלבים מתזרים ייצור קיים (העתקה לתרשים HACCP) */
+export async function importHaccpFlowFromProduction(planId, productionFlowId, { replace = false } = {}) {
+  const pid = sanitizeProductId(planId);
+  const fid = sanitizeProductId(productionFlowId);
+  if (!pid || !fid) throw new ValidationError('בחר תכנית ותזרים');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const flow = await db.flows.get(fid);
+  if (!flow) throw new ValidationError('תזרים ייצור לא נמצא');
+
+  const rawSteps = await db.flowSteps.where('flowId').equals(fid).toArray();
+  const steps = rawSteps
+    .filter((s) => !s.tracksProduction)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  if (!steps.length) throw new ValidationError('לתזרים אין שלבים לייבוא');
+
+  await db.transaction('rw', db.haccpFlowSteps, db.haccpPlans, async () => {
+    if (replace) {
+      const existing = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
+      for (const s of existing) await db.haccpFlowSteps.delete(s.id);
+    }
+    const current = replace ? [] : await db.haccpFlowSteps.where('planId').equals(pid).toArray();
+    let sortOrder = current.length
+      ? Math.max(...current.map((s) => s.sortOrder ?? 0))
+      : 0;
+    for (const s of steps) {
+      const name = sanitizeName(s.name, 120);
+      if (!name) continue;
+      sortOrder += 1;
+      await db.haccpFlowSteps.add({
+        planId: pid,
+        name,
+        stepKind: guessFlowStepKind(name),
+        description: '',
+        notes: '',
+        isCcpCandidate: false,
+        sortOrder,
+      });
+    }
+    await markPlanFlowInProgress(plan);
+  });
+  return steps.length;
 }

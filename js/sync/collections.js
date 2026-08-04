@@ -66,6 +66,7 @@ export const COLLECTION_TABLE = {
   haccpPlans: 'sync_haccp_plans',
   haccpProductDescriptions: 'sync_haccp_product_descriptions',
   haccpIntendedUses: 'sync_haccp_intended_uses',
+  haccpFlowSteps: 'sync_haccp_flow_steps',
   settings: 'sync_app_settings',
 };
 
@@ -159,6 +160,7 @@ export const COLLECTION_FKS = {
   haccpPlans: { categoryGroupId: 'categoryGroups' },
   haccpProductDescriptions: { planId: 'haccpPlans' },
   haccpIntendedUses: { planId: 'haccpPlans' },
+  haccpFlowSteps: { planId: 'haccpPlans' },
 };
 
 /**
@@ -254,6 +256,7 @@ export const SYNC_ORDER = [
   'haccpPlans',
   'haccpProductDescriptions',
   'haccpIntendedUses',
+  'haccpFlowSteps',
   'settings',
 ];
 
@@ -455,6 +458,10 @@ export function rowFingerprint(collection, row) {
       return row.planId != null ? `${collection}|${row.planId}` : '';
     case 'haccpIntendedUses':
       return row.planId != null ? `${collection}|${row.planId}` : '';
+    case 'haccpFlowSteps':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${n}|${row.sortOrder ?? ''}`
+        : '';
     default:
       return n ? `${collection}|${n}` : '';
   }

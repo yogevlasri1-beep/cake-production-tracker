@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=397';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=397';
-import { defaultColorForIndex } from './chart.js?v=397';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=397';
+} from './validators.js?v=398';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=398';
+import { defaultColorForIndex } from './chart.js?v=398';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=398';
 
 export { ValidationError };
 
@@ -3263,6 +3263,10 @@ db.version(69).stores({
   haccpIntendedUses: '++id, planId',
 });
 
+db.version(70).stores({
+  haccpFlowSteps: '++id, planId, sortOrder',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3765,7 +3769,7 @@ export async function resetAllData() {
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents',
     'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
     'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
-    'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses',
+    'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps',
   ), async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
@@ -3804,6 +3808,7 @@ export async function resetAllData() {
     await db.departmentCleaningTasks?.clear?.();
     await db.departmentCleaningLists?.clear?.();
     await db.haccpTeamMembers?.clear?.();
+    await db.haccpFlowSteps?.clear?.();
     await db.haccpIntendedUses?.clear?.();
     await db.haccpProductDescriptions?.clear?.();
     await db.haccpPlans?.clear?.();
@@ -3933,6 +3938,7 @@ export async function exportAllData() {
     haccpPlans,
     haccpProductDescriptions,
     haccpIntendedUses,
+    haccpFlowSteps,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -3997,6 +4003,7 @@ export async function exportAllData() {
     db.haccpPlans?.toArray?.() ?? Promise.resolve([]),
     db.haccpProductDescriptions?.toArray?.() ?? Promise.resolve([]),
     db.haccpIntendedUses?.toArray?.() ?? Promise.resolve([]),
+    db.haccpFlowSteps?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4061,6 +4068,7 @@ export async function exportAllData() {
     haccpPlans,
     haccpProductDescriptions,
     haccpIntendedUses,
+    haccpFlowSteps,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4140,6 +4148,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.haccpPlans)) payload.haccpPlans = [];
   if (!Array.isArray(payload.haccpProductDescriptions)) payload.haccpProductDescriptions = [];
   if (!Array.isArray(payload.haccpIntendedUses)) payload.haccpIntendedUses = [];
+  if (!Array.isArray(payload.haccpFlowSteps)) payload.haccpFlowSteps = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4177,7 +4186,7 @@ export async function importAllData(payload) {
       'productFlowLinks',
       'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
       'purchaseCategories', 'purchaseItems',
-      'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses',
+      'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -4194,6 +4203,7 @@ export async function importAllData(payload) {
       await db.purchaseItems?.clear?.();
       await db.purchaseCategories?.clear?.();
       await db.haccpTeamMembers?.clear?.();
+      await db.haccpFlowSteps?.clear?.();
       await db.haccpIntendedUses?.clear?.();
       await db.haccpProductDescriptions?.clear?.();
       await db.haccpPlans?.clear?.();
@@ -4367,6 +4377,9 @@ export async function importAllData(payload) {
       }
       if (payload.haccpIntendedUses?.length) {
         await db.haccpIntendedUses.bulkPut(payload.haccpIntendedUses);
+      }
+      if (payload.haccpFlowSteps?.length) {
+        await db.haccpFlowSteps.bulkPut(payload.haccpFlowSteps);
       }
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);

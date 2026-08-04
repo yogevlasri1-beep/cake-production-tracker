@@ -11390,3 +11390,117 @@ body.supplier-drag-active {
     grid-template-columns: 1fr;
   }
 }
+
+.haccp-flow-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.haccp-flow-import {
+  flex: 1;
+  min-width: 220px;
+}
+
+.haccp-flow-import select {
+  flex: 1;
+  min-width: 160px;
+}
+
+.haccp-flow-diagram {
+  list-style: none;
+  margin: 0 0 20px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.haccp-flow-node {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border, #cbd5e1) 80%, transparent);
+  position: relative;
+}
+
+.haccp-flow-node:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: 19px;
+  top: 48px;
+  bottom: -2px;
+  width: 2px;
+  background: color-mix(in srgb, var(--accent, #0f766e) 35%, transparent);
+}
+
+.haccp-flow-node-index {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent, #0f766e) 18%, white);
+  color: var(--accent, #0f766e);
+  border: 2px solid color-mix(in srgb, var(--accent, #0f766e) 45%, white);
+  z-index: 1;
+}
+
+.haccp-flow-node.is-ccp .haccp-flow-node-index {
+  background: color-mix(in srgb, #b45309 20%, white);
+  color: #9a3412;
+  border-color: color-mix(in srgb, #b45309 50%, white);
+}
+
+.haccp-flow-node-title {
+  font-weight: 650;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.haccp-flow-node-kind {
+  font-size: 0.85rem;
+  color: var(--text-muted, #64748b);
+  margin-top: 2px;
+}
+
+.haccp-flow-node-desc {
+  font-size: 0.9rem;
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.haccp-flow-node-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.haccp-flow-add {
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
+@media (max-width: 720px) {
+  .haccp-flow-node {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .haccp-flow-node-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .haccp-flow-node:not(:last-child)::after {
+    right: 17px;
+  }
+}
