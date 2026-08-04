@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=405';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=405';
-import { defaultColorForIndex } from './chart.js?v=405';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=405';
+} from './validators.js?v=406';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=406';
+import { defaultColorForIndex } from './chart.js?v=406';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=406';
 
 export { ValidationError };
 
@@ -3295,6 +3295,10 @@ db.version(77).stores({
   haccpVerificationProcs: '++id, planId, ccpId, sortOrder',
 });
 
+db.version(78).stores({
+  haccpDocuments: '++id, planId, docKind, sortOrder',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3797,7 +3801,7 @@ export async function resetAllData() {
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents',
     'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
     'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
-    'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs',
+    'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments',
   ), async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
@@ -3836,6 +3840,7 @@ export async function resetAllData() {
     await db.departmentCleaningTasks?.clear?.();
     await db.departmentCleaningLists?.clear?.();
     await db.haccpTeamMembers?.clear?.();
+    await db.haccpDocuments?.clear?.();
     await db.haccpVerificationProcs?.clear?.();
     await db.haccpCorrectiveActions?.clear?.();
     await db.haccpMonitoring?.clear?.();
@@ -3981,6 +3986,7 @@ export async function exportAllData() {
     haccpMonitoring,
     haccpCorrectiveActions,
     haccpVerificationProcs,
+    haccpDocuments,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -4053,6 +4059,7 @@ export async function exportAllData() {
     db.haccpMonitoring?.toArray?.() ?? Promise.resolve([]),
     db.haccpCorrectiveActions?.toArray?.() ?? Promise.resolve([]),
     db.haccpVerificationProcs?.toArray?.() ?? Promise.resolve([]),
+    db.haccpDocuments?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4125,6 +4132,7 @@ export async function exportAllData() {
     haccpMonitoring,
     haccpCorrectiveActions,
     haccpVerificationProcs,
+    haccpDocuments,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4212,6 +4220,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.haccpMonitoring)) payload.haccpMonitoring = [];
   if (!Array.isArray(payload.haccpCorrectiveActions)) payload.haccpCorrectiveActions = [];
   if (!Array.isArray(payload.haccpVerificationProcs)) payload.haccpVerificationProcs = [];
+  if (!Array.isArray(payload.haccpDocuments)) payload.haccpDocuments = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4249,7 +4258,7 @@ export async function importAllData(payload) {
       'productFlowLinks',
       'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
       'purchaseCategories', 'purchaseItems',
-      'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs',
+      'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -4266,6 +4275,7 @@ export async function importAllData(payload) {
       await db.purchaseItems?.clear?.();
       await db.purchaseCategories?.clear?.();
       await db.haccpTeamMembers?.clear?.();
+      await db.haccpDocuments?.clear?.();
       await db.haccpVerificationProcs?.clear?.();
       await db.haccpCorrectiveActions?.clear?.();
       await db.haccpMonitoring?.clear?.();
@@ -4471,6 +4481,9 @@ export async function importAllData(payload) {
       }
       if (payload.haccpVerificationProcs?.length) {
         await db.haccpVerificationProcs.bulkPut(payload.haccpVerificationProcs);
+      }
+      if (payload.haccpDocuments?.length) {
+        await db.haccpDocuments.bulkPut(payload.haccpDocuments);
       }
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);

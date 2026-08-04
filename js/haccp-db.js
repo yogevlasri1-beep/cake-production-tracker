@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=405';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=405';
+import { db, ValidationError } from './db.js?v=406';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=406';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -16,7 +16,7 @@ export const HACCP_STEPS = [
   { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'available' },
   { id: 'corrective', label: 'פעולות מתקנות', chapter: '5.5', status: 'available' },
   { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'available' },
-  { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'soon' },
+  { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'available' },
 ];
 
 /** נושאי תכניות קדם מהמדריך — לתצוגה בלבד בשלב זה */
@@ -254,11 +254,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpMonitoring,
     db.haccpCorrectiveActions,
     db.haccpVerificationProcs,
+    db.haccpDocuments,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const docs = await db.haccpDocuments.where('planId').equals(pid).toArray();
+      for (const d of docs) await db.haccpDocuments.delete(d.id);
       const verProcs = await db.haccpVerificationProcs.where('planId').equals(pid).toArray();
       for (const v of verProcs) await db.haccpVerificationProcs.delete(v.id);
       const corrective = await db.haccpCorrectiveActions.where('planId').equals(pid).toArray();
@@ -2402,6 +2405,225 @@ export async function seedSuggestedVerificationProcs(planId) {
       responsibleRole: 'quality',
       records: 'טופס אימות CCP',
     });
+    added += 1;
+  }
+  return added;
+}
+
+/** סוגי מסמכים / רשומות לפי עקרון 7 — תיעוד ורישום */
+export const HACCP_DOC_KINDS = [
+  { id: 'plan', label: 'מסמך תכנית HACCP' },
+  { id: 'monitoring', label: 'טופס / רשומת ניטור CCP' },
+  { id: 'corrective', label: 'טופס פעולה מתקנת' },
+  { id: 'verification', label: 'טופס / דוח אימות' },
+  { id: 'calibration', label: 'יומן כיול ציוד מדידה' },
+  { id: 'training', label: 'הדרכות עובדים' },
+  { id: 'prp', label: 'רשומות תכניות קדם (PRP)' },
+  { id: 'other', label: 'אחר' },
+];
+
+export const HACCP_DOC_FORMATS = [
+  { id: 'paper', label: 'נייר' },
+  { id: 'digital', label: 'דיגיטלי' },
+  { id: 'both', label: 'נייר + דיגיטלי' },
+];
+
+export function haccpDocKindLabel(id) {
+  return HACCP_DOC_KINDS.find((k) => k.id === id)?.label || id || '—';
+}
+
+export function haccpDocFormatLabel(id) {
+  return HACCP_DOC_FORMATS.find((f) => f.id === id)?.label || id || '—';
+}
+
+function sanitizeDocKind(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_DOC_KINDS.some((k) => k.id === id) ? id : 'other';
+}
+
+function sanitizeDocFormat(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_DOC_FORMATS.some((f) => f.id === id) ? id : 'both';
+}
+
+function sanitizeRetentionYears(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return 2;
+  return Math.min(30, Math.round(n));
+}
+
+async function markPlanDocumentationInProgress(plan) {
+  if (!plan?.id) return;
+  const early = [
+    'team', 'product', 'intended_use', 'flow', 'flow_verify', 'hazard', 'ccp',
+    'limits', 'monitoring', 'corrective', 'verification', 'overview',
+  ];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'documentation', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpDocuments(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpDocuments.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpDocument(planId, {
+  docKind = 'monitoring',
+  title = '',
+  description = '',
+  retentionYears = 2,
+  storageLocation = '',
+  format = 'both',
+  responsibleRole = 'quality',
+  responsibleText = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const cleanTitle = sanitizeTextField(title, 200);
+  if (!cleanTitle) throw new ValidationError('הגדר שם למסמך / טופס');
+
+  const existing = await getHaccpDocuments(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((d) => d.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpDocuments.add({
+    planId: pid,
+    docKind: sanitizeDocKind(docKind),
+    title: cleanTitle,
+    description: sanitizeTextField(description, 2000),
+    retentionYears: sanitizeRetentionYears(retentionYears),
+    storageLocation: sanitizeTextField(storageLocation, 500),
+    format: sanitizeDocFormat(format),
+    responsibleRole: sanitizeRole(responsibleRole),
+    responsibleText: sanitizeTextField(responsibleText, 200),
+    notes: sanitizeTextField(notes, 2000),
+    sortOrder,
+  });
+  await markPlanDocumentationInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpDocument(id, patch = {}) {
+  const did = sanitizeProductId(id);
+  if (!did) return;
+  const row = await db.haccpDocuments.get(did);
+  if (!row) throw new ValidationError('מסמך לא נמצא');
+  const next = {};
+
+  if (patch.docKind !== undefined) next.docKind = sanitizeDocKind(patch.docKind);
+  if (patch.title !== undefined) {
+    const clean = sanitizeTextField(patch.title, 200);
+    if (!clean) throw new ValidationError('הגדר שם למסמך / טופס');
+    next.title = clean;
+  }
+  if (patch.description !== undefined) next.description = sanitizeTextField(patch.description, 2000);
+  if (patch.retentionYears !== undefined) next.retentionYears = sanitizeRetentionYears(patch.retentionYears);
+  if (patch.storageLocation !== undefined) {
+    next.storageLocation = sanitizeTextField(patch.storageLocation, 500);
+  }
+  if (patch.format !== undefined) next.format = sanitizeDocFormat(patch.format);
+  if (patch.responsibleRole !== undefined) next.responsibleRole = sanitizeRole(patch.responsibleRole);
+  if (patch.responsibleText !== undefined) {
+    next.responsibleText = sanitizeTextField(patch.responsibleText, 200);
+  }
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  if (!Object.keys(next).length) return;
+  await db.haccpDocuments.update(did, next);
+}
+
+export async function deleteHaccpDocument(id) {
+  const did = sanitizeProductId(id);
+  if (!did) return;
+  await db.haccpDocuments.delete(did);
+}
+
+/** הצעת קטלוג תיעוד בסיסי לפי מדריך משהב (שמירה ≥ שנתיים) */
+export async function seedSuggestedHaccpDocuments(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const existing = await getHaccpDocuments(pid);
+  if (existing.length) throw new ValidationError('כבר קיים קטלוג תיעוד לתכנית זו');
+
+  const suggestions = [
+    {
+      docKind: 'plan',
+      title: 'תכנית HACCP מלאה (כולל צוות, מוצר, תרשים, סיכונים, CCP)',
+      description: 'מסמך התכנית המעודכן — גרסה מבוקרת',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית איכות / ענן',
+      responsibleRole: 'quality',
+    },
+    {
+      docKind: 'monitoring',
+      title: 'טופסי ניטור CCP (טמפרטורה / זמן / פרמטרים מדידים)',
+      description: 'רשומות ניטור שוטף עם תאריך, שעה, ערך וחתימה',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית ייצור / מערכת דיגיטלית',
+      responsibleRole: 'production',
+    },
+    {
+      docKind: 'corrective',
+      title: 'טופסי פעולות מתקנות וחריגות מגבול קריטי',
+      description: 'תיעוד חריגה, פעולה, גורל מוצר ואישור',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית איכות',
+      responsibleRole: 'quality',
+    },
+    {
+      docKind: 'verification',
+      title: 'רשומות אימות (תצפית / בדיקה מקבילה / סקירת תיעוד)',
+      description: 'תוצאות אימות תקופתי ואחרי חריגה',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית איכות',
+      responsibleRole: 'quality',
+    },
+    {
+      docKind: 'calibration',
+      title: 'יומן כיול מדחומים וציוד מדידה',
+      description: 'כיול / אימות תקופתי של ציוד המשמש בניטור',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית תחזוקה / איכות',
+      responsibleRole: 'engineering',
+    },
+    {
+      docKind: 'training',
+      title: 'רשומות הדרכת עובדים על נהלי HACCP',
+      description: 'נושאים, משתתפים ותאריכים',
+      retentionYears: 2,
+      format: 'digital',
+      storageLocation: 'תיקיית משאבי אנוש / איכות',
+      responsibleRole: 'quality',
+    },
+    {
+      docKind: 'prp',
+      title: 'רשומות תכניות קדם (ניקיון, מזיקים, ספקים, אלרגנים…)',
+      description: 'תיעוד PRP התומך במערכת HACCP',
+      retentionYears: 2,
+      format: 'both',
+      storageLocation: 'תיקיית איכות / תפעול',
+      responsibleRole: 'quality',
+    },
+  ];
+
+  let added = 0;
+  for (const s of suggestions) {
+    await addHaccpDocument(pid, s);
     added += 1;
   }
   return added;

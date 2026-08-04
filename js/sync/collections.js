@@ -74,6 +74,7 @@ export const COLLECTION_TABLE = {
   haccpMonitoring: 'sync_haccp_monitoring',
   haccpCorrectiveActions: 'sync_haccp_corrective_actions',
   haccpVerificationProcs: 'sync_haccp_verification_procs',
+  haccpDocuments: 'sync_haccp_documents',
   settings: 'sync_app_settings',
 };
 
@@ -175,6 +176,7 @@ export const COLLECTION_FKS = {
   haccpMonitoring: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
   haccpCorrectiveActions: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
   haccpVerificationProcs: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
+  haccpDocuments: { planId: 'haccpPlans' },
 };
 
 /**
@@ -279,6 +281,7 @@ export const SYNC_ORDER = [
   'haccpMonitoring',
   'haccpCorrectiveActions',
   'haccpVerificationProcs',
+  'haccpDocuments',
   'settings',
 ];
 
@@ -511,6 +514,10 @@ export function rowFingerprint(collection, row) {
     case 'haccpVerificationProcs':
       return row.planId != null
         ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.method ?? ''}|${normName(row.activity)}|${row.frequency ?? ''}`
+        : '';
+    case 'haccpDocuments':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.docKind ?? ''}|${normName(row.title)}|${row.retentionYears ?? ''}`
         : '';
     default:
       return n ? `${collection}|${n}` : '';

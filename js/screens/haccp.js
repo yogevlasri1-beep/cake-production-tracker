@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=405';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=405';
-import { openModal, closeModal } from '../modal.js?v=405';
+import { getCategoryGroups } from '../db.js?v=406';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=406';
+import { openModal, closeModal } from '../modal.js?v=406';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -97,7 +97,16 @@ import {
   HACCP_VERIFICATION_FREQUENCIES,
   haccpVerificationMethodLabel,
   haccpVerificationFrequencyLabel,
-} from '../haccp-db.js?v=405';
+  getHaccpDocuments,
+  addHaccpDocument,
+  updateHaccpDocument,
+  deleteHaccpDocument,
+  seedSuggestedHaccpDocuments,
+  HACCP_DOC_KINDS,
+  HACCP_DOC_FORMATS,
+  haccpDocKindLabel,
+  haccpDocFormatLabel,
+} from '../haccp-db.js?v=406';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -151,6 +160,7 @@ export async function renderHaccp(container) {
   let monitoring = [];
   let correctiveActions = [];
   let verificationProcs = [];
+  let documents = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -216,6 +226,9 @@ export async function renderHaccp(container) {
       getHaccpVerificationProcs(activePlan.id),
     ]);
   }
+  if (step.id === 'documentation' && activePlan) {
+    documents = await getHaccpDocuments(activePlan.id);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -241,6 +254,8 @@ export async function renderHaccp(container) {
     body = renderCorrectiveSection(activePlan, flowSteps, ccps, criticalLimits, correctiveActions, groupMap);
   } else if (step.id === 'verification') {
     body = renderVerificationSection(activePlan, flowSteps, ccps, verificationProcs, groupMap);
+  } else if (step.id === 'documentation') {
+    body = renderDocumentationSection(activePlan, documents, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -278,7 +293,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs, documents,
   });
 }
 
@@ -338,12 +353,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: עד <strong>5.6 אימות מערכת</strong></li>
+        <li>השלבים הפעילים: עד <strong>5.7 תיעוד ורישום</strong> (כל עקרונות הליבה)</li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי פעולות מתקנות — הגדר אימות (תצפית, בדיקה מקבילה, תיעוד, כיול).</p>
+      <p class="haccp-hint">המלצה: הגדר קטלוג מסמכים ורשומות — כולל שמירה לפחות שנתיים.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="corrective">פעולות מתקנות</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="verification">אימות מערכת</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="verification">אימות מערכת</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="documentation">תיעוד ורישום</button>
       </div>
     </div>`;
 }
@@ -366,7 +381,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי אימות מערכת — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה יורחב בהמשך. עקרונות הליבה (5.1–5.7) כבר זמינים במפת הדרכים.</p>
     </div>`;
 }
 
@@ -1772,6 +1787,116 @@ function renderVerificationSection(activePlan, flowSteps, confirmedCcps, procs, 
     </div>`;
 }
 
+function docKindOptions(selected = 'monitoring') {
+  return HACCP_DOC_KINDS.map((k) =>
+    `<option value="${k.id}" ${selected === k.id ? 'selected' : ''}>${escapeHtml(k.label)}</option>`
+  ).join('');
+}
+
+function docFormatOptions(selected = 'both') {
+  return HACCP_DOC_FORMATS.map((f) =>
+    `<option value="${f.id}" ${selected === f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`
+  ).join('');
+}
+
+function renderDocumentationSection(activePlan, documents, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.7 · תיעוד ורישום</div>
+        <p class="haccp-hint">בחר תכנית. כאן מגדירים אילו מסמכים ורשומות נשמרים, איפה, ובמשך כמה זמן.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const rows = documents.length
+    ? documents.map((d) => {
+      const who = d.responsibleText
+        ? `${haccpRoleLabel(d.responsibleRole)} · ${d.responsibleText}`
+        : haccpRoleLabel(d.responsibleRole);
+      return `
+        <div class="haccp-doc-row">
+          <div>
+            <div class="haccp-ccp-title">${escapeHtml(d.title)}</div>
+            <div class="haccp-hazard-meta">
+              ${escapeHtml(haccpDocKindLabel(d.docKind))}
+              · ${escapeHtml(haccpDocFormatLabel(d.format))}
+              · שמירה: ${escapeHtml(String(d.retentionYears ?? 2))} שנים
+              · ${escapeHtml(who)}
+            </div>
+            ${d.storageLocation ? `<div class="haccp-hazard-meta">מיקום: ${escapeHtml(d.storageLocation)}</div>` : ''}
+            ${d.description ? `<div class="haccp-hazard-meta">${escapeHtml(d.description)}</div>` : ''}
+          </div>
+          <div class="haccp-hazard-actions">
+            <button type="button" class="btn btn-secondary btn-sm haccp-doc-edit" data-id="${d.id}">ערוך</button>
+            <button type="button" class="btn btn-danger btn-sm haccp-doc-del" data-id="${d.id}">מחק</button>
+          </div>
+        </div>`;
+    }).join('')
+    : `<p class="haccp-hint">עדיין אין קטלוג תיעוד. אפשר להוסיף ידנית או להשתמש בהצעות מהמדריך.</p>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">5.7 · תיעוד ורישום — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: יש להגדיר בקרת תיעוד ושמירת רשומות לניטור, פעולות מתקנות ואימות —
+        כולל ערכים, זמנים, כיולים וחתימות. שמירה מומלצת: לפחות <strong>שנתיים</strong>.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products"><strong>${documents.length}</strong> מסמכים / רשומות בקטלוג</p>
+      <div class="haccp-inline-row" style="margin-bottom:12px">
+        <button type="button" class="btn btn-secondary" id="haccp-doc-seed">הצע קטלוג תיעוד</button>
+      </div>
+
+      <div class="haccp-doc-list">${rows}</div>
+
+      <form id="haccp-doc-form" class="haccp-product-form haccp-doc-form">
+        <div class="card-title" style="font-size:1rem">הוספת מסמך / רשומה</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-doc-kind">סוג</label>
+            <select id="haccp-doc-kind">${docKindOptions('monitoring')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-doc-format">פורמט</label>
+            <select id="haccp-doc-format">${docFormatOptions('both')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-doc-title">שם המסמך / הטופס</label>
+          <input type="text" id="haccp-doc-title" maxlength="200" placeholder="למשל: טופס ניטור טמפרטורת ליבה">
+        </div>
+        <div class="form-group">
+          <label for="haccp-doc-desc">תיאור</label>
+          <textarea id="haccp-doc-desc" rows="2" maxlength="2000" placeholder="מה נרשם ובאיזה שלב"></textarea>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-doc-retention">שנות שמירה</label>
+            <input type="number" id="haccp-doc-retention" min="1" max="30" value="2">
+          </div>
+          <div class="form-group">
+            <label for="haccp-doc-role">אחראי</label>
+            <select id="haccp-doc-role">${monitorRoleOptions('quality')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-doc-location">מיקום אחסון</label>
+          <input type="text" id="haccp-doc-location" maxlength="500" placeholder="תיקיית איכות / מערכת דיגיטלית…">
+        </div>
+        <div class="form-group">
+          <label for="haccp-doc-who">שם / פירוט אחראי</label>
+          <input type="text" id="haccp-doc-who" maxlength="200" placeholder="אופציונלי">
+        </div>
+        <div class="form-group">
+          <label for="haccp-doc-notes">הערות</label>
+          <textarea id="haccp-doc-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">הוסף למסמכים</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -3137,6 +3262,126 @@ function bindHaccpEvents(container, ctx) {
             responsibleText: document.getElementById('edit-verify-who').value,
             records: document.getElementById('edit-verify-records').value,
             notes: document.getElementById('edit-verify-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  document.getElementById('haccp-doc-seed')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    try {
+      const n = await seedSuggestedHaccpDocuments(ctx.activePlan.id);
+      showToast(`נוספו ${n} מסמכים ✓`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-doc-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpDocument(ctx.activePlan.id, {
+        docKind: document.getElementById('haccp-doc-kind')?.value,
+        title: document.getElementById('haccp-doc-title')?.value,
+        description: document.getElementById('haccp-doc-desc')?.value,
+        retentionYears: document.getElementById('haccp-doc-retention')?.value,
+        storageLocation: document.getElementById('haccp-doc-location')?.value,
+        format: document.getElementById('haccp-doc-format')?.value,
+        responsibleRole: document.getElementById('haccp-doc-role')?.value,
+        responsibleText: document.getElementById('haccp-doc-who')?.value,
+        notes: document.getElementById('haccp-doc-notes')?.value,
+      });
+      showToast('מסמך נוסף ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-doc-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק מסמך מהקטלוג?')) return;
+      try {
+        await deleteHaccpDocument(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-doc-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.documents?.find((d) => String(d.id) === String(btn.dataset.id));
+      if (!row) return;
+      openModal({
+        title: 'עריכת מסמך / רשומה',
+        bodyHTML: `
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-doc-kind">סוג</label>
+              <select id="edit-doc-kind">${docKindOptions(row.docKind || 'other')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-doc-format">פורמט</label>
+              <select id="edit-doc-format">${docFormatOptions(row.format || 'both')}</select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-doc-title">שם</label>
+            <input type="text" id="edit-doc-title" maxlength="200" value="${escapeHtml(row.title || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-doc-desc">תיאור</label>
+            <textarea id="edit-doc-desc" rows="2" maxlength="2000">${escapeHtml(row.description || '')}</textarea>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-doc-retention">שנות שמירה</label>
+              <input type="number" id="edit-doc-retention" min="1" max="30" value="${escapeHtml(String(row.retentionYears ?? 2))}">
+            </div>
+            <div class="form-group">
+              <label for="edit-doc-role">אחראי</label>
+              <select id="edit-doc-role">${monitorRoleOptions(row.responsibleRole || 'quality')}</select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-doc-location">מיקום אחסון</label>
+            <input type="text" id="edit-doc-location" maxlength="500" value="${escapeHtml(row.storageLocation || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-doc-who">שם / פירוט</label>
+            <input type="text" id="edit-doc-who" maxlength="200" value="${escapeHtml(row.responsibleText || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-doc-notes">הערות</label>
+            <textarea id="edit-doc-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-doc">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-edit-doc')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpDocument(row.id, {
+            docKind: document.getElementById('edit-doc-kind').value,
+            title: document.getElementById('edit-doc-title').value,
+            description: document.getElementById('edit-doc-desc').value,
+            retentionYears: document.getElementById('edit-doc-retention').value,
+            storageLocation: document.getElementById('edit-doc-location').value,
+            format: document.getElementById('edit-doc-format').value,
+            responsibleRole: document.getElementById('edit-doc-role').value,
+            responsibleText: document.getElementById('edit-doc-who').value,
+            notes: document.getElementById('edit-doc-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');
