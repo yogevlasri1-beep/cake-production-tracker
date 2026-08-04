@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=398';
-import { escapeHtml, showToast } from '../utils.js?v=398';
-import { openModal, closeModal } from '../modal.js?v=398';
+import { getCategoryGroups } from '../db.js?v=399';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=399';
+import { openModal, closeModal } from '../modal.js?v=399';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -12,8 +12,10 @@ import {
   HACCP_USE_CHANNELS,
   HACCP_SENSITIVE_GROUPS,
   HACCP_FLOW_STEP_KINDS,
+  HACCP_FLOW_MATCH_RESULTS,
   haccpRoleLabel,
   haccpFlowStepKindLabel,
+  haccpFlowMatchLabel,
   getHaccpTeamMembers,
   addHaccpTeamMember,
   updateHaccpTeamMember,
@@ -38,7 +40,10 @@ import {
   seedDefaultHaccpFlowSteps,
   listProductionFlowsForHaccpPlan,
   importHaccpFlowFromProduction,
-} from '../haccp-db.js?v=398';
+  getHaccpFlowVerifications,
+  addHaccpFlowVerification,
+  deleteHaccpFlowVerification,
+} from '../haccp-db.js?v=399';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -84,6 +89,7 @@ export async function renderHaccp(container) {
   let intendedUse = null;
   let flowSteps = [];
   let productionFlows = [];
+  let flowVerifications = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -99,6 +105,12 @@ export async function renderHaccp(container) {
       listProductionFlowsForHaccpPlan(activePlan.id),
     ]);
   }
+  if (step.id === 'flow_verify' && activePlan) {
+    [flowSteps, flowVerifications] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getHaccpFlowVerifications(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -110,6 +122,8 @@ export async function renderHaccp(container) {
     body = renderIntendedUseSection(activePlan, intendedUse, groupMap);
   } else if (step.id === 'flow') {
     body = renderFlowSection(activePlan, flowSteps, productionFlows, groupMap);
+  } else if (step.id === 'flow_verify') {
+    body = renderFlowVerifySection(activePlan, flowSteps, flowVerifications, members, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -146,7 +160,9 @@ export async function renderHaccp(container) {
       </div>
     </div>`;
 
-  bindHaccpEvents(container, { members, plans, groups, activePlan, productDesc, flowSteps, productionFlows });
+  bindHaccpEvents(container, {
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications,
+  });
 }
 
 function renderPlanPicker(plans, groups, activePlan, groupMap) {
@@ -205,14 +221,13 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: <strong>3.1–3.4</strong> (צוות, תיאור מוצר, שימוש מיועד, תרשים זרימה)</li>
+        <li>השלבים הפעילים: <strong>3.1–3.5</strong> (עד אימות תרשים בשטח)</li>
       </ul>
-      <p class="haccp-hint">המלצה: הרכב צוות → תכנית למשפחה → תיאור מוצר → שימוש מיועד → תרשים זרימה.</p>
+      <p class="haccp-hint">המלצה: צוות → תיאור מוצר → שימוש מיועד → תרשים זרימה → אימות בשטח.</p>
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-primary" data-haccp-step="team">צוות HACCP</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="product">תיאור מוצר</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="intended_use">שימוש מיועד</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="flow">תרשים זרימה</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="flow_verify">אימות בשטח</button>
       </div>
     </div>`;
 }
@@ -235,7 +250,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי תרשים הזרימה — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי אימות התרשים בשטח — לפי סדר המדריך (עקרונות 5.1–5.7).</p>
     </div>`;
 }
 
@@ -539,6 +554,170 @@ function renderFlowSection(activePlan, flowSteps, productionFlows, groupMap) {
         </label>
         <button type="button" class="btn btn-primary" id="haccp-flow-add">הוסף שלב</button>
       </div>
+    </div>`;
+}
+
+function verifierNames(v, memberMap) {
+  const fromMembers = (v.verifierMemberIds || [])
+    .map((id) => memberMap.get(Number(id)) || memberMap.get(String(id)))
+    .filter(Boolean)
+    .map((m) => m.name);
+  const extras = String(v.verifiedByText || '').trim();
+  const parts = [...fromMembers];
+  if (extras) parts.push(extras);
+  return parts.length ? parts.join(', ') : '—';
+}
+
+function renderFlowVerifySection(activePlan, flowSteps, verifications, members, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">3.5 · אימות תרשים בשטח</div>
+        <p class="haccp-hint">בחר או צור תכנית למעלה, ואז אמת את תרשים הזרימה מול התהליך בפועל.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const memberMap = new Map(members.map((m) => [m.id, m]));
+  const activeMembers = members.filter((m) => m.active !== false);
+  const latest = verifications[0] || null;
+  const matchOptions = HACCP_FLOW_MATCH_RESULTS.map((r) =>
+    `<option value="${r.id}">${escapeHtml(r.label)}</option>`).join('');
+
+  const memberChecks = activeMembers.length
+    ? renderCheckboxGrid(
+      activeMembers.map((m) => ({
+        id: String(m.id),
+        label: `${m.name}${m.isLeader ? ' (מוביל)' : ''}`,
+      })),
+      [],
+      'haccp-verifier',
+    )
+    : `<p class="haccp-hint">אין חברי צוות פעילים — הוסף ב־3.1 או הזן שמות ידנית.</p>`;
+
+  const flowPreview = flowSteps.length
+    ? `<p class="haccp-family-products"><strong>תרשים נוכחי (${flowSteps.length}):</strong>
+        ${flowSteps.map((s) => escapeHtml(s.name)).join(' → ')}</p>`
+    : `<p class="haccp-hint">אין שלבים בתרשים.
+        <button type="button" class="btn btn-secondary btn-sm" data-haccp-step="flow">עבור ל־3.4</button></p>`;
+
+  const latestCard = latest
+    ? `
+      <div class="haccp-verify-latest">
+        <div class="haccp-verify-latest-title">אימות אחרון</div>
+        <div><strong>${escapeHtml(formatDateHebrew(latest.verifiedAt) || latest.verifiedAt)}</strong>
+          · ${escapeHtml(haccpFlowMatchLabel(latest.matchResult))}</div>
+        <div class="haccp-verify-meta">מאמתים: ${escapeHtml(verifierNames(latest, memberMap))}</div>
+        <div class="haccp-verify-flags">
+          ${latest.walkedOnSite ? '<span class="badge">סיור בשטח</span>' : ''}
+          ${latest.packagingIncluded ? '<span class="badge">כולל אריזות</span>' : ''}
+          ${latest.allStepsPresent ? '<span class="badge">כל השלבים</span>' : ''}
+          ${latest.noUnauthorizedChanges ? '<span class="badge">ללא שינויים לא מתועדים</span>' : ''}
+        </div>
+        ${latest.discrepancies ? `<div class="haccp-verify-note"><strong>פערים:</strong> ${escapeHtml(latest.discrepancies)}</div>` : ''}
+        ${latest.correctionsMade ? `<div class="haccp-verify-note"><strong>תיקונים:</strong> ${escapeHtml(latest.correctionsMade)}</div>` : ''}
+      </div>`
+    : `<p class="haccp-hint">עדיין לא נרשם אימות בשטח לתכנית זו.</p>`;
+
+  const history = verifications.length > 1
+    ? `
+      <div class="haccp-verify-history">
+        <div class="card-title" style="font-size:1rem">היסטוריית אימותים</div>
+        ${verifications.slice(1).map((v) => `
+          <div class="haccp-verify-history-row">
+            <div>
+              <strong>${escapeHtml(formatDateHebrew(v.verifiedAt) || v.verifiedAt)}</strong>
+              · ${escapeHtml(haccpFlowMatchLabel(v.matchResult))}
+              <div class="haccp-verify-meta">${escapeHtml(verifierNames(v, memberMap))}
+                · ${v.stepCountSnapshot || 0} שלבים</div>
+            </div>
+            <button type="button" class="btn btn-danger btn-sm haccp-verify-del" data-id="${v.id}">מחק</button>
+          </div>`).join('')}
+      </div>`
+    : '';
+
+  const deleteLatest = latest
+    ? `<button type="button" class="btn btn-danger btn-sm haccp-verify-del" data-id="${latest.id}">מחק אימות אחרון</button>`
+    : '';
+
+  return `
+    <div class="card">
+      <div class="card-title">3.5 · אימות תרשים בשטח — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: יש לאמת שהתרשים תואם את התהליך בפועל במפעל (סיור בשטח),
+        כולל חומרי אריזה וכל מרכיבי המוצר. משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      ${flowPreview}
+      ${latestCard}
+      ${deleteLatest}
+      ${history}
+
+      <form id="haccp-verify-form" class="haccp-product-form haccp-verify-form">
+        <div class="card-title" style="font-size:1rem;margin-top:8px">רישום אימות חדש</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-verify-date">תאריך אימות</label>
+            <input type="date" id="haccp-verify-date" value="${escapeHtml(todayISO())}" required>
+          </div>
+          <div class="form-group">
+            <label for="haccp-verify-match">תוצאה</label>
+            <select id="haccp-verify-match">${matchOptions}</select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>חברי צוות מאמתים</label>
+          ${memberChecks}
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-verify-by-text">שמות נוספים (אופציונלי)</label>
+          <input type="text" id="haccp-verify-by-text" maxlength="500"
+            placeholder="אם לא מסומנים חברי צוות מהרשימה">
+        </div>
+
+        <div class="form-group">
+          <label>צ׳קליסט סיור</label>
+          <div class="haccp-check-grid">
+            <label class="haccp-check">
+              <input type="checkbox" id="haccp-verify-walked" checked>
+              <span>בוצע סיור בשטח מול התרשים</span>
+            </label>
+            <label class="haccp-check">
+              <input type="checkbox" id="haccp-verify-packaging">
+              <span>חומרי אריזה ומרכיבים נכללו</span>
+            </label>
+            <label class="haccp-check">
+              <input type="checkbox" id="haccp-verify-all-steps">
+              <span>כל שלבי התהליך מופיעים</span>
+            </label>
+            <label class="haccp-check">
+              <input type="checkbox" id="haccp-verify-no-extra">
+              <span>אין שינויים לא מתועדים בתהליך</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-verify-discrepancies">פערים שנמצאו</label>
+          <textarea id="haccp-verify-discrepancies" rows="2" maxlength="2000"
+            placeholder="אם התרשים לא תאם — מה היה חסר / מיותר / שונה"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-verify-corrections">תיקונים שבוצעו בתרשים</label>
+          <textarea id="haccp-verify-corrections" rows="2" maxlength="2000"
+            placeholder="מה עודכן ב־3.4 בעקבות האימות"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-verify-notes">הערות</label>
+          <textarea id="haccp-verify-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="haccp-verify-save"
+          ${flowSteps.length ? '' : 'disabled'}>שמור אימות</button>
+      </form>
     </div>`;
 }
 
@@ -954,6 +1133,45 @@ function bindHaccpEvents(container, ctx) {
           showToast(err.message || 'שגיאה');
         }
       });
+    });
+  });
+
+  document.getElementById('haccp-verify-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    const checked = (name) =>
+      [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((el) => el.value);
+    try {
+      await addHaccpFlowVerification(ctx.activePlan.id, {
+        verifiedAt: document.getElementById('haccp-verify-date')?.value,
+        matchResult: document.getElementById('haccp-verify-match')?.value,
+        verifierMemberIds: checked('haccp-verifier'),
+        verifiedByText: document.getElementById('haccp-verify-by-text')?.value,
+        walkedOnSite: document.getElementById('haccp-verify-walked')?.checked,
+        packagingIncluded: document.getElementById('haccp-verify-packaging')?.checked,
+        allStepsPresent: document.getElementById('haccp-verify-all-steps')?.checked,
+        noUnauthorizedChanges: document.getElementById('haccp-verify-no-extra')?.checked,
+        discrepancies: document.getElementById('haccp-verify-discrepancies')?.value,
+        correctionsMade: document.getElementById('haccp-verify-corrections')?.value,
+        notes: document.getElementById('haccp-verify-notes')?.value,
+      });
+      showToast('אימות נשמר ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-verify-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק רשומת אימות?')) return;
+      try {
+        await deleteHaccpFlowVerification(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
     });
   });
 }

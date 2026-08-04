@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=398';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=398';
+import { db, ValidationError } from './db.js?v=399';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=399';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -9,7 +9,7 @@ export const HACCP_STEPS = [
   { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'available' },
   { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'available' },
   { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'available' },
-  { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'soon' },
+  { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'available' },
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'soon' },
   { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'soon' },
   { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'soon' },
@@ -247,6 +247,7 @@ export async function deleteHaccpPlan(id) {
     db.haccpProductDescriptions,
     db.haccpIntendedUses,
     db.haccpFlowSteps,
+    db.haccpFlowVerifications,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
@@ -254,6 +255,8 @@ export async function deleteHaccpPlan(id) {
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
       const steps = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
       for (const s of steps) await db.haccpFlowSteps.delete(s.id);
+      const verifs = await db.haccpFlowVerifications.where('planId').equals(pid).toArray();
+      for (const v of verifs) await db.haccpFlowVerifications.delete(v.id);
       await db.haccpPlans.delete(pid);
     },
   );
@@ -788,4 +791,102 @@ export async function importHaccpFlowFromProduction(planId, productionFlowId, { 
     await markPlanFlowInProgress(plan);
   });
   return steps.length;
+}
+
+/** תוצאת אימות תרשים בשטח */
+export const HACCP_FLOW_MATCH_RESULTS = [
+  { id: 'matches', label: 'תואם למציאות בשטח' },
+  { id: 'partial', label: 'תואם חלקית — נדרשו תיקונים' },
+  { id: 'mismatch', label: 'לא תואם — נדרש עדכון תרשים' },
+];
+
+export function haccpFlowMatchLabel(id) {
+  return HACCP_FLOW_MATCH_RESULTS.find((r) => r.id === id)?.label || id || '—';
+}
+
+function sanitizeMatchResult(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_FLOW_MATCH_RESULTS.some((r) => r.id === id) ? id : 'matches';
+}
+
+function sanitizeDateField(raw) {
+  const s = String(raw || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return '';
+}
+
+function sanitizeMemberIdList(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(list.map((x) => sanitizeProductId(x)).filter(Boolean))];
+}
+
+async function markPlanFlowVerifyInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'flow', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'flow_verify', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpFlowVerifications(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpFlowVerifications.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => {
+    const d = String(b.verifiedAt || '').localeCompare(String(a.verifiedAt || ''));
+    if (d) return d;
+    return (b.id || 0) - (a.id || 0);
+  });
+}
+
+export async function getLatestHaccpFlowVerification(planId) {
+  const rows = await getHaccpFlowVerifications(planId);
+  return rows[0] || null;
+}
+
+export async function addHaccpFlowVerification(planId, fields = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית לפי משפחת מוצרים');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const steps = await getHaccpFlowSteps(pid);
+  if (!steps.length) {
+    throw new ValidationError('אין תרשים זרימה לאימות — מלא קודם את שלב 3.4');
+  }
+
+  const verifiedAt = sanitizeDateField(fields.verifiedAt);
+  if (!verifiedAt) throw new ValidationError('בחר תאריך אימות');
+
+  const verifierMemberIds = sanitizeMemberIdList(fields.verifierMemberIds);
+  const verifiedByText = sanitizeTextField(fields.verifiedByText, 500);
+  if (!verifierMemberIds.length && !verifiedByText) {
+    throw new ValidationError('סמן חברי צוות מאמתים או הזן שמות');
+  }
+
+  const id = await db.haccpFlowVerifications.add({
+    planId: pid,
+    verifiedAt,
+    verifierMemberIds,
+    verifiedByText,
+    matchResult: sanitizeMatchResult(fields.matchResult),
+    walkedOnSite: fields.walkedOnSite !== false,
+    packagingIncluded: !!fields.packagingIncluded,
+    allStepsPresent: !!fields.allStepsPresent,
+    noUnauthorizedChanges: !!fields.noUnauthorizedChanges,
+    discrepancies: sanitizeTextField(fields.discrepancies, 2000),
+    correctionsMade: sanitizeTextField(fields.correctionsMade, 2000),
+    notes: sanitizeTextField(fields.notes, 2000),
+    stepCountSnapshot: steps.length,
+    stepNamesSnapshot: steps.map((s) => s.name).join(' → ').slice(0, 2000),
+    createdAt: new Date().toISOString(),
+  });
+  await markPlanFlowVerifyInProgress(plan);
+  return id;
+}
+
+export async function deleteHaccpFlowVerification(id) {
+  const vid = sanitizeProductId(id);
+  if (!vid) return;
+  await db.haccpFlowVerifications.delete(vid);
 }
