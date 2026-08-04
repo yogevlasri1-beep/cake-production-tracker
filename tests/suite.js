@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=403';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=404';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=403';
+} from '../js/validators.js?v=404';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=403';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=403';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=403';
+} from '../js/calc.js?v=404';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=404';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=404';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,21 +17,21 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=403';
-import { isAutoBackupDue } from '../js/backup-service.js?v=403';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=403';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=403';
+} from '../js/supabase-backup.js?v=404';
+import { isAutoBackupDue } from '../js/backup-service.js?v=404';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=404';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=404';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=403';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=403';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=403';
-import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=403';
-import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel } from '../js/haccp-db.js?v=403';
-import { WORKSPACES } from '../js/workspaces.js?v=403';
+} from '../js/supplier-import.js?v=404';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=404';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=404';
+import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=404';
+import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel } from '../js/haccp-db.js?v=404';
+import { WORKSPACES } from '../js/workspaces.js?v=404';
 
 export async function runAllTests() {
   /* validators */
@@ -603,19 +603,22 @@ export async function runAllTests() {
     }
   });
 
-  test('HACCP — workspace עד ניטור', () => {
+  test('HACCP — workspace עד פעולות מתקנות', () => {
     assertEqual(WORKSPACES.haccp?.defaultScreen, 'haccp');
     assertOk(HACCP_STEPS.some((s) => s.id === 'hazard' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'ccp' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'limits' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'monitoring' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'corrective' && s.status === 'available'));
     assertOk(isSyncCollection('haccpHazards'));
     assertOk(isSyncCollection('haccpCcps'));
     assertOk(isSyncCollection('haccpCriticalLimits'));
     assertOk(isSyncCollection('haccpMonitoring'));
+    assertOk(isSyncCollection('haccpCorrectiveActions'));
     assertEqual(COLLECTION_TABLE.haccpCcps, 'sync_haccp_ccps');
     assertEqual(COLLECTION_TABLE.haccpCriticalLimits, 'sync_haccp_critical_limits');
     assertEqual(COLLECTION_TABLE.haccpMonitoring, 'sync_haccp_monitoring');
+    assertEqual(COLLECTION_TABLE.haccpCorrectiveActions, 'sync_haccp_corrective_actions');
     assertEqual(
       rowFingerprint('haccpCcps', {
         planId: 7,
@@ -650,11 +653,23 @@ export async function runAllTests() {
       'haccpMonitoring|7|2|5|טמפרטורת ליבה|thermometer|every_batch',
     );
     assertEqual(
+      rowFingerprint('haccpCorrectiveActions', {
+        planId: 7,
+        ccpId: 2,
+        limitId: 5,
+        deviation: 'חריגה מטמפרטורה',
+        immediateAction: 'עצירת תהליך',
+        productDisposition: 'hold_evaluate',
+      }),
+      'haccpCorrectiveActions|7|2|5|חריגה מטמפרטורה|עצירת תהליך|hold_evaluate',
+    );
+    assertEqual(
       formatCriticalLimit({ parameter: 'core_temp', operator: 'gte', value: '75', unit: '°C' }),
       'טמפרטורת ליבה: ≥ 75 °C',
     );
     assertEqual(haccpMonitorMethodLabel('thermometer'), 'מדידת טמפרטורה (מדחום / גשוש)');
     assertEqual(haccpMonitorFrequencyLabel('every_batch'), 'כל אצווה / כל ייצור');
+    assertEqual(haccpProductDispositionLabel('hold_evaluate'), 'החזקה / הערכה (מעוכב)');
   });
 
   test('HACCP — עץ החלטות Codex ל-CCP', () => {
@@ -1040,7 +1055,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=403');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=404');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

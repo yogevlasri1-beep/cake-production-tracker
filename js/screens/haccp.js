@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=403';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=403';
-import { openModal, closeModal } from '../modal.js?v=403';
+import { getCategoryGroups } from '../db.js?v=404';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=404';
+import { openModal, closeModal } from '../modal.js?v=404';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -81,7 +81,14 @@ import {
   HACCP_MONITOR_FREQUENCIES,
   haccpMonitorMethodLabel,
   haccpMonitorFrequencyLabel,
-} from '../haccp-db.js?v=403';
+  getHaccpCorrectiveActions,
+  addHaccpCorrectiveAction,
+  updateHaccpCorrectiveAction,
+  deleteHaccpCorrectiveAction,
+  seedSuggestedCorrectiveForCcp,
+  HACCP_PRODUCT_DISPOSITIONS,
+  haccpProductDispositionLabel,
+} from '../haccp-db.js?v=404';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -133,6 +140,7 @@ export async function renderHaccp(container) {
   let ccpCandidates = [];
   let criticalLimits = [];
   let monitoring = [];
+  let correctiveActions = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -183,6 +191,14 @@ export async function renderHaccp(container) {
       getHaccpMonitoring(activePlan.id),
     ]);
   }
+  if (step.id === 'corrective' && activePlan) {
+    [flowSteps, ccps, criticalLimits, correctiveActions] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getConfirmedHaccpCcps(activePlan.id),
+      getHaccpCriticalLimits(activePlan.id),
+      getHaccpCorrectiveActions(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -204,6 +220,8 @@ export async function renderHaccp(container) {
     body = renderLimitsSection(activePlan, flowSteps, ccps, criticalLimits, groupMap);
   } else if (step.id === 'monitoring') {
     body = renderMonitoringSection(activePlan, flowSteps, ccps, criticalLimits, monitoring, groupMap);
+  } else if (step.id === 'corrective') {
+    body = renderCorrectiveSection(activePlan, flowSteps, ccps, criticalLimits, correctiveActions, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -241,7 +259,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions,
   });
 }
 
@@ -301,12 +319,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: עד <strong>5.4 ניטור</strong></li>
+        <li>השלבים הפעילים: עד <strong>5.5 פעולות מתקנות</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי גבולות קריטיים — הגדר מה, איך, מתי ומי מנטר כל CCP.</p>
+      <p class="haccp-hint">המלצה: אחרי ניטור — הגדר מראש מה עושים כשיש חריגה מגבול קריטי.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="limits">גבולות קריטיים</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">ניטור</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="monitoring">ניטור</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="corrective">פעולות מתקנות</button>
       </div>
     </div>`;
 }
@@ -329,7 +347,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי ניטור — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי פעולות מתקנות — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -1443,6 +1461,173 @@ function renderMonitoringSection(activePlan, flowSteps, confirmedCcps, limits, m
     </div>`;
 }
 
+function dispositionOptions(selected = 'hold_evaluate') {
+  return HACCP_PRODUCT_DISPOSITIONS.map((d) =>
+    `<option value="${d.id}" ${selected === d.id ? 'selected' : ''}>${escapeHtml(d.label)}</option>`
+  ).join('');
+}
+
+function renderCorrectiveSection(activePlan, flowSteps, confirmedCcps, limits, actions, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.5 · פעולות מתקנות</div>
+        <p class="haccp-hint">בחר תכנית. לכל CCP מגדירים מראש מה עושים כשיש חריגה מגבול קריטי.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const stepMap = new Map(flowSteps.map((s) => [s.id, s]));
+  const limitMap = new Map((limits || []).map((l) => [Number(l.id), l]));
+  if (!confirmedCcps.length) {
+    return `
+      <div class="card">
+        <div class="card-title">5.5 · פעולות מתקנות — ${escapeHtml(activePlan.name)}</div>
+        <p class="haccp-hint">אין CCP מאושרים. יש לקבוע קודם נקודות בקרה קריטיות ב־5.2.</p>
+        <button type="button" class="btn btn-primary" data-haccp-step="ccp">עבור ל־CCP</button>
+      </div>`;
+  }
+
+  const byCcp = new Map();
+  for (const a of actions) {
+    const key = Number(a.ccpId);
+    if (!byCcp.has(key)) byCcp.set(key, []);
+    byCcp.get(key).push(a);
+  }
+
+  const covered = confirmedCcps.filter((c) => (byCcp.get(Number(c.id)) || []).length).length;
+  const defaultCcpId = confirmedCcps[0]?.id;
+  const ccpOptions = confirmedCcps.map((c) =>
+    `<option value="${c.id}">${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+  ).join('');
+
+  const blocks = confirmedCcps.map((ccp) => {
+    const list = byCcp.get(Number(ccp.id)) || [];
+    const rows = list.length
+      ? list.map((a) => {
+        const linked = a.limitId ? limitMap.get(Number(a.limitId)) : null;
+        const who = a.responsibleText
+          ? `${haccpRoleLabel(a.responsibleRole)} · ${a.responsibleText}`
+          : haccpRoleLabel(a.responsibleRole);
+        return `
+          <div class="haccp-corrective-row">
+            <div>
+              <div class="haccp-ccp-title">${escapeHtml(a.deviation)}</div>
+              <div class="haccp-hazard-meta">
+                פעולה מיידית: ${escapeHtml(a.immediateAction)}
+              </div>
+              <div class="haccp-hazard-meta">
+                גורל מוצר: ${escapeHtml(haccpProductDispositionLabel(a.productDisposition))}
+                · ${escapeHtml(who)}
+              </div>
+              ${linked ? `<div class="haccp-hazard-meta">גבול: ${escapeHtml(formatCriticalLimit(linked))}</div>` : ''}
+              ${a.records ? `<div class="haccp-hazard-meta">רישום: ${escapeHtml(a.records)}</div>` : ''}
+            </div>
+            <div class="haccp-hazard-actions">
+              <button type="button" class="btn btn-secondary btn-sm haccp-corrective-edit" data-id="${a.id}">ערוך</button>
+              <button type="button" class="btn btn-danger btn-sm haccp-corrective-del" data-id="${a.id}">מחק</button>
+            </div>
+          </div>`;
+      }).join('')
+      : `<p class="haccp-hint">אין פעולה מתקנת ל-CCP זה עדיין.</p>`;
+
+    return `
+      <section class="haccp-corrective-ccp">
+        <div class="haccp-hazard-step-head">
+          <div>
+            <strong>${escapeHtml(ccp.code || 'CCP')} · ${escapeHtml(ccp.name)}</strong>
+            <span class="haccp-hazard-meta"> · ${escapeHtml(stepMap.get(ccp.flowStepId)?.name || '')}
+              · ${escapeHtml(ccp.hazardDescription || '')}</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm haccp-corrective-seed" data-ccp-id="${ccp.id}">
+            הצע פעולה מתקנת
+          </button>
+        </div>
+        ${rows}
+      </section>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <div class="card-title">5.5 · פעולות מתקנות — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: לכל CCP יש להגדיר מראש מה עושים בחריגה — החזרת שליטה, חקירת סיבה,
+        מניעת הישנות, וטיפול במוצר החשוד. משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${actions.length}</strong> פעולות מתקנות ·
+        כיסוי CCP: <strong>${covered}/${confirmedCcps.length}</strong>
+      </p>
+
+      <div class="haccp-corrective-list">${blocks}</div>
+
+      <form id="haccp-corrective-form" class="haccp-product-form haccp-corrective-form">
+        <div class="card-title" style="font-size:1rem">הוספת פעולה מתקנת</div>
+        <div class="form-group">
+          <label for="haccp-corrective-ccp">CCP</label>
+          <select id="haccp-corrective-ccp">${ccpOptions}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-limit">קישור לגבול קריטי (אופציונלי)</label>
+          <select id="haccp-corrective-limit">${limitOptionsForCcp(limits, defaultCcpId)}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-deviation">מה נחשב חריגה</label>
+          <textarea id="haccp-corrective-deviation" rows="2" maxlength="1000"
+            placeholder="למשל: טמפרטורת ליבה מתחת ל־75°C"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-immediate">פעולה מיידית (החזרת שליטה)</label>
+          <textarea id="haccp-corrective-immediate" rows="2" maxlength="2000"
+            placeholder="עצירת תהליך / תיקון פרמטר / סימון מוצר כמושהה…"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-cause">חקירת סיבה</label>
+          <textarea id="haccp-corrective-cause" rows="2" maxlength="2000"
+            placeholder="איך בודקים את מקור החריגה"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-prevent">מניעת הישנות</label>
+          <textarea id="haccp-corrective-prevent" rows="2" maxlength="2000"
+            placeholder="תיקון הסיבה, הדרכה, עדכון נוהל…"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-product">בקרת מוצר חשוד</label>
+          <textarea id="haccp-corrective-product" rows="2" maxlength="2000"
+            placeholder="בידוד אצווה, מניעת שחרור עד החלטת איכות…"></textarea>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-corrective-disposition">גורל מוצר</label>
+            <select id="haccp-corrective-disposition">${dispositionOptions('hold_evaluate')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-corrective-role">אחראי (תפקיד)</label>
+            <select id="haccp-corrective-role">${monitorRoleOptions('quality')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-who">שם / פירוט אחראי</label>
+          <input type="text" id="haccp-corrective-who" maxlength="200" placeholder="אופציונלי">
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-notify">הודעה / דיווח</label>
+          <input type="text" id="haccp-corrective-notify" maxlength="1000"
+            placeholder="למי מודיעים ובאיזה שלב">
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-records">רישום / טופס</label>
+          <input type="text" id="haccp-corrective-records" maxlength="1000" placeholder="טופס פעולה מתקנת CCP">
+        </div>
+        <div class="form-group">
+          <label for="haccp-corrective-notes">הערות</label>
+          <textarea id="haccp-corrective-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">הוסף פעולה מתקנת</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -2519,6 +2704,168 @@ function bindHaccpEvents(container, ctx) {
             responsibleText: document.getElementById('edit-monitor-who').value,
             records: document.getElementById('edit-monitor-records').value,
             notes: document.getElementById('edit-monitor-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  function refreshCorrectiveLimitOptions() {
+    const ccpSelect = document.getElementById('haccp-corrective-ccp');
+    const limitSelect = document.getElementById('haccp-corrective-limit');
+    if (!ccpSelect || !limitSelect) return;
+    limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpSelect.value);
+  }
+
+  document.getElementById('haccp-corrective-ccp')?.addEventListener('change', refreshCorrectiveLimitOptions);
+
+  document.getElementById('haccp-corrective-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpCorrectiveAction(ctx.activePlan.id, {
+        ccpId: document.getElementById('haccp-corrective-ccp')?.value,
+        limitId: document.getElementById('haccp-corrective-limit')?.value || null,
+        deviation: document.getElementById('haccp-corrective-deviation')?.value,
+        immediateAction: document.getElementById('haccp-corrective-immediate')?.value,
+        causeInvestigation: document.getElementById('haccp-corrective-cause')?.value,
+        preventRecurrence: document.getElementById('haccp-corrective-prevent')?.value,
+        productControl: document.getElementById('haccp-corrective-product')?.value,
+        productDisposition: document.getElementById('haccp-corrective-disposition')?.value,
+        responsibleRole: document.getElementById('haccp-corrective-role')?.value,
+        responsibleText: document.getElementById('haccp-corrective-who')?.value,
+        notificationInstructions: document.getElementById('haccp-corrective-notify')?.value,
+        records: document.getElementById('haccp-corrective-records')?.value,
+        notes: document.getElementById('haccp-corrective-notes')?.value,
+      });
+      showToast('פעולה מתקנת נוספה ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-corrective-seed').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return;
+      try {
+        const n = await seedSuggestedCorrectiveForCcp(ctx.activePlan.id, btn.dataset.ccpId);
+        showToast(`נוספו ${n} הצעות ✓`);
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-corrective-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק פעולה מתקנת?')) return;
+      try {
+        await deleteHaccpCorrectiveAction(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-corrective-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.correctiveActions?.find((a) => String(a.id) === String(btn.dataset.id));
+      if (!row) return;
+      const confirmed = (ctx.ccps || []).filter((c) => c.decision === 'ccp');
+      const ccpOptions = confirmed.map((c) =>
+        `<option value="${c.id}" ${Number(c.id) === Number(row.ccpId) ? 'selected' : ''}>${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+      ).join('');
+      openModal({
+        title: 'עריכת פעולה מתקנת',
+        bodyHTML: `
+          <div class="form-group">
+            <label for="edit-corrective-ccp">CCP</label>
+            <select id="edit-corrective-ccp">${ccpOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-limit">קישור לגבול קריטי</label>
+            <select id="edit-corrective-limit">${limitOptionsForCcp(ctx.criticalLimits || [], row.ccpId, row.limitId || '')}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-deviation">מה נחשב חריגה</label>
+            <textarea id="edit-corrective-deviation" rows="2" maxlength="1000">${escapeHtml(row.deviation || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-immediate">פעולה מיידית</label>
+            <textarea id="edit-corrective-immediate" rows="2" maxlength="2000">${escapeHtml(row.immediateAction || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-cause">חקירת סיבה</label>
+            <textarea id="edit-corrective-cause" rows="2" maxlength="2000">${escapeHtml(row.causeInvestigation || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-prevent">מניעת הישנות</label>
+            <textarea id="edit-corrective-prevent" rows="2" maxlength="2000">${escapeHtml(row.preventRecurrence || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-product">בקרת מוצר חשוד</label>
+            <textarea id="edit-corrective-product" rows="2" maxlength="2000">${escapeHtml(row.productControl || '')}</textarea>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-corrective-disposition">גורל מוצר</label>
+              <select id="edit-corrective-disposition">${dispositionOptions(row.productDisposition || 'hold_evaluate')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-corrective-role">אחראי</label>
+              <select id="edit-corrective-role">${monitorRoleOptions(row.responsibleRole || 'quality')}</select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-who">שם / פירוט</label>
+            <input type="text" id="edit-corrective-who" maxlength="200" value="${escapeHtml(row.responsibleText || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-notify">הודעה / דיווח</label>
+            <input type="text" id="edit-corrective-notify" maxlength="1000" value="${escapeHtml(row.notificationInstructions || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-records">רישום / טופס</label>
+            <input type="text" id="edit-corrective-records" maxlength="1000" value="${escapeHtml(row.records || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-corrective-notes">הערות</label>
+            <textarea id="edit-corrective-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-corrective">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('edit-corrective-ccp')?.addEventListener('change', () => {
+        const limitSelect = document.getElementById('edit-corrective-limit');
+        const ccpId = document.getElementById('edit-corrective-ccp')?.value;
+        if (limitSelect) limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpId);
+      });
+      document.getElementById('save-edit-corrective')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpCorrectiveAction(row.id, {
+            ccpId: document.getElementById('edit-corrective-ccp').value,
+            limitId: document.getElementById('edit-corrective-limit').value || null,
+            deviation: document.getElementById('edit-corrective-deviation').value,
+            immediateAction: document.getElementById('edit-corrective-immediate').value,
+            causeInvestigation: document.getElementById('edit-corrective-cause').value,
+            preventRecurrence: document.getElementById('edit-corrective-prevent').value,
+            productControl: document.getElementById('edit-corrective-product').value,
+            productDisposition: document.getElementById('edit-corrective-disposition').value,
+            responsibleRole: document.getElementById('edit-corrective-role').value,
+            responsibleText: document.getElementById('edit-corrective-who').value,
+            notificationInstructions: document.getElementById('edit-corrective-notify').value,
+            records: document.getElementById('edit-corrective-records').value,
+            notes: document.getElementById('edit-corrective-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');
