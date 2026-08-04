@@ -1,6 +1,7 @@
-import { getCategoryGroups } from '../db.js?v=407';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=407';
-import { openModal, closeModal } from '../modal.js?v=407';
+import { getCategoryGroups } from '../db.js?v=408';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=408';
+import { openModal, closeModal } from '../modal.js?v=408';
+import { printHaccpPlan } from '../haccp-print.js?v=408';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -114,7 +115,7 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=407';
+} from '../haccp-db.js?v=408';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -335,6 +336,7 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
         <div class="haccp-plan-meta">
           <span class="badge">${escapeHtml(HACCP_PLAN_STATUSES[activePlan.status] || activePlan.status)}</span>
           <span class="haccp-plan-family">${escapeHtml(groupMap.get(activePlan.categoryGroupId)?.name || '')}</span>
+          <button type="button" class="btn btn-secondary btn-sm haccp-print-plan">הדפס תכנית</button>
           <button type="button" class="btn btn-secondary btn-sm" id="haccp-rename-plan">שנה שם</button>
           <button type="button" class="btn btn-danger btn-sm" id="haccp-delete-plan">מחק תכנית</button>
         </div>` : ''}
@@ -371,6 +373,7 @@ function renderOverview(members, plans, groups) {
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-primary" data-haccp-step="prp">תכניות קדם</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="documentation">תיעוד ורישום</button>
+        <button type="button" class="btn btn-secondary haccp-print-plan">הדפס תכנית פעילה</button>
       </div>
     </div>`;
 }
@@ -2093,6 +2096,18 @@ function bindHaccpEvents(container, ctx) {
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
+  });
+
+  container.querySelectorAll('.haccp-print-plan').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+      try {
+        const ok = await printHaccpPlan(ctx.activePlan.id);
+        if (!ok) showToast('יש לאפשר חלונות קופצים להדפסה');
+      } catch (err) {
+        showToast(err.message || 'שגיאה בהדפסה');
+      }
+    });
   });
 
   document.getElementById('haccp-create-plan')?.addEventListener('click', async () => {
