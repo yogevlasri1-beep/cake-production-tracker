@@ -603,13 +603,14 @@ export async function runAllTests() {
     }
   });
 
-  test('HACCP — workspace עד אימות תרשים בשטח', () => {
+  test('HACCP — workspace עד ניתוח גורמי סיכון', () => {
     assertEqual(WORKSPACES.haccp?.defaultScreen, 'haccp');
     assertOk(HACCP_STEPS.some((s) => s.id === 'team' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'product' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'intended_use' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'flow' && s.status === 'available'));
     assertOk(HACCP_STEPS.some((s) => s.id === 'flow_verify' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'hazard' && s.status === 'available'));
     assertEqual(haccpRoleLabel('quality'), 'אבטחת איכות');
     assertOk(isSyncCollection('haccpTeamMembers'));
     assertOk(isSyncCollection('haccpPlans'));
@@ -617,35 +618,16 @@ export async function runAllTests() {
     assertOk(isSyncCollection('haccpIntendedUses'));
     assertOk(isSyncCollection('haccpFlowSteps'));
     assertOk(isSyncCollection('haccpFlowVerifications'));
-    assertEqual(COLLECTION_TABLE.haccpPlans, 'sync_haccp_plans');
-    assertEqual(COLLECTION_TABLE.haccpProductDescriptions, 'sync_haccp_product_descriptions');
-    assertEqual(COLLECTION_TABLE.haccpIntendedUses, 'sync_haccp_intended_uses');
-    assertEqual(COLLECTION_TABLE.haccpFlowSteps, 'sync_haccp_flow_steps');
-    assertEqual(COLLECTION_TABLE.haccpFlowVerifications, 'sync_haccp_flow_verifications');
+    assertOk(isSyncCollection('haccpHazards'));
+    assertEqual(COLLECTION_TABLE.haccpHazards, 'sync_haccp_hazards');
     assertEqual(
-      rowFingerprint('haccpPlans', { name: 'שטרודל', categoryGroupId: 1 }),
-      'haccpPlans|שטרודל|1',
-    );
-    assertEqual(
-      rowFingerprint('haccpProductDescriptions', { planId: 7 }),
-      'haccpProductDescriptions|7',
-    );
-    assertEqual(
-      rowFingerprint('haccpIntendedUses', { planId: 7 }),
-      'haccpIntendedUses|7',
-    );
-    assertEqual(
-      rowFingerprint('haccpFlowSteps', { planId: 7, name: 'אפייה', sortOrder: 3 }),
-      'haccpFlowSteps|7|אפייה|3',
-    );
-    assertEqual(
-      rowFingerprint('haccpFlowVerifications', {
+      rowFingerprint('haccpHazards', {
         planId: 7,
-        verifiedAt: '2026-08-04',
-        matchResult: 'matches',
-        createdAt: '2026-08-04T10:00:00.000Z',
+        flowStepId: 3,
+        description: 'סלמונלה באפייה',
+        hazardType: 'biological',
       }),
-      'haccpFlowVerifications|7|2026-08-04|matches|2026-08-04T10:00:00.000Z',
+      'haccpHazards|7|3|סלמונלה באפייה|biological',
     );
   });
 

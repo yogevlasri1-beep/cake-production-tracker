@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=399';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=399';
+import { db, ValidationError } from './db.js?v=400';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=400';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -10,7 +10,7 @@ export const HACCP_STEPS = [
   { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'available' },
   { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'available' },
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'available' },
-  { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'soon' },
+  { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'available' },
   { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'soon' },
   { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'soon' },
   { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'soon' },
@@ -248,11 +248,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpIntendedUses,
     db.haccpFlowSteps,
     db.haccpFlowVerifications,
+    db.haccpHazards,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const hazards = await db.haccpHazards.where('planId').equals(pid).toArray();
+      for (const h of hazards) await db.haccpHazards.delete(h.id);
       const steps = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
       for (const s of steps) await db.haccpFlowSteps.delete(s.id);
       const verifs = await db.haccpFlowVerifications.where('planId').equals(pid).toArray();
@@ -649,7 +652,11 @@ export async function updateHaccpFlowStep(id, patch = {}) {
 export async function deleteHaccpFlowStep(id) {
   const sid = sanitizeProductId(id);
   if (!sid) return;
-  await db.haccpFlowSteps.delete(sid);
+  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, async () => {
+    const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
+    for (const h of hazards) await db.haccpHazards.delete(h.id);
+    await db.haccpFlowSteps.delete(sid);
+  });
 }
 
 export async function moveHaccpFlowStep(planId, stepId, direction) {
@@ -889,4 +896,247 @@ export async function deleteHaccpFlowVerification(id) {
   const vid = sanitizeProductId(id);
   if (!vid) return;
   await db.haccpFlowVerifications.delete(vid);
+}
+
+/** סוגי גורמי סיכון */
+export const HACCP_HAZARD_TYPES = [
+  { id: 'biological', label: 'ביולוגי' },
+  { id: 'chemical', label: 'כימי' },
+  { id: 'physical', label: 'פיזיקלי' },
+  { id: 'allergen', label: 'אלרגן' },
+];
+
+export const HACCP_RISK_LEVELS = [
+  { id: 'low', label: 'נמוך', score: 1 },
+  { id: 'medium', label: 'בינוני', score: 2 },
+  { id: 'high', label: 'גבוה', score: 3 },
+];
+
+export function haccpHazardTypeLabel(id) {
+  return HACCP_HAZARD_TYPES.find((t) => t.id === id)?.label || id || '—';
+}
+
+export function haccpRiskLevelLabel(id) {
+  return HACCP_RISK_LEVELS.find((l) => l.id === id)?.label || id || '—';
+}
+
+function sanitizeHazardType(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_HAZARD_TYPES.some((t) => t.id === id) ? id : 'biological';
+}
+
+function sanitizeRiskLevel(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_RISK_LEVELS.some((l) => l.id === id) ? id : 'medium';
+}
+
+export function computeHazardSignificant(likelihood, severity) {
+  const score = (id) => HACCP_RISK_LEVELS.find((l) => l.id === id)?.score || 1;
+  return score(likelihood) * score(severity) >= 4;
+}
+
+/** הצעות סיכונים נפוצים למאפייה לפי סוג שלב */
+export const HACCP_HAZARD_SUGGESTIONS_BY_KIND = {
+  receiving: [
+    { hazardType: 'biological', description: 'זיהום מיקרוביאלי בחומרי גלם', source: 'ספק / הובלה', likelihood: 'medium', severity: 'high' },
+    { hazardType: 'physical', description: 'גופים זרים באריזות / חומ״ג', source: 'אריזה פגומה / ספק', likelihood: 'low', severity: 'high' },
+    { hazardType: 'chemical', description: 'שאריות חומרי הדברה / כימיקלים', source: 'חומרי גלם חקלאיים', likelihood: 'low', severity: 'high' },
+  ],
+  storage_raw: [
+    { hazardType: 'biological', description: 'גידול מיקרואורגניזמים באחסון', source: 'טמפרטורה / זמן אחסון', likelihood: 'medium', severity: 'high' },
+    { hazardType: 'allergen', description: 'זיהום צולב אלרגנים במחסן', source: 'אחסון משותף / שפיכה', likelihood: 'medium', severity: 'high' },
+  ],
+  prep: [
+    { hazardType: 'biological', description: 'זיהום מצליב בהכנה', source: 'משטחים / כלים / ידיים', likelihood: 'medium', severity: 'high' },
+    { hazardType: 'physical', description: 'גופים זרים בשקילה/הכנה', source: 'ציוד / אריזות', likelihood: 'low', severity: 'medium' },
+  ],
+  mixing: [
+    { hazardType: 'biological', description: 'זיהום מבצק/מכונות', source: 'ניקיון ציוד לקוי', likelihood: 'medium', severity: 'medium' },
+    { hazardType: 'allergen', description: 'ערבוב אלרגנים לא מתוכנן', source: 'שאריות במערבל', likelihood: 'medium', severity: 'high' },
+  ],
+  proofing: [
+    { hazardType: 'biological', description: 'גידול חיידקים בהתפחה ממושכת', source: 'זמן / טמפרטורה', likelihood: 'medium', severity: 'medium' },
+  ],
+  forming: [
+    { hazardType: 'biological', description: 'זיהום בידיים / משטחי עבודה', source: 'היגיינה', likelihood: 'medium', severity: 'high' },
+    { hazardType: 'physical', description: 'גופים זרים בעיצוב/מילוי', source: 'קישוטים / כלים', likelihood: 'low', severity: 'medium' },
+  ],
+  baking: [
+    { hazardType: 'biological', description: 'הישרדות פתוגנים באפייה לא מספקת', source: 'טמפרטורה / זמן אפייה', likelihood: 'medium', severity: 'high', isCcpCandidate: true },
+  ],
+  cooling: [
+    { hazardType: 'biological', description: 'גידול מיקרוביאלי בקירור איטי', source: 'זמן בקשת הסכנה', likelihood: 'medium', severity: 'high', isCcpCandidate: true },
+  ],
+  freezing: [
+    { hazardType: 'biological', description: 'הישרדות פתוגנים בהקפאה לא תקינה', source: 'טמפרטורת מקפיא', likelihood: 'low', severity: 'high' },
+  ],
+  packaging: [
+    { hazardType: 'biological', description: 'זיהום לאחר אפייה באריזה', source: 'ידיים / משטח / אוויר', likelihood: 'medium', severity: 'high' },
+    { hazardType: 'physical', description: 'גופים זרים באריזה', source: 'חומר אריזה / קו', likelihood: 'low', severity: 'medium' },
+    { hazardType: 'allergen', description: 'סימון אלרגנים שגוי', source: 'תווית / החלפת מוצר', likelihood: 'low', severity: 'high' },
+  ],
+  storage_finished: [
+    { hazardType: 'biological', description: 'גידול מיקרוביאלי באחסון מוגמר', source: 'טמפרטורה / תוקף', likelihood: 'medium', severity: 'high' },
+  ],
+  shipping: [
+    { hazardType: 'biological', description: 'שבירת שרשרת קירור בהפצה', source: 'הובלה', likelihood: 'medium', severity: 'high' },
+  ],
+  other: [
+    { hazardType: 'biological', description: 'זיהום מיקרוביאלי כללי', source: 'תהליך', likelihood: 'medium', severity: 'medium' },
+  ],
+};
+
+async function markPlanHazardInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'flow', 'flow_verify', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'hazard', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpHazards(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpHazards.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) =>
+    (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getHaccpHazardsForStep(flowStepId) {
+  const sid = sanitizeProductId(flowStepId);
+  if (!sid) return [];
+  const rows = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpHazard(planId, {
+  flowStepId,
+  hazardType = 'biological',
+  description = '',
+  source = '',
+  likelihood = 'medium',
+  severity = 'medium',
+  significant,
+  controlMeasures = '',
+  controlledByPrp = false,
+  isCcpCandidate = false,
+  justification = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  const sid = sanitizeProductId(flowStepId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  if (!sid) throw new ValidationError('בחר שלב בתרשים הזרימה');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const step = await db.haccpFlowSteps.get(sid);
+  if (!step || Number(step.planId) !== Number(pid)) {
+    throw new ValidationError('שלב התרשים לא שייך לתכנית');
+  }
+  const cleanDesc = sanitizeTextField(description, 1000);
+  if (!cleanDesc) throw new ValidationError('תאר את גורם הסיכון');
+
+  const likeli = sanitizeRiskLevel(likelihood);
+  const sev = sanitizeRiskLevel(severity);
+  const sig = significant === undefined ? computeHazardSignificant(likeli, sev) : !!significant;
+
+  const existing = await getHaccpHazards(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((h) => h.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpHazards.add({
+    planId: pid,
+    flowStepId: sid,
+    hazardType: sanitizeHazardType(hazardType),
+    description: cleanDesc,
+    source: sanitizeTextField(source, 500),
+    likelihood: likeli,
+    severity: sev,
+    significant: sig,
+    controlMeasures: sanitizeTextField(controlMeasures, 2000),
+    controlledByPrp: !!controlledByPrp,
+    isCcpCandidate: !!isCcpCandidate,
+    justification: sanitizeTextField(justification, 2000),
+    notes: sanitizeTextField(notes, 2000),
+    sortOrder,
+  });
+  await markPlanHazardInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpHazard(id, patch = {}) {
+  const hid = sanitizeProductId(id);
+  if (!hid) return;
+  const row = await db.haccpHazards.get(hid);
+  if (!row) throw new ValidationError('גורם סיכון לא נמצא');
+  const next = {};
+  if (patch.description !== undefined) {
+    const cleanDesc = sanitizeTextField(patch.description, 1000);
+    if (!cleanDesc) throw new ValidationError('תאר את גורם הסיכון');
+    next.description = cleanDesc;
+  }
+  if (patch.hazardType !== undefined) next.hazardType = sanitizeHazardType(patch.hazardType);
+  if (patch.source !== undefined) next.source = sanitizeTextField(patch.source, 500);
+  if (patch.likelihood !== undefined) next.likelihood = sanitizeRiskLevel(patch.likelihood);
+  if (patch.severity !== undefined) next.severity = sanitizeRiskLevel(patch.severity);
+  if (patch.controlMeasures !== undefined) {
+    next.controlMeasures = sanitizeTextField(patch.controlMeasures, 2000);
+  }
+  if (patch.controlledByPrp !== undefined) next.controlledByPrp = !!patch.controlledByPrp;
+  if (patch.isCcpCandidate !== undefined) next.isCcpCandidate = !!patch.isCcpCandidate;
+  if (patch.justification !== undefined) next.justification = sanitizeTextField(patch.justification, 2000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+  if (patch.significant !== undefined) next.significant = !!patch.significant;
+  else if (next.likelihood || next.severity) {
+    next.significant = computeHazardSignificant(
+      next.likelihood || row.likelihood,
+      next.severity || row.severity,
+    );
+  }
+  if (patch.flowStepId !== undefined) {
+    const sid = sanitizeProductId(patch.flowStepId);
+    if (!sid) throw new ValidationError('שלב לא תקין');
+    const step = await db.haccpFlowSteps.get(sid);
+    if (!step || Number(step.planId) !== Number(row.planId)) {
+      throw new ValidationError('שלב התרשים לא שייך לתכנית');
+    }
+    next.flowStepId = sid;
+  }
+  if (!Object.keys(next).length) return;
+  await db.haccpHazards.update(hid, next);
+}
+
+export async function deleteHaccpHazard(id) {
+  const hid = sanitizeProductId(id);
+  if (!hid) return;
+  await db.haccpHazards.delete(hid);
+}
+
+/** מוסיף הצעות סיכון לשלב לפי סוג השלב — מדלג על תיאורים שכבר קיימים */
+export async function seedSuggestedHazardsForStep(planId, flowStepId) {
+  const pid = sanitizeProductId(planId);
+  const sid = sanitizeProductId(flowStepId);
+  if (!pid || !sid) throw new ValidationError('בחר תכנית ושלב');
+  const step = await db.haccpFlowSteps.get(sid);
+  if (!step || Number(step.planId) !== Number(pid)) {
+    throw new ValidationError('שלב לא נמצא בתכנית');
+  }
+  const suggestions = HACCP_HAZARD_SUGGESTIONS_BY_KIND[step.stepKind]
+    || HACCP_HAZARD_SUGGESTIONS_BY_KIND.other;
+  const existing = await getHaccpHazardsForStep(sid);
+  const existingDesc = new Set(existing.map((h) => String(h.description || '').trim()));
+  let added = 0;
+  for (const s of suggestions) {
+    if (existingDesc.has(s.description)) continue;
+    await addHaccpHazard(pid, {
+      flowStepId: sid,
+      ...s,
+      controlMeasures: '',
+      controlledByPrp: !s.isCcpCandidate,
+    });
+    added += 1;
+  }
+  if (!added) throw new ValidationError('כל ההצעות לשלב זה כבר קיימות');
+  return added;
 }
