@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=394';
-import { APP_VERSION } from './version.js?v=394';
-import { defaultColorForIndex } from './chart.js?v=394';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=394';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=394';
-import { ValidationError } from './validators.js?v=394';
+import { exportAllData, importAllData } from './db.js?v=408';
+import { APP_VERSION } from './version.js?v=408';
+import { defaultColorForIndex } from './chart.js?v=408';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=408';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=408';
+import { ValidationError } from './validators.js?v=408';
 
 export const BACKUP_VERSION = 3;
 
@@ -222,6 +222,20 @@ export function enrichBackupData(raw) {
     departmentCleaningTasks: raw.departmentCleaningTasks || [],
     purchaseCategories: raw.purchaseCategories || [],
     purchaseItems: raw.purchaseItems || [],
+    haccpTeamMembers: raw.haccpTeamMembers || [],
+    haccpPlans: raw.haccpPlans || [],
+    haccpProductDescriptions: raw.haccpProductDescriptions || [],
+    haccpIntendedUses: raw.haccpIntendedUses || [],
+    haccpFlowSteps: raw.haccpFlowSteps || [],
+    haccpFlowVerifications: raw.haccpFlowVerifications || [],
+    haccpHazards: raw.haccpHazards || [],
+    haccpCcps: raw.haccpCcps || [],
+    haccpCriticalLimits: raw.haccpCriticalLimits || [],
+    haccpMonitoring: raw.haccpMonitoring || [],
+    haccpCorrectiveActions: raw.haccpCorrectiveActions || [],
+    haccpVerificationProcs: raw.haccpVerificationProcs || [],
+    haccpDocuments: raw.haccpDocuments || [],
+    haccpPrpControls: raw.haccpPrpControls || [],
     settings: raw.settings || [],
   };
 }
@@ -279,6 +293,20 @@ export function summarizeBackupData(data) {
     rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
     purchaseCategories: data.purchaseCategories?.length || 0,
     purchaseItems: data.purchaseItems?.length || 0,
+    haccpTeamMembers: data.haccpTeamMembers?.length || 0,
+    haccpPlans: data.haccpPlans?.length || 0,
+    haccpProductDescriptions: data.haccpProductDescriptions?.length || 0,
+    haccpIntendedUses: data.haccpIntendedUses?.length || 0,
+    haccpFlowSteps: data.haccpFlowSteps?.length || 0,
+    haccpFlowVerifications: data.haccpFlowVerifications?.length || 0,
+    haccpHazards: data.haccpHazards?.length || 0,
+    haccpCcps: data.haccpCcps?.length || 0,
+    haccpCriticalLimits: data.haccpCriticalLimits?.length || 0,
+    haccpMonitoring: data.haccpMonitoring?.length || 0,
+    haccpCorrectiveActions: data.haccpCorrectiveActions?.length || 0,
+    haccpVerificationProcs: data.haccpVerificationProcs?.length || 0,
+    haccpDocuments: data.haccpDocuments?.length || 0,
+    haccpPrpControls: data.haccpPrpControls?.length || 0,
   };
 }
 
@@ -323,6 +351,20 @@ export function formatBackupSummary(counts) {
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
   if (counts.purchaseItems) parts.push(`${counts.purchaseItems} פריטי קניות`);
+  if (counts.haccpTeamMembers) parts.push(`${counts.haccpTeamMembers} צוות HACCP`);
+  if (counts.haccpPlans) parts.push(`${counts.haccpPlans} תכניות HACCP`);
+  if (counts.haccpProductDescriptions) parts.push(`${counts.haccpProductDescriptions} תיאורי מוצר HACCP`);
+  if (counts.haccpIntendedUses) parts.push(`${counts.haccpIntendedUses} שימוש מיועד HACCP`);
+  if (counts.haccpFlowSteps) parts.push(`${counts.haccpFlowSteps} שלבי תרשים HACCP`);
+  if (counts.haccpFlowVerifications) parts.push(`${counts.haccpFlowVerifications} אימותי תרשים HACCP`);
+  if (counts.haccpHazards) parts.push(`${counts.haccpHazards} גורמי סיכון HACCP`);
+  if (counts.haccpCcps) parts.push(`${counts.haccpCcps} קביעות CCP`);
+  if (counts.haccpCriticalLimits) parts.push(`${counts.haccpCriticalLimits} גבולות קריטיים`);
+  if (counts.haccpMonitoring) parts.push(`${counts.haccpMonitoring} נהלי ניטור`);
+  if (counts.haccpCorrectiveActions) parts.push(`${counts.haccpCorrectiveActions} פעולות מתקנות`);
+  if (counts.haccpVerificationProcs) parts.push(`${counts.haccpVerificationProcs} נהלי אימות`);
+  if (counts.haccpDocuments) parts.push(`${counts.haccpDocuments} מסמכי תיעוד`);
+  if (counts.haccpPrpControls) parts.push(`${counts.haccpPrpControls} בקרות PRP`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
@@ -409,6 +451,16 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.departmentCleaningTasks)) data.departmentCleaningTasks = [];
   if (!Array.isArray(data.purchaseCategories)) data.purchaseCategories = [];
   if (!Array.isArray(data.purchaseItems)) data.purchaseItems = [];
+  if (!Array.isArray(data.haccpTeamMembers)) data.haccpTeamMembers = [];
+  if (!Array.isArray(data.haccpPlans)) data.haccpPlans = [];
+  if (!Array.isArray(data.haccpProductDescriptions)) data.haccpProductDescriptions = [];
+  if (!Array.isArray(data.haccpIntendedUses)) data.haccpIntendedUses = [];
+  if (!Array.isArray(data.haccpFlowSteps)) data.haccpFlowSteps = [];
+  if (!Array.isArray(data.haccpFlowVerifications)) data.haccpFlowVerifications = [];
+  if (!Array.isArray(data.haccpHazards)) data.haccpHazards = [];
+  if (!Array.isArray(data.haccpCcps)) data.haccpCcps = [];
+  if (!Array.isArray(data.haccpCriticalLimits)) data.haccpCriticalLimits = [];
+  if (!Array.isArray(data.haccpMonitoring)) data.haccpMonitoring = [];
   return enrichBackupData(data);
 }
 

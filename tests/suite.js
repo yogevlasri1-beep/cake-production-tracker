@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=394';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=408';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=394';
+} from '../js/validators.js?v=408';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=394';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=394';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=394';
+} from '../js/calc.js?v=408';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=408';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=408';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,19 +17,22 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=394';
-import { isAutoBackupDue } from '../js/backup-service.js?v=394';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=394';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=394';
+} from '../js/supabase-backup.js?v=408';
+import { isAutoBackupDue } from '../js/backup-service.js?v=408';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=408';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=408';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=394';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=394';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=394';
-import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=394';
+} from '../js/supplier-import.js?v=408';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=408';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=408';
+import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=408';
+import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS } from '../js/haccp-db.js?v=408';
+import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=408';
+import { WORKSPACES } from '../js/workspaces.js?v=408';
 
 export async function runAllTests() {
   /* validators */
@@ -601,6 +604,156 @@ export async function runAllTests() {
     }
   });
 
+  test('HACCP — workspace מלא כולל PRP', () => {
+    assertEqual(WORKSPACES.haccp?.defaultScreen, 'haccp');
+    assertOk(HACCP_STEPS.some((s) => s.id === 'prp' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'hazard' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'ccp' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'limits' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'monitoring' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'corrective' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'verification' && s.status === 'available'));
+    assertOk(HACCP_STEPS.some((s) => s.id === 'documentation' && s.status === 'available'));
+    assertOk(HACCP_PRP_TOPICS.length >= 10);
+    assertOk(HACCP_PRP_TOPICS.every((t) => t.id && t.label));
+    assertOk(isSyncCollection('haccpHazards'));
+    assertOk(isSyncCollection('haccpCcps'));
+    assertOk(isSyncCollection('haccpCriticalLimits'));
+    assertOk(isSyncCollection('haccpMonitoring'));
+    assertOk(isSyncCollection('haccpCorrectiveActions'));
+    assertOk(isSyncCollection('haccpVerificationProcs'));
+    assertOk(isSyncCollection('haccpDocuments'));
+    assertOk(isSyncCollection('haccpPrpControls'));
+    assertEqual(COLLECTION_TABLE.haccpCcps, 'sync_haccp_ccps');
+    assertEqual(COLLECTION_TABLE.haccpCriticalLimits, 'sync_haccp_critical_limits');
+    assertEqual(COLLECTION_TABLE.haccpMonitoring, 'sync_haccp_monitoring');
+    assertEqual(COLLECTION_TABLE.haccpCorrectiveActions, 'sync_haccp_corrective_actions');
+    assertEqual(COLLECTION_TABLE.haccpVerificationProcs, 'sync_haccp_verification_procs');
+    assertEqual(COLLECTION_TABLE.haccpDocuments, 'sync_haccp_documents');
+    assertEqual(COLLECTION_TABLE.haccpPrpControls, 'sync_haccp_prp_controls');
+    assertEqual(
+      rowFingerprint('haccpCcps', {
+        planId: 7,
+        flowStepId: 3,
+        name: 'אפייה',
+        code: 'CCP-1',
+        decision: 'ccp',
+        hazardId: 9,
+      }),
+      'haccpCcps|7|3|CCP-1|ccp|9',
+    );
+    assertEqual(
+      rowFingerprint('haccpCriticalLimits', {
+        planId: 7,
+        ccpId: 2,
+        parameter: 'core_temp',
+        operator: 'gte',
+        value: '75',
+        valueText: '',
+      }),
+      'haccpCriticalLimits|7|2|core_temp|gte|75|',
+    );
+    assertEqual(
+      rowFingerprint('haccpMonitoring', {
+        planId: 7,
+        ccpId: 2,
+        limitId: 5,
+        what: 'טמפרטורת ליבה',
+        method: 'thermometer',
+        frequency: 'every_batch',
+      }),
+      'haccpMonitoring|7|2|5|טמפרטורת ליבה|thermometer|every_batch',
+    );
+    assertEqual(
+      rowFingerprint('haccpCorrectiveActions', {
+        planId: 7,
+        ccpId: 2,
+        limitId: 5,
+        deviation: 'חריגה מטמפרטורה',
+        immediateAction: 'עצירת תהליך',
+        productDisposition: 'hold_evaluate',
+      }),
+      'haccpCorrectiveActions|7|2|5|חריגה מטמפרטורה|עצירת תהליך|hold_evaluate',
+    );
+    assertEqual(
+      rowFingerprint('haccpVerificationProcs', {
+        planId: 7,
+        ccpId: null,
+        method: 'records_review',
+        activity: 'סקירת רשומות ניטור',
+        frequency: 'weekly',
+      }),
+      'haccpVerificationProcs|7||records_review|סקירת רשומות ניטור|weekly',
+    );
+    assertEqual(
+      rowFingerprint('haccpDocuments', {
+        planId: 7,
+        docKind: 'monitoring',
+        title: 'טופס ניטור CCP',
+        retentionYears: 2,
+      }),
+      'haccpDocuments|7|monitoring|טופס ניטור ccp|2',
+    );
+    assertEqual(
+      rowFingerprint('haccpPrpControls', {
+        planId: 7,
+        topicId: 'hygiene',
+        status: 'implemented',
+        procedureSummary: 'הדרכת היגיינה וצ׳קליסט כניסה',
+      }),
+      'haccpPrpControls|7|hygiene|implemented|הדרכת היגיינה וצ׳קליסט כניסה',
+    );
+    assertEqual(
+      formatCriticalLimit({ parameter: 'core_temp', operator: 'gte', value: '75', unit: '°C' }),
+      'טמפרטורת ליבה: ≥ 75 °C',
+    );
+    assertEqual(haccpMonitorMethodLabel('thermometer'), 'מדידת טמפרטורה (מדחום / גשוש)');
+    assertEqual(haccpMonitorFrequencyLabel('every_batch'), 'כל אצווה / כל ייצור');
+    assertEqual(haccpProductDispositionLabel('hold_evaluate'), 'החזקה / הערכה (מעוכב)');
+    assertEqual(haccpVerificationMethodLabel('observation'), 'תצפית ישירה');
+    assertEqual(haccpVerificationFrequencyLabel('after_deviation'), 'בעקבות חריגה / פעולה מתקנת');
+    assertEqual(haccpDocKindLabel('calibration'), 'יומן כיול ציוד מדידה');
+    assertEqual(haccpDocFormatLabel('both'), 'נייר + דיגיטלי');
+    assertEqual(haccpPrpTopicLabel('allergens'), 'ניהול אלרגנים');
+    assertEqual(haccpPrpStatusLabel('implemented'), 'מיושם');
+  });
+
+  test('HACCP — דוח הדפסת תכנית', () => {
+    const html = buildHaccpPlanPrintHtml({
+      plan: { id: 1, name: 'עוגות', status: 'in_progress' },
+      familyName: 'עוגות',
+      members: [{ name: 'דני', role: 'quality', isLeader: true, authorityNotes: '' }],
+      product: { composition: 'קמח סוכר ביצים' },
+      intendedUse: { targetAudience: 'כללי' },
+      flowSteps: [{ id: 10, name: 'אפייה', stepKind: 'baking', description: '' }],
+      flowVerifications: [],
+      hazards: [],
+      ccps: [{ id: 2, code: 'CCP-1', name: 'אפייה', flowStepId: 10, decision: 'ccp', hazardDescription: 'חיידקים' }],
+      limits: [{ ccpId: 2, parameter: 'core_temp', operator: 'gte', value: '75', unit: '°C' }],
+      monitoring: [{ ccpId: 2, what: 'טמפ׳ ליבה', method: 'thermometer', frequency: 'every_batch', responsibleRole: 'production' }],
+      corrective: [],
+      verification: [],
+      documents: [],
+      prpControls: [{ topicId: 'hygiene', status: 'implemented', procedureSummary: 'צ׳קליסט', responsibleRole: 'quality' }],
+      printedAt: '2026-08-04T12:00:00',
+    });
+    assertOk(html.includes('תכנית HACCP — עוגות'));
+    assertOk(html.includes('CCP-1'));
+    assertOk(html.includes('5.3 גבולות בקרה קריטיים'));
+    assertOk(html.includes('ניהול אלרגנים') === false); // not in this snapshot
+    assertOk(html.includes('היגיינת עובדים'));
+    assertOk(html.includes('<!DOCTYPE html>'));
+  });
+
+  test('HACCP — עץ החלטות Codex ל-CCP', () => {
+    assertEqual(evaluateCcpDecisionTree({ q1: 'yes' }), 'prp');
+    assertEqual(evaluateCcpDecisionTree({ q1: 'no', q2: 'no' }), 'modify_process');
+    assertEqual(evaluateCcpDecisionTree({ q1: 'no', q2: 'yes', q3: 'yes' }), 'later_step');
+    assertEqual(evaluateCcpDecisionTree({ q1: 'no', q2: 'yes', q3: 'no', q4: 'yes' }), 'ccp');
+    assertEqual(evaluateCcpDecisionTree({ q1: 'no', q2: 'yes', q3: 'no', q4: 'no' }), 'modify_process');
+    assertEqual(evaluateCcpDecisionTree({ q1: 'no', q2: 'yes' }), 'incomplete');
+  });
+
   /* pct */
   test('pct — רגיל', () => assertEqual(pct(50, 100), 50));
   test('pct — יעד 0 = 0%', () => assertEqual(pct(50, 0), 0));
@@ -975,7 +1128,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=394');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=408');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

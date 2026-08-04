@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=394';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=394';
-import { defaultColorForIndex } from './chart.js?v=394';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=394';
+} from './validators.js?v=408';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=408';
+import { defaultColorForIndex } from './chart.js?v=408';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=408';
 
 export { ValidationError };
 
@@ -3124,6 +3124,185 @@ db.version(66).stores({
   syncQueue: '++id, status, createdAt, collection',
 });
 
+db.version(67).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sourceRawMaterialId, linkTargetType, linkProductId, linkCategoryId, linkCategoryGroupId, catalogSortOrder, sortOrder',
+  portionPresetLinks: '++id, portionPresetId, linkType, targetId, sortOrder, [portionPresetId+linkType+targetId]',
+  portionPresetIngredientSettings: '++id, portionPresetId, recipeIngredientId, [portionPresetId+recipeIngredientId]',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, parentRecipeId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  productPortionComponents: '++id, productId, rawMaterialId, sortOrder, [productId+rawMaterialId]',
+  productFlowLinks: '++id, productId, flowId, sortOrder, [productId+flowId], [flowId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  productionMachines: '++id, name, sortOrder',
+  productionMachineFields: '++id, machineId, name, measureKind, unit, sortOrder',
+  productionMachineProducts: '++id, machineId, targetType, productId, categoryId, categoryGroupId, recipeId, [machineId+targetType+productId], [machineId+targetType+categoryId], [machineId+targetType+categoryGroupId]',
+  productionMachineProductValues: '++id, assignmentId, fieldId, [assignmentId+fieldId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+  haccpTeamMembers: '++id, name, role, isLeader, active, sortOrder',
+  haccpPlans: '++id, categoryGroupId, name, status, currentStep, sortOrder',
+  syncMeta: '[collection+localKey], syncId, collection, updatedAt',
+  syncQueue: '++id, status, createdAt, collection',
+});
+
+db.version(68).stores({
+  categories: '++id, name, sortOrder, groupId',
+  categoryGroups: '++id, name, sortOrder',
+  products: '++id, categoryId, name, active, sortOrder',
+  productionEntries: '++id, date, productId, runId, [date+productId]',
+  targets: '++id, scope, scopeId, period, [scope+scopeId+period]',
+  processLogs: '++id, date, categoryId, activity',
+  activityPresets: '++id, categoryId, name',
+  flows: '++id, categoryId, categoryGroupId, name, sortOrder',
+  flowSteps: '++id, flowId, categoryId, categoryGroupId, sortOrder',
+  flowPortionPresets: '++id, flowId, sortOrder',
+  groupPortionPresets: '++id, categoryGroupId, sourceRecipeId, sourceRawMaterialId, linkTargetType, linkProductId, linkCategoryId, linkCategoryGroupId, catalogSortOrder, sortOrder',
+  portionPresetLinks: '++id, portionPresetId, linkType, targetId, sortOrder, [portionPresetId+linkType+targetId]',
+  portionPresetIngredientSettings: '++id, portionPresetId, recipeIngredientId, [portionPresetId+recipeIngredientId]',
+  groupPreparations: '++id, categoryGroupId, categoryId, name, sortOrder',
+  checklistTasks: '++id, categoryGroupId, categoryId, name, sortOrder',
+  flowChecklistItems: '++id, flowId, checklistTaskId, sortOrder, [flowId+checklistTaskId]',
+  flowCleaningTasks: '++id, flowId, name, sortOrder',
+  productionRuns: '++id, date, categoryId, productId, status, flowId',
+  runStepStates: '++id, runId, stepIndex, [runId+stepIndex]',
+  productPreparations: '++id, productId, name, sortOrder',
+  runPreparationChecks: '++id, runId, flowPreparationId, [runId+flowPreparationId]',
+  runCleaningChecks: '++id, runId, flowCleaningTaskId, [runId+flowCleaningTaskId]',
+  recipeGroups: '++id, name, sortOrder, linkedCategoryGroupId',
+  recipeCategories: '++id, groupId, name, sortOrder, linkedCategoryId',
+  recipes: '++id, categoryId, parentRecipeId, name, linkedProductId, linkedProductCategoryId, linkedProductGroupId, sortOrder, bakingProfileId',
+  recipeIngredients: '++id, recipeId, rawMaterialId, sortOrder',
+  recipeProductLinks: '++id, recipeId, productId, [recipeId+productId]',
+  recipeProductCategoryLinks: '++id, recipeId, categoryId, [recipeId+categoryId]',
+  recipeProductGroupLinks: '++id, recipeId, groupId, [recipeId+groupId]',
+  productRecipeComponents: '++id, productId, recipeId, sortOrder, [productId+recipeId]',
+  productPortionComponents: '++id, productId, rawMaterialId, sortOrder, [productId+rawMaterialId]',
+  productFlowLinks: '++id, productId, flowId, sortOrder, [productId+flowId], [flowId+productId]',
+  bakingProfiles: '++id, name, sortOrder',
+  bakingProfileProducts: '++id, bakingProfileId, productId, sortOrder, [bakingProfileId+productId]',
+  bakingProfileScopes: '++id, bakingProfileId, scopeType, scopeId, sortOrder, [bakingProfileId+scopeType+scopeId], [scopeType+scopeId]',
+  productionMachines: '++id, name, sortOrder',
+  productionMachineFields: '++id, machineId, name, measureKind, unit, sortOrder',
+  productionMachineProducts: '++id, machineId, targetType, productId, categoryId, categoryGroupId, recipeId, [machineId+targetType+productId], [machineId+targetType+categoryId], [machineId+targetType+categoryGroupId]',
+  productionMachineProductValues: '++id, assignmentId, fieldId, [assignmentId+fieldId]',
+  supplierCategories: '++id, name, sortOrder',
+  suppliers: '++id, categoryId, name, sortOrder',
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder',
+  rawMaterialPriceHistory: '++id, rawMaterialId, effectiveDate, [rawMaterialId+effectiveDate]',
+  supplierShortages: '++id, supplierId, rawMaterialId, sortOrder',
+  weeklyProductionPlans: '++id, weekStart',
+  weeklyProductionPlanItems: '++id, planId, productId, [planId+productId]',
+  settings: 'key',
+  localBackups: '++id, createdAt, kind',
+  managerPlans: '++id, planType, anchorDate, [planType+anchorDate]',
+  managerPlanItems: '++id, planType, anchorDate, [planType+anchorDate], sortOrder',
+  managerTasks: '++id, department, kind, status, priority, dueDate, createdAt, sortOrder',
+  managerIncidents: '++id, department, status, severity, occurredAt, createdAt',
+  managerShiftNotes: '++id, date, department, kind, createdAt',
+  managerResponsibilityAreas: '++id, name, sortOrder',
+  managerEmployees: '++id, name, responsibilityAreaId, active, sortOrder',
+  managerDepartments: '++id, deptKey, sortOrder, active',
+  departmentCleaningLists: '++id, name, sortOrder',
+  departmentCleaningTasks: '++id, listId, name, sortOrder, [listId+name]',
+  purchaseCategories: '++id, catKey, sortOrder',
+  purchaseItems: '++id, categoryId, name, sortOrder, active',
+  haccpTeamMembers: '++id, name, role, isLeader, active, sortOrder',
+  haccpPlans: '++id, categoryGroupId, name, status, currentStep, sortOrder',
+  haccpProductDescriptions: '++id, planId',
+  syncMeta: '[collection+localKey], syncId, collection, updatedAt',
+  syncQueue: '++id, status, createdAt, collection',
+});
+
+db.version(69).stores({
+  haccpIntendedUses: '++id, planId',
+});
+
+db.version(70).stores({
+  haccpFlowSteps: '++id, planId, sortOrder',
+});
+
+db.version(71).stores({
+  haccpFlowVerifications: '++id, planId, verifiedAt',
+});
+
+db.version(72).stores({
+  haccpHazards: '++id, planId, flowStepId, sortOrder',
+});
+
+db.version(73).stores({
+  haccpCcps: '++id, planId, flowStepId, hazardId, sortOrder',
+});
+
+db.version(74).stores({
+  haccpCriticalLimits: '++id, planId, ccpId, sortOrder',
+});
+
+db.version(75).stores({
+  haccpMonitoring: '++id, planId, ccpId, limitId, sortOrder',
+});
+
+db.version(76).stores({
+  haccpCorrectiveActions: '++id, planId, ccpId, limitId, sortOrder',
+});
+
+db.version(77).stores({
+  haccpVerificationProcs: '++id, planId, ccpId, sortOrder',
+});
+
+db.version(78).stores({
+  haccpDocuments: '++id, planId, docKind, sortOrder',
+});
+
+db.version(79).stores({
+  haccpPrpControls: '++id, planId, topicId, sortOrder',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3614,7 +3793,20 @@ export async function deleteCategory(id, { cascade = false } = {}) {
 }
 
 export async function resetAllData() {
-  await db.transaction('rw', db.categories, db.categoryGroups, db.products, db.productionEntries, db.targets, db.processLogs, db.activityPresets, db.flows, db.flowSteps, db.flowPortionPresets, db.groupPortionPresets, db.groupPreparations, db.flowCleaningTasks, db.productionRuns, db.runStepStates, db.productPreparations, db.runPreparationChecks, db.runCleaningChecks, db.recipeGroups, db.recipeCategories, db.recipes, db.recipeIngredients, db.recipeProductLinks, db.recipeProductCategoryLinks, db.recipeProductGroupLinks, db.productRecipeComponents, db.supplierCategories, db.suppliers, db.rawMaterials, db.rawMaterialPriceHistory, db.weeklyProductionPlans, db.weeklyProductionPlanItems, db.managerPlans, db.managerPlanItems, db.managerTasks, db.managerIncidents, db.managerShiftNotes, db.managerResponsibilityAreas, db.managerEmployees, db.managerDepartments, db.departmentCleaningLists, db.departmentCleaningTasks, async () => {
+  await db.transaction('rw', ...pickDbTables(
+    'categories', 'categoryGroups', 'products', 'productionEntries', 'targets', 'processLogs',
+    'activityPresets', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets',
+    'groupPreparations', 'flowCleaningTasks', 'productionRuns', 'runStepStates',
+    'productPreparations', 'runPreparationChecks', 'runCleaningChecks',
+    'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients',
+    'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
+    'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials',
+    'rawMaterialPriceHistory', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
+    'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents',
+    'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
+    'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
+    'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls',
+  ), async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
     await db.productRecipeComponents.clear();
@@ -3651,6 +3843,20 @@ export async function resetAllData() {
     await db.managerDepartments.clear();
     await db.departmentCleaningTasks?.clear?.();
     await db.departmentCleaningLists?.clear?.();
+    await db.haccpTeamMembers?.clear?.();
+    await db.haccpPrpControls?.clear?.();
+    await db.haccpDocuments?.clear?.();
+    await db.haccpVerificationProcs?.clear?.();
+    await db.haccpCorrectiveActions?.clear?.();
+    await db.haccpMonitoring?.clear?.();
+    await db.haccpCriticalLimits?.clear?.();
+    await db.haccpCcps?.clear?.();
+    await db.haccpHazards?.clear?.();
+    await db.haccpFlowVerifications?.clear?.();
+    await db.haccpFlowSteps?.clear?.();
+    await db.haccpIntendedUses?.clear?.();
+    await db.haccpProductDescriptions?.clear?.();
+    await db.haccpPlans?.clear?.();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -3773,6 +3979,20 @@ export async function exportAllData() {
     productionMachineProductValues,
     purchaseCategories,
     purchaseItems,
+    haccpTeamMembers,
+    haccpPlans,
+    haccpProductDescriptions,
+    haccpIntendedUses,
+    haccpFlowSteps,
+    haccpFlowVerifications,
+    haccpHazards,
+    haccpCcps,
+    haccpCriticalLimits,
+    haccpMonitoring,
+    haccpCorrectiveActions,
+    haccpVerificationProcs,
+    haccpDocuments,
+    haccpPrpControls,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -3833,6 +4053,20 @@ export async function exportAllData() {
     db.productionMachineProductValues?.toArray?.() ?? Promise.resolve([]),
     db.purchaseCategories?.toArray?.() ?? Promise.resolve([]),
     db.purchaseItems?.toArray?.() ?? Promise.resolve([]),
+    db.haccpTeamMembers?.toArray?.() ?? Promise.resolve([]),
+    db.haccpPlans?.toArray?.() ?? Promise.resolve([]),
+    db.haccpProductDescriptions?.toArray?.() ?? Promise.resolve([]),
+    db.haccpIntendedUses?.toArray?.() ?? Promise.resolve([]),
+    db.haccpFlowSteps?.toArray?.() ?? Promise.resolve([]),
+    db.haccpFlowVerifications?.toArray?.() ?? Promise.resolve([]),
+    db.haccpHazards?.toArray?.() ?? Promise.resolve([]),
+    db.haccpCcps?.toArray?.() ?? Promise.resolve([]),
+    db.haccpCriticalLimits?.toArray?.() ?? Promise.resolve([]),
+    db.haccpMonitoring?.toArray?.() ?? Promise.resolve([]),
+    db.haccpCorrectiveActions?.toArray?.() ?? Promise.resolve([]),
+    db.haccpVerificationProcs?.toArray?.() ?? Promise.resolve([]),
+    db.haccpDocuments?.toArray?.() ?? Promise.resolve([]),
+    db.haccpPrpControls?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -3893,6 +4127,20 @@ export async function exportAllData() {
     productionMachineProductValues,
     purchaseCategories,
     purchaseItems,
+    haccpTeamMembers,
+    haccpPlans,
+    haccpProductDescriptions,
+    haccpIntendedUses,
+    haccpFlowSteps,
+    haccpFlowVerifications,
+    haccpHazards,
+    haccpCcps,
+    haccpCriticalLimits,
+    haccpMonitoring,
+    haccpCorrectiveActions,
+    haccpVerificationProcs,
+    haccpDocuments,
+    haccpPrpControls,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -3968,6 +4216,20 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.productionMachineFields)) payload.productionMachineFields = [];
   if (!Array.isArray(payload.productionMachineProducts)) payload.productionMachineProducts = [];
   if (!Array.isArray(payload.productionMachineProductValues)) payload.productionMachineProductValues = [];
+  if (!Array.isArray(payload.haccpTeamMembers)) payload.haccpTeamMembers = [];
+  if (!Array.isArray(payload.haccpPlans)) payload.haccpPlans = [];
+  if (!Array.isArray(payload.haccpProductDescriptions)) payload.haccpProductDescriptions = [];
+  if (!Array.isArray(payload.haccpIntendedUses)) payload.haccpIntendedUses = [];
+  if (!Array.isArray(payload.haccpFlowSteps)) payload.haccpFlowSteps = [];
+  if (!Array.isArray(payload.haccpFlowVerifications)) payload.haccpFlowVerifications = [];
+  if (!Array.isArray(payload.haccpHazards)) payload.haccpHazards = [];
+  if (!Array.isArray(payload.haccpCcps)) payload.haccpCcps = [];
+  if (!Array.isArray(payload.haccpCriticalLimits)) payload.haccpCriticalLimits = [];
+  if (!Array.isArray(payload.haccpMonitoring)) payload.haccpMonitoring = [];
+  if (!Array.isArray(payload.haccpCorrectiveActions)) payload.haccpCorrectiveActions = [];
+  if (!Array.isArray(payload.haccpVerificationProcs)) payload.haccpVerificationProcs = [];
+  if (!Array.isArray(payload.haccpDocuments)) payload.haccpDocuments = [];
+  if (!Array.isArray(payload.haccpPrpControls)) payload.haccpPrpControls = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4005,6 +4267,7 @@ export async function importAllData(payload) {
       'productFlowLinks',
       'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
       'purchaseCategories', 'purchaseItems',
+      'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -4020,6 +4283,20 @@ export async function importAllData(payload) {
       await db.productionMachines?.clear?.();
       await db.purchaseItems?.clear?.();
       await db.purchaseCategories?.clear?.();
+      await db.haccpTeamMembers?.clear?.();
+      await db.haccpPrpControls?.clear?.();
+      await db.haccpDocuments?.clear?.();
+      await db.haccpVerificationProcs?.clear?.();
+      await db.haccpCorrectiveActions?.clear?.();
+      await db.haccpMonitoring?.clear?.();
+      await db.haccpCriticalLimits?.clear?.();
+      await db.haccpCcps?.clear?.();
+      await db.haccpHazards?.clear?.();
+      await db.haccpFlowVerifications?.clear?.();
+      await db.haccpFlowSteps?.clear?.();
+      await db.haccpIntendedUses?.clear?.();
+      await db.haccpProductDescriptions?.clear?.();
+      await db.haccpPlans?.clear?.();
       await db.recipeIngredients.clear();
       await db.recipeProductLinks.clear();
       await db.recipeProductCategoryLinks.clear();
@@ -4182,6 +4459,44 @@ export async function importAllData(payload) {
       }
       if (payload.departmentCleaningTasks?.length) {
         await db.departmentCleaningTasks.bulkPut(payload.departmentCleaningTasks);
+      }
+      if (payload.haccpTeamMembers?.length) await db.haccpTeamMembers.bulkPut(payload.haccpTeamMembers);
+      if (payload.haccpPlans?.length) await db.haccpPlans.bulkPut(payload.haccpPlans);
+      if (payload.haccpProductDescriptions?.length) {
+        await db.haccpProductDescriptions.bulkPut(payload.haccpProductDescriptions);
+      }
+      if (payload.haccpIntendedUses?.length) {
+        await db.haccpIntendedUses.bulkPut(payload.haccpIntendedUses);
+      }
+      if (payload.haccpFlowSteps?.length) {
+        await db.haccpFlowSteps.bulkPut(payload.haccpFlowSteps);
+      }
+      if (payload.haccpFlowVerifications?.length) {
+        await db.haccpFlowVerifications.bulkPut(payload.haccpFlowVerifications);
+      }
+      if (payload.haccpHazards?.length) {
+        await db.haccpHazards.bulkPut(payload.haccpHazards);
+      }
+      if (payload.haccpCcps?.length) {
+        await db.haccpCcps.bulkPut(payload.haccpCcps);
+      }
+      if (payload.haccpCriticalLimits?.length) {
+        await db.haccpCriticalLimits.bulkPut(payload.haccpCriticalLimits);
+      }
+      if (payload.haccpMonitoring?.length) {
+        await db.haccpMonitoring.bulkPut(payload.haccpMonitoring);
+      }
+      if (payload.haccpCorrectiveActions?.length) {
+        await db.haccpCorrectiveActions.bulkPut(payload.haccpCorrectiveActions);
+      }
+      if (payload.haccpVerificationProcs?.length) {
+        await db.haccpVerificationProcs.bulkPut(payload.haccpVerificationProcs);
+      }
+      if (payload.haccpDocuments?.length) {
+        await db.haccpDocuments.bulkPut(payload.haccpDocuments);
+      }
+      if (payload.haccpPrpControls?.length) {
+        await db.haccpPrpControls.bulkPut(payload.haccpPrpControls);
       }
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);

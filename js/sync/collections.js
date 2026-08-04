@@ -62,6 +62,20 @@ export const COLLECTION_TABLE = {
   departmentCleaningTasks: 'sync_department_cleaning_tasks',
   purchaseCategories: 'sync_purchase_categories',
   purchaseItems: 'sync_purchase_items',
+  haccpTeamMembers: 'sync_haccp_team_members',
+  haccpPlans: 'sync_haccp_plans',
+  haccpProductDescriptions: 'sync_haccp_product_descriptions',
+  haccpIntendedUses: 'sync_haccp_intended_uses',
+  haccpFlowSteps: 'sync_haccp_flow_steps',
+  haccpFlowVerifications: 'sync_haccp_flow_verifications',
+  haccpHazards: 'sync_haccp_hazards',
+  haccpCcps: 'sync_haccp_ccps',
+  haccpCriticalLimits: 'sync_haccp_critical_limits',
+  haccpMonitoring: 'sync_haccp_monitoring',
+  haccpCorrectiveActions: 'sync_haccp_corrective_actions',
+  haccpVerificationProcs: 'sync_haccp_verification_procs',
+  haccpDocuments: 'sync_haccp_documents',
+  haccpPrpControls: 'sync_haccp_prp_controls',
   settings: 'sync_app_settings',
 };
 
@@ -152,6 +166,19 @@ export const COLLECTION_FKS = {
   managerEmployees: { responsibilityAreaId: 'managerResponsibilityAreas' },
   departmentCleaningTasks: { listId: 'departmentCleaningLists' },
   purchaseItems: { categoryId: 'purchaseCategories' },
+  haccpPlans: { categoryGroupId: 'categoryGroups' },
+  haccpProductDescriptions: { planId: 'haccpPlans' },
+  haccpIntendedUses: { planId: 'haccpPlans' },
+  haccpFlowSteps: { planId: 'haccpPlans' },
+  haccpFlowVerifications: { planId: 'haccpPlans' },
+  haccpHazards: { planId: 'haccpPlans', flowStepId: 'haccpFlowSteps' },
+  haccpCcps: { planId: 'haccpPlans', flowStepId: 'haccpFlowSteps', hazardId: 'haccpHazards' },
+  haccpCriticalLimits: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
+  haccpMonitoring: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
+  haccpCorrectiveActions: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
+  haccpVerificationProcs: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
+  haccpDocuments: { planId: 'haccpPlans' },
+  haccpPrpControls: { planId: 'haccpPlans' },
 };
 
 /**
@@ -160,6 +187,7 @@ export const COLLECTION_FKS = {
  */
 export const ARRAY_FKS = {
   rawMaterials: { portionProductIds: 'products' },
+  haccpFlowVerifications: { verifierMemberIds: 'haccpTeamMembers' },
 };
 
 /**
@@ -243,6 +271,20 @@ export const SYNC_ORDER = [
   'departmentCleaningTasks',
   'purchaseCategories',
   'purchaseItems',
+  'haccpTeamMembers',
+  'haccpPlans',
+  'haccpProductDescriptions',
+  'haccpIntendedUses',
+  'haccpFlowSteps',
+  'haccpFlowVerifications',
+  'haccpHazards',
+  'haccpCcps',
+  'haccpCriticalLimits',
+  'haccpMonitoring',
+  'haccpCorrectiveActions',
+  'haccpVerificationProcs',
+  'haccpDocuments',
+  'haccpPrpControls',
   'settings',
 ];
 
@@ -436,6 +478,54 @@ export function rowFingerprint(collection, row) {
       return row.listId != null ? `${collection}|${row.listId}|${n}` : '';
     case 'purchaseItems':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+    case 'haccpTeamMembers':
+      return n ? `${collection}|${n}|${row.role ?? ''}` : '';
+    case 'haccpPlans':
+      return n ? `${collection}|${n}|${row.categoryGroupId ?? ''}` : '';
+    case 'haccpProductDescriptions':
+      return row.planId != null ? `${collection}|${row.planId}` : '';
+    case 'haccpIntendedUses':
+      return row.planId != null ? `${collection}|${row.planId}` : '';
+    case 'haccpFlowSteps':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${n}|${row.sortOrder ?? ''}`
+        : '';
+    case 'haccpFlowVerifications':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.verifiedAt ?? ''}|${row.matchResult ?? ''}|${row.createdAt ?? ''}`
+        : '';
+    case 'haccpHazards':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.flowStepId ?? ''}|${normName(row.description)}|${row.hazardType ?? ''}`
+        : '';
+    case 'haccpCcps':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.flowStepId ?? ''}|${row.code || n}|${row.decision ?? ''}|${row.hazardId ?? ''}`
+        : '';
+    case 'haccpCriticalLimits':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.parameter ?? ''}|${row.operator ?? ''}|${row.value ?? ''}|${row.valueText ?? ''}`
+        : '';
+    case 'haccpMonitoring':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.limitId ?? ''}|${normName(row.what)}|${row.method ?? ''}|${row.frequency ?? ''}`
+        : '';
+    case 'haccpCorrectiveActions':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.limitId ?? ''}|${normName(row.deviation)}|${normName(row.immediateAction)}|${row.productDisposition ?? ''}`
+        : '';
+    case 'haccpVerificationProcs':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.method ?? ''}|${normName(row.activity)}|${row.frequency ?? ''}`
+        : '';
+    case 'haccpDocuments':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.docKind ?? ''}|${normName(row.title)}|${row.retentionYears ?? ''}`
+        : '';
+    case 'haccpPrpControls':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.topicId ?? ''}|${row.status ?? ''}|${normName(row.procedureSummary)}`
+        : '';
     default:
       return n ? `${collection}|${n}` : '';
   }
