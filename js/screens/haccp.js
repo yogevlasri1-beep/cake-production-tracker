@@ -20,7 +20,6 @@ import {
   haccpFlowMatchLabel,
   haccpHazardTypeLabel,
   haccpRiskLevelLabel,
-  computeHazardSignificant,
   getHaccpTeamMembers,
   addHaccpTeamMember,
   updateHaccpTeamMember,
