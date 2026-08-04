@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=404';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=404';
-import { openModal, closeModal } from '../modal.js?v=404';
+import { getCategoryGroups } from '../db.js?v=405';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=405';
+import { openModal, closeModal } from '../modal.js?v=405';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -88,7 +88,16 @@ import {
   seedSuggestedCorrectiveForCcp,
   HACCP_PRODUCT_DISPOSITIONS,
   haccpProductDispositionLabel,
-} from '../haccp-db.js?v=404';
+  getHaccpVerificationProcs,
+  addHaccpVerificationProc,
+  updateHaccpVerificationProc,
+  deleteHaccpVerificationProc,
+  seedSuggestedVerificationProcs,
+  HACCP_VERIFICATION_METHODS,
+  HACCP_VERIFICATION_FREQUENCIES,
+  haccpVerificationMethodLabel,
+  haccpVerificationFrequencyLabel,
+} from '../haccp-db.js?v=405';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -141,6 +150,7 @@ export async function renderHaccp(container) {
   let criticalLimits = [];
   let monitoring = [];
   let correctiveActions = [];
+  let verificationProcs = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -199,6 +209,13 @@ export async function renderHaccp(container) {
       getHaccpCorrectiveActions(activePlan.id),
     ]);
   }
+  if (step.id === 'verification' && activePlan) {
+    [flowSteps, ccps, verificationProcs] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getConfirmedHaccpCcps(activePlan.id),
+      getHaccpVerificationProcs(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -222,6 +239,8 @@ export async function renderHaccp(container) {
     body = renderMonitoringSection(activePlan, flowSteps, ccps, criticalLimits, monitoring, groupMap);
   } else if (step.id === 'corrective') {
     body = renderCorrectiveSection(activePlan, flowSteps, ccps, criticalLimits, correctiveActions, groupMap);
+  } else if (step.id === 'verification') {
+    body = renderVerificationSection(activePlan, flowSteps, ccps, verificationProcs, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -259,7 +278,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs,
   });
 }
 
@@ -319,12 +338,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: עד <strong>5.5 פעולות מתקנות</strong></li>
+        <li>השלבים הפעילים: עד <strong>5.6 אימות מערכת</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי ניטור — הגדר מראש מה עושים כשיש חריגה מגבול קריטי.</p>
+      <p class="haccp-hint">המלצה: אחרי פעולות מתקנות — הגדר אימות (תצפית, בדיקה מקבילה, תיעוד, כיול).</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="monitoring">ניטור</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="corrective">פעולות מתקנות</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="corrective">פעולות מתקנות</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="verification">אימות מערכת</button>
       </div>
     </div>`;
 }
@@ -347,7 +366,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי פעולות מתקנות — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי אימות מערכת — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -1628,6 +1647,131 @@ function renderCorrectiveSection(activePlan, flowSteps, confirmedCcps, limits, a
     </div>`;
 }
 
+function verificationMethodOptions(selected = 'records_review') {
+  return HACCP_VERIFICATION_METHODS.map((m) =>
+    `<option value="${m.id}" ${selected === m.id ? 'selected' : ''}>${escapeHtml(m.label)}</option>`
+  ).join('');
+}
+
+function verificationFrequencyOptions(selected = 'monthly') {
+  return HACCP_VERIFICATION_FREQUENCIES.map((f) =>
+    `<option value="${f.id}" ${selected === f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`
+  ).join('');
+}
+
+function renderVerificationSection(activePlan, flowSteps, confirmedCcps, procs, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.6 · אימות מערכת</div>
+        <p class="haccp-hint">בחר תכנית. האימות מוודא שהמערכת מיושמת כראוי — מעבר לניטור השוטף.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const ccpMap = new Map((confirmedCcps || []).map((c) => [Number(c.id), c]));
+
+  const ccpOptions = [
+    `<option value="">— כלל התכנית —</option>`,
+    ...(confirmedCcps || []).map((c) =>
+      `<option value="${c.id}">${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+    ),
+  ].join('');
+
+  const rows = procs.length
+    ? procs.map((v) => {
+      const ccp = v.ccpId ? ccpMap.get(Number(v.ccpId)) : null;
+      const who = v.responsibleText
+        ? `${haccpRoleLabel(v.responsibleRole)} · ${v.responsibleText}`
+        : haccpRoleLabel(v.responsibleRole);
+      const scope = ccp
+        ? `${ccp.code || 'CCP'} · ${ccp.name}`
+        : 'כלל התכנית';
+      return `
+        <div class="haccp-verify-row">
+          <div>
+            <div class="haccp-ccp-title">${escapeHtml(haccpVerificationMethodLabel(v.method))} — ${escapeHtml(v.activity)}</div>
+            <div class="haccp-hazard-meta">
+              היקף: ${escapeHtml(scope)}
+              · ${escapeHtml(haccpVerificationFrequencyLabel(v.frequency))}
+              ${v.frequencyDetails ? ` (${escapeHtml(v.frequencyDetails)})` : ''}
+              · ${escapeHtml(who)}
+            </div>
+            ${v.records ? `<div class="haccp-hazard-meta">רישום: ${escapeHtml(v.records)}</div>` : ''}
+          </div>
+          <div class="haccp-hazard-actions">
+            <button type="button" class="btn btn-secondary btn-sm haccp-verify-edit" data-id="${v.id}">ערוך</button>
+            <button type="button" class="btn btn-danger btn-sm haccp-verify-del" data-id="${v.id}">מחק</button>
+          </div>
+        </div>`;
+    }).join('')
+    : `<p class="haccp-hint">עדיין אין נהלי אימות. אפשר להוסיף ידנית או להשתמש בהצעות מהמדריך.</p>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">5.6 · אימות מערכת — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: אימות מתבצע על ידי גורם בכיר יותר מעובדי הייצור — בתצפית ישירה,
+        בדיקה מקבילה או בדיקת תיעוד (ואפשר גם כיול וביקורת). משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${procs.length}</strong> נהלי אימות
+        ${confirmedCcps?.length ? ` · ${confirmedCcps.length} CCP מאושרים` : ''}
+      </p>
+      <div class="haccp-inline-row" style="margin-bottom:12px">
+        <button type="button" class="btn btn-secondary" id="haccp-verify-seed">הצע נהלי אימות</button>
+      </div>
+
+      <div class="haccp-verify-list">${rows}</div>
+
+      <form id="haccp-verify-form" class="haccp-product-form haccp-verify-form">
+        <div class="card-title" style="font-size:1rem">הוספת נוהל אימות</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-verify-method">שיטה</label>
+            <select id="haccp-verify-method">${verificationMethodOptions('records_review')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-verify-freq">תדירות</label>
+            <select id="haccp-verify-freq">${verificationFrequencyOptions('monthly')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-verify-ccp">היקף (אופציונלי — CCP ספציפי)</label>
+          <select id="haccp-verify-ccp">${ccpOptions}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-verify-activity">מה מאמתים</label>
+          <textarea id="haccp-verify-activity" rows="2" maxlength="2000"
+            placeholder="למשל: סקירת רשומות ניטור שבועית"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-verify-freq-details">פירוט תדירות</label>
+          <input type="text" id="haccp-verify-freq-details" maxlength="500" placeholder="אופציונלי">
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-verify-role">אחראי (תפקיד)</label>
+            <select id="haccp-verify-role">${monitorRoleOptions('quality')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-verify-who">שם / פירוט</label>
+            <input type="text" id="haccp-verify-who" maxlength="200" placeholder="אופציונלי">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-verify-records">רישום / טופס</label>
+          <input type="text" id="haccp-verify-records" maxlength="1000" placeholder="טופס אימות / יומן ביקורת">
+        </div>
+        <div class="form-group">
+          <label for="haccp-verify-notes">הערות</label>
+          <textarea id="haccp-verify-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">הוסף נוהל אימות</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -2866,6 +3010,133 @@ function bindHaccpEvents(container, ctx) {
             notificationInstructions: document.getElementById('edit-corrective-notify').value,
             records: document.getElementById('edit-corrective-records').value,
             notes: document.getElementById('edit-corrective-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  document.getElementById('haccp-verify-seed')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    try {
+      const n = await seedSuggestedVerificationProcs(ctx.activePlan.id);
+      showToast(`נוספו ${n} נהלי אימות ✓`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-verify-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpVerificationProc(ctx.activePlan.id, {
+        ccpId: document.getElementById('haccp-verify-ccp')?.value || null,
+        method: document.getElementById('haccp-verify-method')?.value,
+        activity: document.getElementById('haccp-verify-activity')?.value,
+        frequency: document.getElementById('haccp-verify-freq')?.value,
+        frequencyDetails: document.getElementById('haccp-verify-freq-details')?.value,
+        responsibleRole: document.getElementById('haccp-verify-role')?.value,
+        responsibleText: document.getElementById('haccp-verify-who')?.value,
+        records: document.getElementById('haccp-verify-records')?.value,
+        notes: document.getElementById('haccp-verify-notes')?.value,
+      });
+      showToast('נוהל אימות נוסף ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-verify-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק נוהל אימות?')) return;
+      try {
+        await deleteHaccpVerificationProc(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-verify-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.verificationProcs?.find((v) => String(v.id) === String(btn.dataset.id));
+      if (!row) return;
+      const confirmed = (ctx.ccps || []).filter((c) => c.decision === 'ccp');
+      const ccpOptions = [
+        `<option value="" ${!row.ccpId ? 'selected' : ''}>— כלל התכנית —</option>`,
+        ...confirmed.map((c) =>
+          `<option value="${c.id}" ${Number(c.id) === Number(row.ccpId) ? 'selected' : ''}>${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+        ),
+      ].join('');
+      openModal({
+        title: 'עריכת נוהל אימות',
+        bodyHTML: `
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-verify-method">שיטה</label>
+              <select id="edit-verify-method">${verificationMethodOptions(row.method || 'records_review')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-verify-freq">תדירות</label>
+              <select id="edit-verify-freq">${verificationFrequencyOptions(row.frequency || 'monthly')}</select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-verify-ccp">היקף</label>
+            <select id="edit-verify-ccp">${ccpOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-verify-activity">מה מאמתים</label>
+            <textarea id="edit-verify-activity" rows="2" maxlength="2000">${escapeHtml(row.activity || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-verify-freq-details">פירוט תדירות</label>
+            <input type="text" id="edit-verify-freq-details" maxlength="500" value="${escapeHtml(row.frequencyDetails || '')}">
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-verify-role">אחראי</label>
+              <select id="edit-verify-role">${monitorRoleOptions(row.responsibleRole || 'quality')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-verify-who">שם / פירוט</label>
+              <input type="text" id="edit-verify-who" maxlength="200" value="${escapeHtml(row.responsibleText || '')}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-verify-records">רישום / טופס</label>
+            <input type="text" id="edit-verify-records" maxlength="1000" value="${escapeHtml(row.records || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-verify-notes">הערות</label>
+            <textarea id="edit-verify-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-verify">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-edit-verify')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpVerificationProc(row.id, {
+            ccpId: document.getElementById('edit-verify-ccp').value || null,
+            method: document.getElementById('edit-verify-method').value,
+            activity: document.getElementById('edit-verify-activity').value,
+            frequency: document.getElementById('edit-verify-freq').value,
+            frequencyDetails: document.getElementById('edit-verify-freq-details').value,
+            responsibleRole: document.getElementById('edit-verify-role').value,
+            responsibleText: document.getElementById('edit-verify-who').value,
+            records: document.getElementById('edit-verify-records').value,
+            notes: document.getElementById('edit-verify-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');

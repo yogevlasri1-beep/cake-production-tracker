@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=404';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=404';
+import { db, ValidationError } from './db.js?v=405';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=405';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -15,7 +15,7 @@ export const HACCP_STEPS = [
   { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'available' },
   { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'available' },
   { id: 'corrective', label: 'פעולות מתקנות', chapter: '5.5', status: 'available' },
-  { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'soon' },
+  { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'available' },
   { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'soon' },
 ];
 
@@ -253,11 +253,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpCriticalLimits,
     db.haccpMonitoring,
     db.haccpCorrectiveActions,
+    db.haccpVerificationProcs,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const verProcs = await db.haccpVerificationProcs.where('planId').equals(pid).toArray();
+      for (const v of verProcs) await db.haccpVerificationProcs.delete(v.id);
       const corrective = await db.haccpCorrectiveActions.where('planId').equals(pid).toArray();
       for (const a of corrective) await db.haccpCorrectiveActions.delete(a.id);
       const monitoring = await db.haccpMonitoring.where('planId').equals(pid).toArray();
@@ -672,6 +675,7 @@ export async function deleteHaccpFlowStep(id) {
     db.haccpCriticalLimits,
     db.haccpMonitoring,
     db.haccpCorrectiveActions,
+    db.haccpVerificationProcs,
     async () => {
       const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
       for (const h of hazards) {
@@ -701,6 +705,8 @@ async function deleteCcpChildren(ccpId) {
   for (const m of monitoring) await db.haccpMonitoring.delete(m.id);
   const corrective = await db.haccpCorrectiveActions.where('ccpId').equals(cid).toArray();
   for (const a of corrective) await db.haccpCorrectiveActions.delete(a.id);
+  const verProcs = await db.haccpVerificationProcs.where('ccpId').equals(cid).toArray();
+  for (const v of verProcs) await db.haccpVerificationProcs.delete(v.id);
 }
 
 export async function moveHaccpFlowStep(planId, stepId, direction) {
@@ -1391,6 +1397,7 @@ export async function deleteHaccpCcp(id) {
     db.haccpCriticalLimits,
     db.haccpMonitoring,
     db.haccpCorrectiveActions,
+    db.haccpVerificationProcs,
     async () => {
       await deleteCcpChildren(cid);
       await db.haccpCcps.delete(cid);
@@ -2170,4 +2177,232 @@ export async function seedSuggestedCorrectiveForCcp(planId, ccpId) {
     records: 'טופס פעולה מתקנת CCP',
   });
   return 1;
+}
+
+/** שיטות אימות לפי מדריך משהב: תצפית ישירה / בדיקה מקבילה / בדיקת תיעוד (+ כיול/ביקורת) */
+export const HACCP_VERIFICATION_METHODS = [
+  { id: 'observation', label: 'תצפית ישירה' },
+  { id: 'parallel_check', label: 'בדיקה מקבילה' },
+  { id: 'records_review', label: 'בדיקת תיעוד' },
+  { id: 'calibration', label: 'כיול ציוד מדידה' },
+  { id: 'sampling', label: 'דיגום / בדיקה מעבדתית' },
+  { id: 'audit', label: 'ביקורת פנימית / חיצונית' },
+  { id: 'other', label: 'אחר' },
+];
+
+export const HACCP_VERIFICATION_FREQUENCIES = [
+  { id: 'daily', label: 'יומי' },
+  { id: 'weekly', label: 'שבועי' },
+  { id: 'monthly', label: 'חודשי' },
+  { id: 'quarterly', label: 'רבעוני' },
+  { id: 'annually', label: 'שנתי' },
+  { id: 'after_deviation', label: 'בעקבות חריגה / פעולה מתקנת' },
+  { id: 'random', label: 'אקראי / מדגמי' },
+  { id: 'other', label: 'אחר' },
+];
+
+export function haccpVerificationMethodLabel(id) {
+  return HACCP_VERIFICATION_METHODS.find((m) => m.id === id)?.label || id || '—';
+}
+
+export function haccpVerificationFrequencyLabel(id) {
+  return HACCP_VERIFICATION_FREQUENCIES.find((f) => f.id === id)?.label || id || '—';
+}
+
+function sanitizeVerificationMethod(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_VERIFICATION_METHODS.some((m) => m.id === id) ? id : 'records_review';
+}
+
+function sanitizeVerificationFrequency(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_VERIFICATION_FREQUENCIES.some((f) => f.id === id) ? id : 'monthly';
+}
+
+async function markPlanVerificationInProgress(plan) {
+  if (!plan?.id) return;
+  const early = [
+    'team', 'product', 'intended_use', 'flow', 'flow_verify', 'hazard', 'ccp',
+    'limits', 'monitoring', 'corrective', 'overview',
+  ];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'verification', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpVerificationProcs(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpVerificationProcs.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpVerificationProc(planId, {
+  ccpId = null,
+  method = 'records_review',
+  activity = '',
+  frequency = 'monthly',
+  frequencyDetails = '',
+  responsibleRole = 'quality',
+  responsibleText = '',
+  records = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  let cid = sanitizeProductId(ccpId) || null;
+  if (cid) {
+    const ccp = await db.haccpCcps.get(cid);
+    if (!ccp || Number(ccp.planId) !== Number(pid) || ccp.decision !== 'ccp') {
+      throw new ValidationError('CCP מאושר לא נמצא בתכנית');
+    }
+  }
+
+  const cleanActivity = sanitizeTextField(activity, 2000);
+  if (!cleanActivity) throw new ValidationError('הגדר מה מאמתים');
+
+  const existing = await getHaccpVerificationProcs(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((v) => v.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpVerificationProcs.add({
+    planId: pid,
+    ccpId: cid,
+    method: sanitizeVerificationMethod(method),
+    activity: cleanActivity,
+    frequency: sanitizeVerificationFrequency(frequency),
+    frequencyDetails: sanitizeTextField(frequencyDetails, 500),
+    responsibleRole: sanitizeRole(responsibleRole),
+    responsibleText: sanitizeTextField(responsibleText, 200),
+    records: sanitizeTextField(records, 1000),
+    notes: sanitizeTextField(notes, 2000),
+    sortOrder,
+  });
+  await markPlanVerificationInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpVerificationProc(id, patch = {}) {
+  const vid = sanitizeProductId(id);
+  if (!vid) return;
+  const row = await db.haccpVerificationProcs.get(vid);
+  if (!row) throw new ValidationError('נוהל אימות לא נמצא');
+  const next = {};
+
+  if (patch.ccpId !== undefined) {
+    const cid = sanitizeProductId(patch.ccpId);
+    if (cid) {
+      const ccp = await db.haccpCcps.get(cid);
+      if (!ccp || Number(ccp.planId) !== Number(row.planId) || ccp.decision !== 'ccp') {
+        throw new ValidationError('CCP מאושר לא נמצא');
+      }
+      next.ccpId = cid;
+    } else {
+      next.ccpId = null;
+    }
+  }
+  if (patch.method !== undefined) next.method = sanitizeVerificationMethod(patch.method);
+  if (patch.activity !== undefined) {
+    const clean = sanitizeTextField(patch.activity, 2000);
+    if (!clean) throw new ValidationError('הגדר מה מאמתים');
+    next.activity = clean;
+  }
+  if (patch.frequency !== undefined) next.frequency = sanitizeVerificationFrequency(patch.frequency);
+  if (patch.frequencyDetails !== undefined) {
+    next.frequencyDetails = sanitizeTextField(patch.frequencyDetails, 500);
+  }
+  if (patch.responsibleRole !== undefined) next.responsibleRole = sanitizeRole(patch.responsibleRole);
+  if (patch.responsibleText !== undefined) {
+    next.responsibleText = sanitizeTextField(patch.responsibleText, 200);
+  }
+  if (patch.records !== undefined) next.records = sanitizeTextField(patch.records, 1000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  if (!Object.keys(next).length) return;
+  await db.haccpVerificationProcs.update(vid, next);
+}
+
+export async function deleteHaccpVerificationProc(id) {
+  const vid = sanitizeProductId(id);
+  if (!vid) return;
+  await db.haccpVerificationProcs.delete(vid);
+}
+
+/** הצעות אימות בסיסיות לתכנית (לפי מדריך משהב) */
+export async function seedSuggestedVerificationProcs(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const existing = await getHaccpVerificationProcs(pid);
+  if (existing.length) throw new ValidationError('כבר קיימים נהלי אימות לתכנית זו');
+
+  const suggestions = [
+    {
+      method: 'records_review',
+      activity: 'סקירת רשומות ניטור CCP, פעולות מתקנות וכיולים — שלמות, דיוק וחתימות',
+      frequency: 'weekly',
+      responsibleRole: 'quality',
+      records: 'טופס אימות תיעוד / יומן ביקורת פנימית',
+    },
+    {
+      method: 'observation',
+      activity: 'תצפית ישירה על ביצוע ניטור ב-CCP לפי הנוהל הכתוב',
+      frequency: 'monthly',
+      responsibleRole: 'quality',
+      records: 'טופס תצפית אימות',
+    },
+    {
+      method: 'parallel_check',
+      activity: 'בדיקה מקבילה של מדידת CCP (למשל טמפרטורה) על ידי גורם מוסמך שאינו מבצע הניטור השוטף',
+      frequency: 'monthly',
+      responsibleRole: 'quality',
+      records: 'טופס בדיקה מקבילה',
+    },
+    {
+      method: 'calibration',
+      activity: 'כיול / אימות מדחומים וציוד מדידה המשמשים בניטור CCP',
+      frequency: 'quarterly',
+      responsibleRole: 'engineering',
+      records: 'יומן כיולים',
+    },
+    {
+      method: 'audit',
+      activity: 'ביקורת פנימית על יישום תכנית ה-HACCP ועדכונה בעקבות שינויים',
+      frequency: 'annually',
+      responsibleRole: 'management',
+      records: 'דוח ביקורת HACCP',
+    },
+    {
+      method: 'records_review',
+      activity: 'אימות בעקבות חריגה או פעולה מתקנת — בדיקת תיעוד ותהליך',
+      frequency: 'after_deviation',
+      responsibleRole: 'quality',
+      records: 'טופס אימות לאחר חריגה',
+    },
+  ];
+
+  let added = 0;
+  for (const s of suggestions) {
+    await addHaccpVerificationProc(pid, s);
+    added += 1;
+  }
+
+  const ccps = await getConfirmedHaccpCcps(pid);
+  for (const ccp of ccps.slice(0, 5)) {
+    await addHaccpVerificationProc(pid, {
+      ccpId: ccp.id,
+      method: 'observation',
+      activity: `אימות יישום ניטור ב-${ccp.code || 'CCP'} · ${ccp.name || ''}`,
+      frequency: 'monthly',
+      responsibleRole: 'quality',
+      records: 'טופס אימות CCP',
+    });
+    added += 1;
+  }
+  return added;
 }

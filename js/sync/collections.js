@@ -73,6 +73,7 @@ export const COLLECTION_TABLE = {
   haccpCriticalLimits: 'sync_haccp_critical_limits',
   haccpMonitoring: 'sync_haccp_monitoring',
   haccpCorrectiveActions: 'sync_haccp_corrective_actions',
+  haccpVerificationProcs: 'sync_haccp_verification_procs',
   settings: 'sync_app_settings',
 };
 
@@ -173,6 +174,7 @@ export const COLLECTION_FKS = {
   haccpCriticalLimits: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
   haccpMonitoring: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
   haccpCorrectiveActions: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
+  haccpVerificationProcs: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
 };
 
 /**
@@ -276,6 +278,7 @@ export const SYNC_ORDER = [
   'haccpCriticalLimits',
   'haccpMonitoring',
   'haccpCorrectiveActions',
+  'haccpVerificationProcs',
   'settings',
 ];
 
@@ -504,6 +507,10 @@ export function rowFingerprint(collection, row) {
     case 'haccpCorrectiveActions':
       return row.planId != null
         ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.limitId ?? ''}|${normName(row.deviation)}|${normName(row.immediateAction)}|${row.productDisposition ?? ''}`
+        : '';
+    case 'haccpVerificationProcs':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.method ?? ''}|${normName(row.activity)}|${row.frequency ?? ''}`
         : '';
     default:
       return n ? `${collection}|${n}` : '';
