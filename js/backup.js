@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=394';
-import { APP_VERSION } from './version.js?v=394';
-import { defaultColorForIndex } from './chart.js?v=394';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=394';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=394';
-import { ValidationError } from './validators.js?v=394';
+import { exportAllData, importAllData } from './db.js?v=395';
+import { APP_VERSION } from './version.js?v=395';
+import { defaultColorForIndex } from './chart.js?v=395';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=395';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=395';
+import { ValidationError } from './validators.js?v=395';
 
 export const BACKUP_VERSION = 3;
 
@@ -222,6 +222,8 @@ export function enrichBackupData(raw) {
     departmentCleaningTasks: raw.departmentCleaningTasks || [],
     purchaseCategories: raw.purchaseCategories || [],
     purchaseItems: raw.purchaseItems || [],
+    haccpTeamMembers: raw.haccpTeamMembers || [],
+    haccpPlans: raw.haccpPlans || [],
     settings: raw.settings || [],
   };
 }
@@ -279,6 +281,8 @@ export function summarizeBackupData(data) {
     rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
     purchaseCategories: data.purchaseCategories?.length || 0,
     purchaseItems: data.purchaseItems?.length || 0,
+    haccpTeamMembers: data.haccpTeamMembers?.length || 0,
+    haccpPlans: data.haccpPlans?.length || 0,
   };
 }
 
@@ -323,6 +327,8 @@ export function formatBackupSummary(counts) {
   if (counts.bakingProfiles) parts.push(`${counts.bakingProfiles} פרופילי אפייה`);
   if (counts.supplierCategories) parts.push(`${counts.supplierCategories} קטגוריות ספק`);
   if (counts.purchaseItems) parts.push(`${counts.purchaseItems} פריטי קניות`);
+  if (counts.haccpTeamMembers) parts.push(`${counts.haccpTeamMembers} צוות HACCP`);
+  if (counts.haccpPlans) parts.push(`${counts.haccpPlans} תכניות HACCP`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
@@ -409,6 +415,8 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.departmentCleaningTasks)) data.departmentCleaningTasks = [];
   if (!Array.isArray(data.purchaseCategories)) data.purchaseCategories = [];
   if (!Array.isArray(data.purchaseItems)) data.purchaseItems = [];
+  if (!Array.isArray(data.haccpTeamMembers)) data.haccpTeamMembers = [];
+  if (!Array.isArray(data.haccpPlans)) data.haccpPlans = [];
   return enrichBackupData(data);
 }
 

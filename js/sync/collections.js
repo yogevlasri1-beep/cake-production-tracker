@@ -62,6 +62,8 @@ export const COLLECTION_TABLE = {
   departmentCleaningTasks: 'sync_department_cleaning_tasks',
   purchaseCategories: 'sync_purchase_categories',
   purchaseItems: 'sync_purchase_items',
+  haccpTeamMembers: 'sync_haccp_team_members',
+  haccpPlans: 'sync_haccp_plans',
   settings: 'sync_app_settings',
 };
 
@@ -152,6 +154,7 @@ export const COLLECTION_FKS = {
   managerEmployees: { responsibilityAreaId: 'managerResponsibilityAreas' },
   departmentCleaningTasks: { listId: 'departmentCleaningLists' },
   purchaseItems: { categoryId: 'purchaseCategories' },
+  haccpPlans: { categoryGroupId: 'categoryGroups' },
 };
 
 /**
@@ -243,6 +246,8 @@ export const SYNC_ORDER = [
   'departmentCleaningTasks',
   'purchaseCategories',
   'purchaseItems',
+  'haccpTeamMembers',
+  'haccpPlans',
   'settings',
 ];
 
@@ -436,6 +441,10 @@ export function rowFingerprint(collection, row) {
       return row.listId != null ? `${collection}|${row.listId}|${n}` : '';
     case 'purchaseItems':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+    case 'haccpTeamMembers':
+      return n ? `${collection}|${n}|${row.role ?? ''}` : '';
+    case 'haccpPlans':
+      return n ? `${collection}|${n}|${row.categoryGroupId ?? ''}` : '';
     default:
       return n ? `${collection}|${n}` : '';
   }

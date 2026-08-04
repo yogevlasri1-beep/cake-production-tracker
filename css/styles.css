@@ -11168,3 +11168,187 @@ body.supplier-drag-active {
   }
 }
 
+
+/* ── HACCP workspace ── */
+.haccp-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-bottom: 24px;
+}
+
+.haccp-hero-text {
+  color: var(--text-muted, #64748b);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+.haccp-plan-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.haccp-inline-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.haccp-inline-row select {
+  flex: 1;
+}
+
+.haccp-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.haccp-plan-family {
+  color: var(--text-muted, #64748b);
+  font-size: 0.9rem;
+}
+
+.haccp-roadmap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.haccp-step-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+  text-align: right;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.haccp-step-btn:hover {
+  border-color: var(--primary, #2563eb);
+}
+
+.haccp-step-btn.is-active {
+  border-color: var(--primary, #2563eb);
+  background: #eff6ff;
+}
+
+.haccp-step-btn.is-soon {
+  opacity: 0.65;
+}
+
+.haccp-step-btn.is-preview {
+  border-style: dashed;
+}
+
+.haccp-step-chapter {
+  font-size: 0.72rem;
+  color: var(--text-muted, #64748b);
+  font-weight: 600;
+}
+
+.haccp-step-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.haccp-hint {
+  color: var(--text-muted, #64748b);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.haccp-overview-list,
+.haccp-prp-list {
+  margin: 0 0 14px;
+  padding-right: 18px;
+  line-height: 1.7;
+}
+
+.haccp-add-member {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.haccp-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+}
+
+.haccp-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.haccp-member-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.haccp-member-row.is-inactive {
+  opacity: 0.55;
+}
+
+.haccp-member-name {
+  font-weight: 700;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.haccp-member-role {
+  color: var(--text-muted, #64748b);
+  font-size: 0.88rem;
+  margin-top: 2px;
+}
+
+.haccp-member-notes {
+  margin-top: 6px;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.haccp-member-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.haccp-leader-badge {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+@media (max-width: 640px) {
+  .haccp-member-row {
+    flex-direction: column;
+  }
+
+  .haccp-roadmap {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

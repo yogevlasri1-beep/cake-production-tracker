@@ -23,6 +23,12 @@ export const WORKSPACES = {
     icon: '👔',
     defaultScreen: 'manager',
   },
+  haccp: {
+    id: 'haccp',
+    label: 'HACCP',
+    icon: '🛡',
+    defaultScreen: 'haccp',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';
