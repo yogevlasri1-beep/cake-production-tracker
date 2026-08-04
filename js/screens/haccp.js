@@ -1,9 +1,17 @@
-import { getCategoryGroups } from '../db.js?v=406';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=406';
-import { openModal, closeModal } from '../modal.js?v=406';
+import { getCategoryGroups } from '../db.js?v=407';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=407';
+import { openModal, closeModal } from '../modal.js?v=407';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
+  HACCP_PRP_STATUSES,
+  haccpPrpTopicLabel,
+  haccpPrpStatusLabel,
+  getHaccpPrpControls,
+  addHaccpPrpControl,
+  updateHaccpPrpControl,
+  deleteHaccpPrpControl,
+  seedHaccpPrpControls,
   HACCP_TEAM_ROLES,
   HACCP_PLAN_STATUSES,
   HACCP_ALLERGENS,
@@ -106,7 +114,7 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=406';
+} from '../haccp-db.js?v=407';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -161,6 +169,7 @@ export async function renderHaccp(container) {
   let correctiveActions = [];
   let verificationProcs = [];
   let documents = [];
+  let prpControls = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -229,10 +238,13 @@ export async function renderHaccp(container) {
   if (step.id === 'documentation' && activePlan) {
     documents = await getHaccpDocuments(activePlan.id);
   }
+  if (step.id === 'prp' && activePlan) {
+    prpControls = await getHaccpPrpControls(activePlan.id);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
-  else if (step.id === 'prp') body = renderPrpPreview();
+  else if (step.id === 'prp') body = renderPrpSection(activePlan, prpControls, groupMap);
   else if (step.id === 'team') body = renderTeamSection(members);
   else if (step.id === 'product') {
     body = renderProductSection(activePlan, productDesc, familyProducts, groupMap);
@@ -293,7 +305,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs, documents,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs, documents, prpControls,
   });
 }
 
@@ -353,27 +365,135 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: עד <strong>5.7 תיעוד ורישום</strong> (כל עקרונות הליבה)</li>
+        <li>השלבים הפעילים: תכניות קדם (PRP) + הכנה + עקרונות 5.1–5.7</li>
       </ul>
-      <p class="haccp-hint">המלצה: הגדר קטלוג מסמכים ורשומות — כולל שמירה לפחות שנתיים.</p>
+      <p class="haccp-hint">המלצה: התחל ב־PRP ובצוות, ואז התקדם לפי מפת הדרכים.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="verification">אימות מערכת</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="prp">תכניות קדם</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="documentation">תיעוד ורישום</button>
       </div>
     </div>`;
 }
 
-function renderPrpPreview() {
+function prpStatusOptions(selected = 'not_started') {
+  return HACCP_PRP_STATUSES.map((s) =>
+    `<option value="${s.id}" ${selected === s.id ? 'selected' : ''}>${escapeHtml(s.label)}</option>`
+  ).join('');
+}
+
+function prpTopicOptions(selected = '', usedIds = []) {
+  const used = new Set(usedIds);
+  return HACCP_PRP_TOPICS.map((t) => {
+    const disabled = used.has(t.id) && t.id !== selected ? 'disabled' : '';
+    const sel = t.id === selected ? 'selected' : '';
+    return `<option value="${t.id}" ${sel} ${disabled}>${escapeHtml(t.label)}</option>`;
+  }).join('');
+}
+
+function renderPrpSection(activePlan, controls, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">2 · תכניות קדם (PRP)</div>
+        <p class="haccp-hint">בחר תכנית. תכניות קדם הן תנאי בסיסי למערכת HACCP — לפני ובמקביל לניתוח סיכונים.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const implemented = controls.filter((c) => c.status === 'implemented').length;
+  const usedIds = controls.map((c) => c.topicId);
+  const missingTopics = HACCP_PRP_TOPICS.filter((t) => !usedIds.includes(t.id));
+
+  const rows = controls.length
+    ? controls.map((c) => {
+      const who = c.responsibleText
+        ? `${haccpRoleLabel(c.responsibleRole)} · ${c.responsibleText}`
+        : haccpRoleLabel(c.responsibleRole);
+      return `
+        <div class="haccp-prp-row status-${escapeHtml(c.status || 'not_started')}">
+          <div>
+            <div class="haccp-ccp-title">${escapeHtml(haccpPrpTopicLabel(c.topicId))}</div>
+            <div class="haccp-hazard-meta">
+              <span class="badge">${escapeHtml(haccpPrpStatusLabel(c.status))}</span>
+              · ${escapeHtml(who)}
+              ${c.lastReviewedAt ? ` · נסקר: ${escapeHtml(formatDateHebrew(c.lastReviewedAt))}` : ''}
+            </div>
+            ${c.procedureSummary ? `<div class="haccp-hazard-meta">${escapeHtml(c.procedureSummary)}</div>` : ''}
+            ${c.records ? `<div class="haccp-hazard-meta">רישום: ${escapeHtml(c.records)}</div>` : ''}
+          </div>
+          <div class="haccp-hazard-actions">
+            <button type="button" class="btn btn-secondary btn-sm haccp-prp-edit" data-id="${c.id}">ערוך</button>
+            <button type="button" class="btn btn-danger btn-sm haccp-prp-del" data-id="${c.id}">מחק</button>
+          </div>
+        </div>`;
+    }).join('')
+    : `<p class="haccp-hint">עדיין אין בקרות PRP. לחץ «אתחל נושאי PRP» כדי ליצור שלד לכל נושאי המדריך.</p>`;
+
   return `
     <div class="card">
-      <div class="card-title">תכניות קדם (PRP) — תצוגה</div>
+      <div class="card-title">2 · תכניות קדם (PRP) — ${escapeHtml(activePlan.name)}</div>
       <p class="haccp-hint">
-        לפי המדריך, תכניות קדם הן תנאי בסיסי למערכת HACCP.
-        בשלב זה מוצגת הרשימה בלבד — ניהול מלא יבוא בהמשך.
+        לפי המדריך: תכניות קדם הן תנאי בסיסי — בקרת ספקים, היגיינה, ניקיון, מזיקים, כיול ועוד.
+        לכל נושא מגדירים נוהל, אחראי ורישום. משפחה: <strong>${escapeHtml(familyName)}</strong>
       </p>
-      <ul class="haccp-prp-list">
-        ${HACCP_PRP_TOPICS.map((t) => `<li>${escapeHtml(t)}</li>`).join('')}
-      </ul>
+      <p class="haccp-family-products">
+        <strong>${controls.length}</strong> נושאים ·
+        מיושם: <strong>${implemented}/${HACCP_PRP_TOPICS.length}</strong>
+        ${missingTopics.length ? ` · חסרים: ${missingTopics.length}` : ''}
+      </p>
+      <div class="haccp-inline-row" style="margin-bottom:12px">
+        <button type="button" class="btn btn-secondary" id="haccp-prp-seed"
+          ${missingTopics.length ? '' : 'disabled'}>אתחל נושאי PRP</button>
+      </div>
+
+      <div class="haccp-prp-list">${rows}</div>
+
+      <form id="haccp-prp-form" class="haccp-product-form haccp-prp-form">
+        <div class="card-title" style="font-size:1rem">הוספת בקרת PRP</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-prp-topic">נושא</label>
+            <select id="haccp-prp-topic">${prpTopicOptions('', usedIds)}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-prp-status">סטטוס</label>
+            <select id="haccp-prp-status">${prpStatusOptions('in_progress')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-prp-procedure">נוהל / אמצעי בקרה</label>
+          <textarea id="haccp-prp-procedure" rows="3" maxlength="4000"
+            placeholder="איך מבוצעת הבקרה בפועל"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="haccp-prp-monitor">מעקב / ניטור PRP</label>
+          <textarea id="haccp-prp-monitor" rows="2" maxlength="2000"
+            placeholder="איך מוודאים שהנוהל מיושם"></textarea>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-prp-role">אחראי</label>
+            <select id="haccp-prp-role">${monitorRoleOptions('quality')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-prp-reviewed">תאריך סקירה אחרונה</label>
+            <input type="date" id="haccp-prp-reviewed">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-prp-who">שם / פירוט</label>
+          <input type="text" id="haccp-prp-who" maxlength="200" placeholder="אופציונלי">
+        </div>
+        <div class="form-group">
+          <label for="haccp-prp-records">רישום / טופס</label>
+          <input type="text" id="haccp-prp-records" maxlength="1000" placeholder="שם טופס / יומן">
+        </div>
+        <div class="form-group">
+          <label for="haccp-prp-notes">הערות</label>
+          <textarea id="haccp-prp-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary" ${missingTopics.length ? '' : 'disabled'}>הוסף בקרה</button>
+      </form>
     </div>`;
 }
 
@@ -3382,6 +3502,127 @@ function bindHaccpEvents(container, ctx) {
             responsibleRole: document.getElementById('edit-doc-role').value,
             responsibleText: document.getElementById('edit-doc-who').value,
             notes: document.getElementById('edit-doc-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  document.getElementById('haccp-prp-seed')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    try {
+      const n = await seedHaccpPrpControls(ctx.activePlan.id);
+      showToast(`נוספו ${n} נושאי PRP ✓`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-prp-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpPrpControl(ctx.activePlan.id, {
+        topicId: document.getElementById('haccp-prp-topic')?.value,
+        status: document.getElementById('haccp-prp-status')?.value,
+        procedureSummary: document.getElementById('haccp-prp-procedure')?.value,
+        monitoringMethod: document.getElementById('haccp-prp-monitor')?.value,
+        responsibleRole: document.getElementById('haccp-prp-role')?.value,
+        responsibleText: document.getElementById('haccp-prp-who')?.value,
+        lastReviewedAt: document.getElementById('haccp-prp-reviewed')?.value,
+        records: document.getElementById('haccp-prp-records')?.value,
+        notes: document.getElementById('haccp-prp-notes')?.value,
+      });
+      showToast('בקרת PRP נוספה ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-prp-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק בקרת PRP?')) return;
+      try {
+        await deleteHaccpPrpControl(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-prp-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.prpControls?.find((c) => String(c.id) === String(btn.dataset.id));
+      if (!row) return;
+      const usedIds = (ctx.prpControls || []).map((c) => c.topicId);
+      openModal({
+        title: 'עריכת בקרת PRP',
+        bodyHTML: `
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-prp-topic">נושא</label>
+              <select id="edit-prp-topic">${prpTopicOptions(row.topicId, usedIds)}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-prp-status">סטטוס</label>
+              <select id="edit-prp-status">${prpStatusOptions(row.status || 'not_started')}</select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-prp-procedure">נוהל / אמצעי בקרה</label>
+            <textarea id="edit-prp-procedure" rows="3" maxlength="4000">${escapeHtml(row.procedureSummary || '')}</textarea>
+          </div>
+          <div class="form-group">
+            <label for="edit-prp-monitor">מעקב / ניטור PRP</label>
+            <textarea id="edit-prp-monitor" rows="2" maxlength="2000">${escapeHtml(row.monitoringMethod || '')}</textarea>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-prp-role">אחראי</label>
+              <select id="edit-prp-role">${monitorRoleOptions(row.responsibleRole || 'quality')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-prp-reviewed">תאריך סקירה אחרונה</label>
+              <input type="date" id="edit-prp-reviewed" value="${escapeHtml(row.lastReviewedAt || '')}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-prp-who">שם / פירוט</label>
+            <input type="text" id="edit-prp-who" maxlength="200" value="${escapeHtml(row.responsibleText || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-prp-records">רישום / טופס</label>
+            <input type="text" id="edit-prp-records" maxlength="1000" value="${escapeHtml(row.records || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-prp-notes">הערות</label>
+            <textarea id="edit-prp-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-prp">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('save-edit-prp')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpPrpControl(row.id, {
+            topicId: document.getElementById('edit-prp-topic').value,
+            status: document.getElementById('edit-prp-status').value,
+            procedureSummary: document.getElementById('edit-prp-procedure').value,
+            monitoringMethod: document.getElementById('edit-prp-monitor').value,
+            responsibleRole: document.getElementById('edit-prp-role').value,
+            responsibleText: document.getElementById('edit-prp-who').value,
+            lastReviewedAt: document.getElementById('edit-prp-reviewed').value,
+            records: document.getElementById('edit-prp-records').value,
+            notes: document.getElementById('edit-prp-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');

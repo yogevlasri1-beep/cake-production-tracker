@@ -75,6 +75,7 @@ export const COLLECTION_TABLE = {
   haccpCorrectiveActions: 'sync_haccp_corrective_actions',
   haccpVerificationProcs: 'sync_haccp_verification_procs',
   haccpDocuments: 'sync_haccp_documents',
+  haccpPrpControls: 'sync_haccp_prp_controls',
   settings: 'sync_app_settings',
 };
 
@@ -177,6 +178,7 @@ export const COLLECTION_FKS = {
   haccpCorrectiveActions: { planId: 'haccpPlans', ccpId: 'haccpCcps', limitId: 'haccpCriticalLimits' },
   haccpVerificationProcs: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
   haccpDocuments: { planId: 'haccpPlans' },
+  haccpPrpControls: { planId: 'haccpPlans' },
 };
 
 /**
@@ -282,6 +284,7 @@ export const SYNC_ORDER = [
   'haccpCorrectiveActions',
   'haccpVerificationProcs',
   'haccpDocuments',
+  'haccpPrpControls',
   'settings',
 ];
 
@@ -518,6 +521,10 @@ export function rowFingerprint(collection, row) {
     case 'haccpDocuments':
       return row.planId != null
         ? `${collection}|${row.planId}|${row.docKind ?? ''}|${normName(row.title)}|${row.retentionYears ?? ''}`
+        : '';
+    case 'haccpPrpControls':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.topicId ?? ''}|${row.status ?? ''}|${normName(row.procedureSummary)}`
         : '';
     default:
       return n ? `${collection}|${n}` : '';

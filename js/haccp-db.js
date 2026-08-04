@@ -1,10 +1,10 @@
-import { db, ValidationError } from './db.js?v=406';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=406';
+import { db, ValidationError } from './db.js?v=407';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=407';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
   { id: 'overview', label: 'סקירה', chapter: '1–2', status: 'available' },
-  { id: 'prp', label: 'תכניות קדם (PRP)', chapter: '2', status: 'preview' },
+  { id: 'prp', label: 'תכניות קדם (PRP)', chapter: '2', status: 'available' },
   { id: 'team', label: 'צוות HACCP', chapter: '3.1', status: 'available' },
   { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'available' },
   { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'available' },
@@ -19,23 +19,38 @@ export const HACCP_STEPS = [
   { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'available' },
 ];
 
-/** נושאי תכניות קדם מהמדריך — לתצוגה בלבד בשלב זה */
+/** נושאי תכניות קדם מהמדריך */
 export const HACCP_PRP_TOPICS = [
-  'בקרת ספקים',
-  'בקרת חומרי גלם',
-  'שמירת עקיבות',
-  'ניהול אלרגנים',
-  'קביעת חיי מדף',
-  'בקרת חומרי אריזה',
-  'בקרת טמפרטורה של סביבת העבודה והאחסון',
-  'היגיינת עובדים',
-  'בקרת ניקיון וחיטוי מבנה וציוד',
-  'תחזוקת ציוד ותשתיות',
-  'כיול, אימות ובדיקת ציוד מדידה',
-  'בקרת מים ואוויר',
-  'בקרת מזיקים ואטימות מבנה',
-  'ניהול פסולת',
+  { id: 'suppliers', label: 'בקרת ספקים' },
+  { id: 'raw_materials', label: 'בקרת חומרי גלם' },
+  { id: 'traceability', label: 'שמירת עקיבות' },
+  { id: 'allergens', label: 'ניהול אלרגנים' },
+  { id: 'shelf_life', label: 'קביעת חיי מדף' },
+  { id: 'packaging', label: 'בקרת חומרי אריזה' },
+  { id: 'env_temp', label: 'בקרת טמפרטורה של סביבת העבודה והאחסון' },
+  { id: 'hygiene', label: 'היגיינת עובדים' },
+  { id: 'cleaning', label: 'בקרת ניקיון וחיטוי מבנה וציוד' },
+  { id: 'maintenance', label: 'תחזוקת ציוד ותשתיות' },
+  { id: 'calibration', label: 'כיול, אימות ובדיקת ציוד מדידה' },
+  { id: 'water_air', label: 'בקרת מים ואוויר' },
+  { id: 'pest', label: 'בקרת מזיקים ואטימות מבנה' },
+  { id: 'waste', label: 'ניהול פסולת' },
 ];
+
+export const HACCP_PRP_STATUSES = [
+  { id: 'not_started', label: 'טרם הוגדר' },
+  { id: 'in_progress', label: 'בתהליך' },
+  { id: 'implemented', label: 'מיושם' },
+  { id: 'needs_review', label: 'דורש עדכון' },
+];
+
+export function haccpPrpTopicLabel(id) {
+  return HACCP_PRP_TOPICS.find((t) => t.id === id)?.label || id || '—';
+}
+
+export function haccpPrpStatusLabel(id) {
+  return HACCP_PRP_STATUSES.find((s) => s.id === id)?.label || id || '—';
+}
 
 export const HACCP_TEAM_ROLES = [
   { id: 'quality', label: 'אבטחת איכות' },
@@ -255,11 +270,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpCorrectiveActions,
     db.haccpVerificationProcs,
     db.haccpDocuments,
+    db.haccpPrpControls,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const prps = await db.haccpPrpControls.where('planId').equals(pid).toArray();
+      for (const p of prps) await db.haccpPrpControls.delete(p.id);
       const docs = await db.haccpDocuments.where('planId').equals(pid).toArray();
       for (const d of docs) await db.haccpDocuments.delete(d.id);
       const verProcs = await db.haccpVerificationProcs.where('planId').equals(pid).toArray();
@@ -2626,5 +2644,152 @@ export async function seedSuggestedHaccpDocuments(planId) {
     await addHaccpDocument(pid, s);
     added += 1;
   }
+  return added;
+}
+
+function sanitizePrpTopicId(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_PRP_TOPICS.some((t) => t.id === id) ? id : '';
+}
+
+function sanitizePrpStatus(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_PRP_STATUSES.some((s) => s.id === id) ? id : 'not_started';
+}
+
+function sanitizeReviewDate(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return '';
+}
+
+async function markPlanPrpInProgress(plan) {
+  if (!plan?.id) return;
+  if (plan.currentStep === 'overview' || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'prp', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpPrpControls(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpPrpControls.where('planId').equals(pid).toArray();
+  const order = new Map(HACCP_PRP_TOPICS.map((t, i) => [t.id, i]));
+  return rows.sort((a, b) =>
+    (order.get(a.topicId) ?? 99) - (order.get(b.topicId) ?? 99)
+    || (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+    || a.id - b.id
+  );
+}
+
+export async function addHaccpPrpControl(planId, {
+  topicId = '',
+  status = 'not_started',
+  procedureSummary = '',
+  responsibleRole = 'quality',
+  responsibleText = '',
+  monitoringMethod = '',
+  records = '',
+  lastReviewedAt = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const tid = sanitizePrpTopicId(topicId);
+  if (!tid) throw new ValidationError('בחר נושא PRP');
+
+  const existing = await getHaccpPrpControls(pid);
+  if (existing.some((r) => r.topicId === tid)) {
+    throw new ValidationError('כבר קיימת בקרה לנושא זה');
+  }
+
+  const sortOrder = HACCP_PRP_TOPICS.findIndex((t) => t.id === tid) + 1;
+  const id = await db.haccpPrpControls.add({
+    planId: pid,
+    topicId: tid,
+    status: sanitizePrpStatus(status),
+    procedureSummary: sanitizeTextField(procedureSummary, 4000),
+    responsibleRole: sanitizeRole(responsibleRole),
+    responsibleText: sanitizeTextField(responsibleText, 200),
+    monitoringMethod: sanitizeTextField(monitoringMethod, 2000),
+    records: sanitizeTextField(records, 1000),
+    lastReviewedAt: sanitizeReviewDate(lastReviewedAt),
+    notes: sanitizeTextField(notes, 2000),
+    sortOrder,
+  });
+  await markPlanPrpInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpPrpControl(id, patch = {}) {
+  const rid = sanitizeProductId(id);
+  if (!rid) return;
+  const row = await db.haccpPrpControls.get(rid);
+  if (!row) throw new ValidationError('בקרת PRP לא נמצאה');
+  const next = {};
+
+  if (patch.topicId !== undefined) {
+    const tid = sanitizePrpTopicId(patch.topicId);
+    if (!tid) throw new ValidationError('נושא PRP לא תקין');
+    const siblings = await getHaccpPrpControls(row.planId);
+    if (siblings.some((r) => r.topicId === tid && Number(r.id) !== Number(rid))) {
+      throw new ValidationError('כבר קיימת בקרה לנושא זה');
+    }
+    next.topicId = tid;
+    next.sortOrder = HACCP_PRP_TOPICS.findIndex((t) => t.id === tid) + 1;
+  }
+  if (patch.status !== undefined) next.status = sanitizePrpStatus(patch.status);
+  if (patch.procedureSummary !== undefined) {
+    next.procedureSummary = sanitizeTextField(patch.procedureSummary, 4000);
+  }
+  if (patch.responsibleRole !== undefined) next.responsibleRole = sanitizeRole(patch.responsibleRole);
+  if (patch.responsibleText !== undefined) {
+    next.responsibleText = sanitizeTextField(patch.responsibleText, 200);
+  }
+  if (patch.monitoringMethod !== undefined) {
+    next.monitoringMethod = sanitizeTextField(patch.monitoringMethod, 2000);
+  }
+  if (patch.records !== undefined) next.records = sanitizeTextField(patch.records, 1000);
+  if (patch.lastReviewedAt !== undefined) next.lastReviewedAt = sanitizeReviewDate(patch.lastReviewedAt);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  if (!Object.keys(next).length) return;
+  await db.haccpPrpControls.update(rid, next);
+}
+
+export async function deleteHaccpPrpControl(id) {
+  const rid = sanitizeProductId(id);
+  if (!rid) return;
+  await db.haccpPrpControls.delete(rid);
+}
+
+/** יצירת שלדי בקרה לכל נושאי המדריך שחסרים בתכנית */
+export async function seedHaccpPrpControls(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const existing = await getHaccpPrpControls(pid);
+  const have = new Set(existing.map((r) => r.topicId));
+  let added = 0;
+  for (const topic of HACCP_PRP_TOPICS) {
+    if (have.has(topic.id)) continue;
+    await addHaccpPrpControl(pid, {
+      topicId: topic.id,
+      status: 'not_started',
+      procedureSummary: '',
+      responsibleRole: topic.id === 'suppliers' || topic.id === 'raw_materials' || topic.id === 'packaging'
+        ? 'purchasing'
+        : topic.id === 'maintenance' || topic.id === 'calibration'
+          ? 'engineering'
+          : 'quality',
+      records: `טופס / יומן — ${topic.label}`,
+    });
+    added += 1;
+  }
+  if (!added) throw new ValidationError('כל נושאי ה-PRP כבר קיימים בתכנית');
   return added;
 }

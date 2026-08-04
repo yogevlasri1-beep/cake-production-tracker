@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=406';
-import { APP_VERSION } from './version.js?v=406';
-import { defaultColorForIndex } from './chart.js?v=406';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=406';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=406';
-import { ValidationError } from './validators.js?v=406';
+import { exportAllData, importAllData } from './db.js?v=407';
+import { APP_VERSION } from './version.js?v=407';
+import { defaultColorForIndex } from './chart.js?v=407';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=407';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=407';
+import { ValidationError } from './validators.js?v=407';
 
 export const BACKUP_VERSION = 3;
 
@@ -235,6 +235,7 @@ export function enrichBackupData(raw) {
     haccpCorrectiveActions: raw.haccpCorrectiveActions || [],
     haccpVerificationProcs: raw.haccpVerificationProcs || [],
     haccpDocuments: raw.haccpDocuments || [],
+    haccpPrpControls: raw.haccpPrpControls || [],
     settings: raw.settings || [],
   };
 }
@@ -305,6 +306,7 @@ export function summarizeBackupData(data) {
     haccpCorrectiveActions: data.haccpCorrectiveActions?.length || 0,
     haccpVerificationProcs: data.haccpVerificationProcs?.length || 0,
     haccpDocuments: data.haccpDocuments?.length || 0,
+    haccpPrpControls: data.haccpPrpControls?.length || 0,
   };
 }
 
@@ -362,6 +364,7 @@ export function formatBackupSummary(counts) {
   if (counts.haccpCorrectiveActions) parts.push(`${counts.haccpCorrectiveActions} פעולות מתקנות`);
   if (counts.haccpVerificationProcs) parts.push(`${counts.haccpVerificationProcs} נהלי אימות`);
   if (counts.haccpDocuments) parts.push(`${counts.haccpDocuments} מסמכי תיעוד`);
+  if (counts.haccpPrpControls) parts.push(`${counts.haccpPrpControls} בקרות PRP`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);

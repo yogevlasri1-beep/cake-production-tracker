@@ -11267,11 +11267,51 @@ body.supplier-drag-active {
   line-height: 1.5;
 }
 
-.haccp-overview-list,
-.haccp-prp-list {
+.haccp-overview-list {
   margin: 0 0 14px;
   padding-right: 18px;
   line-height: 1.7;
+}
+
+.haccp-prp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+
+.haccp-prp-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #0f766e) 8%, white);
+  border: 1px solid color-mix(in srgb, var(--accent, #0f766e) 22%, transparent);
+}
+
+.haccp-prp-row.status-implemented {
+  border-color: color-mix(in srgb, #059669 35%, transparent);
+  background: color-mix(in srgb, #059669 8%, white);
+}
+
+.haccp-prp-row.status-needs_review {
+  border-color: color-mix(in srgb, #d97706 35%, transparent);
+  background: color-mix(in srgb, #d97706 8%, white);
+}
+
+.haccp-prp-form {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
+@media (max-width: 720px) {
+  .haccp-prp-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .haccp-add-member {
