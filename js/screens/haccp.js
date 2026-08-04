@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=396';
-import { escapeHtml, showToast } from '../utils.js?v=396';
-import { openModal, closeModal } from '../modal.js?v=396';
+import { getCategoryGroups } from '../db.js?v=397';
+import { escapeHtml, showToast } from '../utils.js?v=397';
+import { openModal, closeModal } from '../modal.js?v=397';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -8,6 +8,9 @@ import {
   HACCP_PLAN_STATUSES,
   HACCP_ALLERGENS,
   HACCP_PROCESS_TECHS,
+  HACCP_CONSUMPTION_MODES,
+  HACCP_USE_CHANNELS,
+  HACCP_SENSITIVE_GROUPS,
   haccpRoleLabel,
   getHaccpTeamMembers,
   addHaccpTeamMember,
@@ -23,7 +26,9 @@ import {
   saveHaccpProductDescription,
   getProductsForHaccpPlan,
   suggestCompositionForHaccpPlan,
-} from '../haccp-db.js?v=396';
+  getHaccpIntendedUse,
+  saveHaccpIntendedUse,
+} from '../haccp-db.js?v=397';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -66,11 +71,15 @@ export async function renderHaccp(container) {
 
   let productDesc = null;
   let familyProducts = [];
+  let intendedUse = null;
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
       getProductsForHaccpPlan(activePlan.id),
     ]);
+  }
+  if (step.id === 'intended_use' && activePlan) {
+    intendedUse = await getHaccpIntendedUse(activePlan.id);
   }
 
   let body = '';
@@ -79,6 +88,8 @@ export async function renderHaccp(container) {
   else if (step.id === 'team') body = renderTeamSection(members);
   else if (step.id === 'product') {
     body = renderProductSection(activePlan, productDesc, familyProducts, groupMap);
+  } else if (step.id === 'intended_use') {
+    body = renderIntendedUseSection(activePlan, intendedUse, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -86,7 +97,7 @@ export async function renderHaccp(container) {
       <div class="card haccp-hero">
         <div class="card-title">מערכת בקרת בטיחות מזון עצמית מבוססת HACCP</div>
         <p class="haccp-hero-text">
-          לפי מדריך משרד הבריאות — נבנה שלב־שלב: צוות, תיאור מוצר לפי משפחה,
+          לפי מדריך משרד הבריאות — נבנה שלב־שלב: צוות, תיאור מוצר, שימוש מיועד,
           תרשים זרימה, ניתוח סיכונים ונקודות בקרה קריטיות.
         </p>
         ${renderPlanPicker(plans, groups, activePlan, groupMap)}
@@ -174,12 +185,14 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: <strong>3.1 צוות</strong> ו־<strong>3.2 תיאור מוצר</strong></li>
+        <li>השלבים הפעילים: <strong>3.1 צוות</strong>, <strong>3.2 תיאור מוצר</strong>
+          ו־<strong>3.3 שימוש מיועד</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: הרכב צוות, צור תכנית למשפחה, ואז מלא תיאור מוצר.</p>
+      <p class="haccp-hint">המלצה: הרכב צוות, צור תכנית למשפחה, מלא תיאור מוצר ואז שימוש מיועד.</p>
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-primary" data-haccp-step="team">צוות HACCP</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="product">תיאור מוצר</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="intended_use">שימוש מיועד</button>
       </div>
     </div>`;
 }
@@ -202,7 +215,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בסשן הבא, אחרי שנסיים את צוות ה-HACCP ונתקדם לפי המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי שימוש מיועד — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -336,6 +349,84 @@ function renderProductSection(activePlan, desc, familyProducts, groupMap) {
         </div>
 
         <button type="submit" class="btn btn-primary" id="haccp-save-product">שמור תיאור מוצר</button>
+      </form>
+    </div>`;
+}
+
+function renderIntendedUseSection(activePlan, use, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">3.3 · שימוש מיועד</div>
+        <p class="haccp-hint">
+          השימוש המיועד נשמר לפי משפחת מוצרים. בחר או צור תכנית למעלה ואז מלא את הטופס.
+        </p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const u = use || {};
+
+  return `
+    <div class="card">
+      <div class="card-title">3.3 · שימוש מיועד — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: הגדרת אוכלוסיית היעד ואופן צריכת המוצר, עם דגש מיוחד על אוכלוסיות רגישות.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+
+      <form id="haccp-intended-form" class="haccp-product-form">
+        <div class="form-group">
+          <label>אופן צריכה צפוי</label>
+          ${renderCheckboxGrid(HACCP_CONSUMPTION_MODES, u.consumptionModes, 'haccp-consume')}
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-audience">אוכלוסיית יעד</label>
+          <textarea id="haccp-audience" rows="2" maxlength="2000"
+            placeholder="למשל: צרכנים פרטיים, בתי קפה, מוסדות חינוך…">${escapeHtml(u.targetAudience || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label>ערוצי הפצה / צריכה</label>
+          ${renderCheckboxGrid(HACCP_USE_CHANNELS, u.channels, 'haccp-channel')}
+        </div>
+
+        <div class="form-group">
+          <label>אוכלוסיות רגישות שיש להתייחס אליהן</label>
+          ${renderCheckboxGrid(HACCP_SENSITIVE_GROUPS, u.sensitiveGroups, 'haccp-sensitive')}
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-sensitive-notes">הערות לגבי אוכלוסיות רגישות</label>
+          <textarea id="haccp-sensitive-notes" rows="2" maxlength="2000"
+            placeholder="סיכונים ייחודיים, הגבלות צריכה, אזהרות על התווית…">${escapeHtml(u.sensitiveNotes || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-consumer-instructions">הוראות לצרכן / הכנה לפני אכילה</label>
+          <textarea id="haccp-consumer-instructions" rows="2" maxlength="2000"
+            placeholder="חימום, הפשרה, אחסון בבית אחרי פתיחה…">${escapeHtml(u.consumerInstructions || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-misuse">שימוש לא מיועד / שימוש לרעה אפשרי</label>
+          <textarea id="haccp-misuse" rows="2" maxlength="2000"
+            placeholder="למשל: אכילה אחרי תום תוקף, אחסון מחוץ לקירור, הגשה לתינוקות…">${escapeHtml(u.potentialMisuse || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-not-suitable">למי המוצר אינו מיועד</label>
+          <textarea id="haccp-not-suitable" rows="2" maxlength="2000"
+            placeholder="אם רלוונטי — קבוצות שיש להימנע מצריכה">${escapeHtml(u.notSuitableFor || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-use-notes">הערות</label>
+          <textarea id="haccp-use-notes" rows="2" maxlength="2000">${escapeHtml(u.notes || '')}</textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="haccp-save-intended">שמור שימוש מיועד</button>
       </form>
     </div>`;
 }
@@ -591,6 +682,30 @@ function bindHaccpEvents(container, ctx) {
         notes: document.getElementById('haccp-desc-notes')?.value,
       });
       showToast('תיאור המוצר נשמר ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-intended-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    const checked = (name) =>
+      [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((el) => el.value);
+    try {
+      await saveHaccpIntendedUse(ctx.activePlan.id, {
+        consumptionModes: checked('haccp-consume'),
+        targetAudience: document.getElementById('haccp-audience')?.value,
+        sensitiveGroups: checked('haccp-sensitive'),
+        sensitiveNotes: document.getElementById('haccp-sensitive-notes')?.value,
+        channels: checked('haccp-channel'),
+        consumerInstructions: document.getElementById('haccp-consumer-instructions')?.value,
+        potentialMisuse: document.getElementById('haccp-misuse')?.value,
+        notSuitableFor: document.getElementById('haccp-not-suitable')?.value,
+        notes: document.getElementById('haccp-use-notes')?.value,
+      });
+      showToast('שימוש מיועד נשמר ✓');
       renderHaccp(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');

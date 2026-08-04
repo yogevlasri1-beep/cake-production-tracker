@@ -1,6 +1,6 @@
-import { getSetting, setSetting } from './db.js?v=396';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=396';
-import { ValidationError } from './validators.js?v=396';
+import { getSetting, setSetting } from './db.js?v=397';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=397';
+import { ValidationError } from './validators.js?v=397';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';

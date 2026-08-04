@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=396';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=396';
+import { db, ValidationError } from './db.js?v=397';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=397';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -7,7 +7,7 @@ export const HACCP_STEPS = [
   { id: 'prp', label: 'תכניות קדם (PRP)', chapter: '2', status: 'preview' },
   { id: 'team', label: 'צוות HACCP', chapter: '3.1', status: 'available' },
   { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'available' },
-  { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'soon' },
+  { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'available' },
   { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'soon' },
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'soon' },
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'soon' },
@@ -241,11 +241,19 @@ export async function updateHaccpPlan(id, patch = {}) {
 export async function deleteHaccpPlan(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return;
-  await db.transaction('rw', db.haccpPlans, db.haccpProductDescriptions, async () => {
-    const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
-    for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
-    await db.haccpPlans.delete(pid);
-  });
+  await db.transaction(
+    'rw',
+    db.haccpPlans,
+    db.haccpProductDescriptions,
+    db.haccpIntendedUses,
+    async () => {
+      const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
+      for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
+      const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
+      for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      await db.haccpPlans.delete(pid);
+    },
+  );
   const active = await getActiveHaccpPlanId();
   if (active === pid) await setActiveHaccpPlanId(null);
 }
@@ -417,4 +425,95 @@ export async function suggestCompositionForHaccpPlan(planId) {
 
   if (!names.size) return products.map((p) => p.name).join(', ');
   return [...names].sort((a, b) => a.localeCompare(b, 'he')).join(', ');
+}
+
+/** אופן צריכה צפוי — לפי הגדרת שימוש מיועד במדריך */
+export const HACCP_CONSUMPTION_MODES = [
+  { id: 'ready_to_eat', label: 'מוכן לאכילה כפי שהוא' },
+  { id: 'heat_before', label: 'דורש חימום לפני אכילה' },
+  { id: 'cook_before', label: 'דורש בישול / אפייה נוספת' },
+  { id: 'ingredient', label: 'משמש כרכיב במוצר אחר' },
+];
+
+/** ערוצי הפצה / צריכה */
+export const HACCP_USE_CHANNELS = [
+  { id: 'retail', label: 'קמעונאות / צרכן פרטי' },
+  { id: 'wholesale', label: 'סיטונאות' },
+  { id: 'catering', label: 'קייטרינג / מוסדות' },
+  { id: 'foodservice', label: 'מסעדות / בתי קפה' },
+  { id: 'internal', label: 'שימוש פנימי במפעל' },
+];
+
+/** אוכלוסיות רגישות — דגש מיוחד לפי המדריך */
+export const HACCP_SENSITIVE_GROUPS = [
+  { id: 'general', label: 'אוכלוסייה כללית' },
+  { id: 'children', label: 'ילדים' },
+  { id: 'infants', label: 'תינוקות / פעוטות' },
+  { id: 'elderly', label: 'קשישים' },
+  { id: 'pregnant', label: 'נשים הרות' },
+  { id: 'immunocompromised', label: 'מדוכאי חיסון' },
+  { id: 'allergy', label: 'רגישים לאלרגנים' },
+];
+
+function emptyIntendedUse(planId) {
+  return {
+    planId,
+    consumptionModes: [],
+    targetAudience: '',
+    sensitiveGroups: [],
+    sensitiveNotes: '',
+    channels: [],
+    consumerInstructions: '',
+    potentialMisuse: '',
+    notSuitableFor: '',
+    notes: '',
+  };
+}
+
+function normalizeIntendedUse(row, planId) {
+  const base = emptyIntendedUse(planId);
+  if (!row) return base;
+  return {
+    ...base,
+    id: row.id,
+    planId,
+    consumptionModes: sanitizeIdList(row.consumptionModes, HACCP_CONSUMPTION_MODES),
+    targetAudience: sanitizeTextField(row.targetAudience, 2000),
+    sensitiveGroups: sanitizeIdList(row.sensitiveGroups, HACCP_SENSITIVE_GROUPS),
+    sensitiveNotes: sanitizeTextField(row.sensitiveNotes, 2000),
+    channels: sanitizeIdList(row.channels, HACCP_USE_CHANNELS),
+    consumerInstructions: sanitizeTextField(row.consumerInstructions, 2000),
+    potentialMisuse: sanitizeTextField(row.potentialMisuse, 2000),
+    notSuitableFor: sanitizeTextField(row.notSuitableFor, 2000),
+    notes: sanitizeTextField(row.notes, 2000),
+  };
+}
+
+export async function getHaccpIntendedUse(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return emptyIntendedUse(null);
+  const row = await db.haccpIntendedUses.where('planId').equals(pid).first();
+  return normalizeIntendedUse(row, pid);
+}
+
+export async function saveHaccpIntendedUse(planId, fields = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית לפי משפחת מוצרים');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const next = normalizeIntendedUse({ ...fields, planId: pid }, pid);
+  delete next.id;
+
+  const existing = await db.haccpIntendedUses.where('planId').equals(pid).first();
+  if (existing) {
+    await db.haccpIntendedUses.update(existing.id, next);
+    if (['team', 'product'].includes(plan.currentStep) || plan.status === 'draft') {
+      await db.haccpPlans.update(pid, { currentStep: 'intended_use', status: 'in_progress' });
+    }
+    return existing.id;
+  }
+  const id = await db.haccpIntendedUses.add(next);
+  await db.haccpPlans.update(pid, { currentStep: 'intended_use', status: 'in_progress' });
+  return id;
 }
