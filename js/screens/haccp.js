@@ -132,7 +132,7 @@ export async function renderHaccp(container) {
         <div class="card-title">מערכת בקרת בטיחות מזון עצמית מבוססת HACCP</div>
         <p class="haccp-hero-text">
           לפי מדריך משרד הבריאות — נבנה שלב־שלב: צוות, תיאור מוצר, שימוש מיועד,
-          תרשים זרימה, ניתוח סיכונים ונקודות בקרה קריטיות.
+          תרשים זרימה ואימות בשטח, ואז ניתוח סיכונים ונקודות בקרה קריטיות.
         </p>
         ${renderPlanPicker(plans, groups, activePlan, groupMap)}
       </div>
