@@ -76,6 +76,7 @@ export const COLLECTION_TABLE = {
   haccpVerificationProcs: 'sync_haccp_verification_procs',
   haccpDocuments: 'sync_haccp_documents',
   haccpPrpControls: 'sync_haccp_prp_controls',
+  haccpMonitoringLogs: 'sync_haccp_monitoring_logs',
   settings: 'sync_app_settings',
 };
 
@@ -179,6 +180,7 @@ export const COLLECTION_FKS = {
   haccpVerificationProcs: { planId: 'haccpPlans', ccpId: 'haccpCcps' },
   haccpDocuments: { planId: 'haccpPlans' },
   haccpPrpControls: { planId: 'haccpPlans' },
+  haccpMonitoringLogs: { planId: 'haccpPlans', ccpId: 'haccpCcps', monitoringId: 'haccpMonitoring', limitId: 'haccpCriticalLimits' },
 };
 
 /**
@@ -285,6 +287,7 @@ export const SYNC_ORDER = [
   'haccpVerificationProcs',
   'haccpDocuments',
   'haccpPrpControls',
+  'haccpMonitoringLogs',
   'settings',
 ];
 
@@ -525,6 +528,10 @@ export function rowFingerprint(collection, row) {
     case 'haccpPrpControls':
       return row.planId != null
         ? `${collection}|${row.planId}|${row.topicId ?? ''}|${row.status ?? ''}|${normName(row.procedureSummary)}`
+        : '';
+    case 'haccpMonitoringLogs':
+      return row.planId != null
+        ? `${collection}|${row.planId}|${row.ccpId ?? ''}|${row.recordedAt ?? ''}|${row.result ?? ''}|${normName(row.value)}|${normName(row.batchCode)}`
         : '';
     default:
       return n ? `${collection}|${n}` : '';

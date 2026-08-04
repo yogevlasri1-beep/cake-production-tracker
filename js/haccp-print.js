@@ -1,4 +1,4 @@
-import { escapeHtml, formatDateHebrew, localDateTimeISO } from './utils.js?v=408';
+import { escapeHtml, formatDateHebrew, localDateTimeISO } from './utils.js?v=409';
 import {
   HACCP_PLAN_STATUSES,
   haccpRoleLabel,
@@ -27,13 +27,15 @@ import {
   getHaccpCcps,
   getHaccpCriticalLimits,
   getHaccpMonitoring,
+  getHaccpMonitoringLogs,
+  haccpMonitorLogResultLabel,
   getHaccpCorrectiveActions,
   getHaccpVerificationProcs,
   getHaccpDocuments,
   getHaccpPrpControls,
-} from './haccp-db.js?v=408';
-import { getCategoryGroups } from './db.js?v=408';
-import { APP_VERSION } from './version.js?v=408';
+} from './haccp-db.js?v=409';
+import { getCategoryGroups } from './db.js?v=409';
+import { APP_VERSION } from './version.js?v=409';
 
 const HACCP_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -142,6 +144,7 @@ export async function gatherHaccpPlanPrintData(planId) {
     ccps,
     limits,
     monitoring,
+    monitoringLogs,
     corrective,
     verification,
     documents,
@@ -156,6 +159,7 @@ export async function gatherHaccpPlanPrintData(planId) {
     getHaccpCcps(plan.id),
     getHaccpCriticalLimits(plan.id),
     getHaccpMonitoring(plan.id),
+    getHaccpMonitoringLogs(plan.id, { limit: 40 }),
     getHaccpCorrectiveActions(plan.id),
     getHaccpVerificationProcs(plan.id),
     getHaccpDocuments(plan.id),
@@ -174,6 +178,7 @@ export async function gatherHaccpPlanPrintData(planId) {
     ccps,
     limits,
     monitoring,
+    monitoringLogs,
     corrective,
     verification,
     documents,
@@ -195,6 +200,7 @@ export function buildHaccpPlanPrintHtml(data) {
     ccps = [],
     limits = [],
     monitoring = [],
+    monitoringLogs = [],
     corrective = [],
     verification = [],
     documents = [],
@@ -351,6 +357,28 @@ export function buildHaccpPlanPrintHtml(data) {
       </table>`
     : '<p class="empty">לא הוגדרו נהלי ניטור</p>';
 
+  const monitorLogHtml = monitoringLogs.length
+    ? `<table>
+        <thead><tr><th>תאריך</th><th>CCP</th><th>ערך</th><th>תוצאה</th><th>אצווה</th><th>רשם</th></tr></thead>
+        <tbody>${monitoringLogs.map((l) => {
+          const ccp = confirmedCcps.find((c) => Number(c.id) === Number(l.ccpId));
+          const value = [l.value, l.unit].filter(Boolean).join(' ');
+          return `
+            <tr>
+              <td>${escapeHtml(String(l.recordedAt || '').replace('T', ' ').slice(0, 16))}</td>
+              <td>${escapeHtml(ccp ? `${ccp.code || ''} ${ccp.name || ''}` : '')}</td>
+              <td>${escapeHtml(value || '—')}</td>
+              <td>${escapeHtml(haccpMonitorLogResultLabel(l.result))}</td>
+              <td>${escapeHtml(textOrDash(l.batchCode))}</td>
+              <td>${escapeHtml(l.recordedByText
+                ? `${haccpRoleLabel(l.recordedByRole)} · ${l.recordedByText}`
+                : haccpRoleLabel(l.recordedByRole))}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+      </table>`
+    : '<p class="empty">אין רשומות ניטור ביומן</p>';
+
   const correctiveHtml = corrective.length
     ? `<table>
         <thead><tr><th>CCP</th><th>חריגה</th><th>פעולה מיידית</th><th>גורל מוצר</th></tr></thead>
@@ -429,6 +457,7 @@ export function buildHaccpPlanPrintHtml(data) {
   ${section('5.2 נקודות בקרה קריטיות (CCP)', ccpHtml)}
   ${section('5.3 גבולות בקרה קריטיים', limitsHtml)}
   ${section('5.4 ניטור', monitorHtml)}
+  ${section('5.4+ יומן ניטור', monitorLogHtml)}
   ${section('5.5 פעולות מתקנות', correctiveHtml)}
   ${section('5.6 אימות מערכת', verificationHtml)}
   ${section('5.7 תיעוד ורישום', docsHtml)}

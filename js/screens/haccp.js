@@ -1,7 +1,7 @@
-import { getCategoryGroups } from '../db.js?v=408';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=408';
-import { openModal, closeModal } from '../modal.js?v=408';
-import { printHaccpPlan } from '../haccp-print.js?v=408';
+import { getCategoryGroups } from '../db.js?v=409';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=409';
+import { openModal, closeModal } from '../modal.js?v=409';
+import { printHaccpPlan } from '../haccp-print.js?v=409';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -90,6 +90,12 @@ import {
   HACCP_MONITOR_FREQUENCIES,
   haccpMonitorMethodLabel,
   haccpMonitorFrequencyLabel,
+  getHaccpMonitoringLogs,
+  addHaccpMonitoringLog,
+  updateHaccpMonitoringLog,
+  deleteHaccpMonitoringLog,
+  HACCP_MONITOR_LOG_RESULTS,
+  haccpMonitorLogResultLabel,
   getHaccpCorrectiveActions,
   addHaccpCorrectiveAction,
   updateHaccpCorrectiveAction,
@@ -115,7 +121,7 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=408';
+} from '../haccp-db.js?v=409';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -167,6 +173,7 @@ export async function renderHaccp(container) {
   let ccpCandidates = [];
   let criticalLimits = [];
   let monitoring = [];
+  let monitoringLogs = [];
   let correctiveActions = [];
   let verificationProcs = [];
   let documents = [];
@@ -221,6 +228,15 @@ export async function renderHaccp(container) {
       getHaccpMonitoring(activePlan.id),
     ]);
   }
+  if (step.id === 'monitor_log' && activePlan) {
+    [flowSteps, ccps, criticalLimits, monitoring, monitoringLogs] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getConfirmedHaccpCcps(activePlan.id),
+      getHaccpCriticalLimits(activePlan.id),
+      getHaccpMonitoring(activePlan.id),
+      getHaccpMonitoringLogs(activePlan.id),
+    ]);
+  }
   if (step.id === 'corrective' && activePlan) {
     [flowSteps, ccps, criticalLimits, correctiveActions] = await Promise.all([
       getHaccpFlowSteps(activePlan.id),
@@ -263,6 +279,8 @@ export async function renderHaccp(container) {
     body = renderLimitsSection(activePlan, flowSteps, ccps, criticalLimits, groupMap);
   } else if (step.id === 'monitoring') {
     body = renderMonitoringSection(activePlan, flowSteps, ccps, criticalLimits, monitoring, groupMap);
+  } else if (step.id === 'monitor_log') {
+    body = renderMonitorLogSection(activePlan, flowSteps, ccps, criticalLimits, monitoring, monitoringLogs, groupMap);
   } else if (step.id === 'corrective') {
     body = renderCorrectiveSection(activePlan, flowSteps, ccps, criticalLimits, correctiveActions, groupMap);
   } else if (step.id === 'verification') {
@@ -306,7 +324,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, correctiveActions, verificationProcs, documents, prpControls,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, monitoringLogs, correctiveActions, verificationProcs, documents, prpControls,
   });
 }
 
@@ -367,12 +385,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: תכניות קדם (PRP) + הכנה + עקרונות 5.1–5.7</li>
+        <li>השלבים הפעילים: PRP + הכנה + 5.1–5.7 + יומן ניטור</li>
       </ul>
-      <p class="haccp-hint">המלצה: התחל ב־PRP ובצוות, ואז התקדם לפי מפת הדרכים.</p>
+      <p class="haccp-hint">המלצה: אחרי הגדרת נהלי ניטור — רשום מדידות בפועל ביומן.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="prp">תכניות קדם</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="documentation">תיעוד ורישום</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="monitor_log">יומן ניטור</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">נהלי ניטור</button>
         <button type="button" class="btn btn-secondary haccp-print-plan">הדפס תכנית פעילה</button>
       </div>
     </div>`;
@@ -1615,6 +1633,10 @@ function renderMonitoringSection(activePlan, flowSteps, confirmedCcps, limits, m
         </div>
         <button type="submit" class="btn btn-primary">הוסף ניטור</button>
       </form>
+      <p class="haccp-hint" style="margin-top:14px">
+        אחרי הגדרת נהלים —
+        <button type="button" class="btn btn-secondary btn-sm" data-haccp-step="monitor_log">עבור ליומן ניטור</button>
+      </p>
     </div>`;
 }
 
@@ -1622,6 +1644,174 @@ function dispositionOptions(selected = 'hold_evaluate') {
   return HACCP_PRODUCT_DISPOSITIONS.map((d) =>
     `<option value="${d.id}" ${selected === d.id ? 'selected' : ''}>${escapeHtml(d.label)}</option>`
   ).join('');
+}
+
+function monitorLogResultOptions(selected = 'ok') {
+  return HACCP_MONITOR_LOG_RESULTS.map((r) =>
+    `<option value="${r.id}" ${selected === r.id ? 'selected' : ''}>${escapeHtml(r.label)}</option>`
+  ).join('');
+}
+
+function datetimeLocalNow() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function formatLogWhen(iso) {
+  if (!iso) return '—';
+  const date = String(iso).slice(0, 10);
+  const time = String(iso).includes('T') ? String(iso).slice(11, 16) : '';
+  try {
+    return `${formatDateHebrew(date)}${time ? ` · ${time}` : ''}`;
+  } catch {
+    return iso;
+  }
+}
+
+function monitorProcOptions(monitoringRows, ccpId, selectedId = '') {
+  const list = (monitoringRows || []).filter((m) => Number(m.ccpId) === Number(ccpId));
+  const opts = list.map((m) =>
+    `<option value="${m.id}" ${String(m.id) === String(selectedId) ? 'selected' : ''}>${escapeHtml(m.what || 'נוהל')}</option>`
+  ).join('');
+  return `<option value="">— ללא קישור לנוהל —</option>${opts}`;
+}
+
+function renderMonitorLogSection(activePlan, flowSteps, confirmedCcps, limits, monitoringRows, logs, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.4+ · יומן ניטור</div>
+        <p class="haccp-hint">בחר תכנית. כאן נרשמות מדידות CCP בפועל — ערך, תוצאה וחריגות.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const ccpMap = new Map((confirmedCcps || []).map((c) => [Number(c.id), c]));
+  if (!confirmedCcps.length) {
+    return `
+      <div class="card">
+        <div class="card-title">5.4+ · יומן ניטור — ${escapeHtml(activePlan.name)}</div>
+        <p class="haccp-hint">אין CCP מאושרים. יש לקבוע קודם נקודות בקרה קריטיות.</p>
+        <button type="button" class="btn btn-primary" data-haccp-step="ccp">עבור ל־CCP</button>
+      </div>`;
+  }
+
+  const deviations = logs.filter((l) => l.result === 'deviation').length;
+  const ccpOptions = confirmedCcps.map((c) =>
+    `<option value="${c.id}">${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+  ).join('');
+  const defaultCcp = confirmedCcps[0]?.id;
+
+  const rows = logs.length
+    ? logs.map((l) => {
+      const ccp = ccpMap.get(Number(l.ccpId));
+      const who = l.recordedByText
+        ? `${haccpRoleLabel(l.recordedByRole)} · ${l.recordedByText}`
+        : haccpRoleLabel(l.recordedByRole);
+      return `
+        <div class="haccp-log-row result-${escapeHtml(l.result || 'ok')}">
+          <div>
+            <div class="haccp-ccp-title">
+              ${escapeHtml(ccp ? `${ccp.code || 'CCP'} · ${ccp.name}` : 'CCP')}
+              · ${escapeHtml(l.value || '—')}${l.unit ? ` ${escapeHtml(l.unit)}` : ''}
+            </div>
+            <div class="haccp-hazard-meta">
+              <span class="badge">${escapeHtml(haccpMonitorLogResultLabel(l.result))}</span>
+              · ${escapeHtml(formatLogWhen(l.recordedAt))}
+              ${l.batchCode ? ` · אצווה: ${escapeHtml(l.batchCode)}` : ''}
+              · ${escapeHtml(who)}
+            </div>
+            ${l.correctiveNote ? `<div class="haccp-hazard-meta">פעולה: ${escapeHtml(l.correctiveNote)}</div>` : ''}
+            ${l.notes ? `<div class="haccp-hazard-meta">${escapeHtml(l.notes)}</div>` : ''}
+          </div>
+          <div class="haccp-hazard-actions">
+            <button type="button" class="btn btn-secondary btn-sm haccp-log-edit" data-id="${l.id}">ערוך</button>
+            <button type="button" class="btn btn-danger btn-sm haccp-log-del" data-id="${l.id}">מחק</button>
+          </div>
+        </div>`;
+    }).join('')
+    : `<p class="haccp-hint">עדיין אין רשומות. הוסף מדידה ראשונה למטה.</p>`;
+
+  return `
+    <div class="card">
+      <div class="card-title">5.4+ · יומן ניטור — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        רישום מדידות בפועל לכל CCP — ערך, תוצאה מול הגבול, ואם יש חריגה: פעולה שננקטה.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${logs.length}</strong> רשומות ·
+        חריגות: <strong>${deviations}</strong>
+      </p>
+      <div class="haccp-inline-row" style="margin-bottom:12px">
+        <button type="button" class="btn btn-secondary btn-sm" data-haccp-step="monitoring">נהלי ניטור</button>
+      </div>
+
+      <div class="haccp-log-list">${rows}</div>
+
+      <form id="haccp-log-form" class="haccp-product-form haccp-log-form">
+        <div class="card-title" style="font-size:1rem">רישום מדידה</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-log-ccp">CCP</label>
+            <select id="haccp-log-ccp">${ccpOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-log-when">תאריך ושעה</label>
+            <input type="datetime-local" id="haccp-log-when" value="${escapeHtml(datetimeLocalNow())}">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-log-monitor">נוהל ניטור (אופציונלי)</label>
+          <select id="haccp-log-monitor">${monitorProcOptions(monitoringRows, defaultCcp)}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-log-limit">גבול קריטי (אופציונלי)</label>
+          <select id="haccp-log-limit">${limitOptionsForCcp(limits, defaultCcp)}</select>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-log-value">ערך מדידה</label>
+            <input type="text" id="haccp-log-value" maxlength="80" placeholder="75">
+          </div>
+          <div class="form-group">
+            <label for="haccp-log-unit">יחידה</label>
+            <input type="text" id="haccp-log-unit" maxlength="40" placeholder="°C">
+          </div>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-log-result">תוצאה</label>
+            <select id="haccp-log-result">${monitorLogResultOptions('ok')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-log-batch">אצווה / תבנית</label>
+            <input type="text" id="haccp-log-batch" maxlength="80" placeholder="אופציונלי">
+          </div>
+        </div>
+        <div class="form-group" id="haccp-log-corrective-wrap" hidden>
+          <label for="haccp-log-corrective">פעולה מתקנת שננקטה</label>
+          <textarea id="haccp-log-corrective" rows="2" maxlength="2000"
+            placeholder="מה נעשה בעקבות החריגה"></textarea>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-log-role">רשם</label>
+            <select id="haccp-log-role">${monitorRoleOptions('production')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-log-who">שם</label>
+            <input type="text" id="haccp-log-who" maxlength="200" placeholder="אופציונלי">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-log-notes">הערות</label>
+          <textarea id="haccp-log-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">שמור מדידה</button>
+      </form>
+    </div>`;
 }
 
 function renderCorrectiveSection(activePlan, flowSteps, confirmedCcps, limits, actions, groupMap) {
@@ -3638,6 +3828,169 @@ function bindHaccpEvents(container, ctx) {
             lastReviewedAt: document.getElementById('edit-prp-reviewed').value,
             records: document.getElementById('edit-prp-records').value,
             notes: document.getElementById('edit-prp-notes').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  function syncLogCorrectiveVisibility(resultSelectId = 'haccp-log-result', wrapId = 'haccp-log-corrective-wrap') {
+    const result = document.getElementById(resultSelectId)?.value;
+    const wrap = document.getElementById(wrapId);
+    if (wrap) wrap.hidden = result !== 'deviation';
+  }
+
+  function refreshLogLinkedOptions() {
+    const ccpId = document.getElementById('haccp-log-ccp')?.value;
+    const monSelect = document.getElementById('haccp-log-monitor');
+    const limitSelect = document.getElementById('haccp-log-limit');
+    if (monSelect) monSelect.innerHTML = monitorProcOptions(ctx.monitoring || [], ccpId);
+    if (limitSelect) limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpId);
+  }
+
+  document.getElementById('haccp-log-ccp')?.addEventListener('change', refreshLogLinkedOptions);
+  document.getElementById('haccp-log-result')?.addEventListener('change', () => syncLogCorrectiveVisibility());
+  syncLogCorrectiveVisibility();
+
+  document.getElementById('haccp-log-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpMonitoringLog(ctx.activePlan.id, {
+        ccpId: document.getElementById('haccp-log-ccp')?.value,
+        monitoringId: document.getElementById('haccp-log-monitor')?.value || null,
+        limitId: document.getElementById('haccp-log-limit')?.value || null,
+        recordedAt: document.getElementById('haccp-log-when')?.value,
+        batchCode: document.getElementById('haccp-log-batch')?.value,
+        value: document.getElementById('haccp-log-value')?.value,
+        unit: document.getElementById('haccp-log-unit')?.value,
+        result: document.getElementById('haccp-log-result')?.value,
+        recordedByRole: document.getElementById('haccp-log-role')?.value,
+        recordedByText: document.getElementById('haccp-log-who')?.value,
+        correctiveNote: document.getElementById('haccp-log-corrective')?.value,
+        notes: document.getElementById('haccp-log-notes')?.value,
+      });
+      showToast('מדידה נשמרה ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-log-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק רשומת ניטור?')) return;
+      try {
+        await deleteHaccpMonitoringLog(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-log-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.monitoringLogs?.find((l) => String(l.id) === String(btn.dataset.id));
+      if (!row) return;
+      const confirmed = (ctx.ccps || []).filter((c) => c.decision === 'ccp');
+      const ccpOptions = confirmed.map((c) =>
+        `<option value="${c.id}" ${Number(c.id) === Number(row.ccpId) ? 'selected' : ''}>${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+      ).join('');
+      openModal({
+        title: 'עריכת רשומת ניטור',
+        bodyHTML: `
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-log-ccp">CCP</label>
+              <select id="edit-log-ccp">${ccpOptions}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-log-when">תאריך ושעה</label>
+              <input type="datetime-local" id="edit-log-when" value="${escapeHtml(String(row.recordedAt || '').slice(0, 16))}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-log-monitor">נוהל ניטור</label>
+            <select id="edit-log-monitor">${monitorProcOptions(ctx.monitoring || [], row.ccpId, row.monitoringId || '')}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-log-limit">גבול קריטי</label>
+            <select id="edit-log-limit">${limitOptionsForCcp(ctx.criticalLimits || [], row.ccpId, row.limitId || '')}</select>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-log-value">ערך</label>
+              <input type="text" id="edit-log-value" maxlength="80" value="${escapeHtml(row.value || '')}">
+            </div>
+            <div class="form-group">
+              <label for="edit-log-unit">יחידה</label>
+              <input type="text" id="edit-log-unit" maxlength="40" value="${escapeHtml(row.unit || '')}">
+            </div>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-log-result">תוצאה</label>
+              <select id="edit-log-result">${monitorLogResultOptions(row.result || 'ok')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-log-batch">אצווה</label>
+              <input type="text" id="edit-log-batch" maxlength="80" value="${escapeHtml(row.batchCode || '')}">
+            </div>
+          </div>
+          <div class="form-group" id="edit-log-corrective-wrap" ${row.result === 'deviation' ? '' : 'hidden'}>
+            <label for="edit-log-corrective">פעולה מתקנת</label>
+            <textarea id="edit-log-corrective" rows="2" maxlength="2000">${escapeHtml(row.correctiveNote || '')}</textarea>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-log-role">רשם</label>
+              <select id="edit-log-role">${monitorRoleOptions(row.recordedByRole || 'production')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-log-who">שם</label>
+              <input type="text" id="edit-log-who" maxlength="200" value="${escapeHtml(row.recordedByText || '')}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-log-notes">הערות</label>
+            <textarea id="edit-log-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-log">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('edit-log-ccp')?.addEventListener('change', () => {
+        const ccpId = document.getElementById('edit-log-ccp')?.value;
+        const mon = document.getElementById('edit-log-monitor');
+        const lim = document.getElementById('edit-log-limit');
+        if (mon) mon.innerHTML = monitorProcOptions(ctx.monitoring || [], ccpId);
+        if (lim) lim.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpId);
+      });
+      document.getElementById('edit-log-result')?.addEventListener('change', () => {
+        syncLogCorrectiveVisibility('edit-log-result', 'edit-log-corrective-wrap');
+      });
+      document.getElementById('save-edit-log')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpMonitoringLog(row.id, {
+            ccpId: document.getElementById('edit-log-ccp').value,
+            monitoringId: document.getElementById('edit-log-monitor').value || null,
+            limitId: document.getElementById('edit-log-limit').value || null,
+            recordedAt: document.getElementById('edit-log-when').value,
+            batchCode: document.getElementById('edit-log-batch').value,
+            value: document.getElementById('edit-log-value').value,
+            unit: document.getElementById('edit-log-unit').value,
+            result: document.getElementById('edit-log-result').value,
+            recordedByRole: document.getElementById('edit-log-role').value,
+            recordedByText: document.getElementById('edit-log-who').value,
+            correctiveNote: document.getElementById('edit-log-corrective').value,
+            notes: document.getElementById('edit-log-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');
