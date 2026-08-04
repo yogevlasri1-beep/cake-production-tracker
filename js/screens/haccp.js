@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=401';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=401';
-import { openModal, closeModal } from '../modal.js?v=401';
+import { getCategoryGroups } from '../db.js?v=403';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=403';
+import { openModal, closeModal } from '../modal.js?v=403';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -72,7 +72,16 @@ import {
   formatCriticalLimit,
   haccpLimitParameterLabel,
   haccpLimitOperatorLabel,
-} from '../haccp-db.js?v=401';
+  getHaccpMonitoring,
+  addHaccpMonitoring,
+  updateHaccpMonitoring,
+  deleteHaccpMonitoring,
+  seedSuggestedMonitoringForCcp,
+  HACCP_MONITOR_METHODS,
+  HACCP_MONITOR_FREQUENCIES,
+  haccpMonitorMethodLabel,
+  haccpMonitorFrequencyLabel,
+} from '../haccp-db.js?v=403';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -123,6 +132,7 @@ export async function renderHaccp(container) {
   let ccps = [];
   let ccpCandidates = [];
   let criticalLimits = [];
+  let monitoring = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -165,6 +175,14 @@ export async function renderHaccp(container) {
       getHaccpCriticalLimits(activePlan.id),
     ]);
   }
+  if (step.id === 'monitoring' && activePlan) {
+    [flowSteps, ccps, criticalLimits, monitoring] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getConfirmedHaccpCcps(activePlan.id),
+      getHaccpCriticalLimits(activePlan.id),
+      getHaccpMonitoring(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -184,6 +202,8 @@ export async function renderHaccp(container) {
     body = renderCcpSection(activePlan, flowSteps, hazards, ccps, ccpCandidates, groupMap);
   } else if (step.id === 'limits') {
     body = renderLimitsSection(activePlan, flowSteps, ccps, criticalLimits, groupMap);
+  } else if (step.id === 'monitoring') {
+    body = renderMonitoringSection(activePlan, flowSteps, ccps, criticalLimits, monitoring, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -221,7 +241,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring,
   });
 }
 
@@ -281,12 +301,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: עד <strong>5.3 גבולות קריטיים</strong></li>
+        <li>השלבים הפעילים: עד <strong>5.4 ניטור</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי קביעת CCP — הגדר גבול מדיד לכל נקודה.</p>
+      <p class="haccp-hint">המלצה: אחרי גבולות קריטיים — הגדר מה, איך, מתי ומי מנטר כל CCP.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="ccp">נקודות CCP</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="limits">גבולות קריטיים</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="limits">גבולות קריטיים</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">ניטור</button>
       </div>
     </div>`;
 }
@@ -309,7 +329,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי גבולות בקרה קריטיים — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי ניטור — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -1245,6 +1265,184 @@ function renderLimitsSection(activePlan, flowSteps, confirmedCcps, limits, group
     </div>`;
 }
 
+function methodOptions(selected = 'thermometer') {
+  return HACCP_MONITOR_METHODS.map((m) =>
+    `<option value="${m.id}" ${selected === m.id ? 'selected' : ''}>${escapeHtml(m.label)}</option>`
+  ).join('');
+}
+
+function frequencyOptions(selected = 'every_batch') {
+  return HACCP_MONITOR_FREQUENCIES.map((f) =>
+    `<option value="${f.id}" ${selected === f.id ? 'selected' : ''}>${escapeHtml(f.label)}</option>`
+  ).join('');
+}
+
+function monitorRoleOptions(selected = 'production') {
+  return HACCP_TEAM_ROLES.map((r) =>
+    `<option value="${r.id}" ${selected === r.id ? 'selected' : ''}>${escapeHtml(r.label)}</option>`
+  ).join('');
+}
+
+function limitOptionsForCcp(limits, ccpId, selectedId = '') {
+  const list = (limits || []).filter((l) => Number(l.ccpId) === Number(ccpId));
+  const opts = list.map((l) =>
+    `<option value="${l.id}" ${String(l.id) === String(selectedId) ? 'selected' : ''}>${escapeHtml(formatCriticalLimit(l))}</option>`
+  ).join('');
+  return `<option value="">— ללא קישור לגבול —</option>${opts}`;
+}
+
+function renderMonitoringSection(activePlan, flowSteps, confirmedCcps, limits, monitoringRows, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.4 · ניטור</div>
+        <p class="haccp-hint">בחר תכנית. נהלי ניטור מוגדרים לכל CCP מאושר — מה מנטרים, איך, באיזו תדירות ומי אחראי.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const stepMap = new Map(flowSteps.map((s) => [s.id, s]));
+  const limitMap = new Map((limits || []).map((l) => [Number(l.id), l]));
+  if (!confirmedCcps.length) {
+    return `
+      <div class="card">
+        <div class="card-title">5.4 · ניטור — ${escapeHtml(activePlan.name)}</div>
+        <p class="haccp-hint">אין CCP מאושרים. יש לקבוע קודם נקודות בקרה קריטיות ב־5.2.</p>
+        <button type="button" class="btn btn-primary" data-haccp-step="ccp">עבור ל־CCP</button>
+      </div>`;
+  }
+
+  const byCcp = new Map();
+  for (const m of monitoringRows) {
+    const key = Number(m.ccpId);
+    if (!byCcp.has(key)) byCcp.set(key, []);
+    byCcp.get(key).push(m);
+  }
+
+  const covered = confirmedCcps.filter((c) => (byCcp.get(Number(c.id)) || []).length).length;
+  const defaultCcpId = confirmedCcps[0]?.id;
+  const ccpOptions = confirmedCcps.map((c) =>
+    `<option value="${c.id}">${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+  ).join('');
+
+  const blocks = confirmedCcps.map((ccp) => {
+    const list = byCcp.get(Number(ccp.id)) || [];
+    const rows = list.length
+      ? list.map((m) => {
+        const linked = m.limitId ? limitMap.get(Number(m.limitId)) : null;
+        const who = m.responsibleText
+          ? `${haccpRoleLabel(m.responsibleRole)} · ${m.responsibleText}`
+          : haccpRoleLabel(m.responsibleRole);
+        return `
+          <div class="haccp-monitor-row">
+            <div>
+              <div class="haccp-ccp-title">${escapeHtml(m.what)}</div>
+              <div class="haccp-hazard-meta">
+                ${escapeHtml(haccpMonitorMethodLabel(m.method))}
+                ${m.methodDetails ? ` · ${escapeHtml(m.methodDetails)}` : ''}
+                · ${escapeHtml(haccpMonitorFrequencyLabel(m.frequency))}
+                ${m.frequencyDetails ? ` (${escapeHtml(m.frequencyDetails)})` : ''}
+                · ${escapeHtml(who)}
+              </div>
+              ${linked ? `<div class="haccp-hazard-meta">גבול: ${escapeHtml(formatCriticalLimit(linked))}</div>` : ''}
+              ${m.records ? `<div class="haccp-hazard-meta">רישום: ${escapeHtml(m.records)}</div>` : ''}
+            </div>
+            <div class="haccp-hazard-actions">
+              <button type="button" class="btn btn-secondary btn-sm haccp-monitor-edit" data-id="${m.id}">ערוך</button>
+              <button type="button" class="btn btn-danger btn-sm haccp-monitor-del" data-id="${m.id}">מחק</button>
+            </div>
+          </div>`;
+      }).join('')
+      : `<p class="haccp-hint">אין נוהל ניטור ל-CCP זה עדיין.</p>`;
+
+    return `
+      <section class="haccp-monitor-ccp">
+        <div class="haccp-hazard-step-head">
+          <div>
+            <strong>${escapeHtml(ccp.code || 'CCP')} · ${escapeHtml(ccp.name)}</strong>
+            <span class="haccp-hazard-meta"> · ${escapeHtml(stepMap.get(ccp.flowStepId)?.name || '')}
+              · ${escapeHtml(ccp.hazardDescription || '')}</span>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm haccp-monitor-seed" data-ccp-id="${ccp.id}">
+            הצע ניטור
+          </button>
+        </div>
+        ${rows}
+      </section>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <div class="card-title">5.4 · ניטור — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: לכל CCP יש להגדיר נוהל ניטור — מה נמדד, שיטה, תדירות, אחראי, ואיפה נרשמים התוצאות.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${monitoringRows.length}</strong> נהלי ניטור ·
+        כיסוי CCP: <strong>${covered}/${confirmedCcps.length}</strong>
+      </p>
+
+      <div class="haccp-monitor-list">${blocks}</div>
+
+      <form id="haccp-monitor-form" class="haccp-product-form haccp-monitor-form">
+        <div class="card-title" style="font-size:1rem">הוספת נוהל ניטור</div>
+        <div class="form-group">
+          <label for="haccp-monitor-ccp">CCP</label>
+          <select id="haccp-monitor-ccp">${ccpOptions}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-monitor-limit">קישור לגבול קריטי (אופציונלי)</label>
+          <select id="haccp-monitor-limit">${limitOptionsForCcp(limits, defaultCcpId)}</select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-monitor-what">מה מנטרים</label>
+          <textarea id="haccp-monitor-what" rows="2" maxlength="1000"
+            placeholder="למשל: טמפרטורת ליבה בסוף אפייה"></textarea>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-monitor-method">שיטה</label>
+            <select id="haccp-monitor-method">${methodOptions('thermometer')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-monitor-freq">תדירות</label>
+            <select id="haccp-monitor-freq">${frequencyOptions('every_batch')}</select>
+          </div>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-monitor-method-details">פירוט שיטה</label>
+            <input type="text" id="haccp-monitor-method-details" maxlength="1000" placeholder="סוג מדחום, מיקום מדידה…">
+          </div>
+          <div class="form-group">
+            <label for="haccp-monitor-freq-details">פירוט תדירות</label>
+            <input type="text" id="haccp-monitor-freq-details" maxlength="500" placeholder="למשל: כל תבנית ראשונה ואחרונה">
+          </div>
+        </div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-monitor-role">אחראי (תפקיד)</label>
+            <select id="haccp-monitor-role">${monitorRoleOptions('production')}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-monitor-who">שם / פירוט אחראי</label>
+            <input type="text" id="haccp-monitor-who" maxlength="200" placeholder="אופציונלי">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-monitor-records">רישום / טופס</label>
+          <input type="text" id="haccp-monitor-records" maxlength="1000" placeholder="טופס ניטור CCP / יומן ייצור">
+        </div>
+        <div class="form-group">
+          <label for="haccp-monitor-notes">הערות</label>
+          <textarea id="haccp-monitor-notes" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">הוסף ניטור</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -2167,6 +2365,160 @@ function bindHaccpEvents(container, ctx) {
             unit: document.getElementById('edit-limit-unit').value,
             valueText: document.getElementById('edit-limit-text').value,
             justification: document.getElementById('edit-limit-justification').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  function refreshMonitorLimitOptions() {
+    const ccpSelect = document.getElementById('haccp-monitor-ccp');
+    const limitSelect = document.getElementById('haccp-monitor-limit');
+    if (!ccpSelect || !limitSelect) return;
+    limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpSelect.value);
+  }
+
+  document.getElementById('haccp-monitor-ccp')?.addEventListener('change', refreshMonitorLimitOptions);
+
+  document.getElementById('haccp-monitor-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      await addHaccpMonitoring(ctx.activePlan.id, {
+        ccpId: document.getElementById('haccp-monitor-ccp')?.value,
+        limitId: document.getElementById('haccp-monitor-limit')?.value || null,
+        what: document.getElementById('haccp-monitor-what')?.value,
+        method: document.getElementById('haccp-monitor-method')?.value,
+        methodDetails: document.getElementById('haccp-monitor-method-details')?.value,
+        frequency: document.getElementById('haccp-monitor-freq')?.value,
+        frequencyDetails: document.getElementById('haccp-monitor-freq-details')?.value,
+        responsibleRole: document.getElementById('haccp-monitor-role')?.value,
+        responsibleText: document.getElementById('haccp-monitor-who')?.value,
+        records: document.getElementById('haccp-monitor-records')?.value,
+        notes: document.getElementById('haccp-monitor-notes')?.value,
+      });
+      showToast('נוהל ניטור נוסף ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-monitor-seed').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!ctx.activePlan) return;
+      try {
+        const n = await seedSuggestedMonitoringForCcp(ctx.activePlan.id, btn.dataset.ccpId);
+        showToast(`נוספו ${n} הצעות ניטור ✓`);
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-monitor-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק נוהל ניטור?')) return;
+      try {
+        await deleteHaccpMonitoring(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-monitor-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const row = ctx.monitoring?.find((m) => String(m.id) === String(btn.dataset.id));
+      if (!row) return;
+      const confirmed = (ctx.ccps || []).filter((c) => c.decision === 'ccp');
+      const ccpOptions = confirmed.map((c) =>
+        `<option value="${c.id}" ${Number(c.id) === Number(row.ccpId) ? 'selected' : ''}>${escapeHtml(c.code || 'CCP')} — ${escapeHtml(c.name)}</option>`
+      ).join('');
+      openModal({
+        title: 'עריכת נוהל ניטור',
+        bodyHTML: `
+          <div class="form-group">
+            <label for="edit-monitor-ccp">CCP</label>
+            <select id="edit-monitor-ccp">${ccpOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-monitor-limit">קישור לגבול קריטי</label>
+            <select id="edit-monitor-limit">${limitOptionsForCcp(ctx.criticalLimits || [], row.ccpId, row.limitId || '')}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-monitor-what">מה מנטרים</label>
+            <textarea id="edit-monitor-what" rows="2" maxlength="1000">${escapeHtml(row.what || '')}</textarea>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-monitor-method">שיטה</label>
+              <select id="edit-monitor-method">${methodOptions(row.method || 'thermometer')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-monitor-freq">תדירות</label>
+              <select id="edit-monitor-freq">${frequencyOptions(row.frequency || 'every_batch')}</select>
+            </div>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-monitor-method-details">פירוט שיטה</label>
+              <input type="text" id="edit-monitor-method-details" maxlength="1000" value="${escapeHtml(row.methodDetails || '')}">
+            </div>
+            <div class="form-group">
+              <label for="edit-monitor-freq-details">פירוט תדירות</label>
+              <input type="text" id="edit-monitor-freq-details" maxlength="500" value="${escapeHtml(row.frequencyDetails || '')}">
+            </div>
+          </div>
+          <div class="haccp-form-row">
+            <div class="form-group">
+              <label for="edit-monitor-role">אחראי</label>
+              <select id="edit-monitor-role">${monitorRoleOptions(row.responsibleRole || 'production')}</select>
+            </div>
+            <div class="form-group">
+              <label for="edit-monitor-who">שם / פירוט</label>
+              <input type="text" id="edit-monitor-who" maxlength="200" value="${escapeHtml(row.responsibleText || '')}">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="edit-monitor-records">רישום / טופס</label>
+            <input type="text" id="edit-monitor-records" maxlength="1000" value="${escapeHtml(row.records || '')}">
+          </div>
+          <div class="form-group">
+            <label for="edit-monitor-notes">הערות</label>
+            <textarea id="edit-monitor-notes" rows="2" maxlength="2000">${escapeHtml(row.notes || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-monitor">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      document.getElementById('edit-monitor-ccp')?.addEventListener('change', () => {
+        const limitSelect = document.getElementById('edit-monitor-limit');
+        const ccpId = document.getElementById('edit-monitor-ccp')?.value;
+        if (limitSelect) limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpId);
+      });
+      document.getElementById('save-edit-monitor')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpMonitoring(row.id, {
+            ccpId: document.getElementById('edit-monitor-ccp').value,
+            limitId: document.getElementById('edit-monitor-limit').value || null,
+            what: document.getElementById('edit-monitor-what').value,
+            method: document.getElementById('edit-monitor-method').value,
+            methodDetails: document.getElementById('edit-monitor-method-details').value,
+            frequency: document.getElementById('edit-monitor-freq').value,
+            frequencyDetails: document.getElementById('edit-monitor-freq-details').value,
+            responsibleRole: document.getElementById('edit-monitor-role').value,
+            responsibleText: document.getElementById('edit-monitor-who').value,
+            records: document.getElementById('edit-monitor-records').value,
+            notes: document.getElementById('edit-monitor-notes').value,
           });
           closeModal();
           showToast('עודכן ✓');

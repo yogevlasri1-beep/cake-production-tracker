@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=402';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=402';
+import { db, ValidationError } from './db.js?v=403';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=403';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -13,7 +13,7 @@ export const HACCP_STEPS = [
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'available' },
   { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'available' },
   { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'available' },
-  { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'soon' },
+  { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'available' },
   { id: 'corrective', label: 'פעולות מתקנות', chapter: '5.5', status: 'soon' },
   { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'soon' },
   { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'soon' },
@@ -251,11 +251,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpHazards,
     db.haccpCcps,
     db.haccpCriticalLimits,
+    db.haccpMonitoring,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const monitoring = await db.haccpMonitoring.where('planId').equals(pid).toArray();
+      for (const m of monitoring) await db.haccpMonitoring.delete(m.id);
       const limits = await db.haccpCriticalLimits.where('planId').equals(pid).toArray();
       for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
       const ccps = await db.haccpCcps.where('planId').equals(pid).toArray();
@@ -658,25 +661,40 @@ export async function updateHaccpFlowStep(id, patch = {}) {
 export async function deleteHaccpFlowStep(id) {
   const sid = sanitizeProductId(id);
   if (!sid) return;
-  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, db.haccpCcps, db.haccpCriticalLimits, async () => {
-    const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
-    for (const h of hazards) {
-      const linked = await db.haccpCcps.where('hazardId').equals(h.id).toArray();
-      for (const c of linked) {
-        const limits = await db.haccpCriticalLimits.where('ccpId').equals(c.id).toArray();
-        for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+  await db.transaction(
+    'rw',
+    db.haccpFlowSteps,
+    db.haccpHazards,
+    db.haccpCcps,
+    db.haccpCriticalLimits,
+    db.haccpMonitoring,
+    async () => {
+      const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
+      for (const h of hazards) {
+        const linked = await db.haccpCcps.where('hazardId').equals(h.id).toArray();
+        for (const c of linked) {
+          await deleteCcpChildren(c.id);
+          await db.haccpCcps.delete(c.id);
+        }
+        await db.haccpHazards.delete(h.id);
+      }
+      const stepCcps = await db.haccpCcps.where('flowStepId').equals(sid).toArray();
+      for (const c of stepCcps) {
+        await deleteCcpChildren(c.id);
         await db.haccpCcps.delete(c.id);
       }
-      await db.haccpHazards.delete(h.id);
-    }
-    const stepCcps = await db.haccpCcps.where('flowStepId').equals(sid).toArray();
-    for (const c of stepCcps) {
-      const limits = await db.haccpCriticalLimits.where('ccpId').equals(c.id).toArray();
-      for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
-      await db.haccpCcps.delete(c.id);
-    }
-    await db.haccpFlowSteps.delete(sid);
-  });
+      await db.haccpFlowSteps.delete(sid);
+    },
+  );
+}
+
+async function deleteCcpChildren(ccpId) {
+  const cid = sanitizeProductId(ccpId);
+  if (!cid) return;
+  const limits = await db.haccpCriticalLimits.where('ccpId').equals(cid).toArray();
+  for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+  const monitoring = await db.haccpMonitoring.where('ccpId').equals(cid).toArray();
+  for (const m of monitoring) await db.haccpMonitoring.delete(m.id);
 }
 
 export async function moveHaccpFlowStep(planId, stepId, direction) {
@@ -1361,9 +1379,8 @@ export async function updateHaccpCcp(id, patch = {}) {
 export async function deleteHaccpCcp(id) {
   const cid = sanitizeProductId(id);
   if (!cid) return;
-  await db.transaction('rw', db.haccpCcps, db.haccpCriticalLimits, async () => {
-    const limits = await db.haccpCriticalLimits.where('ccpId').equals(cid).toArray();
-    for (const l of limits) await db.haccpCriticalLimits.delete(l.id);
+  await db.transaction('rw', db.haccpCcps, db.haccpCriticalLimits, db.haccpMonitoring, async () => {
+    await deleteCcpChildren(cid);
     await db.haccpCcps.delete(cid);
   });
 }
@@ -1604,7 +1621,11 @@ export async function updateHaccpCriticalLimit(id, patch = {}) {
 export async function deleteHaccpCriticalLimit(id) {
   const lid = sanitizeProductId(id);
   if (!lid) return;
-  await db.haccpCriticalLimits.delete(lid);
+  await db.transaction('rw', db.haccpCriticalLimits, db.haccpMonitoring, async () => {
+    const linked = await db.haccpMonitoring.where('limitId').equals(lid).toArray();
+    for (const m of linked) await db.haccpMonitoring.update(m.id, { limitId: null });
+    await db.haccpCriticalLimits.delete(lid);
+  });
 }
 
 /** הצעות גבולות נפוצות לפי סוג שלב של ה-CCP */
@@ -1652,4 +1673,238 @@ export async function seedSuggestedLimitsForCcp(planId, ccpId) {
   }
   if (!added) throw new ValidationError('כל ההצעות ל-CCP זה כבר קיימות');
   return added;
+}
+
+/** שיטות ניטור נפוצות */
+export const HACCP_MONITOR_METHODS = [
+  { id: 'thermometer', label: 'מדידת טמפרטורה (מדחום / גשוש)' },
+  { id: 'timer', label: 'מדידת זמן' },
+  { id: 'visual', label: 'בדיקה ויזואלית' },
+  { id: 'continuous', label: 'רישום רציף / לוגר' },
+  { id: 'ph_meter', label: 'מד pH' },
+  { id: 'scale', label: 'שקילה' },
+  { id: 'checklist', label: 'צ׳קליסט מובנה' },
+  { id: 'other', label: 'אחר' },
+];
+
+export const HACCP_MONITOR_FREQUENCIES = [
+  { id: 'continuous', label: 'רציף' },
+  { id: 'every_batch', label: 'כל אצווה / כל ייצור' },
+  { id: 'start_mid_end', label: 'תחילת / אמצע / סוף תהליך' },
+  { id: 'hourly', label: 'כל שעה' },
+  { id: 'each_shift', label: 'כל משמרת' },
+  { id: 'daily', label: 'יומי' },
+  { id: 'other', label: 'אחר' },
+];
+
+export function haccpMonitorMethodLabel(id) {
+  return HACCP_MONITOR_METHODS.find((m) => m.id === id)?.label || id || '—';
+}
+
+export function haccpMonitorFrequencyLabel(id) {
+  return HACCP_MONITOR_FREQUENCIES.find((f) => f.id === id)?.label || id || '—';
+}
+
+function sanitizeMonitorMethod(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_MONITOR_METHODS.some((m) => m.id === id) ? id : 'other';
+}
+
+function sanitizeMonitorFrequency(raw) {
+  const id = String(raw || '').trim();
+  return HACCP_MONITOR_FREQUENCIES.some((f) => f.id === id) ? id : 'every_batch';
+}
+
+async function markPlanMonitoringInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'flow', 'flow_verify', 'hazard', 'ccp', 'limits', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'monitoring', status: 'in_progress' });
+  }
+}
+
+export async function getHaccpMonitoring(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpMonitoring.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getHaccpMonitoringForCcp(ccpId) {
+  const cid = sanitizeProductId(ccpId);
+  if (!cid) return [];
+  const rows = await db.haccpMonitoring.where('ccpId').equals(cid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function addHaccpMonitoring(planId, {
+  ccpId,
+  limitId = null,
+  what = '',
+  method = 'thermometer',
+  methodDetails = '',
+  frequency = 'every_batch',
+  frequencyDetails = '',
+  responsibleRole = 'production',
+  responsibleText = '',
+  records = '',
+  notes = '',
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  const cid = sanitizeProductId(ccpId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  if (!cid) throw new ValidationError('בחר CCP');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+  const ccp = await db.haccpCcps.get(cid);
+  if (!ccp || Number(ccp.planId) !== Number(pid) || ccp.decision !== 'ccp') {
+    throw new ValidationError('CCP מאושר לא נמצא בתכנית');
+  }
+
+  let lid = sanitizeProductId(limitId) || null;
+  if (lid) {
+    const limit = await db.haccpCriticalLimits.get(lid);
+    if (!limit || Number(limit.planId) !== Number(pid) || Number(limit.ccpId) !== Number(cid)) {
+      throw new ValidationError('גבול קריטי לא שייך ל-CCP');
+    }
+  }
+
+  const cleanWhat = sanitizeTextField(what, 1000);
+  if (!cleanWhat) throw new ValidationError('הגדר מה מנטרים');
+
+  const existing = await getHaccpMonitoring(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((m) => m.sortOrder ?? 0)) + 1
+    : 1;
+
+  const id = await db.haccpMonitoring.add({
+    planId: pid,
+    ccpId: cid,
+    limitId: lid,
+    what: cleanWhat,
+    method: sanitizeMonitorMethod(method),
+    methodDetails: sanitizeTextField(methodDetails, 1000),
+    frequency: sanitizeMonitorFrequency(frequency),
+    frequencyDetails: sanitizeTextField(frequencyDetails, 500),
+    responsibleRole: sanitizeRole(responsibleRole),
+    responsibleText: sanitizeTextField(responsibleText, 200),
+    records: sanitizeTextField(records, 1000),
+    notes: sanitizeTextField(notes, 2000),
+    sortOrder,
+  });
+  await markPlanMonitoringInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpMonitoring(id, patch = {}) {
+  const mid = sanitizeProductId(id);
+  if (!mid) return;
+  const row = await db.haccpMonitoring.get(mid);
+  if (!row) throw new ValidationError('נוהל ניטור לא נמצא');
+  const next = {};
+
+  if (patch.ccpId !== undefined) {
+    const cid = sanitizeProductId(patch.ccpId);
+    if (!cid) throw new ValidationError('CCP לא תקין');
+    const ccp = await db.haccpCcps.get(cid);
+    if (!ccp || Number(ccp.planId) !== Number(row.planId) || ccp.decision !== 'ccp') {
+      throw new ValidationError('CCP מאושר לא נמצא');
+    }
+    next.ccpId = cid;
+  }
+  if (patch.limitId !== undefined) {
+    const lid = sanitizeProductId(patch.limitId);
+    if (lid) {
+      const limit = await db.haccpCriticalLimits.get(lid);
+      const ccpId = next.ccpId || row.ccpId;
+      if (!limit || Number(limit.planId) !== Number(row.planId) || Number(limit.ccpId) !== Number(ccpId)) {
+        throw new ValidationError('גבול קריטי לא שייך ל-CCP');
+      }
+      next.limitId = lid;
+    } else {
+      next.limitId = null;
+    }
+  }
+  if (patch.what !== undefined) {
+    const cleanWhat = sanitizeTextField(patch.what, 1000);
+    if (!cleanWhat) throw new ValidationError('הגדר מה מנטרים');
+    next.what = cleanWhat;
+  }
+  if (patch.method !== undefined) next.method = sanitizeMonitorMethod(patch.method);
+  if (patch.methodDetails !== undefined) next.methodDetails = sanitizeTextField(patch.methodDetails, 1000);
+  if (patch.frequency !== undefined) next.frequency = sanitizeMonitorFrequency(patch.frequency);
+  if (patch.frequencyDetails !== undefined) {
+    next.frequencyDetails = sanitizeTextField(patch.frequencyDetails, 500);
+  }
+  if (patch.responsibleRole !== undefined) next.responsibleRole = sanitizeRole(patch.responsibleRole);
+  if (patch.responsibleText !== undefined) next.responsibleText = sanitizeTextField(patch.responsibleText, 200);
+  if (patch.records !== undefined) next.records = sanitizeTextField(patch.records, 1000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  if (!Object.keys(next).length) return;
+  await db.haccpMonitoring.update(mid, next);
+}
+
+export async function deleteHaccpMonitoring(id) {
+  const mid = sanitizeProductId(id);
+  if (!mid) return;
+  await db.haccpMonitoring.delete(mid);
+}
+
+/** הצעת ניטור בסיסית לפי CCP וגבולותיו */
+export async function seedSuggestedMonitoringForCcp(planId, ccpId) {
+  const pid = sanitizeProductId(planId);
+  const cid = sanitizeProductId(ccpId);
+  if (!pid || !cid) throw new ValidationError('בחר תכנית ו-CCP');
+  const ccp = await db.haccpCcps.get(cid);
+  if (!ccp || Number(ccp.planId) !== Number(pid) || ccp.decision !== 'ccp') {
+    throw new ValidationError('CCP מאושר לא נמצא');
+  }
+  const existing = await getHaccpMonitoringForCcp(cid);
+  if (existing.length) throw new ValidationError('כבר קיים נוהל ניטור ל-CCP זה');
+
+  const limits = await getHaccpCriticalLimitsForCcp(cid);
+  const step = await db.haccpFlowSteps.get(ccp.flowStepId);
+  const kind = step?.stepKind || 'other';
+
+  const methodByParam = {
+    core_temp: 'thermometer',
+    oven_temp: 'thermometer',
+    cooling_temp: 'thermometer',
+    storage_temp: 'thermometer',
+    time: 'timer',
+    cooling_time: 'timer',
+    visual: 'visual',
+    ph: 'ph_meter',
+    aw: 'other',
+    other: 'checklist',
+  };
+
+  if (limits.length) {
+    let added = 0;
+    for (const limit of limits) {
+      await addHaccpMonitoring(pid, {
+        ccpId: cid,
+        limitId: limit.id,
+        what: formatCriticalLimit(limit),
+        method: methodByParam[limit.parameter] || 'other',
+        methodDetails: '',
+        frequency: kind === 'baking' || kind === 'cooling' ? 'every_batch' : 'each_shift',
+        responsibleRole: 'production',
+        records: 'טופס ניטור CCP / יומן ייצור',
+      });
+      added += 1;
+    }
+    return added;
+  }
+
+  await addHaccpMonitoring(pid, {
+    ccpId: cid,
+    what: ccp.hazardDescription || ccp.name || 'ניטור CCP',
+    method: kind === 'baking' || kind === 'cooling' ? 'thermometer' : 'checklist',
+    frequency: 'every_batch',
+    responsibleRole: 'production',
+    records: 'טופס ניטור CCP / יומן ייצור',
+  });
+  return 1;
 }

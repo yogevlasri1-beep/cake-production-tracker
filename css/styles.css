@@ -11725,3 +11725,38 @@ body.supplier-drag-active {
     grid-template-columns: 1fr;
   }
 }
+
+.haccp-monitor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 18px;
+}
+
+.haccp-monitor-ccp {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.haccp-monitor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 6px 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #0f766e) 8%, white);
+  border: 1px solid color-mix(in srgb, var(--accent, #0f766e) 22%, transparent);
+}
+
+.haccp-monitor-form {
+  margin-top: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
+@media (max-width: 720px) {
+  .haccp-monitor-row {
+    grid-template-columns: 1fr;
+  }
+}
