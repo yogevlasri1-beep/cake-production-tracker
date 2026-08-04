@@ -1,11 +1,13 @@
-import { getCategoryGroups } from '../db.js?v=395';
-import { escapeHtml, showToast } from '../utils.js?v=395';
-import { openModal, closeModal } from '../modal.js?v=395';
+import { getCategoryGroups } from '../db.js?v=396';
+import { escapeHtml, showToast } from '../utils.js?v=396';
+import { openModal, closeModal } from '../modal.js?v=396';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
   HACCP_TEAM_ROLES,
   HACCP_PLAN_STATUSES,
+  HACCP_ALLERGENS,
+  HACCP_PROCESS_TECHS,
   haccpRoleLabel,
   getHaccpTeamMembers,
   addHaccpTeamMember,
@@ -17,7 +19,11 @@ import {
   ensureHaccpPlanForGroup,
   updateHaccpPlan,
   deleteHaccpPlan,
-} from '../haccp-db.js?v=395';
+  getHaccpProductDescription,
+  saveHaccpProductDescription,
+  getProductsForHaccpPlan,
+  suggestCompositionForHaccpPlan,
+} from '../haccp-db.js?v=396';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -58,11 +64,22 @@ export async function renderHaccp(container) {
   const activePlan = plans.find((p) => p.id === activePlanId) || null;
   const step = HACCP_STEPS.find((s) => s.id === stepId) || HACCP_STEPS[0];
 
+  let productDesc = null;
+  let familyProducts = [];
+  if (step.id === 'product' && activePlan) {
+    [productDesc, familyProducts] = await Promise.all([
+      getHaccpProductDescription(activePlan.id),
+      getProductsForHaccpPlan(activePlan.id),
+    ]);
+  }
+
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
   else if (step.id === 'prp') body = renderPrpPreview();
   else if (step.id === 'team') body = renderTeamSection(members);
-  else body = renderSoonStep(step);
+  else if (step.id === 'product') {
+    body = renderProductSection(activePlan, productDesc, familyProducts, groupMap);
+  } else body = renderSoonStep(step);
 
   container.innerHTML = `
     <div class="haccp-screen">
@@ -98,7 +115,7 @@ export async function renderHaccp(container) {
       </div>
     </div>`;
 
-  bindHaccpEvents(container, { members, plans, groups, activePlan });
+  bindHaccpEvents(container, { members, plans, groups, activePlan, productDesc });
 }
 
 function renderPlanPicker(plans, groups, activePlan, groupMap) {
@@ -157,10 +174,13 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלב הפעיל עכשיו: <strong>3.1 צוות HACCP</strong></li>
+        <li>השלבים הפעילים: <strong>3.1 צוות</strong> ו־<strong>3.2 תיאור מוצר</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: התחל בהרכבת הצוות, ואז צור תכנית לכל משפחה (שטרודל, קראנץ…) ועבור לתיאור המוצר.</p>
-      <button type="button" class="btn btn-primary" data-haccp-step="team">המשך לצוות HACCP</button>
+      <p class="haccp-hint">המלצה: הרכב צוות, צור תכנית למשפחה, ואז מלא תיאור מוצר.</p>
+      <div class="haccp-inline-row">
+        <button type="button" class="btn btn-primary" data-haccp-step="team">צוות HACCP</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="product">תיאור מוצר</button>
+      </div>
     </div>`;
 }
 
@@ -183,6 +203,140 @@ function renderSoonStep(step) {
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
       <p class="haccp-hint">שלב זה ייבנה בסשן הבא, אחרי שנסיים את צוות ה-HACCP ונתקדם לפי המדריך.</p>
+    </div>`;
+}
+
+function renderCheckboxGrid(items, selected, nameAttr) {
+  const selectedSet = new Set(selected || []);
+  return `
+    <div class="haccp-check-grid">
+      ${items.map((item) => `
+        <label class="haccp-check">
+          <input type="checkbox" name="${nameAttr}" value="${escapeHtml(item.id)}"
+            ${selectedSet.has(item.id) ? 'checked' : ''}>
+          <span>${escapeHtml(item.label)}</span>
+        </label>`).join('')}
+    </div>`;
+}
+
+function renderProductSection(activePlan, desc, familyProducts, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">3.2 · תיאור המוצר</div>
+        <p class="haccp-hint">
+          תיאור המוצר נשמר לפי משפחת מוצרים. צור או בחר תכנית למעלה (למשל שטרודל / קראנץ)
+          ואז מלא את הטופס.
+        </p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const productList = familyProducts.length
+    ? familyProducts.map((p) => escapeHtml(p.name)).join(' · ')
+    : 'אין מוצרים פעילים במשפחה זו';
+
+  const d = desc || {};
+
+  return `
+    <div class="card">
+      <div class="card-title">3.2 · תיאור המוצר — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך: תיאור מפורט של המוצר או קבוצת מוצרים דומים, עם מיקוד במאפיינים
+        שמשפיעים על בטיחות המזון. משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products"><strong>מוצרים במשפחה:</strong> ${productList}</p>
+
+      <form id="haccp-product-form" class="haccp-product-form">
+        <div class="form-group">
+          <label for="haccp-composition">הרכב המוצר (רשימת רכיבים)</label>
+          <textarea id="haccp-composition" rows="3" maxlength="4000"
+            placeholder="קמח, מים, שמרים, סוכר…">${escapeHtml(d.composition || '')}</textarea>
+          <button type="button" class="btn btn-secondary btn-sm" id="haccp-suggest-composition">
+            הצע הרכב ממתכונים
+          </button>
+        </div>
+
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-aw">פעילות מים (aw)</label>
+            <input type="text" id="haccp-aw" maxlength="40" value="${escapeHtml(d.waterActivity || '')}"
+              placeholder="למשל 0.85 או לא נמדד">
+          </div>
+          <div class="form-group">
+            <label for="haccp-ph">ערך הגבה (pH)</label>
+            <input type="text" id="haccp-ph" maxlength="40" value="${escapeHtml(d.phValue || '')}"
+              placeholder="למשל 5.2 או לא רלוונטי">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-preservatives">חומרים משמרים</label>
+          <input type="text" id="haccp-preservatives" maxlength="500"
+            value="${escapeHtml(d.preservatives || '')}" placeholder="אם אין — כתוב אין">
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-physchem">מאפיינים פיזיקליים / כימיים נוספים</label>
+          <textarea id="haccp-physchem" rows="2" maxlength="2000">${escapeHtml(d.physicalChemicalNotes || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-micro">מאפיינים מיקרוביולוגיים</label>
+          <textarea id="haccp-micro" rows="2" maxlength="2000"
+            placeholder="פתוגנים פוטנציאליים, השפעת האפייה על העומס המיקרוביאלי…">${escapeHtml(d.microbiological || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label>טכנולוגיות עיבוד</label>
+          ${renderCheckboxGrid(HACCP_PROCESS_TECHS, d.processTechs, 'haccp-process')}
+        </div>
+
+        <div class="form-group">
+          <label>אלרגנים / חומרים הגורמים לאי־סבילות</label>
+          ${renderCheckboxGrid(HACCP_ALLERGENS, d.allergens, 'haccp-allergen')}
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-packaging">סוג אריזה ומאפייני מחסום</label>
+          <textarea id="haccp-packaging" rows="2" maxlength="1000">${escapeHtml(d.packaging || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-shelf">חיי מדף מוצהרים</label>
+          <input type="text" id="haccp-shelf" maxlength="500" value="${escapeHtml(d.shelfLife || '')}"
+            placeholder="למשל 7 ימים בקירור / 3 חודשים בהקפאה">
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-storage">תנאי אחסון</label>
+          <textarea id="haccp-storage" rows="2" maxlength="1000">${escapeHtml(d.storageConditions || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-distribution">תנאי הפצה</label>
+          <textarea id="haccp-distribution" rows="2" maxlength="1000">${escapeHtml(d.distributionConditions || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-labeling">מידע סימון לבטיחות מזון</label>
+          <textarea id="haccp-labeling" rows="2" maxlength="2000"
+            placeholder="אלרגנים על התווית, הוראות אחסון, תאריך תפוגה, הוראות חימום…">${escapeHtml(d.labelingInfo || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-regulatory">דרישות רגולטוריות החלות על המוצר</label>
+          <textarea id="haccp-regulatory" rows="2" maxlength="2000"
+            placeholder="קריטריונים מיקרוביולוגיים, מגבלות תוספים, טמפרטורות עיבוד מחייבות…">${escapeHtml(d.regulatoryRequirements || '')}</textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="haccp-desc-notes">הערות</label>
+          <textarea id="haccp-desc-notes" rows="2" maxlength="2000">${escapeHtml(d.notes || '')}</textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary" id="haccp-save-product">שמור תיאור מוצר</button>
+      </form>
     </div>`;
 }
 
@@ -393,5 +547,53 @@ function bindHaccpEvents(container, ctx) {
         }
       });
     });
+  });
+
+  document.getElementById('haccp-suggest-composition')?.addEventListener('click', async () => {
+    if (!ctx.activePlan) return;
+    try {
+      const suggestion = await suggestCompositionForHaccpPlan(ctx.activePlan.id);
+      const el = document.getElementById('haccp-composition');
+      if (!el) return;
+      if (!suggestion) {
+        showToast('לא נמצא הרכב במתכונים למשפחה זו');
+        return;
+      }
+      if (el.value.trim() && !confirm('להחליף את ההרכב הקיים בהצעה מהמתכונים?')) return;
+      el.value = suggestion;
+      showToast('הוצע הרכב ✓');
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-product-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    const checked = (name) =>
+      [...document.querySelectorAll(`input[name="${name}"]:checked`)].map((el) => el.value);
+    try {
+      await saveHaccpProductDescription(ctx.activePlan.id, {
+        composition: document.getElementById('haccp-composition')?.value,
+        waterActivity: document.getElementById('haccp-aw')?.value,
+        phValue: document.getElementById('haccp-ph')?.value,
+        preservatives: document.getElementById('haccp-preservatives')?.value,
+        physicalChemicalNotes: document.getElementById('haccp-physchem')?.value,
+        microbiological: document.getElementById('haccp-micro')?.value,
+        processTechs: checked('haccp-process'),
+        packaging: document.getElementById('haccp-packaging')?.value,
+        shelfLife: document.getElementById('haccp-shelf')?.value,
+        storageConditions: document.getElementById('haccp-storage')?.value,
+        distributionConditions: document.getElementById('haccp-distribution')?.value,
+        allergens: checked('haccp-allergen'),
+        labelingInfo: document.getElementById('haccp-labeling')?.value,
+        regulatoryRequirements: document.getElementById('haccp-regulatory')?.value,
+        notes: document.getElementById('haccp-desc-notes')?.value,
+      });
+      showToast('תיאור המוצר נשמר ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 }

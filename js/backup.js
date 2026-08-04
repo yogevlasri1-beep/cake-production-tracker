@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=395';
-import { APP_VERSION } from './version.js?v=395';
-import { defaultColorForIndex } from './chart.js?v=395';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=395';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=395';
-import { ValidationError } from './validators.js?v=395';
+import { exportAllData, importAllData } from './db.js?v=396';
+import { APP_VERSION } from './version.js?v=396';
+import { defaultColorForIndex } from './chart.js?v=396';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=396';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=396';
+import { ValidationError } from './validators.js?v=396';
 
 export const BACKUP_VERSION = 3;
 
@@ -224,6 +224,7 @@ export function enrichBackupData(raw) {
     purchaseItems: raw.purchaseItems || [],
     haccpTeamMembers: raw.haccpTeamMembers || [],
     haccpPlans: raw.haccpPlans || [],
+    haccpProductDescriptions: raw.haccpProductDescriptions || [],
     settings: raw.settings || [],
   };
 }
@@ -283,6 +284,7 @@ export function summarizeBackupData(data) {
     purchaseItems: data.purchaseItems?.length || 0,
     haccpTeamMembers: data.haccpTeamMembers?.length || 0,
     haccpPlans: data.haccpPlans?.length || 0,
+    haccpProductDescriptions: data.haccpProductDescriptions?.length || 0,
   };
 }
 
@@ -329,6 +331,7 @@ export function formatBackupSummary(counts) {
   if (counts.purchaseItems) parts.push(`${counts.purchaseItems} פריטי קניות`);
   if (counts.haccpTeamMembers) parts.push(`${counts.haccpTeamMembers} צוות HACCP`);
   if (counts.haccpPlans) parts.push(`${counts.haccpPlans} תכניות HACCP`);
+  if (counts.haccpProductDescriptions) parts.push(`${counts.haccpProductDescriptions} תיאורי מוצר HACCP`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
@@ -417,6 +420,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.purchaseItems)) data.purchaseItems = [];
   if (!Array.isArray(data.haccpTeamMembers)) data.haccpTeamMembers = [];
   if (!Array.isArray(data.haccpPlans)) data.haccpPlans = [];
+  if (!Array.isArray(data.haccpProductDescriptions)) data.haccpProductDescriptions = [];
   return enrichBackupData(data);
 }
 

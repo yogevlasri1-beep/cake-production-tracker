@@ -1,12 +1,12 @@
-import { db, ValidationError } from './db.js?v=395';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=395';
+import { db, ValidationError } from './db.js?v=396';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=396';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
   { id: 'overview', label: 'סקירה', chapter: '1–2', status: 'available' },
   { id: 'prp', label: 'תכניות קדם (PRP)', chapter: '2', status: 'preview' },
   { id: 'team', label: 'צוות HACCP', chapter: '3.1', status: 'available' },
-  { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'soon' },
+  { id: 'product', label: 'תיאור המוצר', chapter: '3.2', status: 'available' },
   { id: 'intended_use', label: 'שימוש מיועד', chapter: '3.3', status: 'soon' },
   { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'soon' },
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'soon' },
@@ -241,7 +241,180 @@ export async function updateHaccpPlan(id, patch = {}) {
 export async function deleteHaccpPlan(id) {
   const pid = sanitizeProductId(id);
   if (!pid) return;
-  await db.haccpPlans.delete(pid);
+  await db.transaction('rw', db.haccpPlans, db.haccpProductDescriptions, async () => {
+    const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
+    for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
+    await db.haccpPlans.delete(pid);
+  });
   const active = await getActiveHaccpPlanId();
   if (active === pid) await setActiveHaccpPlanId(null);
+}
+
+/** אלרגנים נפוצים לפי נספח הסימון */
+export const HACCP_ALLERGENS = [
+  { id: 'gluten', label: 'דגנים המכילים גלוטן' },
+  { id: 'milk', label: 'חלב ומוצריו' },
+  { id: 'eggs', label: 'ביצים' },
+  { id: 'peanuts', label: 'בוטנים' },
+  { id: 'tree_nuts', label: 'אגוזים' },
+  { id: 'sesame', label: 'שומשום' },
+  { id: 'soy', label: 'סויה' },
+  { id: 'mustard', label: 'חרדל' },
+  { id: 'celery', label: 'סלרי' },
+  { id: 'lupin', label: 'תורמוס' },
+  { id: 'fish', label: 'דגים' },
+  { id: 'crustaceans', label: 'סרטנים' },
+  { id: 'molluscs', label: 'רכיכות' },
+  { id: 'sulphites', label: 'סולפיטים' },
+];
+
+/** טכנולוגיות עיבוד רלוונטיות למאפייה */
+export const HACCP_PROCESS_TECHS = [
+  { id: 'baking', label: 'טיפול תרמי / אפייה' },
+  { id: 'proofing', label: 'התפחה' },
+  { id: 'cooling', label: 'קירור' },
+  { id: 'freezing', label: 'הקפאה' },
+  { id: 'frying', label: 'טיגון' },
+  { id: 'drying', label: 'ייבוש' },
+  { id: 'mixing', label: 'ערבוב / לישה' },
+  { id: 'filling', label: 'מילוי / מריחה' },
+  { id: 'packaging', label: 'אריזה' },
+];
+
+function emptyProductDescription(planId) {
+  return {
+    planId,
+    composition: '',
+    waterActivity: '',
+    phValue: '',
+    preservatives: '',
+    physicalChemicalNotes: '',
+    microbiological: '',
+    processTechs: [],
+    packaging: '',
+    shelfLife: '',
+    storageConditions: '',
+    distributionConditions: '',
+    allergens: [],
+    labelingInfo: '',
+    regulatoryRequirements: '',
+    notes: '',
+  };
+}
+
+function sanitizeTextField(raw, max = 2000) {
+  return String(raw ?? '').trim().slice(0, max);
+}
+
+function sanitizeIdList(raw, allowed) {
+  const set = new Set(allowed.map((a) => a.id));
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(list.map((x) => String(x)).filter((id) => set.has(id)))];
+}
+
+function normalizeProductDescription(row, planId) {
+  const base = emptyProductDescription(planId);
+  if (!row) return base;
+  return {
+    ...base,
+    id: row.id,
+    planId,
+    composition: sanitizeTextField(row.composition, 4000),
+    waterActivity: sanitizeTextField(row.waterActivity, 40),
+    phValue: sanitizeTextField(row.phValue, 40),
+    preservatives: sanitizeTextField(row.preservatives, 500),
+    physicalChemicalNotes: sanitizeTextField(row.physicalChemicalNotes, 2000),
+    microbiological: sanitizeTextField(row.microbiological, 2000),
+    processTechs: sanitizeIdList(row.processTechs, HACCP_PROCESS_TECHS),
+    packaging: sanitizeTextField(row.packaging, 1000),
+    shelfLife: sanitizeTextField(row.shelfLife, 500),
+    storageConditions: sanitizeTextField(row.storageConditions, 1000),
+    distributionConditions: sanitizeTextField(row.distributionConditions, 1000),
+    allergens: sanitizeIdList(row.allergens, HACCP_ALLERGENS),
+    labelingInfo: sanitizeTextField(row.labelingInfo, 2000),
+    regulatoryRequirements: sanitizeTextField(row.regulatoryRequirements, 2000),
+    notes: sanitizeTextField(row.notes, 2000),
+  };
+}
+
+export async function getHaccpProductDescription(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return emptyProductDescription(null);
+  const row = await db.haccpProductDescriptions.where('planId').equals(pid).first();
+  return normalizeProductDescription(row, pid);
+}
+
+export async function saveHaccpProductDescription(planId, fields = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית לפי משפחת מוצרים');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const next = normalizeProductDescription({ ...fields, planId: pid }, pid);
+  delete next.id;
+
+  const existing = await db.haccpProductDescriptions.where('planId').equals(pid).first();
+  if (existing) {
+    await db.haccpProductDescriptions.update(existing.id, next);
+    if (plan.currentStep === 'team' || plan.status === 'draft') {
+      await db.haccpPlans.update(pid, { currentStep: 'product', status: 'in_progress' });
+    }
+    return existing.id;
+  }
+  const id = await db.haccpProductDescriptions.add(next);
+  await db.haccpPlans.update(pid, { currentStep: 'product', status: 'in_progress' });
+  return id;
+}
+
+/** מוצרים בקבוצת הקטגוריות של התכנית */
+export async function getProductsForHaccpPlan(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan?.categoryGroupId) return [];
+  const categories = await db.categories.where('groupId').equals(Number(plan.categoryGroupId)).toArray();
+  const catIds = new Set(categories.map((c) => c.id));
+  const products = await db.products.toArray();
+  return products
+    .filter((p) => catIds.has(p.categoryId) && p.active !== false)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+/**
+ * מציע טקסט הרכב מתוך שמות חומרי גלם במתכונים המקושרים למוצרי המשפחה.
+ * לא מחליף שמירה אוטומטית — רק הצעה למילוי.
+ */
+export async function suggestCompositionForHaccpPlan(planId) {
+  const products = await getProductsForHaccpPlan(planId);
+  if (!products.length) return '';
+  const productIds = new Set(products.map((p) => p.id));
+  const names = new Set();
+
+  const components = await db.productRecipeComponents.toArray();
+  const recipeIds = new Set(
+    components.filter((c) => productIds.has(Number(c.productId))).map((c) => Number(c.recipeId)),
+  );
+
+  const links = await db.recipeProductLinks.toArray();
+  for (const link of links) {
+    if (productIds.has(Number(link.productId))) recipeIds.add(Number(link.recipeId));
+  }
+
+  const groupLinks = await db.recipeProductGroupLinks?.toArray?.() ?? [];
+  const plan = await db.haccpPlans.get(sanitizeProductId(planId));
+  for (const link of groupLinks) {
+    if (Number(link.groupId) === Number(plan?.categoryGroupId)) recipeIds.add(Number(link.recipeId));
+  }
+
+  if (!recipeIds.size) return products.map((p) => p.name).join(', ');
+
+  const ingredients = await db.recipeIngredients.toArray();
+  for (const ing of ingredients) {
+    if (!recipeIds.has(Number(ing.recipeId))) continue;
+    const label = sanitizeName(ing.name, 80);
+    if (label) names.add(label);
+  }
+
+  if (!names.size) return products.map((p) => p.name).join(', ');
+  return [...names].sort((a, b) => a.localeCompare(b, 'he')).join(', ');
 }

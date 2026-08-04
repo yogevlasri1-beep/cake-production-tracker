@@ -11352,3 +11352,41 @@ body.supplier-drag-active {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.haccp-product-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.haccp-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.haccp-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.haccp-family-products {
+  margin: 0 0 14px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--text-muted, #64748b);
+}
+
+.haccp-product-form textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+}
+
+@media (max-width: 640px) {
+  .haccp-form-row {
+    grid-template-columns: 1fr;
+  }
+}
