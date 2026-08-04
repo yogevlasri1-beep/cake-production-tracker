@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=400';
-import { APP_VERSION } from './version.js?v=400';
-import { defaultColorForIndex } from './chart.js?v=400';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=400';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=400';
-import { ValidationError } from './validators.js?v=400';
+import { exportAllData, importAllData } from './db.js?v=401';
+import { APP_VERSION } from './version.js?v=401';
+import { defaultColorForIndex } from './chart.js?v=401';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=401';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=401';
+import { ValidationError } from './validators.js?v=401';
 
 export const BACKUP_VERSION = 3;
 
@@ -229,6 +229,7 @@ export function enrichBackupData(raw) {
     haccpFlowSteps: raw.haccpFlowSteps || [],
     haccpFlowVerifications: raw.haccpFlowVerifications || [],
     haccpHazards: raw.haccpHazards || [],
+    haccpCcps: raw.haccpCcps || [],
     settings: raw.settings || [],
   };
 }
@@ -293,6 +294,7 @@ export function summarizeBackupData(data) {
     haccpFlowSteps: data.haccpFlowSteps?.length || 0,
     haccpFlowVerifications: data.haccpFlowVerifications?.length || 0,
     haccpHazards: data.haccpHazards?.length || 0,
+    haccpCcps: data.haccpCcps?.length || 0,
   };
 }
 
@@ -344,6 +346,7 @@ export function formatBackupSummary(counts) {
   if (counts.haccpFlowSteps) parts.push(`${counts.haccpFlowSteps} שלבי תרשים HACCP`);
   if (counts.haccpFlowVerifications) parts.push(`${counts.haccpFlowVerifications} אימותי תרשים HACCP`);
   if (counts.haccpHazards) parts.push(`${counts.haccpHazards} גורמי סיכון HACCP`);
+  if (counts.haccpCcps) parts.push(`${counts.haccpCcps} קביעות CCP`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
@@ -437,6 +440,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.haccpFlowSteps)) data.haccpFlowSteps = [];
   if (!Array.isArray(data.haccpFlowVerifications)) data.haccpFlowVerifications = [];
   if (!Array.isArray(data.haccpHazards)) data.haccpHazards = [];
+  if (!Array.isArray(data.haccpCcps)) data.haccpCcps = [];
   return enrichBackupData(data);
 }
 

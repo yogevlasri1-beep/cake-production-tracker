@@ -1,5 +1,5 @@
-import { db, ValidationError } from './db.js?v=400';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=400';
+import { db, ValidationError } from './db.js?v=401';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=401';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -11,7 +11,7 @@ export const HACCP_STEPS = [
   { id: 'flow', label: 'תרשים זרימה', chapter: '3.4', status: 'available' },
   { id: 'flow_verify', label: 'אימות תרשים בשטח', chapter: '3.5', status: 'available' },
   { id: 'hazard', label: 'ניתוח גורמי סיכון', chapter: '5.1', status: 'available' },
-  { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'soon' },
+  { id: 'ccp', label: 'נקודות בקרה קריטיות (CCP)', chapter: '5.2', status: 'available' },
   { id: 'limits', label: 'גבולות בקרה קריטיים', chapter: '5.3', status: 'soon' },
   { id: 'monitoring', label: 'ניטור', chapter: '5.4', status: 'soon' },
   { id: 'corrective', label: 'פעולות מתקנות', chapter: '5.5', status: 'soon' },
@@ -249,11 +249,14 @@ export async function deleteHaccpPlan(id) {
     db.haccpFlowSteps,
     db.haccpFlowVerifications,
     db.haccpHazards,
+    db.haccpCcps,
     async () => {
       const descs = await db.haccpProductDescriptions.where('planId').equals(pid).toArray();
       for (const d of descs) await db.haccpProductDescriptions.delete(d.id);
       const uses = await db.haccpIntendedUses.where('planId').equals(pid).toArray();
       for (const u of uses) await db.haccpIntendedUses.delete(u.id);
+      const ccps = await db.haccpCcps.where('planId').equals(pid).toArray();
+      for (const c of ccps) await db.haccpCcps.delete(c.id);
       const hazards = await db.haccpHazards.where('planId').equals(pid).toArray();
       for (const h of hazards) await db.haccpHazards.delete(h.id);
       const steps = await db.haccpFlowSteps.where('planId').equals(pid).toArray();
@@ -652,9 +655,15 @@ export async function updateHaccpFlowStep(id, patch = {}) {
 export async function deleteHaccpFlowStep(id) {
   const sid = sanitizeProductId(id);
   if (!sid) return;
-  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, async () => {
+  await db.transaction('rw', db.haccpFlowSteps, db.haccpHazards, db.haccpCcps, async () => {
     const hazards = await db.haccpHazards.where('flowStepId').equals(sid).toArray();
-    for (const h of hazards) await db.haccpHazards.delete(h.id);
+    for (const h of hazards) {
+      const linked = await db.haccpCcps.where('hazardId').equals(h.id).toArray();
+      for (const c of linked) await db.haccpCcps.delete(c.id);
+      await db.haccpHazards.delete(h.id);
+    }
+    const stepCcps = await db.haccpCcps.where('flowStepId').equals(sid).toArray();
+    for (const c of stepCcps) await db.haccpCcps.delete(c.id);
     await db.haccpFlowSteps.delete(sid);
   });
 }
@@ -1110,7 +1119,257 @@ export async function updateHaccpHazard(id, patch = {}) {
 export async function deleteHaccpHazard(id) {
   const hid = sanitizeProductId(id);
   if (!hid) return;
-  await db.haccpHazards.delete(hid);
+  await db.transaction('rw', db.haccpHazards, db.haccpCcps, async () => {
+    const linked = await db.haccpCcps.where('hazardId').equals(hid).toArray();
+    for (const c of linked) await db.haccpCcps.update(c.id, { hazardId: null });
+    await db.haccpHazards.delete(hid);
+  });
+}
+
+/** שאלות עץ החלטות CCP — Codex 2023 */
+export const HACCP_CCP_TREE_QUESTIONS = [
+  {
+    id: 'q1',
+    label: 'האם ניתן לבקר את הסיכון המשמעותי בשלב זה באמצעות תכניות קדם (PRP / GHP)?',
+  },
+  {
+    id: 'q2',
+    label: 'האם קיימים אמצעי בקרה ספציפיים לסיכון המשמעותי בשלב זה?',
+  },
+  {
+    id: 'q3',
+    label: 'האם שלב מאוחר יותר ימנע / יסלק / יפחית את הסיכון לרמה מקובלת?',
+  },
+  {
+    id: 'q4',
+    label: 'האם השלב עצמו יכול למנוע / לסלק / להפחית את הסיכון לרמה מקובלת?',
+  },
+];
+
+export const HACCP_CCP_DECISIONS = [
+  { id: 'ccp', label: 'CCP — נקודת בקרה קריטית' },
+  { id: 'prp', label: 'מבוקר ע״י PRP (לא CCP)' },
+  { id: 'later_step', label: 'יבוקר בשלב מאוחר יותר' },
+  { id: 'modify_process', label: 'נדרש שינוי תהליך / אמצעי בקרה' },
+  { id: 'incomplete', label: 'עץ החלטות לא הושלם' },
+];
+
+export function haccpCcpDecisionLabel(id) {
+  return HACCP_CCP_DECISIONS.find((d) => d.id === id)?.label || id || '—';
+}
+
+function sanitizeYesNo(raw) {
+  const v = String(raw || '').trim().toLowerCase();
+  if (v === 'yes' || v === 'no') return v;
+  return '';
+}
+
+/** הערכת תוצאת עץ Codex 2023 */
+export function evaluateCcpDecisionTree({ q1, q2, q3, q4 } = {}) {
+  const a1 = sanitizeYesNo(q1);
+  const a2 = sanitizeYesNo(q2);
+  const a3 = sanitizeYesNo(q3);
+  const a4 = sanitizeYesNo(q4);
+  if (a1 === 'yes') return 'prp';
+  if (!a1) return 'incomplete';
+  if (a2 === 'no') return 'modify_process';
+  if (!a2) return 'incomplete';
+  if (a3 === 'yes') return 'later_step';
+  if (!a3) return 'incomplete';
+  if (a4 === 'yes') return 'ccp';
+  if (a4 === 'no') return 'modify_process';
+  return 'incomplete';
+}
+
+async function markPlanCcpInProgress(plan) {
+  if (!plan?.id) return;
+  const early = ['team', 'product', 'intended_use', 'flow', 'flow_verify', 'hazard', 'overview'];
+  if (early.includes(plan.currentStep) || plan.status === 'draft') {
+    await db.haccpPlans.update(plan.id, { currentStep: 'ccp', status: 'in_progress' });
+  }
+}
+
+async function nextCcpCode(planId) {
+  const rows = await db.haccpCcps.where('planId').equals(planId).toArray();
+  const confirmed = rows.filter((r) => r.decision === 'ccp');
+  return `CCP-${confirmed.length + 1}`;
+}
+
+export async function getHaccpCcps(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const rows = await db.haccpCcps.where('planId').equals(pid).toArray();
+  return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+}
+
+export async function getHaccpCcpCandidates(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) return [];
+  const [hazards, ccps] = await Promise.all([getHaccpHazards(pid), getHaccpCcps(pid)]);
+  const linkedHazardIds = new Set(
+    ccps.map((c) => Number(c.hazardId)).filter((id) => Number.isFinite(id) && id > 0),
+  );
+  return hazards.filter((h) =>
+    (h.significant || h.isCcpCandidate) && !linkedHazardIds.has(Number(h.id)));
+}
+
+export async function addHaccpCcp(planId, fields = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const sid = sanitizeProductId(fields.flowStepId);
+  if (!sid) throw new ValidationError('בחר שלב בתרשים');
+  const step = await db.haccpFlowSteps.get(sid);
+  if (!step || Number(step.planId) !== Number(pid)) {
+    throw new ValidationError('שלב התרשים לא שייך לתכנית');
+  }
+
+  let hazardId = sanitizeProductId(fields.hazardId) || null;
+  if (hazardId) {
+    const hazard = await db.haccpHazards.get(hazardId);
+    if (!hazard || Number(hazard.planId) !== Number(pid)) {
+      throw new ValidationError('גורם סיכון לא שייך לתכנית');
+    }
+  }
+
+  const q1 = sanitizeYesNo(fields.q1);
+  const q2 = sanitizeYesNo(fields.q2);
+  const q3 = sanitizeYesNo(fields.q3);
+  const q4 = sanitizeYesNo(fields.q4);
+  const decision = fields.decision
+    ? (HACCP_CCP_DECISIONS.some((d) => d.id === fields.decision) ? fields.decision : evaluateCcpDecisionTree({ q1, q2, q3, q4 }))
+    : evaluateCcpDecisionTree({ q1, q2, q3, q4 });
+  if (decision === 'incomplete') {
+    throw new ValidationError('השלם את כל שאלות עץ ההחלטות');
+  }
+
+  const hazardDescription = sanitizeTextField(fields.hazardDescription, 1000);
+  if (!hazardDescription) throw new ValidationError('תאר את הסיכון שעבורו נקבעת ההחלטה');
+
+  const existing = await getHaccpCcps(pid);
+  const sortOrder = existing.length
+    ? Math.max(...existing.map((c) => c.sortOrder ?? 0)) + 1
+    : 1;
+
+  const code = decision === 'ccp'
+    ? (sanitizeTextField(fields.code, 40) || await nextCcpCode(pid))
+    : sanitizeTextField(fields.code, 40);
+
+  const id = await db.haccpCcps.add({
+    planId: pid,
+    flowStepId: sid,
+    hazardId,
+    code,
+    name: sanitizeName(fields.name || step.name, 120) || step.name,
+    hazardType: sanitizeHazardType(fields.hazardType || 'biological'),
+    hazardDescription,
+    q1,
+    q2,
+    q3,
+    q4,
+    decision,
+    controlMeasure: sanitizeTextField(fields.controlMeasure, 2000),
+    justification: sanitizeTextField(fields.justification, 2000),
+    notes: sanitizeTextField(fields.notes, 2000),
+    sortOrder,
+  });
+  await markPlanCcpInProgress(plan);
+  return id;
+}
+
+export async function updateHaccpCcp(id, patch = {}) {
+  const cid = sanitizeProductId(id);
+  if (!cid) return;
+  const row = await db.haccpCcps.get(cid);
+  if (!row) throw new ValidationError('רשומת CCP לא נמצאה');
+  const next = {};
+
+  if (patch.flowStepId !== undefined) {
+    const sid = sanitizeProductId(patch.flowStepId);
+    if (!sid) throw new ValidationError('שלב לא תקין');
+    const step = await db.haccpFlowSteps.get(sid);
+    if (!step || Number(step.planId) !== Number(row.planId)) {
+      throw new ValidationError('שלב התרשים לא שייך לתכנית');
+    }
+    next.flowStepId = sid;
+  }
+  if (patch.hazardId !== undefined) {
+    const hid = sanitizeProductId(patch.hazardId);
+    if (hid) {
+      const hazard = await db.haccpHazards.get(hid);
+      if (!hazard || Number(hazard.planId) !== Number(row.planId)) {
+        throw new ValidationError('גורם סיכון לא שייך לתכנית');
+      }
+      next.hazardId = hid;
+    } else {
+      next.hazardId = null;
+    }
+  }
+  if (patch.name !== undefined) {
+    const clean = sanitizeName(patch.name, 120);
+    if (!clean) throw new ValidationError('הזן שם');
+    next.name = clean;
+  }
+  if (patch.code !== undefined) next.code = sanitizeTextField(patch.code, 40);
+  if (patch.hazardType !== undefined) next.hazardType = sanitizeHazardType(patch.hazardType);
+  if (patch.hazardDescription !== undefined) {
+    const desc = sanitizeTextField(patch.hazardDescription, 1000);
+    if (!desc) throw new ValidationError('תאר את הסיכון');
+    next.hazardDescription = desc;
+  }
+  if (patch.q1 !== undefined) next.q1 = sanitizeYesNo(patch.q1);
+  if (patch.q2 !== undefined) next.q2 = sanitizeYesNo(patch.q2);
+  if (patch.q3 !== undefined) next.q3 = sanitizeYesNo(patch.q3);
+  if (patch.q4 !== undefined) next.q4 = sanitizeYesNo(patch.q4);
+  if (patch.controlMeasure !== undefined) next.controlMeasure = sanitizeTextField(patch.controlMeasure, 2000);
+  if (patch.justification !== undefined) next.justification = sanitizeTextField(patch.justification, 2000);
+  if (patch.notes !== undefined) next.notes = sanitizeTextField(patch.notes, 2000);
+
+  const q1 = next.q1 !== undefined ? next.q1 : row.q1;
+  const q2 = next.q2 !== undefined ? next.q2 : row.q2;
+  const q3 = next.q3 !== undefined ? next.q3 : row.q3;
+  const q4 = next.q4 !== undefined ? next.q4 : row.q4;
+  if (patch.decision !== undefined) {
+    next.decision = HACCP_CCP_DECISIONS.some((d) => d.id === patch.decision)
+      ? patch.decision
+      : evaluateCcpDecisionTree({ q1, q2, q3, q4 });
+  } else if (patch.q1 !== undefined || patch.q2 !== undefined || patch.q3 !== undefined || patch.q4 !== undefined) {
+    next.decision = evaluateCcpDecisionTree({ q1, q2, q3, q4 });
+  }
+
+  if (next.decision === 'ccp' && !(next.code || row.code)) {
+    next.code = await nextCcpCode(row.planId);
+  }
+
+  if (!Object.keys(next).length) return;
+  await db.haccpCcps.update(cid, next);
+}
+
+export async function deleteHaccpCcp(id) {
+  const cid = sanitizeProductId(id);
+  if (!cid) return;
+  await db.haccpCcps.delete(cid);
+}
+
+/** יצירת קביעת CCP ממועמד מניתוח הסיכונים */
+export async function addHaccpCcpFromHazard(planId, hazardId, treeAnswers = {}) {
+  const hid = sanitizeProductId(hazardId);
+  if (!hid) throw new ValidationError('בחר גורם סיכון');
+  const hazard = await db.haccpHazards.get(hid);
+  if (!hazard) throw new ValidationError('גורם סיכון לא נמצא');
+  const step = await db.haccpFlowSteps.get(hazard.flowStepId);
+  return addHaccpCcp(planId, {
+    flowStepId: hazard.flowStepId,
+    hazardId: hid,
+    name: step?.name || 'CCP',
+    hazardType: hazard.hazardType,
+    hazardDescription: hazard.description,
+    controlMeasure: hazard.controlMeasures || '',
+    justification: hazard.justification || '',
+    ...treeAnswers,
+  });
 }
 
 /** מוסיף הצעות סיכון לשלב לפי סוג השלב — מדלג על תיאורים שכבר קיימים */

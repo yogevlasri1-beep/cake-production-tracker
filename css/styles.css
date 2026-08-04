@@ -11638,3 +11638,55 @@ body.supplier-drag-active {
     grid-template-columns: 1fr;
   }
 }
+
+.haccp-ccp-list,
+.haccp-ccp-candidates,
+.haccp-ccp-other {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.haccp-ccp-row,
+.haccp-ccp-candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--border, #e2e8f0) 35%, white);
+  align-items: start;
+}
+
+.haccp-ccp-row.is-ccp {
+  background: color-mix(in srgb, var(--accent, #0f766e) 10%, white);
+  border: 1px solid color-mix(in srgb, var(--accent, #0f766e) 30%, transparent);
+}
+
+.haccp-ccp-title {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-weight: 650;
+}
+
+.haccp-tree-summary {
+  font-size: 0.8rem;
+  color: var(--text-muted, #64748b);
+  margin-top: 4px;
+}
+
+.haccp-ccp-form {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e2e8f0);
+}
+
+@media (max-width: 720px) {
+  .haccp-ccp-row,
+  .haccp-ccp-candidate {
+    grid-template-columns: 1fr;
+  }
+}

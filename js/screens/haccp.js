@@ -1,6 +1,6 @@
-import { getCategoryGroups } from '../db.js?v=400';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=400';
-import { openModal, closeModal } from '../modal.js?v=400';
+import { getCategoryGroups } from '../db.js?v=401';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=401';
+import { openModal, closeModal } from '../modal.js?v=401';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -15,11 +15,14 @@ import {
   HACCP_FLOW_MATCH_RESULTS,
   HACCP_HAZARD_TYPES,
   HACCP_RISK_LEVELS,
+  HACCP_CCP_TREE_QUESTIONS,
   haccpRoleLabel,
   haccpFlowStepKindLabel,
   haccpFlowMatchLabel,
   haccpHazardTypeLabel,
   haccpRiskLevelLabel,
+  haccpCcpDecisionLabel,
+  evaluateCcpDecisionTree,
   getHaccpTeamMembers,
   addHaccpTeamMember,
   updateHaccpTeamMember,
@@ -52,7 +55,13 @@ import {
   updateHaccpHazard,
   deleteHaccpHazard,
   seedSuggestedHazardsForStep,
-} from '../haccp-db.js?v=400';
+  getHaccpCcps,
+  getHaccpCcpCandidates,
+  addHaccpCcp,
+  addHaccpCcpFromHazard,
+  updateHaccpCcp,
+  deleteHaccpCcp,
+} from '../haccp-db.js?v=401';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -100,6 +109,8 @@ export async function renderHaccp(container) {
   let productionFlows = [];
   let flowVerifications = [];
   let hazards = [];
+  let ccps = [];
+  let ccpCandidates = [];
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -127,6 +138,14 @@ export async function renderHaccp(container) {
       getHaccpHazards(activePlan.id),
     ]);
   }
+  if (step.id === 'ccp' && activePlan) {
+    [flowSteps, hazards, ccps, ccpCandidates] = await Promise.all([
+      getHaccpFlowSteps(activePlan.id),
+      getHaccpHazards(activePlan.id),
+      getHaccpCcps(activePlan.id),
+      getHaccpCcpCandidates(activePlan.id),
+    ]);
+  }
 
   let body = '';
   if (step.id === 'overview') body = renderOverview(members, plans, groups);
@@ -142,6 +161,8 @@ export async function renderHaccp(container) {
     body = renderFlowVerifySection(activePlan, flowSteps, flowVerifications, members, groupMap);
   } else if (step.id === 'hazard') {
     body = renderHazardSection(activePlan, flowSteps, hazards, groupMap);
+  } else if (step.id === 'ccp') {
+    body = renderCcpSection(activePlan, flowSteps, hazards, ccps, ccpCandidates, groupMap);
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
@@ -179,7 +200,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates,
   });
 }
 
@@ -239,13 +260,12 @@ function renderOverview(members, plans, groups) {
           ${leaders.length ? `· מוביל: ${escapeHtml(leaders.map((l) => l.name).join(', '))}` : '· עדיין בלי מוביל מערכת'}</li>
         <li><strong>${plans.length}</strong> תכניות לפי משפחות מוצרים
           (מתוך ${groups.length} משפחות במערכת)</li>
-        <li>השלבים הפעילים: <strong>3.1–3.5</strong> ו־<strong>5.1 ניתוח סיכונים</strong></li>
+        <li>השלבים הפעילים: <strong>3.1–3.5</strong>, <strong>5.1</strong> ו־<strong>5.2 CCP</strong></li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי אימות תרשים בשטח — נתח גורמי סיכון לכל שלב בתרשים.</p>
+      <p class="haccp-hint">המלצה: אחרי ניתוח סיכונים — קבע CCP לפי עץ ההחלטות.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="flow">תרשים זרימה</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="flow_verify">אימות בשטח</button>
-        <button type="button" class="btn btn-secondary" data-haccp-step="hazard">ניתוח סיכונים</button>
+        <button type="button" class="btn btn-primary" data-haccp-step="hazard">ניתוח סיכונים</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="ccp">נקודות CCP</button>
       </div>
     </div>`;
 }
@@ -268,7 +288,7 @@ function renderSoonStep(step) {
   return `
     <div class="card">
       <div class="card-title">${escapeHtml(step.chapter)} · ${escapeHtml(step.label)}</div>
-      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי ניתוח גורמי הסיכון — לפי סדר המדריך.</p>
+      <p class="haccp-hint">שלב זה ייבנה בהמשך, אחרי קביעת CCP — לפי סדר המדריך.</p>
     </div>`;
 }
 
@@ -905,6 +925,171 @@ function renderHazardSection(activePlan, flowSteps, hazards, groupMap) {
     </div>`;
 }
 
+function yesNoOptions(selected = '') {
+  return `
+    <option value="" ${!selected ? 'selected' : ''}>— בחר —</option>
+    <option value="yes" ${selected === 'yes' ? 'selected' : ''}>כן</option>
+    <option value="no" ${selected === 'no' ? 'selected' : ''}>לא</option>`;
+}
+
+function renderTreeQuestions(prefix, values = {}) {
+  return HACCP_CCP_TREE_QUESTIONS.map((q, i) => `
+    <div class="form-group">
+      <label for="${prefix}-${q.id}">ש${i + 1}. ${escapeHtml(q.label)}</label>
+      <select id="${prefix}-${q.id}" class="haccp-tree-q" data-q="${q.id}">
+        ${yesNoOptions(values[q.id] || '')}
+      </select>
+    </div>`).join('');
+}
+
+function renderCcpSection(activePlan, flowSteps, hazards, ccps, candidates, groupMap) {
+  if (!activePlan) {
+    return `
+      <div class="card">
+        <div class="card-title">5.2 · נקודות בקרה קריטיות (CCP)</div>
+        <p class="haccp-hint">בחר תכנית למעלה. קביעת CCP מתבססת על ניתוח הסיכונים (5.1) ותרשים הזרימה.</p>
+      </div>`;
+  }
+
+  const familyName = groupMap.get(activePlan.categoryGroupId)?.name || '';
+  const stepMap = new Map(flowSteps.map((s) => [s.id, s]));
+  const confirmed = ccps.filter((c) => c.decision === 'ccp');
+  const other = ccps.filter((c) => c.decision !== 'ccp');
+
+  if (!flowSteps.length) {
+    return `
+      <div class="card">
+        <div class="card-title">5.2 · CCP — ${escapeHtml(activePlan.name)}</div>
+        <p class="haccp-hint">אין תרשים זרימה. יש להשלים 3.4 ו־5.1 לפני קביעת CCP.</p>
+        <button type="button" class="btn btn-primary" data-haccp-step="flow">עבור לתרשים</button>
+      </div>`;
+  }
+
+  const confirmedHtml = confirmed.length
+    ? confirmed.map((c) => `
+        <div class="haccp-ccp-row is-ccp">
+          <div>
+            <div class="haccp-ccp-title">
+              <span class="badge">${escapeHtml(c.code || 'CCP')}</span>
+              ${escapeHtml(c.name)}
+              <span class="badge haccp-hazard-type">${escapeHtml(haccpHazardTypeLabel(c.hazardType))}</span>
+            </div>
+            <div class="haccp-hazard-meta">
+              שלב: ${escapeHtml(stepMap.get(c.flowStepId)?.name || '—')}
+              · ${escapeHtml(c.hazardDescription || '')}
+            </div>
+            ${c.controlMeasure ? `<div class="haccp-hazard-ctrl"><strong>בקרה:</strong> ${escapeHtml(c.controlMeasure)}</div>` : ''}
+            <div class="haccp-tree-summary">
+              ש1:${c.q1 || '—'} · ש2:${c.q2 || '—'} · ש3:${c.q3 || '—'} · ש4:${c.q4 || '—'}
+            </div>
+          </div>
+          <div class="haccp-hazard-actions">
+            <button type="button" class="btn btn-secondary btn-sm haccp-ccp-edit" data-id="${c.id}">ערוך</button>
+            <button type="button" class="btn btn-danger btn-sm haccp-ccp-del" data-id="${c.id}">מחק</button>
+          </div>
+        </div>`).join('')
+    : `<p class="haccp-hint">עדיין אין CCP מאושרים. הרץ עץ החלטות על מועמד מ־5.1.</p>`;
+
+  const candidatesHtml = candidates.length
+    ? candidates.map((h) => `
+        <div class="haccp-ccp-candidate">
+          <div>
+            <div class="haccp-hazard-title">
+              <span class="badge haccp-hazard-type">${escapeHtml(haccpHazardTypeLabel(h.hazardType))}</span>
+              ${escapeHtml(h.description)}
+              ${h.significant ? '<span class="badge">משמעותי</span>' : ''}
+              ${h.isCcpCandidate ? '<span class="badge">מועמד</span>' : ''}
+            </div>
+            <div class="haccp-hazard-meta">
+              שלב: ${escapeHtml(stepMap.get(h.flowStepId)?.name || '—')}
+              ${h.controlMeasures ? `· בקרה: ${escapeHtml(h.controlMeasures)}` : ''}
+            </div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm haccp-ccp-from-hazard" data-hazard-id="${h.id}">
+            עץ החלטות
+          </button>
+        </div>`).join('')
+    : `<p class="haccp-hint">אין מועמדים ממתינים.
+        ${hazards.length ? 'כל הסיכונים המשמעותיים כבר עברו קביעה, או שאין סיכונים מסומנים.' : 'הוסף סיכונים משמעותיים ב־5.1.'}
+        <button type="button" class="btn btn-secondary btn-sm" data-haccp-step="hazard">לניתוח סיכונים</button>
+      </p>`;
+
+  const otherHtml = other.length
+    ? `
+      <div class="haccp-ccp-other">
+        <div class="card-title" style="font-size:1rem">החלטות שאינן CCP</div>
+        ${other.map((c) => `
+          <div class="haccp-ccp-row">
+            <div>
+              <div class="haccp-ccp-title">${escapeHtml(haccpCcpDecisionLabel(c.decision))}
+                · ${escapeHtml(c.hazardDescription || '')}</div>
+              <div class="haccp-hazard-meta">
+                שלב: ${escapeHtml(stepMap.get(c.flowStepId)?.name || '—')}
+                · ש1:${c.q1 || '—'} ש2:${c.q2 || '—'} ש3:${c.q3 || '—'} ש4:${c.q4 || '—'}
+              </div>
+            </div>
+            <div class="haccp-hazard-actions">
+              <button type="button" class="btn btn-secondary btn-sm haccp-ccp-edit" data-id="${c.id}">ערוך</button>
+              <button type="button" class="btn btn-danger btn-sm haccp-ccp-del" data-id="${c.id}">מחק</button>
+            </div>
+          </div>`).join('')}
+      </div>`
+    : '';
+
+  const stepOptions = flowSteps.map((s) =>
+    `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
+
+  return `
+    <div class="card">
+      <div class="card-title">5.2 · נקודות בקרה קריטיות — ${escapeHtml(activePlan.name)}</div>
+      <p class="haccp-hint">
+        לפי המדריך + עץ החלטות Codex 2023: קביעה האם שלב הוא CCP עבור סיכון משמעותי.
+        משפחה: <strong>${escapeHtml(familyName)}</strong>
+      </p>
+      <p class="haccp-family-products">
+        <strong>${confirmed.length}</strong> CCP מאושרים ·
+        <strong>${candidates.length}</strong> מועמדים ממתינים ·
+        <strong>${other.length}</strong> החלטות אחרות
+      </p>
+
+      <div class="card-title" style="font-size:1rem">CCP מאושרים</div>
+      <div class="haccp-ccp-list">${confirmedHtml}</div>
+
+      <div class="card-title" style="font-size:1rem;margin-top:16px">מועמדים מניתוח הסיכונים</div>
+      <div class="haccp-ccp-candidates">${candidatesHtml}</div>
+      ${otherHtml}
+
+      <form id="haccp-ccp-form" class="haccp-product-form haccp-ccp-form">
+        <div class="card-title" style="font-size:1rem">קביעה ידנית (עץ החלטות)</div>
+        <div class="haccp-form-row">
+          <div class="form-group">
+            <label for="haccp-ccp-step">שלב בתרשים</label>
+            <select id="haccp-ccp-step">${stepOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="haccp-ccp-type">סוג סיכון</label>
+            <select id="haccp-ccp-type">${hazardTypeOptions('biological')}</select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="haccp-ccp-desc">תיאור הסיכון</label>
+          <input type="text" id="haccp-ccp-desc" maxlength="1000" required>
+        </div>
+        <div class="form-group">
+          <label for="haccp-ccp-control">אמצעי בקרה בשלב</label>
+          <textarea id="haccp-ccp-control" rows="2" maxlength="2000"></textarea>
+        </div>
+        ${renderTreeQuestions('haccp-ccp')}
+        <p class="haccp-hint" id="haccp-ccp-decision-preview">תוצאה: —</p>
+        <div class="form-group">
+          <label for="haccp-ccp-justification">הצדקה</label>
+          <textarea id="haccp-ccp-justification" rows="2" maxlength="2000"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">שמור קביעה</button>
+      </form>
+    </div>`;
+}
+
 function renderTeamSection(members) {
   const roleOptions = HACCP_TEAM_ROLES
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
@@ -1484,6 +1669,187 @@ function bindHaccpEvents(container, ctx) {
             controlledByPrp: document.getElementById('edit-hazard-prp').checked,
             isCcpCandidate: document.getElementById('edit-hazard-ccp').checked,
             justification: document.getElementById('edit-hazard-justification').value,
+          });
+          closeModal();
+          showToast('עודכן ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  function readTreeAnswers(prefix) {
+    return {
+      q1: document.getElementById(`${prefix}-q1`)?.value,
+      q2: document.getElementById(`${prefix}-q2`)?.value,
+      q3: document.getElementById(`${prefix}-q3`)?.value,
+      q4: document.getElementById(`${prefix}-q4`)?.value,
+    };
+  }
+
+  function bindDecisionPreview(prefix, previewId) {
+    const preview = document.getElementById(previewId);
+    if (!preview) return;
+    const update = () => {
+      const decision = evaluateCcpDecisionTree(readTreeAnswers(prefix));
+      preview.textContent = `תוצאה: ${haccpCcpDecisionLabel(decision)}`;
+    };
+    container.querySelectorAll(`#${prefix}-q1, #${prefix}-q2, #${prefix}-q3, #${prefix}-q4`).forEach((el) => {
+      el.addEventListener('change', update);
+    });
+    // also query by id without container scope issues
+    ['q1', 'q2', 'q3', 'q4'].forEach((q) => {
+      document.getElementById(`${prefix}-${q}`)?.addEventListener('change', update);
+    });
+    update();
+  }
+
+  bindDecisionPreview('haccp-ccp', 'haccp-ccp-decision-preview');
+
+  document.getElementById('haccp-ccp-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    try {
+      const tree = readTreeAnswers('haccp-ccp');
+      await addHaccpCcp(ctx.activePlan.id, {
+        flowStepId: document.getElementById('haccp-ccp-step')?.value,
+        hazardType: document.getElementById('haccp-ccp-type')?.value,
+        hazardDescription: document.getElementById('haccp-ccp-desc')?.value,
+        controlMeasure: document.getElementById('haccp-ccp-control')?.value,
+        justification: document.getElementById('haccp-ccp-justification')?.value,
+        ...tree,
+      });
+      showToast('קביעה נשמרה ✓');
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  container.querySelectorAll('.haccp-ccp-from-hazard').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const hazard = ctx.hazards?.find((h) => String(h.id) === String(btn.dataset.hazardId))
+        || ctx.ccpCandidates?.find((h) => String(h.id) === String(btn.dataset.hazardId));
+      if (!hazard || !ctx.activePlan) return;
+      openModal({
+        title: 'עץ החלטות CCP',
+        bodyHTML: `
+          <p class="haccp-hint">${escapeHtml(hazard.description)}</p>
+          ${renderTreeQuestions('modal-ccp', {})}
+          <p class="haccp-hint" id="modal-ccp-decision-preview">תוצאה: —</p>
+          <div class="form-group">
+            <label for="modal-ccp-justification">הצדקה</label>
+            <textarea id="modal-ccp-justification" rows="2" maxlength="2000">${escapeHtml(hazard.justification || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-modal-ccp">שמור קביעה</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      const update = () => {
+        const el = document.getElementById('modal-ccp-decision-preview');
+        if (!el) return;
+        el.textContent = `תוצאה: ${haccpCcpDecisionLabel(evaluateCcpDecisionTree(readTreeAnswers('modal-ccp')))}`;
+      };
+      ['q1', 'q2', 'q3', 'q4'].forEach((q) => {
+        document.getElementById(`modal-ccp-${q}`)?.addEventListener('change', update);
+      });
+      update();
+      document.getElementById('save-modal-ccp')?.addEventListener('click', async () => {
+        try {
+          await addHaccpCcpFromHazard(ctx.activePlan.id, hazard.id, {
+            ...readTreeAnswers('modal-ccp'),
+            justification: document.getElementById('modal-ccp-justification')?.value,
+            controlMeasure: hazard.controlMeasures || '',
+          });
+          closeModal();
+          showToast('קביעה נשמרה ✓');
+          renderHaccp(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה');
+        }
+      });
+    });
+  });
+
+  container.querySelectorAll('.haccp-ccp-del').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('למחוק קביעת CCP?')) return;
+      try {
+        await deleteHaccpCcp(btn.dataset.id);
+        showToast('נמחק');
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  });
+
+  container.querySelectorAll('.haccp-ccp-edit').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ccp = ctx.ccps?.find((c) => String(c.id) === String(btn.dataset.id));
+      if (!ccp) return;
+      const stepOptions = (ctx.flowSteps || []).map((s) =>
+        `<option value="${s.id}" ${Number(s.id) === Number(ccp.flowStepId) ? 'selected' : ''}>${escapeHtml(s.name)}</option>`
+      ).join('');
+      openModal({
+        title: 'עריכת קביעת CCP',
+        bodyHTML: `
+          <div class="form-group">
+            <label for="edit-ccp-step">שלב</label>
+            <select id="edit-ccp-step">${stepOptions}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-ccp-code">קוד</label>
+            <input type="text" id="edit-ccp-code" value="${escapeHtml(ccp.code || '')}" maxlength="40">
+          </div>
+          <div class="form-group">
+            <label for="edit-ccp-name">שם</label>
+            <input type="text" id="edit-ccp-name" value="${escapeHtml(ccp.name || '')}" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label for="edit-ccp-type">סוג סיכון</label>
+            <select id="edit-ccp-type">${hazardTypeOptions(ccp.hazardType)}</select>
+          </div>
+          <div class="form-group">
+            <label for="edit-ccp-desc">תיאור סיכון</label>
+            <input type="text" id="edit-ccp-desc" value="${escapeHtml(ccp.hazardDescription || '')}" maxlength="1000">
+          </div>
+          <div class="form-group">
+            <label for="edit-ccp-control">אמצעי בקרה</label>
+            <textarea id="edit-ccp-control" rows="2" maxlength="2000">${escapeHtml(ccp.controlMeasure || '')}</textarea>
+          </div>
+          ${renderTreeQuestions('edit-ccp', { q1: ccp.q1, q2: ccp.q2, q3: ccp.q3, q4: ccp.q4 })}
+          <p class="haccp-hint" id="edit-ccp-decision-preview">תוצאה: —</p>
+          <div class="form-group">
+            <label for="edit-ccp-justification">הצדקה</label>
+            <textarea id="edit-ccp-justification" rows="2" maxlength="2000">${escapeHtml(ccp.justification || '')}</textarea>
+          </div>`,
+        footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="save-edit-ccp">שמור</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      const update = () => {
+        const el = document.getElementById('edit-ccp-decision-preview');
+        if (!el) return;
+        el.textContent = `תוצאה: ${haccpCcpDecisionLabel(evaluateCcpDecisionTree(readTreeAnswers('edit-ccp')))}`;
+      };
+      ['q1', 'q2', 'q3', 'q4'].forEach((q) => {
+        document.getElementById(`edit-ccp-${q}`)?.addEventListener('change', update);
+      });
+      update();
+      document.getElementById('save-edit-ccp')?.addEventListener('click', async () => {
+        try {
+          await updateHaccpCcp(ccp.id, {
+            flowStepId: document.getElementById('edit-ccp-step').value,
+            code: document.getElementById('edit-ccp-code').value,
+            name: document.getElementById('edit-ccp-name').value,
+            hazardType: document.getElementById('edit-ccp-type').value,
+            hazardDescription: document.getElementById('edit-ccp-desc').value,
+            controlMeasure: document.getElementById('edit-ccp-control').value,
+            justification: document.getElementById('edit-ccp-justification').value,
+            ...readTreeAnswers('edit-ccp'),
           });
           closeModal();
           showToast('עודכן ✓');
