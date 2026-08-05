@@ -1,20 +1,22 @@
-import { initDB } from './db.js?v=410';
-import { renderHome, homeMeta } from './screens/home.js?v=410';
-import { renderProducts, productsMeta } from './screens/products.js?v=410';
-import { renderManager, managerMeta } from './screens/manager.js?v=410';
-import { renderProcess, processMeta } from './screens/process.js?v=410';
-import { renderReports, reportsMeta } from './screens/reports.js?v=410';
-import { renderBackup, backupMeta } from './screens/backup.js?v=410';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=410';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=410';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=410';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=410';
-import { initIOSInstallPrompt } from './ios-install.js?v=410';
-import { initNetworkCheck } from './network.js?v=410';
-import { registerServiceWorker } from './sw-register.js?v=410';
-import { APP_VERSION } from './version.js?v=410';
-import { showToast } from './utils.js?v=410';
-import './modal.js?v=410';
+import { initDB } from './db.js?v=411';
+import { renderHome, homeMeta } from './screens/home.js?v=411';
+import { renderProducts, productsMeta } from './screens/products.js?v=411';
+import { renderManager, managerMeta } from './screens/manager.js?v=411';
+import { renderProcess, processMeta } from './screens/process.js?v=411';
+import { renderReports, reportsMeta } from './screens/reports.js?v=411';
+import { renderBackup, backupMeta } from './screens/backup.js?v=411';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=411';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=411';
+import { renderHaccp, haccpMeta } from './screens/haccp.js?v=411';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=411';
+import { initIOSInstallPrompt } from './ios-install.js?v=411';
+import { initNetworkCheck } from './network.js?v=411';
+import { registerServiceWorker } from './sw-register.js?v=411';
+import { APP_VERSION } from './version.js?v=411';
+import { showToast } from './utils.js?v=411';
+import { getCurrentUserRole } from './auth.js?v=411';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=411';
+import './modal.js?v=411';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -67,6 +69,14 @@ function updateWorkspaceChrome() {
   });
 }
 
+function applyRolePermissionsToMenu() {
+  const role = getCurrentUserRole();
+  const allowed = new Set(allowedWorkspaces(role));
+  document.querySelectorAll('.workspace-menu-item[data-workspace]').forEach((btn) => {
+    btn.classList.toggle('hidden', !allowed.has(btn.dataset.workspace));
+  });
+}
+
 function closeWorkspaceDrawer() {
   const drawer = document.getElementById('workspace-drawer');
   const btn = document.getElementById('workspace-menu-btn');
@@ -116,6 +126,11 @@ function initWorkspaceMenu() {
     btn.addEventListener('click', () => {
       const ws = btn.dataset.workspace;
       if (!WORKSPACES[ws]) return;
+      if (!canAccessWorkspace(getCurrentUserRole(), ws)) {
+        showToast(PERMISSION_DENIED_MESSAGE);
+        closeWorkspaceDrawer();
+        return;
+      }
       currentWorkspace = ws;
       saveWorkspace(ws);
       const managerTab = btn.dataset.managerTab;
@@ -137,6 +152,14 @@ function initWorkspaceMenu() {
 }
 
 async function navigate(screen) {
+  if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace)) {
+    showToast(PERMISSION_DENIED_MESSAGE);
+    currentWorkspace = 'production';
+    saveWorkspace('production');
+    updateWorkspaceChrome();
+    return navigate(WORKSPACES.production.defaultScreen);
+  }
+
   const SCREENS = getActiveScreens();
   if (!SCREENS[screen]) {
     const fallback = WORKSPACES[currentWorkspace]?.defaultScreen || 'home';
@@ -194,10 +217,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=410');
+  const { getValidSession } = await import('./auth.js?v=411');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=410');
+    const { renderLoginGate } = await import('./screens/login.js?v=411');
     renderLoginGate(() => startApp());
     return;
   }
@@ -212,11 +235,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=410');
+        const { forceAppUpdate } = await import('./sw-register.js?v=411');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=410').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=411').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -229,20 +252,25 @@ async function startApp() {
     initWorkspaceMenu();
     initRecipesSubNav();
     initSuppliersSubNav();
+    applyRolePermissionsToMenu();
+    if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace)) {
+      currentWorkspace = 'production';
+      saveWorkspace('production');
+    }
     updateWorkspaceChrome();
 
     const {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=410');
+    } = await import('./supabase-sync.js?v=411');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=410');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=411');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
@@ -286,6 +314,10 @@ export { navigate, navigateToWorkspace };
 
 async function navigateToWorkspace(workspaceId, screen) {
   if (!WORKSPACES[workspaceId]) return;
+  if (!canAccessWorkspace(getCurrentUserRole(), workspaceId)) {
+    showToast(PERMISSION_DENIED_MESSAGE);
+    return;
+  }
   currentWorkspace = workspaceId;
   saveWorkspace(workspaceId);
   updateWorkspaceChrome();

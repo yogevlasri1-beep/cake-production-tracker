@@ -18,13 +18,14 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=410';
-import { describeDownloadMethod } from '../download.js?v=410';
-import { showToast, escapeHtml } from '../utils.js?v=410';
-import { openModal, closeModal } from '../modal.js?v=410';
-import { APP_VERSION } from '../version.js?v=410';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=410';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=410';
+} from '../backup-service.js?v=411';
+import { describeDownloadMethod } from '../download.js?v=411';
+import { showToast, escapeHtml } from '../utils.js?v=411';
+import { openModal, closeModal } from '../modal.js?v=411';
+import { APP_VERSION } from '../version.js?v=411';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=411';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=411';
+import { canAccessBackupFull } from '../permissions.js?v=411';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -100,9 +101,27 @@ export async function renderBackup(container, { navigate } = {}) {
   } = status;
   const iosPwa = isIOS && !isNativeApp;
 
+  const role = getCurrentUserRole();
   const accountBody = `
-      <p class="form-hint">מחובר כ: <strong>${escapeHtml(getCurrentUserEmail() || '—')}</strong> · תפקיד: <strong>${escapeHtml(userRoleLabel(getCurrentUserRole()))}</strong></p>
+      <p class="form-hint">מחובר כ: <strong>${escapeHtml(getCurrentUserEmail() || '—')}</strong> · תפקיד: <strong>${escapeHtml(userRoleLabel(role))}</strong></p>
       <button type="button" class="btn btn-secondary btn-sm" id="account-sign-out" style="margin-top:8px">התנתק</button>`;
+
+  if (!canAccessBackupFull(role)) {
+    container.innerHTML = `
+      <button type="button" class="btn btn-secondary btn-sm backup-back-btn" id="backup-back">← חזרה</button>
+      ${backupSectionHTML('account', '👤 חשבון', accountBody)}
+      <div class="card">
+        <p class="form-hint">ניהול גיבוי ושחזור זמין למנהלים בלבד. אין הרשאה למסך זה.</p>
+      </div>`;
+    bindBackupSectionToggles(container);
+    document.getElementById('backup-back')?.addEventListener('click', () => navigate?.('home'));
+    document.getElementById('account-sign-out')?.addEventListener('click', async () => {
+      if (!confirm('להתנתק מהחשבון?')) return;
+      await signOut();
+      location.reload();
+    });
+    return;
+  }
 
   const appUpdateBody = `
       <p class="form-hint">גרסה מותקנת: <strong>${APP_VERSION}</strong>${isStandaloneApp() ? ' · מהאייקון במסך הבית' : ''}</p>
@@ -409,7 +428,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
     try {
-      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=410');
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=411');
       await setLiveSyncEnabled(e.target.checked);
       showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
       renderBackup(container, { navigate });
@@ -423,7 +442,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=410');
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=411');
       const pushed = await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
@@ -441,7 +460,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=410');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=411');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
@@ -459,7 +478,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=410');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=411');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -476,7 +495,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=410');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=411');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });

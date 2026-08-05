@@ -1,7 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=410';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=410';
-import { openModal, closeModal } from '../modal.js?v=410';
-import { printHaccpPlan } from '../haccp-print.js?v=410';
+import { getCategoryGroups } from '../db.js?v=411';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=411';
+import { openModal, closeModal } from '../modal.js?v=411';
+import { printHaccpPlan } from '../haccp-print.js?v=411';
+import { getCurrentUserRole } from '../auth.js?v=411';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=411';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -121,7 +123,7 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=410';
+} from '../haccp-db.js?v=411';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -147,7 +149,9 @@ export function haccpMeta() {
 }
 
 export async function renderHaccp(container) {
-  const stepId = container.dataset.haccpStep || getSavedStep();
+  const role = getCurrentUserRole();
+  let stepId = container.dataset.haccpStep || getSavedStep();
+  if (!canAccessHaccpStep(role, stepId)) stepId = 'overview';
   container.dataset.haccpStep = stepId;
   saveStep(stepId);
 
@@ -304,10 +308,11 @@ export async function renderHaccp(container) {
         <div class="card-title">מפת דרכים</div>
         <div class="haccp-roadmap" role="tablist" aria-label="שלבי HACCP">
           ${HACCP_STEPS.map((s) => {
+            const denied = !canAccessHaccpStep(role, s.id);
             const active = s.id === step.id ? ' is-active' : '';
-            const locked = s.status === 'soon' ? ' is-soon' : '';
+            const locked = (s.status === 'soon' || denied) ? ' is-soon' : '';
             const preview = s.status === 'preview' ? ' is-preview' : '';
-            const badge = s.status === 'soon' ? 'בקרוב' : s.status === 'preview' ? 'תצוגה' : s.chapter;
+            const badge = s.status === 'soon' ? 'בקרוב' : denied ? 'ללא הרשאה' : s.status === 'preview' ? 'תצוגה' : s.chapter;
             return `
               <button type="button" class="haccp-step-btn${active}${locked}${preview}"
                 data-haccp-step="${s.id}" role="tab" aria-selected="${s.id === step.id}">
@@ -2273,6 +2278,10 @@ function bindHaccpEvents(container, ctx) {
     btn.addEventListener('click', () => {
       const id = btn.dataset.haccpStep;
       if (!id) return;
+      if (!canAccessHaccpStep(getCurrentUserRole(), id)) {
+        showToast(PERMISSION_DENIED_MESSAGE);
+        return;
+      }
       container.dataset.haccpStep = id;
       renderHaccp(container);
     });
