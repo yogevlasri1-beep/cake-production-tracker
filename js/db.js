@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=409';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=409';
-import { defaultColorForIndex } from './chart.js?v=409';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=409';
+} from './validators.js?v=411';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=411';
+import { defaultColorForIndex } from './chart.js?v=411';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=411';
 
 export { ValidationError };
 
@@ -3528,6 +3528,17 @@ export async function initDB() {
     }
   } catch (err) {
     console.warn('recipe portion preset sync', err);
+  }
+  try {
+    // Snapshotted weights on existing runs stay stale after preset re-sync —
+    // re-align recipe/material-linked portion logs & step batches (e.g. עוגת דבש).
+    const repaired = await getSetting('runPortionWeightsRepairedV1');
+    if (!repaired) {
+      await repairStaleRunPortionWeightsFromPresets();
+      await setSetting('runPortionWeightsRepairedV1', true);
+    }
+  } catch (err) {
+    console.warn('run portion weight repair', err);
   }
   try {
     const costSynced = await getSetting('productRecipesCostDefaultSynced');
@@ -7429,6 +7440,92 @@ export function getStepPortionBatches(step) {
     }];
   }
   return [];
+}
+
+/**
+ * Align a snapshotted portion entry (run log / step batch) with the current
+ * recipe/material-linked preset weight. Manual presets are left alone.
+ * @returns {{ entry: object, changed: boolean }}
+ */
+export function alignPortionEntryWithPreset(entry, presetById, recipePresetByRecipeId = null) {
+  if (!entry || typeof entry !== 'object') return { entry, changed: false };
+  let preset = null;
+  const pid = entry.presetId != null ? Number(entry.presetId) : null;
+  if (pid && presetById?.has(pid)) preset = presetById.get(pid);
+  if (!preset && entry.sourceRecipeId && recipePresetByRecipeId?.has(Number(entry.sourceRecipeId))) {
+    preset = recipePresetByRecipeId.get(Number(entry.sourceRecipeId));
+  }
+  if (!preset) return { entry, changed: false };
+  if (!preset.sourceRecipeId && !preset.sourceRawMaterialId) return { entry, changed: false };
+
+  const next = { ...entry };
+  let changed = false;
+  if (preset.weight != null && Number(next.weight) !== Number(preset.weight)) {
+    next.weight = preset.weight;
+    changed = true;
+  }
+  if (preset.extra != null && String(next.extra || '') !== String(preset.extra || '')) {
+    next.extra = preset.extra;
+    changed = true;
+  }
+  return { entry: next, changed };
+}
+
+/**
+ * Re-align snapshotted portion weights on existing production runs to match
+ * current groupPortionPresets (fixes stale copies like עוגת דבש 4542→46.67).
+ */
+export async function repairStaleRunPortionWeightsFromPresets() {
+  const presets = await db.groupPortionPresets.toArray();
+  const presetById = new Map(presets.map((p) => [Number(p.id), p]));
+  const recipePresetByRecipeId = new Map();
+  for (const p of presets) {
+    if (p.sourceRecipeId) recipePresetByRecipeId.set(Number(p.sourceRecipeId), p);
+  }
+
+  let runsFixed = 0;
+  let stepsFixed = 0;
+  let entriesFixed = 0;
+
+  const runs = await db.productionRuns.toArray();
+  for (const run of runs) {
+    const logs = Array.isArray(run.runPortionLogs) ? run.runPortionLogs : [];
+    if (!logs.length) continue;
+    let runChanged = false;
+    const nextLogs = logs.map((log) => {
+      const { entry, changed } = alignPortionEntryWithPreset(log, presetById, recipePresetByRecipeId);
+      if (changed) {
+        runChanged = true;
+        entriesFixed += 1;
+      }
+      return entry;
+    });
+    if (runChanged) {
+      await db.productionRuns.update(run.id, { runPortionLogs: nextLogs });
+      runsFixed += 1;
+    }
+  }
+
+  const steps = await db.runStepStates.toArray();
+  for (const step of steps) {
+    const batches = Array.isArray(step.portionBatches) ? step.portionBatches : [];
+    if (!batches.length) continue;
+    let stepChanged = false;
+    const nextBatches = batches.map((batch) => {
+      const { entry, changed } = alignPortionEntryWithPreset(batch, presetById, recipePresetByRecipeId);
+      if (changed) {
+        stepChanged = true;
+        entriesFixed += 1;
+      }
+      return entry;
+    });
+    if (stepChanged) {
+      await db.runStepStates.update(step.id, { portionBatches: nextBatches });
+      stepsFixed += 1;
+    }
+  }
+
+  return { runsFixed, stepsFixed, entriesFixed };
 }
 
 export function sumPortionBatches(batches) {
