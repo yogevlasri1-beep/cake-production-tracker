@@ -1,9 +1,9 @@
 import {
   db, getCategories, getProducts, getSetting, setSetting,
   importProductionRows, importCatalogRows,
-} from './db.js?v=411';
-import { computeReportRows, roundMoney } from './calc.js?v=411';
-import { ValidationError } from './validators.js?v=411';
+} from './db.js?v=412';
+import { computeReportRows, roundMoney } from './calc.js?v=412';
+import { ValidationError } from './validators.js?v=412';
 
 const SETTINGS_KEY = 'googleSheets';
 const DEFAULT_TOKEN = 'yitzur2024';

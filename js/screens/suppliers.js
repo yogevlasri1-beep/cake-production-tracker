@@ -22,16 +22,16 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=411';
-import { getProducts, getCategories } from '../db.js?v=411';
+} from '../kitchen-db.js?v=412';
+import { getProducts, getCategories } from '../db.js?v=412';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=411';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=411';
-import { openModal, closeModal } from '../modal.js?v=411';
-import { requestAutoBackupNow } from '../backup-service.js?v=411';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=411';
+} from '../supplier-import.js?v=412';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=412';
+import { openModal, closeModal } from '../modal.js?v=412';
+import { requestAutoBackupNow } from '../backup-service.js?v=412';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=412';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
