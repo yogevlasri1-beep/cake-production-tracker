@@ -1,5 +1,5 @@
-import { escapeHtml } from './utils.js?v=412';
-import { RECIPE_OVEN_TYPES } from './kitchen-db.js?v=412';
+import { escapeHtml } from './utils.js?v=413';
+import { RECIPE_OVEN_TYPES } from './kitchen-db.js?v=413';
 
 const BAKING_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }

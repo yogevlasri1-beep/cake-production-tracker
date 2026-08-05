@@ -11931,3 +11931,26 @@ body.supplier-drag-active {
     grid-template-columns: 1fr;
   }
 }
+
+/* מסך כניסה — חייב לכסות את כל האפליקציה עד להתחברות */
+.login-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: var(--bg, #f0f4f8);
+}
+
+.login-gate-card {
+  width: 100%;
+  max-width: 360px;
+  margin-bottom: 0;
+}
+
+/* כשהתפריט פתוח — להעלות את ה-header מעל התוכן והניווט התחתון */
+.app-header.workspace-drawer-open {
+  z-index: 300;
+}
