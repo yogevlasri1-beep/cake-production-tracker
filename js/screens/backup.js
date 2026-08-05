@@ -24,7 +24,7 @@ import { showToast, escapeHtml } from '../utils.js?v=410';
 import { openModal, closeModal } from '../modal.js?v=410';
 import { APP_VERSION } from '../version.js?v=410';
 import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=410';
-import { getCurrentUserEmail, signOut } from '../auth.js?v=410';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=410';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -101,7 +101,7 @@ export async function renderBackup(container, { navigate } = {}) {
   const iosPwa = isIOS && !isNativeApp;
 
   const accountBody = `
-      <p class="form-hint">מחובר כ: <strong>${escapeHtml(getCurrentUserEmail() || '—')}</strong></p>
+      <p class="form-hint">מחובר כ: <strong>${escapeHtml(getCurrentUserEmail() || '—')}</strong> · תפקיד: <strong>${escapeHtml(userRoleLabel(getCurrentUserRole()))}</strong></p>
       <button type="button" class="btn btn-secondary btn-sm" id="account-sign-out" style="margin-top:8px">התנתק</button>`;
 
   const appUpdateBody = `

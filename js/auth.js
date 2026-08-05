@@ -1,8 +1,15 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl } from './supabase-backup.js?v=410';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=410';
 import { ValidationError } from './validators.js?v=410';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
+
+const USER_ROLE_LABELS = {
+  production: 'ייצור',
+  quality: 'איכות',
+  manager: 'מנהל',
+  admin: 'מנהל מערכת',
+};
 
 function buildAuthUrl(baseUrl, path) {
   const base = normalizeSupabaseUrl(baseUrl);
@@ -39,6 +46,34 @@ function toSession(tokenResponse) {
   };
 }
 
+async function fetchProfile(cfg, session) {
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token || !session?.user?.id) return null;
+  const url = `${buildSupabaseRestUrl(cfg.supabaseUrl, '/profiles')}?id=eq.${session.user.id}&select=role,display_name`;
+  try {
+    const res = await fetch(url, {
+      headers: {
+        apikey: cfg.anonKey,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+    });
+    if (!res.ok) return null;
+    const rows = await res.json().catch(() => null);
+    return Array.isArray(rows) && rows[0] ? rows[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+async function attachProfile(cfg, session) {
+  if (!session) return session;
+  const profile = await fetchProfile(cfg, session);
+  return saveSession({
+    ...session,
+    role: profile?.role || 'production',
+    display_name: profile?.display_name || null,
+  });
+}
+
 async function authFetch(cfg, path, body) {
   const url = buildAuthUrl(cfg.supabaseUrl, path);
   const res = await fetch(url, {
@@ -66,7 +101,8 @@ export async function signIn(email, password) {
     email: String(email || '').trim(),
     password: String(password || ''),
   });
-  return saveSession(toSession(json));
+  const session = saveSession(toSession(json));
+  return attachProfile(cfg, session);
 }
 
 export async function signOut() {
@@ -95,7 +131,11 @@ export { getStoredSession };
 export async function getValidSession() {
   const session = getStoredSession();
   if (!session?.access_token) return null;
-  if (session.expires_at - REFRESH_SKEW_MS > Date.now()) return session;
+  if (session.expires_at - REFRESH_SKEW_MS > Date.now()) {
+    if (session.role !== undefined) return session;
+    const cfg = await getSupabaseBackupConfig();
+    return attachProfile(cfg, session);
+  }
 
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey || !session.refresh_token) {
@@ -106,7 +146,8 @@ export async function getValidSession() {
     const json = await authFetch(cfg, '/token?grant_type=refresh_token', {
       refresh_token: session.refresh_token,
     });
-    return saveSession(toSession(json));
+    const refreshed = saveSession(toSession(json));
+    return attachProfile(cfg, refreshed);
   } catch {
     clearSession();
     return null;
@@ -115,4 +156,16 @@ export async function getValidSession() {
 
 export function getCurrentUserEmail() {
   return getStoredSession()?.user?.email || null;
+}
+
+export function getCurrentUserRole() {
+  return getStoredSession()?.role || 'production';
+}
+
+export function getCurrentUserDisplayName() {
+  return getStoredSession()?.display_name || null;
+}
+
+export function userRoleLabel(role) {
+  return USER_ROLE_LABELS[role] || USER_ROLE_LABELS.production;
 }

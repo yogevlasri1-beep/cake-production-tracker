@@ -33,6 +33,7 @@ import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNum
 import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel } from '../js/haccp-db.js?v=410';
 import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=410';
 import { WORKSPACES } from '../js/workspaces.js?v=410';
+import { userRoleLabel } from '../js/auth.js?v=410';
 
 export async function runAllTests() {
   /* validators */
@@ -731,6 +732,14 @@ export async function runAllTests() {
     assertEqual(haccpMonitorLogResultLabel('deviation'), 'חריגה');
     assertEqual(haccpPrpTopicLabel('allergens'), 'ניהול אלרגנים');
     assertEqual(haccpPrpStatusLabel('implemented'), 'מיושם');
+  });
+
+  test('userRoleLabel — תרגום תפקידים לעברית', () => {
+    assertEqual(userRoleLabel('production'), 'ייצור');
+    assertEqual(userRoleLabel('quality'), 'איכות');
+    assertEqual(userRoleLabel('manager'), 'מנהל');
+    assertEqual(userRoleLabel('admin'), 'מנהל מערכת');
+    assertEqual(userRoleLabel('unknown'), 'ייצור');
   });
 
   test('HACCP — דוח הדפסת תכנית', () => {
