@@ -1,22 +1,22 @@
-import { initDB } from './db.js?v=413';
-import { renderHome, homeMeta } from './screens/home.js?v=413';
-import { renderProducts, productsMeta } from './screens/products.js?v=413';
-import { renderManager, managerMeta } from './screens/manager.js?v=413';
-import { renderProcess, processMeta } from './screens/process.js?v=413';
-import { renderReports, reportsMeta } from './screens/reports.js?v=413';
-import { renderBackup, backupMeta } from './screens/backup.js?v=413';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=413';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=413';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=413';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=413';
-import { initIOSInstallPrompt } from './ios-install.js?v=413';
-import { initNetworkCheck } from './network.js?v=413';
-import { registerServiceWorker } from './sw-register.js?v=413';
-import { APP_VERSION } from './version.js?v=413';
-import { showToast } from './utils.js?v=413';
-import { getCurrentUserRole } from './auth.js?v=413';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=413';
-import './modal.js?v=413';
+import { initDB } from './db.js?v=414';
+import { renderHome, homeMeta } from './screens/home.js?v=414';
+import { renderProducts, productsMeta } from './screens/products.js?v=414';
+import { renderManager, managerMeta } from './screens/manager.js?v=414';
+import { renderProcess, processMeta } from './screens/process.js?v=414';
+import { renderReports, reportsMeta } from './screens/reports.js?v=414';
+import { renderBackup, backupMeta } from './screens/backup.js?v=414';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=414';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=414';
+import { renderHaccp, haccpMeta } from './screens/haccp.js?v=414';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=414';
+import { initIOSInstallPrompt } from './ios-install.js?v=414';
+import { initNetworkCheck } from './network.js?v=414';
+import { registerServiceWorker } from './sw-register.js?v=414';
+import { APP_VERSION } from './version.js?v=414';
+import { showToast } from './utils.js?v=414';
+import { getCurrentUserRole } from './auth.js?v=414';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=414';
+import './modal.js?v=414';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -243,10 +243,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=413');
+  const { getValidSession } = await import('./auth.js?v=414');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=413');
+    const { renderLoginGate } = await import('./screens/login.js?v=414');
     renderLoginGate(() => startApp());
     return;
   }
@@ -261,11 +261,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=413');
+        const { forceAppUpdate } = await import('./sw-register.js?v=414');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=413').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=414').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -289,14 +289,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=413');
+    } = await import('./supabase-sync.js?v=414');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=413');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=414');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 

@@ -1,5 +1,5 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=413';
-import { ValidationError } from './validators.js?v=413';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=414';
+import { ValidationError } from './validators.js?v=414';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
@@ -67,9 +67,10 @@ async function fetchProfile(cfg, session) {
 async function attachProfile(cfg, session) {
   if (!session) return session;
   const profile = await fetchProfile(cfg, session);
+  // בלי שורת profile (או מיגרציה שעדיין לא רצה) — מנהל, כדי לא להסתיר עמדות לבעלים
   return saveSession({
     ...session,
-    role: profile?.role || 'production',
+    role: profile?.role || 'manager',
     display_name: profile?.display_name || null,
   });
 }
@@ -159,7 +160,7 @@ export function getCurrentUserEmail() {
 }
 
 export function getCurrentUserRole() {
-  return getStoredSession()?.role || 'production';
+  return getStoredSession()?.role || 'manager';
 }
 
 export function getCurrentUserDisplayName() {
