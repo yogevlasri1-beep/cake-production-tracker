@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '409';
+const VERSION = '410';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -33,6 +33,7 @@ const PRECACHE = [
   v('./js/backup-service.js'),
   v('./js/supabase-backup.js'),
   v('./js/supabase-sync.js'),
+  v('./js/auth.js'),
   v('./js/sync/collections.js'),
   v('./js/sync/id-map.js'),
   v('./js/backup-folder-bridge.js'),
@@ -69,6 +70,7 @@ const PRECACHE = [
   v('./js/screens/suppliers.js'),
   v('./js/screens/purchasing.js'),
   v('./js/screens/haccp.js'),
+  v('./js/screens/login.js'),
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',

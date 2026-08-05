@@ -25,3 +25,18 @@ Applied to project `ravhjceukjsjfigcqgob`.
 ## UI
 
 Backup screen → **סנכרון חי בין מכשירים** (on by default after publish).
+
+## Login (Supabase Auth)
+
+App requires sign-in at launch (`js/auth.js`, `js/screens/login.js`). Invite-only — no
+in-app sign-up. Login is an identity layer only: every signed-in user still reads/writes
+the same shared `yitzur` kitchen data (RLS above is unchanged, and still keyed on
+`kitchen_id`, not per-user).
+
+To add a staff account:
+
+1. Supabase dashboard → project `ravhjceukjsjfigcqgob` → **Authentication → Providers**
+   → make sure **Email** is enabled.
+2. **Authentication → Users → Add user** → enter email + password.
+   Mark the email as confirmed (or turn off "Confirm email" under Providers → Email if
+   you'd rather staff not need to click a confirmation link).
