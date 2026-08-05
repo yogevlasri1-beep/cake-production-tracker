@@ -31,19 +31,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=409';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=409';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=409';
-import { renderRecipesMachines } from '../recipes-machines.js?v=409';
-import { renderRecipesPortions } from '../recipes-portions.js?v=409';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=409';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=409';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=409';
-import { openModal, closeModal } from '../modal.js?v=409';
+} from '../kitchen-db.js?v=412';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=412';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=412';
+import { renderRecipesMachines } from '../recipes-machines.js?v=412';
+import { renderRecipesPortions } from '../recipes-portions.js?v=412';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=412';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=412';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=412';
+import { openModal, closeModal } from '../modal.js?v=412';
+import { getCurrentUserRole } from '../auth.js?v=412';
+import { canAccessRecipeTab, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=412';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=409';
-import { defaultColorForIndex } from '../chart.js?v=409';
+} from '../product-drag.js?v=412';
+import { defaultColorForIndex } from '../chart.js?v=412';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -65,7 +67,8 @@ export const RECIPE_TABS = {
 
 function getRecipeTab(container) {
   const tab = container?.dataset?.recipeTab || sessionStorage.getItem(RECIPE_TAB_KEY) || 'browse';
-  return RECIPE_TABS[tab] ? tab : 'browse';
+  const resolved = RECIPE_TABS[tab] ? tab : 'browse';
+  return canAccessRecipeTab(getCurrentUserRole(), resolved) ? resolved : 'browse';
 }
 
 export function syncRecipesSubNav(activeTab) {
@@ -83,6 +86,10 @@ export function updateRecipesHeader() {
 
 export function switchRecipeTab(tab) {
   if (!RECIPE_TABS[tab]) return;
+  if (!canAccessRecipeTab(getCurrentUserRole(), tab)) {
+    showToast(PERMISSION_DENIED_MESSAGE);
+    return;
+  }
   const main = document.getElementById('main-content');
   main.dataset.recipeTab = tab;
   sessionStorage.setItem(RECIPE_TAB_KEY, tab);
@@ -93,7 +100,9 @@ export function switchRecipeTab(tab) {
 }
 
 export function initRecipesSubNav() {
+  const role = getCurrentUserRole();
   document.querySelectorAll('.recipes-nav-btn').forEach((btn) => {
+    btn.classList.toggle('hidden', !canAccessRecipeTab(role, btn.dataset.recipeTab));
     btn.addEventListener('click', () => switchRecipeTab(btn.dataset.recipeTab));
   });
 }
@@ -372,7 +381,8 @@ function bindRecipeRowOpen(container, layout, productCatalog) {
 }
 
 export function recipesMeta() {
-  const tab = sessionStorage.getItem(RECIPE_TAB_KEY) || 'browse';
+  const saved = sessionStorage.getItem(RECIPE_TAB_KEY) || 'browse';
+  const tab = canAccessRecipeTab(getCurrentUserRole(), saved) ? saved : 'browse';
   const meta = RECIPE_TABS[tab];
   return { title: 'מתכונים', subtitle: meta?.subtitle || '' };
 }
@@ -2536,9 +2546,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=409');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=412');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=409');
+    const { navigateToWorkspace } = await import('../app.js?v=412');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
