@@ -1,22 +1,22 @@
-import { initDB } from './db.js?v=412';
-import { renderHome, homeMeta } from './screens/home.js?v=412';
-import { renderProducts, productsMeta } from './screens/products.js?v=412';
-import { renderManager, managerMeta } from './screens/manager.js?v=412';
-import { renderProcess, processMeta } from './screens/process.js?v=412';
-import { renderReports, reportsMeta } from './screens/reports.js?v=412';
-import { renderBackup, backupMeta } from './screens/backup.js?v=412';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=412';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=412';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=412';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=412';
-import { initIOSInstallPrompt } from './ios-install.js?v=412';
-import { initNetworkCheck } from './network.js?v=412';
-import { registerServiceWorker } from './sw-register.js?v=412';
-import { APP_VERSION } from './version.js?v=412';
-import { showToast } from './utils.js?v=412';
-import { getCurrentUserRole } from './auth.js?v=412';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=412';
-import './modal.js?v=412';
+import { initDB } from './db.js?v=413';
+import { renderHome, homeMeta } from './screens/home.js?v=413';
+import { renderProducts, productsMeta } from './screens/products.js?v=413';
+import { renderManager, managerMeta } from './screens/manager.js?v=413';
+import { renderProcess, processMeta } from './screens/process.js?v=413';
+import { renderReports, reportsMeta } from './screens/reports.js?v=413';
+import { renderBackup, backupMeta } from './screens/backup.js?v=413';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=413';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=413';
+import { renderHaccp, haccpMeta } from './screens/haccp.js?v=413';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=413';
+import { initIOSInstallPrompt } from './ios-install.js?v=413';
+import { initNetworkCheck } from './network.js?v=413';
+import { registerServiceWorker } from './sw-register.js?v=413';
+import { APP_VERSION } from './version.js?v=413';
+import { showToast } from './utils.js?v=413';
+import { getCurrentUserRole } from './auth.js?v=413';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=413';
+import './modal.js?v=413';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -77,21 +77,40 @@ function applyRolePermissionsToMenu() {
   });
 }
 
+let workspaceDrawerIgnoreCloseUntil = 0;
+let workspaceMenuInitialized = false;
+
+function syncWorkspaceDrawerChrome(isOpen) {
+  const header = document.querySelector('.app-header');
+  header?.classList.toggle('workspace-drawer-open', !!isOpen);
+}
+
 function closeWorkspaceDrawer() {
   const drawer = document.getElementById('workspace-drawer');
   const btn = document.getElementById('workspace-menu-btn');
   drawer?.classList.add('hidden');
   drawer?.setAttribute('aria-hidden', 'true');
   btn?.setAttribute('aria-expanded', 'false');
+  syncWorkspaceDrawerChrome(false);
+}
+
+function openWorkspaceDrawer() {
+  const drawer = document.getElementById('workspace-drawer');
+  const btn = document.getElementById('workspace-menu-btn');
+  if (!drawer) return;
+  drawer.classList.remove('hidden');
+  drawer.setAttribute('aria-hidden', 'false');
+  btn?.setAttribute('aria-expanded', 'true');
+  syncWorkspaceDrawerChrome(true);
+  // מונע סגירה מיידית מאותו קליק/טאץ' (בעיקר במובייל)
+  workspaceDrawerIgnoreCloseUntil = Date.now() + 400;
 }
 
 function toggleWorkspaceDrawer() {
   const drawer = document.getElementById('workspace-drawer');
-  const btn = document.getElementById('workspace-menu-btn');
   if (!drawer) return;
-  const open = drawer.classList.toggle('hidden');
-  drawer.setAttribute('aria-hidden', open ? 'true' : 'false');
-  btn?.setAttribute('aria-expanded', open ? 'false' : 'true');
+  if (drawer.classList.contains('hidden')) openWorkspaceDrawer();
+  else closeWorkspaceDrawer();
 }
 
 function openBackupScreen() {
@@ -105,16 +124,22 @@ function openBackupScreen() {
 }
 
 function initWorkspaceMenu() {
+  if (workspaceMenuInitialized) return;
+  workspaceMenuInitialized = true;
+
   document.getElementById('workspace-menu-btn')?.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
     toggleWorkspaceDrawer();
   });
 
-  document.getElementById('workspace-menu-backup')?.addEventListener('click', () => {
+  document.getElementById('workspace-menu-backup')?.addEventListener('click', (e) => {
+    e.stopPropagation();
     openBackupScreen();
   });
 
   document.addEventListener('click', (e) => {
+    if (Date.now() < workspaceDrawerIgnoreCloseUntil) return;
     const drawer = document.getElementById('workspace-drawer');
     const btn = document.getElementById('workspace-menu-btn');
     if (!drawer || drawer.classList.contains('hidden')) return;
@@ -122,8 +147,9 @@ function initWorkspaceMenu() {
     closeWorkspaceDrawer();
   });
 
-  document.querySelectorAll('.workspace-menu-item').forEach((btn) => {
-    btn.addEventListener('click', () => {
+  document.querySelectorAll('.workspace-menu-item[data-workspace]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
       const ws = btn.dataset.workspace;
       if (!WORKSPACES[ws]) return;
       if (!canAccessWorkspace(getCurrentUserRole(), ws)) {
@@ -217,10 +243,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=412');
+  const { getValidSession } = await import('./auth.js?v=413');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=412');
+    const { renderLoginGate } = await import('./screens/login.js?v=413');
     renderLoginGate(() => startApp());
     return;
   }
@@ -235,11 +261,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=412');
+        const { forceAppUpdate } = await import('./sw-register.js?v=413');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=412').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=413').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -263,14 +289,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=412');
+    } = await import('./supabase-sync.js?v=413');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=412');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=413');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
