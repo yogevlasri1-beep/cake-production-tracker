@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=408';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=408';
-import { defaultColorForIndex } from './chart.js?v=408';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=408';
+} from './validators.js?v=409';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=409';
+import { defaultColorForIndex } from './chart.js?v=409';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=409';
 
 export { ValidationError };
 
@@ -3517,10 +3517,13 @@ export async function initDB() {
     console.warn('purchase categories', err);
   }
   try {
-    const synced = await getSetting('recipePortionPresetsSynced');
+    // v2: force re-sync so portion weights match current recipe ingredient totals
+    // (fixes stale weights e.g. עוגת דבש 4542→46.67 after quantity corrections)
+    const synced = await getSetting('recipePortionPresetsSyncedV2');
     if (!synced) {
       const { syncAllRecipePortionPresets } = await import('./kitchen-db.js');
       await syncAllRecipePortionPresets();
+      await setSetting('recipePortionPresetsSyncedV2', true);
       await setSetting('recipePortionPresetsSynced', true);
     }
   } catch (err) {

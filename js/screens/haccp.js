@@ -1,7 +1,7 @@
-import { getCategoryGroups } from '../db.js?v=408';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=408';
-import { openModal, closeModal } from '../modal.js?v=408';
-import { printHaccpPlan } from '../haccp-print.js?v=408';
+import { getCategoryGroups } from '../db.js?v=409';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=409';
+import { openModal, closeModal } from '../modal.js?v=409';
+import { printHaccpPlan } from '../haccp-print.js?v=409';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -115,7 +115,7 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=408';
+} from '../haccp-db.js?v=409';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
