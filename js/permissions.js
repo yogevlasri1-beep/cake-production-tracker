@@ -1,13 +1,12 @@
 // מטריצת הרשאות לפי תפקיד.
-// כרגע (משתמש יחיד / שלב הטמעה): כל התפקידים רואים את כל העמדות בתפריט.
-// הגבלות עדינות נשארות בתוך HACCP/מתכונים/גיבוי לפי role.
-// כשיתווספו עובדים — אפשר לצמצם כאן מחדש את WORKSPACE_ACCESS.
+// עמדת «חשבונות» למנהל/מנהל מערכת בלבד — אישור משתמשים ובחירת תפקיד.
 
-const ALL_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp'];
+const STAFF_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp'];
+const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts'];
 
 const WORKSPACE_ACCESS = {
-  production: ALL_WORKSPACES,
-  quality: ALL_WORKSPACES,
+  production: ['production', 'recipes', 'haccp'],
+  quality: ['production', 'suppliers', 'recipes', 'haccp'],
   manager: ALL_WORKSPACES,
   admin: ALL_WORKSPACES,
 };
@@ -21,7 +20,7 @@ const RECIPES_PRODUCTION_TABS = new Set(['browse', 'baking', 'ratio', 'machines'
 export const PERMISSION_DENIED_MESSAGE = 'אין הרשאה למסך זה';
 
 export function allowedWorkspaces(role) {
-  return WORKSPACE_ACCESS[role] || ALL_WORKSPACES;
+  return WORKSPACE_ACCESS[role] || WORKSPACE_ACCESS.production;
 }
 
 export function canAccessWorkspace(role, workspaceId) {
@@ -45,5 +44,9 @@ export function canAccessRecipeTab(role, tab) {
 }
 
 export function canAccessBackupFull(role) {
+  return role === 'manager' || role === 'admin';
+}
+
+export function canManageAccounts(role) {
   return role === 'manager' || role === 'admin';
 }

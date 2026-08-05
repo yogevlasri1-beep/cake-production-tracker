@@ -11950,6 +11950,78 @@ body.supplier-drag-active {
   margin-bottom: 0;
 }
 
+.login-gate-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.login-gate-tab {
+  flex: 1;
+  border: 1px solid var(--border, #cbd5e1);
+  background: var(--surface, #fff);
+  color: var(--text, #0f172a);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.login-gate-tab.active {
+  border-color: var(--primary, #2563eb);
+  background: color-mix(in srgb, var(--primary, #2563eb) 12%, white);
+  font-weight: 700;
+}
+
+.login-gate-notice {
+  color: var(--danger, #dc2626);
+  margin: 0 0 12px;
+}
+
+.accounts-section-title {
+  margin: 18px 4px 8px;
+  font-size: 0.95rem;
+  color: var(--text-muted, #64748b);
+}
+
+.accounts-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.accounts-status {
+  display: inline-block;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.accounts-status--ok {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.accounts-status--warn {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.accounts-status--danger {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.accounts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* כשהתפריט פתוח — להעלות את ה-header מעל התוכן והניווט התחתון */
 .app-header.workspace-drawer-open {
   z-index: 300;

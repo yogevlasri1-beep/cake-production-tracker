@@ -29,6 +29,12 @@ export const WORKSPACES = {
     icon: '🛡',
     defaultScreen: 'haccp',
   },
+  accounts: {
+    id: 'accounts',
+    label: 'חשבונות',
+    icon: '👥',
+    defaultScreen: 'accounts',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';
