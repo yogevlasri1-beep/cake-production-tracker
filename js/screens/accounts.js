@@ -1,15 +1,15 @@
-import { escapeHtml, showToast } from '../utils.js?v=415';
+import { escapeHtml, showToast } from '../utils.js?v=416';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=415';
+} from '../auth.js?v=416';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=415';
+} from '../accounts-api.js?v=416';
 
 export const accountsMeta = {
   title: 'חשבונות',

@@ -2,15 +2,16 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=415';
+import { db, getSetting, setSetting } from './db.js?v=416';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
+  resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=415';
+} from './supabase-backup.js?v=416';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -22,7 +23,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=415';
+} from './sync/collections.js?v=416';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -32,8 +33,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=415';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=415';
+} from './sync/id-map.js?v=416';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=416';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -94,9 +95,13 @@ export function isApplyingRemoteSync() {
 
 async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {} } = {}) {
   const url = buildSupabaseRestUrl(cfg.supabaseUrl, path);
+  const accessToken = await resolveSupabaseUserAccessToken();
   const res = await fetch(url, {
     method,
-    headers: buildSupabaseHeaders(cfg.anonKey, headers),
+    headers: buildSupabaseHeaders(cfg.anonKey, {
+      ...headers,
+      ...(accessToken ? { accessToken } : {}),
+    }),
     body: body != null ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {

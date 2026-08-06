@@ -1,6 +1,6 @@
-import { getSetting, setSetting } from './db.js?v=415';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=415';
-import { ValidationError } from './validators.js?v=415';
+import { getSetting, setSetting } from './db.js?v=416';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=416';
+import { ValidationError } from './validators.js?v=416';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -43,12 +43,25 @@ export function buildSupabaseRestUrl(baseUrl, path = '') {
 
 export function buildSupabaseHeaders(anonKey, extra = {}) {
   const key = String(anonKey || '').trim();
+  const { accessToken, ...rest } = extra || {};
+  const bearer = accessToken ? String(accessToken).trim() : key;
   return {
     apikey: key,
-    Authorization: `Bearer ${key}`,
+    Authorization: `Bearer ${bearer}`,
     'Content-Type': 'application/json',
-    ...extra,
+    ...rest,
   };
+}
+
+/** JWT של המשתמש המחובר — ל-RLS. דינמי כדי למנוע ייבוא מעגלי עם auth.js. */
+export async function resolveSupabaseUserAccessToken() {
+  try {
+    const { getValidSession } = await import('./auth.js?v=416');
+    const session = await getValidSession();
+    return session?.access_token || null;
+  } catch {
+    return null;
+  }
 }
 
 export async function getSupabaseBackupConfig() {
@@ -129,9 +142,13 @@ export function parseSupabaseBackupRow(row) {
 
 async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {} } = {}) {
   const url = buildSupabaseRestUrl(cfg.supabaseUrl, path);
+  const accessToken = await resolveSupabaseUserAccessToken();
   const res = await fetch(url, {
     method,
-    headers: buildSupabaseHeaders(cfg.anonKey, headers),
+    headers: buildSupabaseHeaders(cfg.anonKey, {
+      ...headers,
+      ...(accessToken ? { accessToken } : {}),
+    }),
     body: body != null ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
