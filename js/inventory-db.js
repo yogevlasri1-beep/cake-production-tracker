@@ -1,11 +1,12 @@
-import { db, ValidationError } from './db.js?v=419';
+import { db, ValidationError } from './db.js?v=420';
 import {
   getRawMaterials,
   getSupplierCategories,
   getSuppliers,
   addSupplierShortage,
-} from './kitchen-db.js?v=419';
-import { localDateTimeISO } from './utils.js?v=419';
+  computeWeeklyMaterialNeeds,
+} from './kitchen-db.js?v=420';
+import { localDateTimeISO } from './utils.js?v=420';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -17,7 +18,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=419');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=420');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -245,6 +246,84 @@ export function inventoryMovementKindLabel(kind) {
   if (kind === 'issue') return 'ניפוק';
   if (kind === 'set') return 'הגדרה';
   return 'התאמה';
+}
+
+/**
+ * פער הזמנה = צורך מתוכנן לשבוע − יתרה במלאי.
+ * gap > 0 ⇒ חסר; gap <= 0 ⇒ מספיק / עודף.
+ */
+export async function computeWeeklyInventoryGaps(weekStart, { onlyShortage = true } = {}) {
+  const [{ allNeeds, plan, categories: needCategories }, balances] = await Promise.all([
+    computeWeeklyMaterialNeeds(weekStart),
+    getInventoryBalances(),
+  ]);
+  const balMap = new Map(balances.map((b) => [b.rawMaterialId, b]));
+
+  const rows = (allNeeds || []).map((need) => {
+    const bal = need.rawMaterialId ? balMap.get(need.rawMaterialId) : null;
+    const qtyOnHand = bal ? Number(bal.qtyOnHand) || 0 : 0;
+    const needed = Number(need.totalQty) || 0;
+    const gap = Math.round((needed - qtyOnHand) * 1000) / 1000;
+    return {
+      rawMaterialId: need.rawMaterialId,
+      name: need.name,
+      unit: need.unit || bal?.unit || '',
+      supplierCategoryId: need.supplierCategoryId || 0,
+      supplierCategoryName: need.supplierCategoryName || 'ללא קטגוריה',
+      supplierId: need.supplierId || null,
+      needed,
+      qtyOnHand,
+      gap,
+      orderQty: gap > 0 ? gap : 0,
+      products: need.products || [],
+      hasBalance: !!bal,
+    };
+  });
+
+  rows.sort((a, b) => {
+    if ((a.gap > 0) !== (b.gap > 0)) return a.gap > 0 ? -1 : 1;
+    const g = b.gap - a.gap;
+    if (g) return g;
+    return String(a.name).localeCompare(String(b.name), 'he');
+  });
+
+  const filtered = onlyShortage ? rows.filter((r) => r.gap > 0) : rows;
+  const shortageCount = rows.filter((r) => r.gap > 0).length;
+  const totalOrderQty = filtered.reduce((s, r) => s + (r.orderQty || 0), 0);
+
+  return {
+    weekStart,
+    plan,
+    rows: filtered,
+    allRows: rows,
+    shortageCount,
+    totalOrderQty,
+    needCategories,
+  };
+}
+
+export function formatWhatsAppGapOrderText({ weekStart, rows }) {
+  const lines = [`📋 פער מלאי להזמנה — שבוע ${weekStart}`, ''];
+  const shortages = (rows || []).filter((r) => r.gap > 0);
+  if (!shortages.length) {
+    lines.push('אין פערים — המלאי מכסה את התוכנית השבועית.');
+    return lines.join('\n');
+  }
+  const byCat = new Map();
+  for (const row of shortages) {
+    const key = row.supplierCategoryName || 'ללא קטגוריה';
+    if (!byCat.has(key)) byCat.set(key, []);
+    byCat.get(key).push(row);
+  }
+  for (const [cat, items] of [...byCat.entries()].sort((a, b) => a[0].localeCompare(b[0], 'he'))) {
+    lines.push(`*${cat}*`);
+    for (const item of items) {
+      lines.push(`• ${item.name}: להזמין ${item.orderQty} ${item.unit} (צורך ${item.needed}, במלאי ${item.qtyOnHand})`);
+    }
+    lines.push('');
+  }
+  lines.push('_נוצר מאפליקציית מעקב יצור — פער מלאי_');
+  return lines.join('\n');
 }
 
 export { sanitizeStockQty };

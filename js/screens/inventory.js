@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=419';
-import { openModal, closeModal } from '../modal.js?v=419';
-import { requestAutoBackupNow } from '../backup-service.js?v=419';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=420';
+import { openModal, closeModal } from '../modal.js?v=420';
+import { requestAutoBackupNow } from '../backup-service.js?v=420';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -8,14 +8,22 @@ import {
   addInventoryItemToShortages,
   inventoryLowCount,
   inventoryMovementKindLabel,
-} from '../inventory-db.js?v=419';
-import { getSupplierCategories } from '../kitchen-db.js?v=419';
+  computeWeeklyInventoryGaps,
+  formatWhatsAppGapOrderText,
+} from '../inventory-db.js?v=420';
+import { getSupplierCategories } from '../kitchen-db.js?v=420';
+
+const TAB_SUBTITLES = {
+  stock: 'יתרות חומרי גלם והתאמות מלאי',
+  movements: 'יומן תנועות מלאי',
+  gap: 'פער מול תוכנית ייצור שבועית',
+};
 
 export function inventoryMeta() {
   const tab = sessionStorage.getItem('yitzurInventoryTab') || 'stock';
   return {
     title: 'מלאי',
-    subtitle: tab === 'movements' ? 'יומן תנועות מלאי' : 'יתרות חומרי גלם והתאמות מלאי',
+    subtitle: TAB_SUBTITLES[tab] || TAB_SUBTITLES.stock,
   };
 }
 
@@ -45,6 +53,7 @@ function tabsHtml(active) {
   return `
     <div class="inventory-tabs" role="tablist">
       <button type="button" class="login-gate-tab ${active === 'stock' ? 'active' : ''}" data-inv-tab="stock">יתרות</button>
+      <button type="button" class="login-gate-tab ${active === 'gap' ? 'active' : ''}" data-inv-tab="gap">פער הזמנה</button>
       <button type="button" class="login-gate-tab ${active === 'movements' ? 'active' : ''}" data-inv-tab="movements">יומן תנועות</button>
     </div>`;
 }
@@ -252,6 +261,91 @@ async function renderMovementsTab(container) {
   };
 }
 
+async function renderGapTab(container) {
+  const weekStart = container.dataset.invGapWeek || weekStartISO(todayISO());
+  const showAll = container.dataset.invGapShowAll === '1';
+  let result;
+  try {
+    result = await computeWeeklyInventoryGaps(weekStart, { onlyShortage: !showAll });
+  } catch (err) {
+    return {
+      html: `
+        <div class="card" style="border:2px solid var(--danger)">
+          <div class="card-title">שגיאה בחישוב פער</div>
+          <p>${escapeHtml(err.message || err)}</p>
+        </div>`,
+      rows: [],
+      weekStart,
+      waText: '',
+    };
+  }
+
+  const waText = formatWhatsAppGapOrderText({ weekStart, rows: result.allRows });
+  const rows = result.rows;
+
+  return {
+    weekStart,
+    rows,
+    waText,
+    html: `
+      <div class="card">
+        <div class="card-title">פער מלאי מול תוכנית שבועית</div>
+        <p class="form-hint">מחשב צורך מתוכנן (תוכנית ייצור בספקים → הזמנה) פחות יתרה במלאי. פער חיובי = להזמין.</p>
+        <form id="inv-gap-filter" class="lots-search-form" style="margin-top:12px">
+          <div class="form-group">
+            <label for="inv-gap-week">תחילת שבוע</label>
+            <input type="date" id="inv-gap-week" value="${escapeHtml(weekStart)}">
+          </div>
+          <label class="form-hint" style="display:flex;gap:8px;align-items:center;margin:8px 0">
+            <input type="checkbox" id="inv-gap-show-all" ${showAll ? 'checked' : ''}>
+            הצג גם חומרים שמכוסים במלאי
+          </label>
+          <button type="submit" class="btn btn-primary">חשב</button>
+        </form>
+        <p class="form-hint" style="margin:10px 0 0">
+          חסרים: <strong style="color:var(--danger)">${result.shortageCount}</strong>
+          · פריטים מוצגים: <strong>${rows.length}</strong>
+        </p>
+        <div class="accounts-actions" style="margin-top:10px">
+          <button type="button" class="btn btn-secondary" id="inv-gap-copy" ${result.shortageCount ? '' : 'disabled'}>העתק הזמנת פער (WhatsApp)</button>
+          <button type="button" class="btn btn-primary" id="inv-gap-add-all" ${result.shortageCount ? '' : 'disabled'}>הוסף את כל הפערים לחוסרים</button>
+        </div>
+      </div>
+      ${rows.length ? rows.map(gapCard).join('') : `<div class="card"><p class="form-hint">${result.allRows.length ? 'אין פערים — המלאי מכסה את התוכנית.' : 'אין צרכים מתוכננים. הגדר תוכנית ייצור שבועית בעמדת ספקים ← הזמנה, עם מתכונים מקושרים.'}</p></div>`}
+      <textarea id="inv-gap-wa-text" class="hidden" aria-hidden="true">${escapeHtml(waText)}</textarea>
+    `,
+  };
+}
+
+function gapCard(row) {
+  const missing = row.gap > 0;
+  return `
+    <div class="card inventory-card" data-material-id="${row.rawMaterialId || ''}">
+      <div class="accounts-card-head">
+        <div>
+          <div class="card-title" style="margin-bottom:4px">${escapeHtml(row.name)}</div>
+          <p class="form-hint" style="margin:0">${escapeHtml(row.supplierCategoryName)}</p>
+          <p class="form-hint" style="margin:4px 0 0">
+            צורך: <strong>${formatQty(row.needed, row.unit)}</strong>
+            · במלאי: <strong>${formatQty(row.qtyOnHand, row.unit)}</strong>
+            · פער: <strong style="color:${missing ? 'var(--danger)' : 'var(--success, #059669)'}">${missing ? formatQty(row.gap, row.unit) : 'מכוסה'}</strong>
+          </p>
+          ${!row.hasBalance ? '<p class="form-hint" style="margin:4px 0 0">לא הוגדרה יתרה — נספר כ־0</p>' : ''}
+          ${row.products?.length ? `<p class="form-hint" style="margin:4px 0 0">מוצרים: ${escapeHtml(row.products.map((p) => p.name).join(', '))}</p>` : ''}
+        </div>
+        <span class="accounts-status accounts-status--${missing ? 'danger' : 'ok'}">${missing ? 'להזמין' : 'מספיק'}</span>
+      </div>
+      ${missing && row.rawMaterialId && row.supplierId ? `
+        <div class="accounts-actions">
+          <button type="button" class="btn btn-secondary inventory-gap-to-shortage"
+            data-material-id="${row.rawMaterialId}" data-order-qty="${row.orderQty}">
+            הוסף לחוסרים (${formatQty(row.orderQty, row.unit)})
+          </button>
+        </div>` : ''}
+      ${missing && row.rawMaterialId && !row.supplierId ? '<p class="form-hint">אין ספק משויך — שייך בספקים כדי להוסיף לחוסרים</p>' : ''}
+    </div>`;
+}
+
 export async function renderInventory(container) {
   const tab = container.dataset.invTab || sessionStorage.getItem('yitzurInventoryTab') || 'stock';
   container.dataset.invTab = tab;
@@ -261,9 +355,14 @@ export async function renderInventory(container) {
 
   let body = '';
   let stockRows = [];
+  let gapRows = [];
   if (tab === 'movements') {
     const res = await renderMovementsTab(container);
     body = res.html;
+  } else if (tab === 'gap') {
+    const res = await renderGapTab(container);
+    body = res.html;
+    gapRows = res.rows || [];
   } else {
     const res = await renderStockTab(container);
     body = res.html;
@@ -306,6 +405,54 @@ export async function renderInventory(container) {
   container.querySelector('#inv-clear-mat-filter')?.addEventListener('click', () => {
     delete container.dataset.invMoveMaterial;
     renderInventory(container);
+  });
+
+  container.querySelector('#inv-gap-filter')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = container.querySelector('#inv-gap-week')?.value || todayISO();
+    container.dataset.invGapWeek = weekStartISO(raw);
+    container.dataset.invGapShowAll = container.querySelector('#inv-gap-show-all')?.checked ? '1' : '0';
+    renderInventory(container);
+  });
+
+  container.querySelector('#inv-gap-copy')?.addEventListener('click', async () => {
+    const text = container.querySelector('#inv-gap-wa-text')?.value || '';
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('הועתק ללוח');
+    } catch {
+      showToast('לא ניתן להעתיק — העתק ידנית מהטקסט');
+    }
+  });
+
+  container.querySelector('#inv-gap-add-all')?.addEventListener('click', async () => {
+    const shortages = gapRows.filter((r) => r.gap > 0 && r.rawMaterialId && r.supplierId);
+    if (!shortages.length) return showToast('אין פריטים להוספה');
+    if (!confirm(`להוסיף ${shortages.length} פריטים לחוסרים?`)) return;
+    let ok = 0;
+    let skipped = 0;
+    for (const row of shortages) {
+      try {
+        await addInventoryItemToShortages(row.rawMaterialId, row.orderQty);
+        ok++;
+      } catch {
+        skipped++;
+      }
+    }
+    requestAutoBackupNow();
+    showToast(skipped ? `נוספו ${ok}, דולגו ${skipped} (כבר ברשימה / שגיאה)` : `נוספו ${ok} לחוסרים`);
+  });
+
+  container.querySelectorAll('.inventory-gap-to-shortage').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await addInventoryItemToShortages(Number(btn.dataset.materialId), btn.dataset.orderQty);
+        showToast('נוסף לחוסרים');
+        requestAutoBackupNow();
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
+      }
+    });
   });
 
   container.querySelectorAll('.inventory-adjust').forEach((btn) => {
