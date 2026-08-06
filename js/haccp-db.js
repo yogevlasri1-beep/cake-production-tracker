@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=430';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=430';
-import { logAuditEvent } from './audit.js?v=430';
+import { db, ValidationError } from './db.js?v=431';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=431';
+import { logAuditEvent } from './audit.js?v=431';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -57,7 +57,7 @@ export const BAKERY_TEAM_TEMPLATE = [
   },
 ];
 
-/** שימוש מיועד — ברירת מחדל למאפייה קמעונאית */
+/** שימוש מיועד — ברירת מחדל למאפייה קמעונאית (תבנית כללית) */
 export const BAKERY_INTENDED_USE_TEMPLATE = {
   targetAudience: 'צרכנים פרטיים הרוכשים מוצרי מאפה טריים / ארוזים',
   consumptionModes: ['ready_to_eat'],
@@ -69,6 +69,133 @@ export const BAKERY_INTENDED_USE_TEMPLATE = {
   notSuitableFor: 'צרכנים עם אלרגיה לאלרגנים המסומנים על האריזה',
   notes: 'טיוטת מאפייה — יש להתאים למשפחת המוצרים הספציפית',
 };
+
+/**
+ * תבניות מאפייה לפי סוג מוצר — שימוש מיועד + תיאור מוצר + תרשים ברירת מחדל.
+ * id `general` שומר תאימות לאחור עם BAKERY_INTENDED_USE_TEMPLATE.
+ */
+export const HACCP_BAKERY_TEMPLATES = [
+  {
+    id: 'general',
+    label: 'מאפייה כללית',
+    intendedUse: { ...BAKERY_INTENDED_USE_TEMPLATE },
+    productDefaults: {
+      shelfLife: 'לפי סוג המוצר והאריזה — יש לקבוע לכל פריט',
+      storageConditions: 'טמפרטורת חדר קרירה / קירור לפי המוצר',
+      processTechs: ['baking', 'cooling'],
+      notes: 'טיוטת תבנית מאפייה כללית',
+    },
+    flowSteps: null,
+  },
+  {
+    id: 'cakes',
+    label: 'עוגות וקינוחים',
+    intendedUse: {
+      targetAudience: 'צרכנים פרטיים ואירועים — עוגות וקינוחים מוכנים לאכילה',
+      consumptionModes: ['ready_to_eat'],
+      channels: ['retail', 'catering', 'foodservice'],
+      sensitiveGroups: ['general', 'children', 'allergy'],
+      sensitiveNotes: 'אלרגנים נפוצים: גלוטן, ביצים, חלב, אגוזים — סימון חובה על האריזה/תווית',
+      consumerInstructions: 'לאחסן בקירור אם המוצר מכיל קרם/גבינה. לצרוך עד תאריך התפוגה',
+      potentialMisuse: 'השארה מחוץ לקירור במוצרים רגישים / חיתוך בכלים מזוהמים',
+      notSuitableFor: 'אלרגיים לאלרגנים המסומנים',
+      notes: 'תבנית עוגות — להתאים למתכוני המשפחה',
+    },
+    productDefaults: {
+      shelfLife: 'עוגות יבשות: עד מספר ימים באריזה; עם קרם: לפי קירור ותנאי אחסון',
+      storageConditions: 'קירור למוצרים עם קרם/גבינה; יבש לארוזים יציבים',
+      processTechs: ['baking', 'cooling', 'freezing'],
+      packaging: 'אריזה אישית / קופסה — הגנה ממגע ומזהמים',
+      notes: 'טיוטת תבנית עוגות וקינוחים',
+    },
+    flowSteps: [
+      { name: 'קבלת חומרי גלם ואריזות', stepKind: 'receiving' },
+      { name: 'אחסון חומרי גלם', stepKind: 'storage_raw' },
+      { name: 'הכנה ושקילה', stepKind: 'prep' },
+      { name: 'ערבוב / לישה', stepKind: 'mixing' },
+      { name: 'עיצוב / מילוי', stepKind: 'forming' },
+      { name: 'אפייה', stepKind: 'baking' },
+      { name: 'קירור', stepKind: 'cooling' },
+      { name: 'אריזה', stepKind: 'packaging' },
+      { name: 'אחסון מוצר מוגמר', stepKind: 'storage_finished' },
+      { name: 'הפצה / משלוח', stepKind: 'shipping' },
+    ],
+  },
+  {
+    id: 'doughs',
+    label: 'לחמים ובצקים',
+    intendedUse: {
+      targetAudience: 'צרכנים וקמעונאים — לחם ובצקים טריים / קפואים',
+      consumptionModes: ['ready_to_eat', 'cook_before'],
+      channels: ['retail', 'wholesale', 'foodservice'],
+      sensitiveGroups: ['general', 'allergy'],
+      sensitiveNotes: 'גלוטן כאלרגן עיקרי; אפשרות לזיהום צולב בקו ייצור',
+      consumerInstructions: 'לחם טרי — לאחסן במקום יבש; בצק קפוא — לפי הוראות הפשרה ואפייה',
+      potentialMisuse: 'הפשרה חוזרת / אפייה חלקית / אחסון לח',
+      notSuitableFor: 'אלרגיים לגלוטן (ולשאר אלרגנים מסומנים)',
+      notes: 'תבנית לחמים ובצקים',
+    },
+    productDefaults: {
+      shelfLife: 'לחם טרי: יום–יומיים; קפוא: לפי תנאי הקפאה',
+      storageConditions: 'טמפרטורת חדר יבשה ללחם; הקפאה לבצקים קפואים',
+      processTechs: ['proofing', 'baking', 'cooling', 'freezing'],
+      notes: 'טיוטת תבנית לחמים ובצקים',
+    },
+    flowSteps: [
+      { name: 'קבלת קמחים וחומרי גלם', stepKind: 'receiving' },
+      { name: 'אחסון חומרי גלם', stepKind: 'storage_raw' },
+      { name: 'שקילה והכנה', stepKind: 'prep' },
+      { name: 'לישה / ערבוב', stepKind: 'mixing' },
+      { name: 'התפחה', stepKind: 'proofing' },
+      { name: 'עיצוב', stepKind: 'forming' },
+      { name: 'אפייה', stepKind: 'baking' },
+      { name: 'קירור', stepKind: 'cooling' },
+      { name: 'אריזה', stepKind: 'packaging' },
+      { name: 'אחסון / הפצה', stepKind: 'shipping' },
+    ],
+  },
+  {
+    id: 'creams',
+    label: 'קרמים ומילויים',
+    intendedUse: {
+      targetAudience: 'שימוש פנימי כרכיב / מכירה כמילוי מוכן',
+      consumptionModes: ['ingredient', 'ready_to_eat'],
+      channels: ['internal', 'foodservice', 'retail'],
+      sensitiveGroups: ['general', 'children', 'allergy', 'pregnant'],
+      sensitiveNotes: 'מוצרים רגישים לקירור — סיכון מיקרוביולוגי גבוה יחסית',
+      consumerInstructions: 'לשמור בקירור ברציפות; לא להפשיר ולהקפיא שוב',
+      potentialMisuse: 'השארה בטמפרטורת חדר / ערבוב בכלים לא מחוטים',
+      notSuitableFor: 'שימוש אחרי חריגת טמפרטורה או תום תוקף',
+      notes: 'תבנית קרמים ומילויים — דגש על שרשרת קירור',
+    },
+    productDefaults: {
+      shelfLife: 'קצר — לפי מתכון ותנאי קירור (ימים בודדים בקירור)',
+      storageConditions: 'קירור ≤5°C ברציפות; הקפאה אם מוגדר במתכון',
+      processTechs: ['cooling', 'freezing'],
+      packaging: 'מיכל סגור / שקית — מניעת זיהום צולב',
+      notes: 'טיוטת תבנית קרמים ומילויים',
+    },
+    flowSteps: [
+      { name: 'קבלת חומרי גלם (קירור)', stepKind: 'receiving' },
+      { name: 'אחסון מקורר', stepKind: 'storage_raw' },
+      { name: 'הכנה ושקילה', stepKind: 'prep' },
+      { name: 'הכנת קרם / מילוי', stepKind: 'mixing' },
+      { name: 'קירור מהיר', stepKind: 'cooling' },
+      { name: 'אריזה', stepKind: 'packaging' },
+      { name: 'אחסון מקורר מוגמר', stepKind: 'storage_finished' },
+      { name: 'הפצה בקירור', stepKind: 'shipping' },
+    ],
+  },
+];
+
+export function getHaccpBakeryTemplate(templateId = 'general') {
+  const id = String(templateId || 'general').trim();
+  return HACCP_BAKERY_TEMPLATES.find((t) => t.id === id) || HACCP_BAKERY_TEMPLATES[0];
+}
+
+export function haccpBakeryTemplateLabel(templateId) {
+  return getHaccpBakeryTemplate(templateId).label;
+}
 
 /** נושאי תכניות קדם מהמדריך */
 export const HACCP_PRP_TOPICS = [
@@ -3199,6 +3326,19 @@ export async function addHaccpMonitoringLog(planId, {
     cleanCorrective = await suggestCorrectiveNoteForDeviation(cid);
   }
 
+  // חריגה בלי נוהל פעולה מתקנת ל-CCP → זורעים נוהל מוצע אוטומטית
+  let seededCorrective = 0;
+  if (cleanResult === 'deviation') {
+    try {
+      seededCorrective = await ensureCorrectiveProcedureForCcp(pid, cid);
+      if (!cleanCorrective) {
+        cleanCorrective = await suggestCorrectiveNoteForDeviation(cid);
+      }
+    } catch {
+      seededCorrective = 0;
+    }
+  }
+
   const logRow = {
     planId: pid,
     ccpId: cid,
@@ -3215,8 +3355,28 @@ export async function addHaccpMonitoringLog(planId, {
     notes: sanitizeTextField(notes, 2000),
   };
   const id = await db.haccpMonitoringLogs.add(logRow);
-  logAuditEvent({ entityTable: 'haccpMonitoringLogs', entityId: id, action: 'create', snapshot: logRow });
+  logAuditEvent({
+    entityTable: 'haccpMonitoringLogs',
+    entityId: id,
+    action: 'create',
+    snapshot: { ...logRow, seededCorrective },
+  });
   return id;
+}
+
+/** אם ל-CCP אין נוהל פעולה מתקנת — זורע הצעה. מחזיר כמה נוספו. */
+export async function ensureCorrectiveProcedureForCcp(planId, ccpId) {
+  const pid = sanitizeProductId(planId);
+  const cid = sanitizeProductId(ccpId);
+  if (!pid || !cid) return 0;
+  const existing = await getHaccpCorrectiveActionsForCcp(cid);
+  if (existing.length) return 0;
+  try {
+    return await seedSuggestedCorrectiveForCcp(pid, cid);
+  } catch (err) {
+    if (/כבר/.test(err?.message || '')) return 0;
+    throw err;
+  }
 }
 
 export async function updateHaccpMonitoringLog(id, patch = {}) {
@@ -3871,7 +4031,7 @@ export async function seedBakeryTeamDefaults() {
 }
 
 /** זריעת שימוש מיועד למאפייה — רק אם השדות ריקים */
-export async function seedBakeryIntendedUse(planId) {
+export async function seedBakeryIntendedUse(planId, templateId = 'general') {
   const pid = sanitizeProductId(planId);
   if (!pid) throw new ValidationError('בחר תכנית');
   const current = await getHaccpIntendedUse(pid);
@@ -3881,20 +4041,65 @@ export async function seedBakeryIntendedUse(planId) {
     || (current.channels || []).length
   );
   if (hasContent) throw new ValidationError('כבר יש שימוש מיועד');
-  await saveHaccpIntendedUse(pid, { ...BAKERY_INTENDED_USE_TEMPLATE });
+  const tmpl = getHaccpBakeryTemplate(templateId);
+  await saveHaccpIntendedUse(pid, { ...(tmpl.intendedUse || BAKERY_INTENDED_USE_TEMPLATE) });
   return 1;
+}
+
+/** זריעת שדות תיאור מוצר מתבנית — רק שדות ריקים */
+export async function seedBakeryProductDefaults(planId, templateId = 'general') {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const tmpl = getHaccpBakeryTemplate(templateId);
+  const defaults = tmpl.productDefaults || {};
+  if (!Object.keys(defaults).length) throw new ValidationError('אין ברירות מחדל למוצר בתבנית');
+  const desc = await getHaccpProductDescription(pid);
+  const patch = { ...desc };
+  let filled = 0;
+  for (const key of Object.keys(defaults)) {
+    const cur = patch[key];
+    const empty = Array.isArray(cur) ? !cur.length : !String(cur || '').trim();
+    if (empty && defaults[key] != null && String(defaults[key]).length) {
+      patch[key] = defaults[key];
+      filled += 1;
+    }
+  }
+  if (!filled) throw new ValidationError('כבר יש תיאור מוצר מתאים');
+  await saveHaccpProductDescription(pid, patch);
+  return filled;
+}
+
+/** זריעת תרשים מתבנית — רק אם אין שלבים ואין ייבוא ייצור מועדף */
+export async function seedBakeryTemplateFlow(planId, templateId = 'general') {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const existing = await getHaccpFlowSteps(pid);
+  if (existing.length) throw new ValidationError('כבר יש שלבים בתרשים');
+  const tmpl = getHaccpBakeryTemplate(templateId);
+  const steps = tmpl.flowSteps;
+  if (!steps?.length) throw new ValidationError('לתבנית זו אין תרשים ייעודי');
+  let added = 0;
+  for (const step of steps) {
+    await addHaccpFlowStep(pid, { ...step });
+    added += 1;
+  }
+  return added;
 }
 
 /**
  * יצירת תכנית מתבנית מאפייה:
- * צוות בסיסי (אם חסר) → שימוש מיועד → buildHaccpPlanDraft.
+ * צוות בסיסי (אם חסר) → שימוש מיועד → תיאור מוצר → תרשים תבנית → buildHaccpPlanDraft.
  */
 export async function createHaccpPlanFromBakeryTemplate(categoryGroupId, {
   name = '',
+  templateId = 'general',
   preferProductionFlow = true,
   confirmCcpCandidates = true,
 } = {}) {
-  const planId = await ensureHaccpPlanForGroup(categoryGroupId, { name });
+  const tmpl = getHaccpBakeryTemplate(templateId);
+  const planId = await ensureHaccpPlanForGroup(categoryGroupId, {
+    name: name || `HACCP — ${tmpl.label}`,
+  });
   const steps = [];
 
   const run = async (label, fn) => {
@@ -3909,7 +4114,7 @@ export async function createHaccpPlanFromBakeryTemplate(categoryGroupId, {
       });
     } catch (err) {
       const message = err?.message || String(err);
-      const skipped = /כבר/.test(message);
+      const skipped = /כבר|אין תרשים ייעודי|אין ברירות מחדל/.test(message);
       steps.push({
         label,
         ok: skipped,
@@ -3921,7 +4126,18 @@ export async function createHaccpPlanFromBakeryTemplate(categoryGroupId, {
   };
 
   await run('צוות מאפייה בסיסי', () => seedBakeryTeamDefaults());
-  await run('שימוש מיועד (מאפייה)', () => seedBakeryIntendedUse(planId));
+  await run(`שימוש מיועד (${tmpl.label})`, () => seedBakeryIntendedUse(planId, tmpl.id));
+  await run(`תיאור מוצר (${tmpl.label})`, () => seedBakeryProductDefaults(planId, tmpl.id));
+
+  // תרשים ייעודי רק אם אין תזרים ייצור לייבוא (או אם preferProductionFlow=false)
+  if (preferProductionFlow) {
+    const flows = await listProductionFlowsForHaccpPlan(planId);
+    if (!flows.length) {
+      await run(`תרשים ${tmpl.label}`, () => seedBakeryTemplateFlow(planId, tmpl.id));
+    }
+  } else {
+    await run(`תרשים ${tmpl.label}`, () => seedBakeryTemplateFlow(planId, tmpl.id));
+  }
 
   const draft = await buildHaccpPlanDraft(planId, {
     preferProductionFlow,
@@ -3931,12 +4147,14 @@ export async function createHaccpPlanFromBakeryTemplate(categoryGroupId, {
   await db.haccpPlans.update(planId, {
     status: 'in_progress',
     currentStep: 'flow_verify',
-    notes: 'נוצר מתבנית מאפייה — יש לאמת תרשים בשטח ולהתאים שמות צוות',
+    notes: `נוצר מתבנית «${tmpl.label}» — יש לאמת תרשים בשטח ולהתאים שמות צוות`,
   });
 
   const readiness = await getHaccpPlanReadiness(planId);
   return {
     planId,
+    templateId: tmpl.id,
+    templateLabel: tmpl.label,
     steps: [...steps, ...(draft.steps || [])],
     addedTotal: steps.reduce((s, x) => s + (x.count || 0), 0) + (draft.addedTotal || 0),
     failed: [

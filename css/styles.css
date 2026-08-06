@@ -11399,6 +11399,24 @@ body.supplier-drag-active {
   background: #eff6ff;
 }
 
+.haccp-step-btn.is-done {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.haccp-step-btn.is-done.is-active {
+  border-color: var(--primary, #2563eb);
+  background: #ecfdf5;
+}
+
+.haccp-step-btn.is-todo:not(.is-soon) {
+  border-color: #fde68a;
+}
+
+.haccp-step-mark {
+  font-weight: 700;
+}
+
 .haccp-step-btn.is-soon {
   opacity: 0.65;
 }

@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=430';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=430';
-import { openModal, closeModal } from '../modal.js?v=430';
-import { printHaccpPlan } from '../haccp-print.js?v=430';
-import { getCurrentUserRole } from '../auth.js?v=430';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=430';
+import { getCategoryGroups } from '../db.js?v=431';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=431';
+import { openModal, closeModal } from '../modal.js?v=431';
+import { printHaccpPlan } from '../haccp-print.js?v=431';
+import { getCurrentUserRole } from '../auth.js?v=431';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=431';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -131,7 +131,8 @@ import {
   getHaccpWizardState,
   createHaccpPlanFromBakeryTemplate,
   getHaccpDeviationDashboard,
-} from '../haccp-db.js?v=430';
+  HACCP_BAKERY_TEMPLATES,
+} from '../haccp-db.js?v=431';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
@@ -209,13 +210,8 @@ export async function renderHaccp(container) {
   let wizardState = null;
   let deviationDash = null;
   const wizardOn = isWizardMode();
-  const needReadiness = !!activePlan && (
-    step.id === 'overview'
-    || step.id === 'product'
-    || step.id === 'prp'
-    || wizardOn
-  );
-  if (needReadiness && activePlan) {
+  // מוכנות נטענת לכל תכנית פעילה — גם לסימון ✓/○ במפת הדרכים
+  if (activePlan) {
     try {
       readiness = await getHaccpPlanReadiness(activePlan.id);
     } catch {
@@ -387,6 +383,9 @@ export async function renderHaccp(container) {
             const active = s.id === step.id ? ' is-active' : '';
             const locked = (s.status === 'soon' || denied || wizardLocked) ? ' is-soon' : '';
             const preview = s.status === 'preview' ? ' is-preview' : '';
+            const readyItem = readiness?.items?.find((i) => i.stepId === s.id);
+            const doneClass = readyItem ? (readyItem.done ? ' is-done' : ' is-todo') : '';
+            const mark = readyItem ? (readyItem.done ? '✓' : '○') : '';
             const badge = s.status === 'soon'
               ? 'בקרוב'
               : denied
@@ -397,12 +396,13 @@ export async function renderHaccp(container) {
                     ? 'תצוגה'
                     : s.chapter;
             return `
-              <button type="button" class="haccp-step-btn${active}${locked}${preview}"
+              <button type="button" class="haccp-step-btn${active}${locked}${preview}${doneClass}"
                 data-haccp-step="${s.id}"
                 ${wizardLocked ? 'data-haccp-wizard-locked="1"' : ''}
                 role="tab" aria-selected="${s.id === step.id}"
-                ${wizardLocked || denied ? 'aria-disabled="true"' : ''}>
-                <span class="haccp-step-chapter">${escapeHtml(badge)}</span>
+                ${wizardLocked || denied ? 'aria-disabled="true"' : ''}
+                title="${readyItem ? escapeHtml(readyItem.detail || readyItem.label) : ''}">
+                <span class="haccp-step-chapter">${mark ? `<span class="haccp-step-mark" aria-hidden="true">${mark}</span> ` : ''}${escapeHtml(badge)}</span>
                 <span class="haccp-step-label">${escapeHtml(s.label)}</span>
               </button>`;
           }).join('')}
@@ -478,11 +478,17 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
               <option value="">${availableGroups.length ? 'בחר משפחה…' : 'כל המשפחות כבר משויכות'}</option>
               ${createOptions}
             </select>
+            <select id="haccp-template-type" ${availableGroups.length ? '' : 'disabled'}
+              title="סוג תבנית מאפייה">
+              ${HACCP_BAKERY_TEMPLATES.map((t) =>
+                `<option value="${t.id}" ${t.id === 'cakes' ? 'selected' : ''}>${escapeHtml(t.label)}</option>`
+              ).join('')}
+            </select>
             <button type="button" class="btn btn-secondary btn-sm" id="haccp-create-plan"
               ${availableGroups.length ? '' : 'disabled'}>צור ריקה</button>
             <button type="button" class="btn btn-primary btn-sm" id="haccp-create-from-template"
               ${availableGroups.length ? '' : 'disabled'}
-              title="צוות + שימוש מיועד + טיוטת PRP/תרשים/סיכונים/CCP">מתבנית מאפייה</button>
+              title="צוות + שימוש מיועד + תיאור + טיוטת PRP/תרשים/סיכונים/CCP">מתבנית</button>
           </div>
         </div>
       </div>
@@ -2530,16 +2536,18 @@ function bindHaccpEvents(container, ctx) {
 
   document.getElementById('haccp-create-from-template')?.addEventListener('click', async () => {
     const gid = document.getElementById('haccp-new-family')?.value;
+    const templateId = document.getElementById('haccp-template-type')?.value || 'cakes';
     if (!gid) return showToast('בחר משפחת מוצרים');
-    if (!confirm('ליצור תכנית מתבנית מאפייה?\nימולאו צוות בסיסי (אם חסר), שימוש מיועד, וטיוטת PRP/תרשים/סיכונים/CCP.')) return;
+    const tmplLabel = HACCP_BAKERY_TEMPLATES.find((t) => t.id === templateId)?.label || templateId;
+    if (!confirm(`ליצור תכנית מתבנית «${tmplLabel}»?\nימולאו צוות (אם חסר), שימוש מיועד, תיאור מוצר, וטיוטת PRP/תרשים/סיכונים/CCP.`)) return;
     const btn = document.getElementById('haccp-create-from-template');
     if (btn) btn.disabled = true;
     try {
-      showToast('בונה מתבנית מאפייה…');
-      const result = await createHaccpPlanFromBakeryTemplate(gid);
+      showToast(`בונה מתבנית ${tmplLabel}…`);
+      const result = await createHaccpPlanFromBakeryTemplate(gid, { templateId });
       setWizardMode(true);
       container.dataset.haccpStep = result.readiness?.missing?.[0]?.stepId || 'flow_verify';
-      showToast(`תכנית מתבנית ✓ (+${result.addedTotal}) · מוכנות ${result.readiness?.percent ?? '?'}%`);
+      showToast(`תכנית «${result.templateLabel || tmplLabel}» ✓ (+${result.addedTotal}) · מוכנות ${result.readiness?.percent ?? '?'}%`);
       renderHaccp(container);
     } catch (err) {
       showToast(err.message || 'שגיאה ביצירת תבנית');
@@ -4193,7 +4201,7 @@ function bindHaccpEvents(container, ctx) {
         notes: document.getElementById('haccp-log-notes')?.value,
       });
       showToast(resultVal === 'deviation'
-        ? 'חריגה נרשמה ✓ · מולאה טיוטת פעולה מתקנת מהנוהל'
+        ? 'חריגה נרשמה ✓ · טיוטת פעולה מתקנת + נוהל CCP אם חסר'
         : 'מדידה נשמרה ✓');
       renderHaccp(container);
     } catch (err) {
