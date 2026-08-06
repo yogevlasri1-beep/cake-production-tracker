@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=429';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=429';
-import { openModal, closeModal } from '../modal.js?v=429';
-import { printHaccpPlan } from '../haccp-print.js?v=429';
-import { getCurrentUserRole } from '../auth.js?v=429';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=429';
+import { getCategoryGroups } from '../db.js?v=430';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=430';
+import { openModal, closeModal } from '../modal.js?v=430';
+import { printHaccpPlan } from '../haccp-print.js?v=430';
+import { getCurrentUserRole } from '../auth.js?v=430';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=430';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -130,7 +130,8 @@ import {
   HACCP_WIZARD_STEPS,
   getHaccpWizardState,
   createHaccpPlanFromBakeryTemplate,
-} from '../haccp-db.js?v=429';
+  getHaccpDeviationDashboard,
+} from '../haccp-db.js?v=430';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
@@ -206,6 +207,7 @@ export async function renderHaccp(container) {
   let prpControls = [];
   let readiness = null;
   let wizardState = null;
+  let deviationDash = null;
   const wizardOn = isWizardMode();
   const needReadiness = !!activePlan && (
     step.id === 'overview'
@@ -218,6 +220,13 @@ export async function renderHaccp(container) {
       readiness = await getHaccpPlanReadiness(activePlan.id);
     } catch {
       readiness = null;
+    }
+  }
+  if (step.id === 'overview') {
+    try {
+      deviationDash = await getHaccpDeviationDashboard({ days: 30, limit: 20 });
+    } catch {
+      deviationDash = null;
     }
   }
   if (wizardOn && activePlan && readiness) {
@@ -315,7 +324,7 @@ export async function renderHaccp(container) {
   }
 
   let body = '';
-  if (step.id === 'overview') body = renderOverview(members, plans, groups, activePlan, readiness);
+  if (step.id === 'overview') body = renderOverview(members, plans, groups, activePlan, readiness, deviationDash);
   else if (step.id === 'prp') body = renderPrpSection(activePlan, prpControls, groupMap);
   else if (step.id === 'team') body = renderTeamSection(members);
   else if (step.id === 'product') {
@@ -480,7 +489,52 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
     </div>`;
 }
 
-function renderOverview(members, plans, groups, activePlan = null, readiness = null) {
+function renderDeviationDashboard(dash) {
+  if (!dash) {
+    return `
+      <div class="card haccp-deviation-card">
+        <div class="card-title">דשבורד חריגות (30 יום)</div>
+        <p class="haccp-hint">אין נתונים להצגה עדיין.</p>
+      </div>`;
+  }
+  const rows = dash.items.length
+    ? dash.items.map((item) => `
+        <li class="haccp-deviation-row ${item.hasCorrective ? 'has-note' : 'needs-note'}">
+          <div>
+            <div class="haccp-ccp-title">
+              ${escapeHtml(item.ccpCode)} · ${escapeHtml(item.ccpName)}
+              · ${escapeHtml(item.value || '—')}${item.unit ? ` ${escapeHtml(item.unit)}` : ''}
+            </div>
+            <div class="haccp-hazard-meta">
+              ${escapeHtml(item.planName)}
+              · ${escapeHtml(formatLogWhen(item.recordedAt))}
+              ${item.batchCode ? ` · אצווה: ${escapeHtml(item.batchCode)}` : ''}
+              · ${item.hasCorrective ? 'יש פעולה מתקנת' : 'חסרה פעולה מתקנת'}
+            </div>
+            ${item.correctiveNote ? `<div class="haccp-hazard-meta">${escapeHtml(item.correctiveNote)}</div>` : ''}
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm"
+            data-haccp-open-plan="${escapeHtml(String(item.planId))}"
+            data-haccp-step="monitor_log">יומן</button>
+        </li>`).join('')
+    : '<li class="haccp-hint">אין חריגות ב־30 הימים האחרונים ✓</li>';
+
+  return `
+    <div class="card haccp-deviation-card">
+      <div class="card-title">דשבורד חריגות (30 יום)</div>
+      <p class="haccp-family-products">
+        <strong>${dash.total}</strong> חריגות ·
+        ללא פעולה מתקנת: <strong>${dash.openWithoutCorrective}</strong>
+      </p>
+      <ul class="haccp-deviation-list">${rows}</ul>
+      <div class="haccp-inline-row">
+        <button type="button" class="btn btn-secondary" data-haccp-step="monitor_log">יומן ניטור</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="corrective">נהלי פעולות מתקנות</button>
+      </div>
+    </div>`;
+}
+
+function renderOverview(members, plans, groups, activePlan = null, readiness = null, deviationDash = null) {
   const leaders = members.filter((m) => m.isLeader && m.active !== false);
   const activeMembers = members.filter((m) => m.active !== false);
   const readinessHtml = activePlan && readiness ? `
@@ -529,6 +583,7 @@ function renderOverview(members, plans, groups, activePlan = null, readiness = n
         <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">נהלי ניטור</button>
       </div>
     </div>
+    ${renderDeviationDashboard(deviationDash)}
     ${readinessHtml}`;
 }
 
@@ -2414,7 +2469,7 @@ function bindHaccpEvents(container, ctx) {
   });
 
   container.querySelectorAll('[data-haccp-step]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const id = btn.dataset.haccpStep;
       if (!id) return;
       if (!canAccessHaccpStep(getCurrentUserRole(), id)) {
@@ -2424,6 +2479,15 @@ function bindHaccpEvents(container, ctx) {
       if (btn.dataset.haccpWizardLocked === '1' || (ctx.wizardOn && ctx.wizardState && !ctx.wizardState.isUnlocked(id))) {
         showToast('במצב אשף: השלם את השלבים הקודמים לפני דילוג');
         return;
+      }
+      const openPlanId = btn.dataset.haccpOpenPlan;
+      if (openPlanId) {
+        try {
+          await setActiveHaccpPlanId(openPlanId);
+        } catch (err) {
+          showToast(err.message || 'שגיאה בבחירת תכנית');
+          return;
+        }
       }
       container.dataset.haccpStep = id;
       renderHaccp(container);

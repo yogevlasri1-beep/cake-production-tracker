@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=429';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=429';
-import { logAuditEvent } from './audit.js?v=429';
+import { db, ValidationError } from './db.js?v=430';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=430';
+import { logAuditEvent } from './audit.js?v=430';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -171,7 +171,7 @@ export async function addHaccpTeamMember({
         await db.haccpTeamMembers.update(row.id, { isLeader: false });
       }
     }
-    return db.haccpTeamMembers.add({
+    const id = await db.haccpTeamMembers.add({
       name: cleanName,
       role: sanitizeRole(role),
       isLeader: leader,
@@ -179,6 +179,13 @@ export async function addHaccpTeamMember({
       active: active !== false,
       sortOrder,
     });
+    logAuditEvent({
+      entityTable: 'haccpTeamMembers',
+      entityId: id,
+      action: 'create',
+      snapshot: { name: cleanName, role: sanitizeRole(role), isLeader: leader },
+    });
+    return id;
   });
 }
 
@@ -210,7 +217,13 @@ export async function updateHaccpTeamMember(id, patch = {}) {
         await db.haccpTeamMembers.update(leader.id, { isLeader: false });
       }
     }
-    return db.haccpTeamMembers.update(mid, next);
+    await db.haccpTeamMembers.update(mid, next);
+    logAuditEvent({
+      entityTable: 'haccpTeamMembers',
+      entityId: mid,
+      action: 'update',
+      snapshot: { ...row, ...next },
+    });
   });
 }
 
@@ -218,6 +231,7 @@ export async function deleteHaccpTeamMember(id) {
   const mid = sanitizeProductId(id);
   if (!mid) return;
   await db.haccpTeamMembers.delete(mid);
+  logAuditEvent({ entityTable: 'haccpTeamMembers', entityId: mid, action: 'delete' });
 }
 
 export async function getHaccpPlans() {
@@ -274,6 +288,12 @@ export async function ensureHaccpPlanForGroup(categoryGroupId, { name } = {}) {
     notes: '',
     sortOrder,
   });
+  logAuditEvent({
+    entityTable: 'haccpPlans',
+    entityId: id,
+    action: 'create',
+    snapshot: { name: planName, categoryGroupId: gid, status: 'draft' },
+  });
   await setActiveHaccpPlanId(id);
   return id;
 }
@@ -301,7 +321,13 @@ export async function updateHaccpPlan(id, patch = {}) {
     next.categoryGroupId = gid;
   }
   if (!Object.keys(next).length) return;
-  return db.haccpPlans.update(pid, next);
+  await db.haccpPlans.update(pid, next);
+  logAuditEvent({
+    entityTable: 'haccpPlans',
+    entityId: pid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpPlan(id) {
@@ -355,6 +381,7 @@ export async function deleteHaccpPlan(id) {
   );
   const active = await getActiveHaccpPlanId();
   if (active === pid) await setActiveHaccpPlanId(null);
+  logAuditEvent({ entityTable: 'haccpPlans', entityId: pid, action: 'delete' });
 }
 
 /** אלרגנים נפוצים לפי נספח הסימון */
@@ -466,10 +493,22 @@ export async function saveHaccpProductDescription(planId, fields = {}) {
     if (plan.currentStep === 'team' || plan.status === 'draft') {
       await db.haccpPlans.update(pid, { currentStep: 'product', status: 'in_progress' });
     }
+    logAuditEvent({
+      entityTable: 'haccpProductDescriptions',
+      entityId: existing.id,
+      action: 'update',
+      snapshot: { planId: pid, composition: next.composition },
+    });
     return existing.id;
   }
   const id = await db.haccpProductDescriptions.add(next);
   await db.haccpPlans.update(pid, { currentStep: 'product', status: 'in_progress' });
+  logAuditEvent({
+    entityTable: 'haccpProductDescriptions',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, composition: next.composition },
+  });
   return id;
 }
 
@@ -610,10 +649,22 @@ export async function saveHaccpIntendedUse(planId, fields = {}) {
     if (['team', 'product'].includes(plan.currentStep) || plan.status === 'draft') {
       await db.haccpPlans.update(pid, { currentStep: 'intended_use', status: 'in_progress' });
     }
+    logAuditEvent({
+      entityTable: 'haccpIntendedUses',
+      entityId: existing.id,
+      action: 'update',
+      snapshot: { planId: pid, targetAudience: next.targetAudience },
+    });
     return existing.id;
   }
   const id = await db.haccpIntendedUses.add(next);
   await db.haccpPlans.update(pid, { currentStep: 'intended_use', status: 'in_progress' });
+  logAuditEvent({
+    entityTable: 'haccpIntendedUses',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, targetAudience: next.targetAudience },
+  });
   return id;
 }
 
@@ -717,6 +768,12 @@ export async function addHaccpFlowStep(planId, {
     sortOrder,
   });
   await markPlanFlowInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpFlowSteps',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, name: cleanName, stepKind: sanitizeFlowStepKind(stepKind) },
+  });
   return id;
 }
 
@@ -737,6 +794,12 @@ export async function updateHaccpFlowStep(id, patch = {}) {
   if (patch.isCcpCandidate !== undefined) next.isCcpCandidate = !!patch.isCcpCandidate;
   if (!Object.keys(next).length) return;
   await db.haccpFlowSteps.update(sid, next);
+  logAuditEvent({
+    entityTable: 'haccpFlowSteps',
+    entityId: sid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpFlowStep(id) {
@@ -770,6 +833,7 @@ export async function deleteHaccpFlowStep(id) {
       await db.haccpFlowSteps.delete(sid);
     },
   );
+  logAuditEvent({ entityTable: 'haccpFlowSteps', entityId: sid, action: 'delete' });
 }
 
 async function deleteCcpChildren(ccpId) {
@@ -1017,6 +1081,12 @@ export async function addHaccpFlowVerification(planId, fields = {}) {
     createdAt: new Date().toISOString(),
   });
   await markPlanFlowVerifyInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpFlowVerifications',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, verifiedAt, matchResult: sanitizeMatchResult(fields.matchResult) },
+  });
   return id;
 }
 
@@ -1024,6 +1094,7 @@ export async function deleteHaccpFlowVerification(id) {
   const vid = sanitizeProductId(id);
   if (!vid) return;
   await db.haccpFlowVerifications.delete(vid);
+  logAuditEvent({ entityTable: 'haccpFlowVerifications', entityId: vid, action: 'delete' });
 }
 
 /** סוגי גורמי סיכון */
@@ -1190,6 +1261,12 @@ export async function addHaccpHazard(planId, {
     sortOrder,
   });
   await markPlanHazardInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpHazards',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, description: cleanDesc, hazardType: sanitizeHazardType(hazardType) },
+  });
   return id;
 }
 
@@ -1233,6 +1310,12 @@ export async function updateHaccpHazard(id, patch = {}) {
   }
   if (!Object.keys(next).length) return;
   await db.haccpHazards.update(hid, next);
+  logAuditEvent({
+    entityTable: 'haccpHazards',
+    entityId: hid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpHazard(id) {
@@ -1243,6 +1326,7 @@ export async function deleteHaccpHazard(id) {
     for (const c of linked) await db.haccpCcps.update(c.id, { hazardId: null });
     await db.haccpHazards.delete(hid);
   });
+  logAuditEvent({ entityTable: 'haccpHazards', entityId: hid, action: 'delete' });
 }
 
 /** שאלות עץ החלטות CCP — Codex 2023 */
@@ -1911,6 +1995,12 @@ export async function addHaccpMonitoring(planId, {
     sortOrder,
   });
   await markPlanMonitoringInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpMonitoring',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, ccpId, what: sanitizeTextField(what, 500) },
+  });
   return id;
 }
 
@@ -1961,6 +2051,12 @@ export async function updateHaccpMonitoring(id, patch = {}) {
 
   if (!Object.keys(next).length) return;
   await db.haccpMonitoring.update(mid, next);
+  logAuditEvent({
+    entityTable: 'haccpMonitoring',
+    entityId: mid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpMonitoring(id) {
@@ -1971,6 +2067,7 @@ export async function deleteHaccpMonitoring(id) {
     for (const l of linked) await db.haccpMonitoringLogs.update(l.id, { monitoringId: null });
     await db.haccpMonitoring.delete(mid);
   });
+  logAuditEvent({ entityTable: 'haccpMonitoring', entityId: mid, action: 'delete' });
 }
 
 /** הצעת ניטור בסיסית לפי CCP וגבולותיו */
@@ -2137,6 +2234,12 @@ export async function addHaccpCorrectiveAction(planId, {
     sortOrder,
   });
   await markPlanCorrectiveInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpCorrectiveActions',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, ccpId, deviation: sanitizeTextField(deviation, 1000) },
+  });
   return id;
 }
 
@@ -2203,12 +2306,19 @@ export async function updateHaccpCorrectiveAction(id, patch = {}) {
 
   if (!Object.keys(next).length) return;
   await db.haccpCorrectiveActions.update(aid, next);
+  logAuditEvent({
+    entityTable: 'haccpCorrectiveActions',
+    entityId: aid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpCorrectiveAction(id) {
   const aid = sanitizeProductId(id);
   if (!aid) return;
   await db.haccpCorrectiveActions.delete(aid);
+  logAuditEvent({ entityTable: 'haccpCorrectiveActions', entityId: aid, action: 'delete' });
 }
 
 /** הצעת פעולה מתקנת בסיסית לפי CCP וגבולותיו */
@@ -2377,6 +2487,12 @@ export async function addHaccpVerificationProc(planId, {
     sortOrder,
   });
   await markPlanVerificationInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpVerificationProcs',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, activity: sanitizeTextField(activity, 2000), method },
+  });
   return id;
 }
 
@@ -2418,12 +2534,19 @@ export async function updateHaccpVerificationProc(id, patch = {}) {
 
   if (!Object.keys(next).length) return;
   await db.haccpVerificationProcs.update(vid, next);
+  logAuditEvent({
+    entityTable: 'haccpVerificationProcs',
+    entityId: vid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpVerificationProc(id) {
   const vid = sanitizeProductId(id);
   if (!vid) return;
   await db.haccpVerificationProcs.delete(vid);
+  logAuditEvent({ entityTable: 'haccpVerificationProcs', entityId: vid, action: 'delete' });
 }
 
 /** הצעות אימות בסיסיות לתכנית (לפי מדריך משהב) */
@@ -2599,6 +2722,12 @@ export async function addHaccpDocument(planId, {
     sortOrder,
   });
   await markPlanDocumentationInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpDocuments',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, title: sanitizeTextField(title, 200), docKind },
+  });
   return id;
 }
 
@@ -2629,12 +2758,19 @@ export async function updateHaccpDocument(id, patch = {}) {
 
   if (!Object.keys(next).length) return;
   await db.haccpDocuments.update(did, next);
+  logAuditEvent({
+    entityTable: 'haccpDocuments',
+    entityId: did,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpDocument(id) {
   const did = sanitizeProductId(id);
   if (!did) return;
   await db.haccpDocuments.delete(did);
+  logAuditEvent({ entityTable: 'haccpDocuments', entityId: did, action: 'delete' });
 }
 
 /** הצעת קטלוג תיעוד בסיסי לפי מדריך משהב (שמירה ≥ שנתיים) */
@@ -2794,6 +2930,12 @@ export async function addHaccpPrpControl(planId, {
     sortOrder,
   });
   await markPlanPrpInProgress(plan);
+  logAuditEvent({
+    entityTable: 'haccpPrpControls',
+    entityId: id,
+    action: 'create',
+    snapshot: { planId: pid, topicId: tid, status: sanitizePrpStatus(status) },
+  });
   return id;
 }
 
@@ -2831,12 +2973,19 @@ export async function updateHaccpPrpControl(id, patch = {}) {
 
   if (!Object.keys(next).length) return;
   await db.haccpPrpControls.update(rid, next);
+  logAuditEvent({
+    entityTable: 'haccpPrpControls',
+    entityId: rid,
+    action: 'update',
+    snapshot: { ...row, ...next },
+  });
 }
 
 export async function deleteHaccpPrpControl(id) {
   const rid = sanitizeProductId(id);
   if (!rid) return;
   await db.haccpPrpControls.delete(rid);
+  logAuditEvent({ entityTable: 'haccpPrpControls', entityId: rid, action: 'delete' });
 }
 
 /** יצירת שלדי בקרה לכל נושאי המדריך שחסרים בתכנית */
@@ -2898,6 +3047,84 @@ export async function getHaccpMonitoringLogs(planId, { limit = 200 } = {}) {
   return rows
     .sort((a, b) => String(b.recordedAt || '').localeCompare(String(a.recordedAt || '')) || b.id - a.id)
     .slice(0, Math.max(1, Number(limit) || 200));
+}
+
+/**
+ * בניית דשבורד חריגות מנתונים שכבר נטענו (לבדיקות + UI).
+ */
+export function buildHaccpDeviationDashboard(logs, {
+  plans = [],
+  ccps = [],
+  days = 30,
+  nowMs = Date.now(),
+  limit = 50,
+} = {}) {
+  const windowMs = Math.max(1, Number(days) || 30) * 24 * 60 * 60 * 1000;
+  const cutoff = nowMs - windowMs;
+  const planMap = new Map((plans || []).map((p) => [Number(p.id), p]));
+  const ccpMap = new Map((ccps || []).map((c) => [Number(c.id), c]));
+
+  const parseWhen = (recordedAt) => {
+    const s = String(recordedAt || '').trim();
+    if (!s) return NaN;
+    const iso = s.length === 16 && s.includes('T') ? `${s}:00` : s;
+    const t = Date.parse(iso);
+    return Number.isFinite(t) ? t : NaN;
+  };
+
+  const items = (logs || [])
+    .filter((l) => l && l.result === 'deviation')
+    .map((l) => {
+      const whenMs = parseWhen(l.recordedAt);
+      const plan = planMap.get(Number(l.planId));
+      const ccp = ccpMap.get(Number(l.ccpId));
+      const hasCorrective = !!String(l.correctiveNote || '').trim();
+      return {
+        id: l.id,
+        planId: l.planId,
+        planName: plan?.name || 'תכנית',
+        ccpId: l.ccpId,
+        ccpCode: ccp?.code || 'CCP',
+        ccpName: ccp?.name || ccp?.hazardDescription || '—',
+        value: l.value || '',
+        unit: l.unit || '',
+        recordedAt: l.recordedAt || '',
+        whenMs: Number.isFinite(whenMs) ? whenMs : 0,
+        batchCode: l.batchCode || '',
+        correctiveNote: l.correctiveNote || '',
+        hasCorrective,
+        recordedByText: l.recordedByText || '',
+        recordedByRole: l.recordedByRole || '',
+      };
+    })
+    .filter((item) => !item.whenMs || item.whenMs >= cutoff)
+    .sort((a, b) => (b.whenMs - a.whenMs) || (Number(b.id) - Number(a.id)));
+
+  const capped = items.slice(0, Math.max(1, Number(limit) || 50));
+  const openWithoutCorrective = capped.filter((i) => !i.hasCorrective).length;
+  return {
+    days: Math.max(1, Number(days) || 30),
+    total: capped.length,
+    openWithoutCorrective,
+    items: capped,
+  };
+}
+
+/** דשבורד חריגות ניטור — כל התכניות או תכנית אחת */
+export async function getHaccpDeviationDashboard({
+  planId = null,
+  days = 30,
+  limit = 50,
+} = {}) {
+  const pid = planId ? sanitizeProductId(planId) : null;
+  const [plans, logs, ccps] = await Promise.all([
+    getHaccpPlans(),
+    pid
+      ? db.haccpMonitoringLogs.where('planId').equals(pid).toArray()
+      : db.haccpMonitoringLogs.toArray(),
+    db.haccpCcps.toArray(),
+  ]);
+  return buildHaccpDeviationDashboard(logs, { plans, ccps, days, limit });
 }
 
 /**

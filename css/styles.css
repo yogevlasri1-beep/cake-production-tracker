@@ -11342,6 +11342,40 @@ body.supplier-drag-active {
   cursor: not-allowed;
 }
 
+.haccp-deviation-card {
+  margin-top: 12px;
+}
+
+.haccp-deviation-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.haccp-deviation-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.haccp-deviation-row.needs-note {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.haccp-deviation-row.has-note {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
 .haccp-step-btn {
   display: flex;
   flex-direction: column;

@@ -1,14 +1,14 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=429';
+} from './supabase-backup.js?v=430';
 import {
   getValidSession,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=429';
-import { ValidationError } from './validators.js?v=429';
-import { logAuditEvent } from './audit.js?v=429';
+} from './auth.js?v=430';
+import { ValidationError } from './validators.js?v=430';
+import { logAuditEvent } from './audit.js?v=430';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {

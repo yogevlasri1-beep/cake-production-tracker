@@ -1,13 +1,13 @@
 // RBAC שלב 3+: audit trail — כתיבה best-effort + קריאה ליומן (מנהל/admin).
 // כישלון רשת/הרשאות בכתיבה לא חוסם פעולה עסקית.
-import { getValidSession } from './auth.js?v=429';
+import { getValidSession } from './auth.js?v=430';
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
   getOrCreateDeviceId,
   getBackupScopeId,
-} from './supabase-backup.js?v=429';
-import { ValidationError } from './validators.js?v=429';
+} from './supabase-backup.js?v=430';
+import { ValidationError } from './validators.js?v=430';
 
 const AUDIT_ACTIONS = ['create', 'update', 'delete'];
 const TABLE = 'sync_audit_log';
@@ -16,11 +16,21 @@ const ENTITY_LABELS = {
   haccpCcps: 'נקודות בקרה (CCP)',
   haccpCriticalLimits: 'גבולות קריטיים',
   haccpMonitoringLogs: 'יומן ניטור',
+  haccpMonitoring: 'נהלי ניטור',
+  haccpCorrectiveActions: 'פעולות מתקנות',
+  haccpVerificationProcs: 'נהלי אימות',
+  haccpDocuments: 'מסמכי HACCP',
   haccpHazards: 'סיכונים',
-  haccpPrp: 'PRP',
-  haccpTeam: 'צוות HACCP',
-  haccpProducts: 'מוצרי HACCP',
+  haccpPrpControls: 'תכניות קדם (PRP)',
+  haccpPrp: 'תכניות קדם (PRP)', // alias ישן
+  haccpTeamMembers: 'צוות HACCP',
+  haccpTeam: 'צוות HACCP', // alias ישן
+  haccpProductDescriptions: 'תיאור מוצר HACCP',
+  haccpProducts: 'תיאור מוצר HACCP', // alias ישן
+  haccpIntendedUses: 'שימוש מיועד',
   haccpFlowSteps: 'שלבי תרשים זרימה',
+  haccpFlowVerifications: 'אימות תרשים זרימה',
+  haccpPlans: 'תכניות HACCP',
   profiles: 'חשבונות',
   inventoryBalances: 'יתרות מלאי',
   inventoryMovements: 'תנועות מלאי',
