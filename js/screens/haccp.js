@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=428';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=428';
-import { openModal, closeModal } from '../modal.js?v=428';
-import { printHaccpPlan } from '../haccp-print.js?v=428';
-import { getCurrentUserRole } from '../auth.js?v=428';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=428';
+import { getCategoryGroups } from '../db.js?v=429';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=429';
+import { openModal, closeModal } from '../modal.js?v=429';
+import { printHaccpPlan } from '../haccp-print.js?v=429';
+import { getCurrentUserRole } from '../auth.js?v=429';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=429';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -127,9 +127,13 @@ import {
   getHaccpPlanReadiness,
   cloneHaccpPlan,
   suggestCorrectiveNoteForDeviation,
-} from '../haccp-db.js?v=428';
+  HACCP_WIZARD_STEPS,
+  getHaccpWizardState,
+  createHaccpPlanFromBakeryTemplate,
+} from '../haccp-db.js?v=429';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
+const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
 
 function getSavedStep() {
   try {
@@ -142,6 +146,20 @@ function getSavedStep() {
 function saveStep(id) {
   try {
     sessionStorage.setItem(STEP_STORAGE_KEY, id);
+  } catch { /* ignore */ }
+}
+
+function isWizardMode() {
+  try {
+    return sessionStorage.getItem(WIZARD_MODE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setWizardMode(on) {
+  try {
+    sessionStorage.setItem(WIZARD_MODE_KEY, on ? '1' : '0');
   } catch { /* ignore */ }
 }
 
@@ -168,7 +186,7 @@ export async function renderHaccp(container) {
 
   const groupMap = new Map(groups.map((g) => [g.id, g]));
   const activePlan = plans.find((p) => p.id === activePlanId) || null;
-  const step = HACCP_STEPS.find((s) => s.id === stepId) || HACCP_STEPS[0];
+  let step = HACCP_STEPS.find((s) => s.id === stepId) || HACCP_STEPS[0];
 
   let productDesc = null;
   let familyProducts = [];
@@ -187,12 +205,33 @@ export async function renderHaccp(container) {
   let documents = [];
   let prpControls = [];
   let readiness = null;
-  if ((step.id === 'overview' || step.id === 'product' || step.id === 'prp') && activePlan) {
+  let wizardState = null;
+  const wizardOn = isWizardMode();
+  const needReadiness = !!activePlan && (
+    step.id === 'overview'
+    || step.id === 'product'
+    || step.id === 'prp'
+    || wizardOn
+  );
+  if (needReadiness && activePlan) {
     try {
       readiness = await getHaccpPlanReadiness(activePlan.id);
     } catch {
       readiness = null;
     }
+  }
+  if (wizardOn && activePlan && readiness) {
+    try {
+      wizardState = await getHaccpWizardState(activePlan.id, readiness);
+    } catch {
+      wizardState = null;
+    }
+  }
+  if (wizardOn && wizardState && !wizardState.isUnlocked(step.id) && canAccessHaccpStep(role, wizardState.firstIncomplete)) {
+    stepId = wizardState.firstIncomplete;
+    container.dataset.haccpStep = stepId;
+    saveStep(stepId);
+    step = HACCP_STEPS.find((s) => s.id === stepId) || HACCP_STEPS[0];
   }
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
@@ -306,7 +345,7 @@ export async function renderHaccp(container) {
   } else body = renderSoonStep(step);
 
   container.innerHTML = `
-    <div class="haccp-screen">
+    <div class="haccp-screen${wizardOn ? ' is-wizard' : ''}">
       <div class="card haccp-hero">
         <div class="card-title">מערכת בקרת בטיחות מזון עצמית מבוססת HACCP</div>
         <p class="haccp-hero-text">
@@ -317,17 +356,43 @@ export async function renderHaccp(container) {
       </div>
 
       <div class="card">
-        <div class="card-title">מפת דרכים</div>
+        <div class="haccp-roadmap-head">
+          <div class="card-title" style="margin:0">מפת דרכים</div>
+          <label class="haccp-wizard-toggle">
+            <input type="checkbox" id="haccp-wizard-mode" ${wizardOn ? 'checked' : ''}>
+            <span>מצב אשף (נעילת דילוגים)</span>
+          </label>
+        </div>
+        ${wizardOn && wizardState ? `
+          <div class="haccp-wizard-progress" aria-label="התקדמות אשף">
+            <div class="haccp-wizard-progress-bar" aria-hidden="true">
+              <span style="width:${Math.round(((wizardState.progressIndex) / Math.max(1, wizardState.progressTotal)) * 100)}%"></span>
+            </div>
+            <span class="form-hint">שלב ${wizardState.progressIndex + 1} מתוך ${wizardState.progressTotal}
+              · הבא להשלמה: ${escapeHtml(HACCP_STEPS.find((s) => s.id === wizardState.firstIncomplete)?.label || '')}</span>
+          </div>` : ''}
         <div class="haccp-roadmap" role="tablist" aria-label="שלבי HACCP">
           ${HACCP_STEPS.map((s) => {
             const denied = !canAccessHaccpStep(role, s.id);
+            const wizardLocked = wizardOn && wizardState && !wizardState.isUnlocked(s.id) && !denied;
             const active = s.id === step.id ? ' is-active' : '';
-            const locked = (s.status === 'soon' || denied) ? ' is-soon' : '';
+            const locked = (s.status === 'soon' || denied || wizardLocked) ? ' is-soon' : '';
             const preview = s.status === 'preview' ? ' is-preview' : '';
-            const badge = s.status === 'soon' ? 'בקרוב' : denied ? 'ללא הרשאה' : s.status === 'preview' ? 'תצוגה' : s.chapter;
+            const badge = s.status === 'soon'
+              ? 'בקרוב'
+              : denied
+                ? 'ללא הרשאה'
+                : wizardLocked
+                  ? 'נעול'
+                  : s.status === 'preview'
+                    ? 'תצוגה'
+                    : s.chapter;
             return `
               <button type="button" class="haccp-step-btn${active}${locked}${preview}"
-                data-haccp-step="${s.id}" role="tab" aria-selected="${s.id === step.id}">
+                data-haccp-step="${s.id}"
+                ${wizardLocked ? 'data-haccp-wizard-locked="1"' : ''}
+                role="tab" aria-selected="${s.id === step.id}"
+                ${wizardLocked || denied ? 'aria-disabled="true"' : ''}>
                 <span class="haccp-step-chapter">${escapeHtml(badge)}</span>
                 <span class="haccp-step-label">${escapeHtml(s.label)}</span>
               </button>`;
@@ -337,12 +402,31 @@ export async function renderHaccp(container) {
 
       <div class="haccp-step-panel" data-step="${escapeHtml(step.id)}">
         ${body}
+        ${renderWizardNav(step.id, wizardOn, wizardState)}
       </div>
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, monitoringLogs, correctiveActions, verificationProcs, documents, prpControls, readiness,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, monitoringLogs, correctiveActions, verificationProcs, documents, prpControls, readiness, wizardState, wizardOn,
   });
+}
+
+function renderWizardNav(stepId, wizardOn, wizardState) {
+  if (!wizardOn || !wizardState) return '';
+  if (!HACCP_WIZARD_STEPS.includes(stepId)) return '';
+  const prev = wizardState.prevStepId(stepId);
+  const next = wizardState.nextStepId(stepId);
+  const labelOf = (id) => HACCP_STEPS.find((s) => s.id === id)?.label || id;
+  return `
+    <div class="haccp-wizard-nav card">
+      <button type="button" class="btn btn-secondary" data-haccp-step="${prev || ''}"
+        ${prev ? '' : 'disabled'}>← הקודם${prev ? `: ${escapeHtml(labelOf(prev))}` : ''}</button>
+      <button type="button" class="btn btn-primary" data-haccp-step="${next || ''}"
+        ${next ? '' : 'disabled'}
+        title="${next ? '' : 'השלם את הסעיף הנוכחי כדי להמשיך'}">
+        ${next ? `הבא: ${escapeHtml(labelOf(next))} →` : 'השלם שלב זה כדי להמשיך'}
+      </button>
+    </div>`;
 }
 
 function renderPlanPicker(plans, groups, activePlan, groupMap) {
@@ -385,8 +469,11 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
               <option value="">${availableGroups.length ? 'בחר משפחה…' : 'כל המשפחות כבר משויכות'}</option>
               ${createOptions}
             </select>
-            <button type="button" class="btn btn-primary btn-sm" id="haccp-create-plan"
-              ${availableGroups.length ? '' : 'disabled'}>צור</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="haccp-create-plan"
+              ${availableGroups.length ? '' : 'disabled'}>צור ריקה</button>
+            <button type="button" class="btn btn-primary btn-sm" id="haccp-create-from-template"
+              ${availableGroups.length ? '' : 'disabled'}
+              title="צוות + שימוש מיועד + טיוטת PRP/תרשים/סיכונים/CCP">מתבנית מאפייה</button>
           </div>
         </div>
       </div>
@@ -436,7 +523,7 @@ function renderOverview(members, plans, groups, activePlan = null, readiness = n
           (מתוך ${groups.length} משפחות במערכת)</li>
         <li>השלבים הפעילים: PRP + הכנה + 5.1–5.7 + יומן ניטור</li>
       </ul>
-      <p class="haccp-hint">המלצה: התחל מבניית טיוטה, ואז השלם שימוש מיועד ואימות תרשים בשטח.</p>
+      <p class="haccp-hint">המלצה: צור תכנית «מתבנית מאפייה», הפעל מצב אשף, והשלם אימות תרשים + שמות צוות.</p>
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-secondary" data-haccp-step="monitor_log">יומן ניטור</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">נהלי ניטור</button>
@@ -2318,12 +2405,24 @@ function renderTeamSection(members) {
 }
 
 function bindHaccpEvents(container, ctx) {
+  document.getElementById('haccp-wizard-mode')?.addEventListener('change', (e) => {
+    setWizardMode(!!e.target.checked);
+    if (e.target.checked && ctx.activePlan && ctx.wizardState?.firstIncomplete) {
+      container.dataset.haccpStep = ctx.wizardState.firstIncomplete;
+    }
+    renderHaccp(container);
+  });
+
   container.querySelectorAll('[data-haccp-step]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.haccpStep;
       if (!id) return;
       if (!canAccessHaccpStep(getCurrentUserRole(), id)) {
         showToast(PERMISSION_DENIED_MESSAGE);
+        return;
+      }
+      if (btn.dataset.haccpWizardLocked === '1' || (ctx.wizardOn && ctx.wizardState && !ctx.wizardState.isUnlocked(id))) {
+        showToast('במצב אשף: השלם את השלבים הקודמים לפני דילוג');
         return;
       }
       container.dataset.haccpStep = id;
@@ -2362,6 +2461,26 @@ function bindHaccpEvents(container, ctx) {
       renderHaccp(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('haccp-create-from-template')?.addEventListener('click', async () => {
+    const gid = document.getElementById('haccp-new-family')?.value;
+    if (!gid) return showToast('בחר משפחת מוצרים');
+    if (!confirm('ליצור תכנית מתבנית מאפייה?\nימולאו צוות בסיסי (אם חסר), שימוש מיועד, וטיוטת PRP/תרשים/סיכונים/CCP.')) return;
+    const btn = document.getElementById('haccp-create-from-template');
+    if (btn) btn.disabled = true;
+    try {
+      showToast('בונה מתבנית מאפייה…');
+      const result = await createHaccpPlanFromBakeryTemplate(gid);
+      setWizardMode(true);
+      container.dataset.haccpStep = result.readiness?.missing?.[0]?.stepId || 'flow_verify';
+      showToast(`תכנית מתבנית ✓ (+${result.addedTotal}) · מוכנות ${result.readiness?.percent ?? '?'}%`);
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה ביצירת תבנית');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   });
 

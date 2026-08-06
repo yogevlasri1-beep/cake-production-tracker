@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=428';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=428';
-import { logAuditEvent } from './audit.js?v=428';
+import { db, ValidationError } from './db.js?v=429';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=429';
+import { logAuditEvent } from './audit.js?v=429';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -20,6 +20,55 @@ export const HACCP_STEPS = [
   { id: 'verification', label: 'אימות מערכת', chapter: '5.6', status: 'available' },
   { id: 'documentation', label: 'תיעוד ורישום', chapter: '5.7', status: 'available' },
 ];
+
+/**
+ * סדר אשף בניית תכנית (ללא סקירה / יומן תפעולי).
+ * נעילה באשף: שלב הבא נפתח אחרי שסעיף המוכנות של הקודם מסומן כהושלם.
+ */
+export const HACCP_WIZARD_STEPS = [
+  'team',
+  'prp',
+  'product',
+  'intended_use',
+  'flow',
+  'flow_verify',
+  'hazard',
+  'ccp',
+  'limits',
+  'monitoring',
+  'corrective',
+  'verification',
+  'documentation',
+];
+
+/** תבנית צוות מאפייה בסיסית (רק אם אין חברים בכלל) */
+export const BAKERY_TEAM_TEMPLATE = [
+  {
+    name: 'מוביל איכות',
+    role: 'quality',
+    isLeader: true,
+    authorityNotes: 'אישור פעולות מתקנות וחריגות CCP',
+  },
+  {
+    name: 'אחראי ייצור',
+    role: 'production',
+    isLeader: false,
+    authorityNotes: 'ביצוע ניטור בשטח ורישום יומן',
+  },
+];
+
+/** שימוש מיועד — ברירת מחדל למאפייה קמעונאית */
+export const BAKERY_INTENDED_USE_TEMPLATE = {
+  targetAudience: 'צרכנים פרטיים הרוכשים מוצרי מאפה טריים / ארוזים',
+  consumptionModes: ['ready_to_eat'],
+  channels: ['retail', 'foodservice'],
+  sensitiveGroups: ['general', 'children', 'allergy'],
+  sensitiveNotes: 'מוצרים עשויים להכיל אלרגנים נפוצים (גלוטן, ביצים, חלב, אגוזים) — יש לסמן על התווית',
+  consumerInstructions: 'לאחסן לפי הוראות האריזה. מוצרים רגישים לקירור — לשמור בקירור עד הצריכה',
+  potentialMisuse: 'אחסון מחוץ לטמפרטורה הנדרשת / צריכה אחרי תום תוקף',
+  notSuitableFor: 'צרכנים עם אלרגיה לאלרגנים המסומנים על האריזה',
+  notes: 'טיוטת מאפייה — יש להתאים למשפחת המוצרים הספציפית',
+};
 
 /** נושאי תכניות קדם מהמדריך */
 export const HACCP_PRP_TOPICS = [
@@ -3518,5 +3567,157 @@ export async function cloneHaccpPlan(sourcePlanId, targetCategoryGroupId, { name
 
   await setActiveHaccpPlanId(newPlanId);
   return newPlanId;
+}
+
+/**
+ * מצב אשף: אילו שלבים פתוחים / נעולים לפי מוכנות.
+ * overview ו-monitor_log תמיד פתוחים (סקירה ותפעול יומיומי).
+ * flow_verify הוא המלצה חזקה אך לא חוסם את המשך ניתוח הסיכונים.
+ */
+export async function getHaccpWizardState(planId, readiness = null) {
+  const pid = sanitizeProductId(planId);
+  const ready = readiness || (pid ? await getHaccpPlanReadiness(pid) : null);
+  const doneByStep = new Map();
+  for (const item of ready?.items || []) {
+    doneByStep.set(item.stepId, !!item.done);
+  }
+
+  /** שלבים שחוסמים את הבא אחריהם (אימות תרשים — אופציונלי לנעילה) */
+  const gateDone = (stepId) => {
+    if (stepId === 'flow_verify') return true;
+    return !!doneByStep.get(stepId);
+  };
+
+  const unlocked = new Set(['overview', 'monitor_log']);
+  let prevGateOk = true;
+  for (const stepId of HACCP_WIZARD_STEPS) {
+    if (prevGateOk) {
+      unlocked.add(stepId);
+      if (!gateDone(stepId)) prevGateOk = false;
+    }
+  }
+  const firstIncomplete = HACCP_WIZARD_STEPS.find((id) => !doneByStep.get(id))
+    || 'documentation';
+
+  const indexOf = (id) => {
+    const i = HACCP_WIZARD_STEPS.indexOf(id);
+    return i >= 0 ? i : -1;
+  };
+
+  return {
+    planId: pid,
+    wizardSteps: [...HACCP_WIZARD_STEPS],
+    unlocked: [...unlocked],
+    isUnlocked(stepId) {
+      return unlocked.has(stepId);
+    },
+    firstIncomplete,
+    prevStepId(stepId) {
+      const i = indexOf(stepId);
+      return i > 0 ? HACCP_WIZARD_STEPS[i - 1] : null;
+    },
+    nextStepId(stepId) {
+      const i = indexOf(stepId);
+      if (i < 0 || i >= HACCP_WIZARD_STEPS.length - 1) return null;
+      const next = HACCP_WIZARD_STEPS[i + 1];
+      return unlocked.has(next) ? next : null;
+    },
+    progressIndex: Math.max(0, indexOf(firstIncomplete)),
+    progressTotal: HACCP_WIZARD_STEPS.length,
+    readiness: ready,
+  };
+}
+
+/** זריעת צוות מאפייה בסיסי — רק כשאין חברים פעילים */
+export async function seedBakeryTeamDefaults() {
+  const members = await getHaccpTeamMembers();
+  const active = members.filter((m) => m.active !== false);
+  if (active.length) {
+    throw new ValidationError('כבר יש חברי צוות');
+  }
+  let added = 0;
+  for (const row of BAKERY_TEAM_TEMPLATE) {
+    await addHaccpTeamMember({ ...row });
+    added += 1;
+  }
+  return added;
+}
+
+/** זריעת שימוש מיועד למאפייה — רק אם השדות ריקים */
+export async function seedBakeryIntendedUse(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const current = await getHaccpIntendedUse(pid);
+  const hasContent = !!(
+    String(current.targetAudience || '').trim()
+    || (current.consumptionModes || []).length
+    || (current.channels || []).length
+  );
+  if (hasContent) throw new ValidationError('כבר יש שימוש מיועד');
+  await saveHaccpIntendedUse(pid, { ...BAKERY_INTENDED_USE_TEMPLATE });
+  return 1;
+}
+
+/**
+ * יצירת תכנית מתבנית מאפייה:
+ * צוות בסיסי (אם חסר) → שימוש מיועד → buildHaccpPlanDraft.
+ */
+export async function createHaccpPlanFromBakeryTemplate(categoryGroupId, {
+  name = '',
+  preferProductionFlow = true,
+  confirmCcpCandidates = true,
+} = {}) {
+  const planId = await ensureHaccpPlanForGroup(categoryGroupId, { name });
+  const steps = [];
+
+  const run = async (label, fn) => {
+    try {
+      const count = await fn();
+      steps.push({
+        label,
+        ok: true,
+        skipped: false,
+        count: Number.isFinite(count) ? count : 0,
+        message: '',
+      });
+    } catch (err) {
+      const message = err?.message || String(err);
+      const skipped = /כבר/.test(message);
+      steps.push({
+        label,
+        ok: skipped,
+        skipped,
+        count: 0,
+        message,
+      });
+    }
+  };
+
+  await run('צוות מאפייה בסיסי', () => seedBakeryTeamDefaults());
+  await run('שימוש מיועד (מאפייה)', () => seedBakeryIntendedUse(planId));
+
+  const draft = await buildHaccpPlanDraft(planId, {
+    preferProductionFlow,
+    confirmCcpCandidates,
+  });
+
+  await db.haccpPlans.update(planId, {
+    status: 'in_progress',
+    currentStep: 'flow_verify',
+    notes: 'נוצר מתבנית מאפייה — יש לאמת תרשים בשטח ולהתאים שמות צוות',
+  });
+
+  const readiness = await getHaccpPlanReadiness(planId);
+  return {
+    planId,
+    steps: [...steps, ...(draft.steps || [])],
+    addedTotal: steps.reduce((s, x) => s + (x.count || 0), 0) + (draft.addedTotal || 0),
+    failed: [
+      ...steps.filter((s) => !s.ok && !s.skipped),
+      ...(draft.failed || []),
+    ],
+    readiness,
+    draft,
+  };
 }
 

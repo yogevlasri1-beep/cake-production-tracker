@@ -11282,6 +11282,66 @@ body.supplier-drag-active {
   gap: 8px;
 }
 
+.haccp-roadmap-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.haccp-wizard-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.haccp-wizard-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.haccp-wizard-progress-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.haccp-wizard-progress-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--primary, #2563eb);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.haccp-wizard-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.haccp-wizard-nav .btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.haccp-screen.is-wizard .haccp-step-btn[data-haccp-wizard-locked="1"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .haccp-step-btn {
   display: flex;
   flex-direction: column;
