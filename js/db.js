@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=418';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=418';
-import { defaultColorForIndex } from './chart.js?v=418';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=418';
+} from './validators.js?v=419';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=419';
+import { defaultColorForIndex } from './chart.js?v=419';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=419';
 
 export { ValidationError };
 
@@ -3311,6 +3311,10 @@ db.version(81).stores({
   inventoryBalances: '++id, rawMaterialId',
 });
 
+db.version(82).stores({
+  inventoryMovements: '++id, rawMaterialId, at',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3812,7 +3816,7 @@ export async function resetAllData() {
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeIngredients',
     'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
     'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials',
-    'inventoryBalances',
+    'inventoryBalances', 'inventoryMovements',
     'rawMaterialPriceHistory', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents',
     'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
@@ -3831,6 +3835,7 @@ export async function resetAllData() {
     await db.recipeGroups.clear();
     await db.rawMaterialPriceHistory?.clear?.();
     await db.inventoryBalances?.clear?.();
+    await db.inventoryMovements?.clear?.();
     await db.rawMaterials.clear();
     await db.suppliers.clear();
     await db.supplierCategories.clear();
@@ -4009,6 +4014,7 @@ export async function exportAllData() {
     haccpPrpControls,
     haccpMonitoringLogs,
     inventoryBalances,
+    inventoryMovements,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -4085,6 +4091,7 @@ export async function exportAllData() {
     db.haccpPrpControls?.toArray?.() ?? Promise.resolve([]),
     db.haccpMonitoringLogs?.toArray?.() ?? Promise.resolve([]),
     db.inventoryBalances?.toArray?.() ?? Promise.resolve([]),
+    db.inventoryMovements?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4161,6 +4168,7 @@ export async function exportAllData() {
     haccpPrpControls,
     haccpMonitoringLogs,
     inventoryBalances,
+    inventoryMovements,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4212,6 +4220,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.suppliers)) payload.suppliers = [];
   if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
   if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
+  if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
   if (!Array.isArray(payload.rawMaterialPriceHistory)) payload.rawMaterialPriceHistory = [];
   if (!Array.isArray(payload.supplierShortages)) payload.supplierShortages = [];
   if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
@@ -4253,6 +4262,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.haccpPrpControls)) payload.haccpPrpControls = [];
   if (!Array.isArray(payload.haccpMonitoringLogs)) payload.haccpMonitoringLogs = [];
   if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
+  if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4283,7 +4293,7 @@ export async function importAllData(payload) {
       'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
       'recipeGroups', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
       'recipeCategories', 'recipes', 'recipeIngredients', 'supplierCategories', 'suppliers',
-      'rawMaterials', 'inventoryBalances', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
+      'rawMaterials', 'inventoryBalances', 'inventoryMovements', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
       'weeklyProductionPlanItems', 'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
       'productRecipeComponents',
       'productPortionComponents',
@@ -4309,6 +4319,7 @@ export async function importAllData(payload) {
       await db.haccpTeamMembers?.clear?.();
       await db.haccpMonitoringLogs?.clear?.();
       await db.inventoryBalances?.clear?.();
+      await db.inventoryMovements?.clear?.();
       await db.haccpPrpControls?.clear?.();
       await db.haccpDocuments?.clear?.();
       await db.haccpVerificationProcs?.clear?.();
@@ -4458,6 +4469,7 @@ export async function importAllData(payload) {
       if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);
       if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
       if (payload.inventoryBalances?.length) await db.inventoryBalances.bulkPut(payload.inventoryBalances);
+      if (payload.inventoryMovements?.length) await db.inventoryMovements.bulkPut(payload.inventoryMovements);
       if (payload.supplierShortages?.length) await db.supplierShortages.bulkPut(payload.supplierShortages);
       if (payload.rawMaterialPriceHistory?.length) await db.rawMaterialPriceHistory.bulkPut(payload.rawMaterialPriceHistory);
       if (payload.weeklyProductionPlans.length) await db.weeklyProductionPlans.bulkPut(payload.weeklyProductionPlans);

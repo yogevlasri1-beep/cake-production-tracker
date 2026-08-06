@@ -12047,6 +12047,12 @@ body.supplier-drag-active {
   margin-bottom: 4px;
 }
 
+.inventory-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 /* כשהתפריט פתוח — להעלות את ה-header מעל התוכן והניווט התחתון */
 .app-header.workspace-drawer-open {
   z-index: 300;

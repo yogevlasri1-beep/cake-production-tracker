@@ -1,18 +1,21 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=418';
-import { openModal, closeModal } from '../modal.js?v=418';
-import { requestAutoBackupNow } from '../backup-service.js?v=418';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=419';
+import { openModal, closeModal } from '../modal.js?v=419';
+import { requestAutoBackupNow } from '../backup-service.js?v=419';
 import {
   getInventoryStockRows,
+  getInventoryMovements,
   adjustInventoryStock,
   addInventoryItemToShortages,
   inventoryLowCount,
-} from '../inventory-db.js?v=418';
-import { getSupplierCategories } from '../kitchen-db.js?v=418';
+  inventoryMovementKindLabel,
+} from '../inventory-db.js?v=419';
+import { getSupplierCategories } from '../kitchen-db.js?v=419';
 
 export function inventoryMeta() {
+  const tab = sessionStorage.getItem('yitzurInventoryTab') || 'stock';
   return {
     title: 'מלאי',
-    subtitle: 'יתרות חומרי גלם והתאמות מלאי',
+    subtitle: tab === 'movements' ? 'יומן תנועות מלאי' : 'יתרות חומרי גלם והתאמות מלאי',
   };
 }
 
@@ -30,6 +33,20 @@ function formatQty(n, unit) {
   const q = Number(n);
   const s = Number.isFinite(q) ? String(q) : '0';
   return unit ? `${s} ${escapeHtml(unit)}` : s;
+}
+
+function formatDelta(delta, unit) {
+  const d = Number(delta) || 0;
+  const sign = d > 0 ? '+' : '';
+  return `${sign}${formatQty(d, unit)}`;
+}
+
+function tabsHtml(active) {
+  return `
+    <div class="inventory-tabs" role="tablist">
+      <button type="button" class="login-gate-tab ${active === 'stock' ? 'active' : ''}" data-inv-tab="stock">יתרות</button>
+      <button type="button" class="login-gate-tab ${active === 'movements' ? 'active' : ''}" data-inv-tab="movements">יומן תנועות</button>
+    </div>`;
 }
 
 function stockCard(row) {
@@ -51,6 +68,26 @@ function stockCard(row) {
       <div class="accounts-actions">
         <button type="button" class="btn btn-primary inventory-adjust" data-material-id="${m.id}">התאם מלאי</button>
         <button type="button" class="btn btn-secondary inventory-to-shortage" data-material-id="${m.id}">הוסף לחוסרים</button>
+        <button type="button" class="btn btn-secondary inventory-show-moves" data-material-id="${m.id}" data-material-name="${escapeHtml(m.name)}">יומן</button>
+      </div>
+    </div>`;
+}
+
+function movementCard(m) {
+  const deltaClass = Number(m.delta) > 0 ? 'lots-hit' : (Number(m.delta) < 0 ? '' : '');
+  return `
+    <div class="card inventory-card">
+      <div class="accounts-card-head">
+        <div>
+          <div class="card-title" style="margin-bottom:4px">${escapeHtml(m.materialName || `חומר #${m.rawMaterialId}`)}</div>
+          <p class="form-hint" style="margin:0">${escapeHtml(formatDateTime(m.at))} · ${escapeHtml(inventoryMovementKindLabel(m.kind))}</p>
+          <p class="form-hint" style="margin:4px 0 0">
+            <span class="${deltaClass}"><strong>${formatDelta(m.delta, m.unit)}</strong></span>
+            · לפני: ${formatQty(m.qtyBefore, m.unit)} → אחרי: ${formatQty(m.qtyAfter, m.unit)}
+          </p>
+          ${m.reason ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(m.reason)}</p>` : ''}
+          ${m.userEmail ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(m.userName || m.userEmail)}</p>` : ''}
+        </div>
       </div>
     </div>`;
 }
@@ -108,7 +145,7 @@ function openAdjustModal(row, onDone) {
       });
       closeModal();
       showToast('המלאי עודכן');
-      requestAutoBackupNow?.();
+      requestAutoBackupNow();
       onDone();
     } catch (err) {
       if (errEl) {
@@ -121,12 +158,10 @@ function openAdjustModal(row, onDone) {
   });
 }
 
-export async function renderInventory(container) {
+async function renderStockTab(container) {
   const search = container.dataset.invSearch || '';
   const categoryId = container.dataset.invCategory || '';
   const lowOnly = container.dataset.invLowOnly === '1';
-
-  container.innerHTML = `<div class="card"><p class="form-hint">טוען מלאי...</p></div>`;
 
   let cats = [];
   let rows = [];
@@ -136,12 +171,11 @@ export async function renderInventory(container) {
       getInventoryStockRows({ search, categoryId: categoryId || null, lowOnly }),
     ]);
   } catch (err) {
-    container.innerHTML = `
+    return `
       <div class="card" style="border:2px solid var(--danger)">
         <div class="card-title">שגיאה בטעינת מלאי</div>
         <p>${escapeHtml(err.message || err)}</p>
       </div>`;
-    return;
   }
 
   const lowCount = inventoryLowCount(rows);
@@ -150,29 +184,110 @@ export async function renderInventory(container) {
     ...cats.map((c) => `<option value="${c.id}" ${String(c.id) === String(categoryId) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`),
   ].join('');
 
+  return {
+    html: `
+      <div class="card">
+        <div class="card-title">יתרות חומרי גלם</div>
+        <p class="form-hint">התאם מלאי אחרי ספירה או קבלה. חומר מתחת למינימום — אפשר להוסיף לחוסרים.</p>
+        <p class="form-hint" style="margin:0">מוצגים: <strong>${rows.length}</strong>${lowCount ? ` · מתחת למינימום: <strong style="color:var(--danger)">${lowCount}</strong>` : ''}</p>
+        <form id="inv-filter-form" class="lots-search-form" style="margin-top:12px">
+          <div class="form-group">
+            <label for="inv-search">חיפוש</label>
+            <input type="search" id="inv-search" value="${escapeHtml(search)}" placeholder="שם חומר">
+          </div>
+          <div class="form-group">
+            <label for="inv-category">קטגוריית ספק</label>
+            <select id="inv-category">${catOptions}</select>
+          </div>
+          <label class="form-hint" style="display:flex;gap:8px;align-items:center;margin:8px 0">
+            <input type="checkbox" id="inv-low-only" ${lowOnly ? 'checked' : ''}>
+            הצג רק מתחת למינימום
+          </label>
+          <button type="submit" class="btn btn-primary">סנן</button>
+        </form>
+      </div>
+      ${rows.length ? rows.map(stockCard).join('') : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>'}
+    `,
+    rows,
+  };
+}
+
+async function renderMovementsTab(container) {
+  const search = container.dataset.invMoveSearch || '';
+  const materialId = container.dataset.invMoveMaterial || '';
+  let moves = [];
+  try {
+    moves = await getInventoryMovements({
+      rawMaterialId: materialId || null,
+      search,
+      limit: 250,
+    });
+  } catch (err) {
+    return {
+      html: `
+        <div class="card" style="border:2px solid var(--danger)">
+          <div class="card-title">שגיאה בטעינת יומן</div>
+          <p>${escapeHtml(err.message || err)}</p>
+        </div>`,
+    };
+  }
+
+  return {
+    html: `
+      <div class="card">
+        <div class="card-title">יומן תנועות מלאי</div>
+        <p class="form-hint">כל התאמה (+/− / הגדרה) נרשמת כאן עם כמות לפני/אחרי, סיבה ומשתמש.</p>
+        <form id="inv-move-filter" class="lots-search-form" style="margin-top:12px">
+          <div class="form-group">
+            <label for="inv-move-search">חיפוש</label>
+            <input type="search" id="inv-move-search" value="${escapeHtml(search)}" placeholder="חומר / סיבה / משתמש">
+          </div>
+          ${materialId ? `<p class="form-hint">מסונן לפי חומר #${escapeHtml(materialId)} · <button type="button" class="btn btn-secondary" id="inv-clear-mat-filter">הצג הכל</button></p>` : ''}
+          <button type="submit" class="btn btn-primary">סנן</button>
+        </form>
+        <p class="form-hint" style="margin:8px 0 0">מוצגות ${moves.length} תנועות אחרונות</p>
+      </div>
+      ${moves.length ? moves.map(movementCard).join('') : '<div class="card"><p class="form-hint">עדיין אין תנועות. בצע התאמת מלאי בטאב «יתרות».</p></div>'}
+    `,
+  };
+}
+
+export async function renderInventory(container) {
+  const tab = container.dataset.invTab || sessionStorage.getItem('yitzurInventoryTab') || 'stock';
+  container.dataset.invTab = tab;
+  sessionStorage.setItem('yitzurInventoryTab', tab);
+
+  container.innerHTML = `<div class="card"><p class="form-hint">טוען מלאי...</p></div>`;
+
+  let body = '';
+  let stockRows = [];
+  if (tab === 'movements') {
+    const res = await renderMovementsTab(container);
+    body = res.html;
+  } else {
+    const res = await renderStockTab(container);
+    body = res.html;
+    stockRows = res.rows || [];
+  }
+
+  const titleEl = document.getElementById('page-subtitle');
+  if (titleEl) titleEl.textContent = inventoryMeta().subtitle;
+
   container.innerHTML = `
     <div class="card">
-      <div class="card-title">מלאי חומרי גלם</div>
-      <p class="form-hint">יתרות מקושרות לחומרים מעמדת ספקים. התאם מלאי אחרי ספירה או קבלה. חומר מתחת למינימום — אפשר להוסיף לחוסרים.</p>
-      <p class="form-hint" style="margin:0">מוצגים: <strong>${rows.length}</strong>${lowCount ? ` · מתחת למינימום: <strong style="color:var(--danger)">${lowCount}</strong>` : ''}</p>
-      <form id="inv-filter-form" class="lots-search-form" style="margin-top:12px">
-        <div class="form-group">
-          <label for="inv-search">חיפוש</label>
-          <input type="search" id="inv-search" value="${escapeHtml(search)}" placeholder="שם חומר">
-        </div>
-        <div class="form-group">
-          <label for="inv-category">קטגוריית ספק</label>
-          <select id="inv-category">${catOptions}</select>
-        </div>
-        <label class="form-hint" style="display:flex;gap:8px;align-items:center;margin:8px 0">
-          <input type="checkbox" id="inv-low-only" ${lowOnly ? 'checked' : ''}>
-          הצג רק מתחת למינימום
-        </label>
-        <button type="submit" class="btn btn-primary">סנן</button>
-      </form>
+      <div class="card-title">מלאי</div>
+      ${tabsHtml(tab)}
     </div>
-    ${rows.length ? rows.map(stockCard).join('') : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>'}
+    ${body}
   `;
+
+  container.querySelectorAll('[data-inv-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.invTab = btn.dataset.invTab;
+      sessionStorage.setItem('yitzurInventoryTab', btn.dataset.invTab);
+      renderInventory(container);
+    });
+  });
 
   container.querySelector('#inv-filter-form')?.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -182,10 +297,21 @@ export async function renderInventory(container) {
     renderInventory(container);
   });
 
+  container.querySelector('#inv-move-filter')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    container.dataset.invMoveSearch = container.querySelector('#inv-move-search')?.value || '';
+    renderInventory(container);
+  });
+
+  container.querySelector('#inv-clear-mat-filter')?.addEventListener('click', () => {
+    delete container.dataset.invMoveMaterial;
+    renderInventory(container);
+  });
+
   container.querySelectorAll('.inventory-adjust').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = Number(btn.dataset.materialId);
-      const row = rows.find((r) => r.material.id === id);
+      const row = stockRows.find((r) => r.material.id === id);
       if (!row) return;
       openAdjustModal(row, () => renderInventory(container));
     });
@@ -196,10 +322,19 @@ export async function renderInventory(container) {
       try {
         await addInventoryItemToShortages(Number(btn.dataset.materialId));
         showToast('נוסף לחוסרים');
-        requestAutoBackupNow?.();
+        requestAutoBackupNow();
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
+    });
+  });
+
+  container.querySelectorAll('.inventory-show-moves').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.invTab = 'movements';
+      container.dataset.invMoveMaterial = btn.dataset.materialId || '';
+      sessionStorage.setItem('yitzurInventoryTab', 'movements');
+      renderInventory(container);
     });
   });
 }

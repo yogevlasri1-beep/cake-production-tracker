@@ -1,7 +1,7 @@
 // RBAC שלב 3: audit trail מינימלי — תיעוד best-effort של פעולות כתיבה ל-Supabase.
 // כישלון רשת/הרשאות לא אמור לחסום שום פעולה עסקית: כל שגיאה נבלעת כאן.
-import { getValidSession } from './auth.js?v=418';
-import { getSupabaseBackupConfig, buildSupabaseRestUrl, getOrCreateDeviceId, getBackupScopeId } from './supabase-backup.js?v=418';
+import { getValidSession } from './auth.js?v=419';
+import { getSupabaseBackupConfig, buildSupabaseRestUrl, getOrCreateDeviceId, getBackupScopeId } from './supabase-backup.js?v=419';
 
 const AUDIT_ACTIONS = ['create', 'update', 'delete'];
 const TABLE = 'sync_audit_log';

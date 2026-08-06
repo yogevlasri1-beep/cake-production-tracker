@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=418';
-import { APP_VERSION } from './version.js?v=418';
-import { defaultColorForIndex } from './chart.js?v=418';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=418';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=418';
-import { ValidationError } from './validators.js?v=418';
+import { exportAllData, importAllData } from './db.js?v=419';
+import { APP_VERSION } from './version.js?v=419';
+import { defaultColorForIndex } from './chart.js?v=419';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=419';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=419';
+import { ValidationError } from './validators.js?v=419';
 
 export const BACKUP_VERSION = 3;
 
@@ -199,6 +199,7 @@ export function enrichBackupData(raw) {
     suppliers: raw.suppliers || [],
     rawMaterials: raw.rawMaterials || [],
     inventoryBalances: raw.inventoryBalances || [],
+    inventoryMovements: raw.inventoryMovements || [],
     supplierShortages: raw.supplierShortages || [],
     rawMaterialPriceHistory: raw.rawMaterialPriceHistory || [],
     weeklyProductionPlans: raw.weeklyProductionPlans || [],
@@ -292,6 +293,7 @@ export function summarizeBackupData(data) {
     suppliers: data.suppliers?.length || 0,
     rawMaterials: data.rawMaterials?.length || 0,
     inventoryBalances: data.inventoryBalances?.length || 0,
+    inventoryMovements: data.inventoryMovements?.length || 0,
     supplierShortages: data.supplierShortages?.length || 0,
     rawMaterialPriceHistory: data.rawMaterialPriceHistory?.length || 0,
     purchaseCategories: data.purchaseCategories?.length || 0,
@@ -373,6 +375,7 @@ export function formatBackupSummary(counts) {
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.inventoryBalances) parts.push(`${counts.inventoryBalances} יתרות מלאי`);
+  if (counts.inventoryMovements) parts.push(`${counts.inventoryMovements} תנועות מלאי`);
   if (counts.supplierShortages) parts.push(`${counts.supplierShortages} חוסרים`);
   if (counts.rawMaterialPriceHistory) parts.push(`${counts.rawMaterialPriceHistory} היסטוריית מחירים`);
   return parts.join(' · ');
@@ -439,6 +442,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.suppliers)) data.suppliers = [];
   if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];
   if (!Array.isArray(data.inventoryBalances)) data.inventoryBalances = [];
+  if (!Array.isArray(data.inventoryMovements)) data.inventoryMovements = [];
   if (!Array.isArray(data.supplierShortages)) data.supplierShortages = [];
   if (!Array.isArray(data.rawMaterialPriceHistory)) data.rawMaterialPriceHistory = [];
   if (!Array.isArray(data.weeklyProductionPlans)) data.weeklyProductionPlans = [];

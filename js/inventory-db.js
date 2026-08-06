@@ -1,11 +1,11 @@
-import { db, ValidationError } from './db.js?v=418';
+import { db, ValidationError } from './db.js?v=419';
 import {
   getRawMaterials,
   getSupplierCategories,
   getSuppliers,
   addSupplierShortage,
-} from './kitchen-db.js?v=418';
-import { localDateTimeISO } from './utils.js?v=418';
+} from './kitchen-db.js?v=419';
+import { localDateTimeISO } from './utils.js?v=419';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -13,6 +13,18 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (!Number.isFinite(n)) return null;
   if (!allowNegative && n < 0) return null;
   return Math.round(n * 1000) / 1000;
+}
+
+async function currentUserStamp() {
+  try {
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=419');
+    return {
+      userEmail: getCurrentUserEmail() || '',
+      userName: getCurrentUserDisplayName() || '',
+    };
+  } catch {
+    return { userEmail: '', userName: '' };
+  }
 }
 
 export async function getInventoryBalances() {
@@ -76,6 +88,33 @@ export async function getInventoryStockRows({ search = '', categoryId = null, lo
   return rows;
 }
 
+export async function getInventoryMovements({
+  rawMaterialId = null,
+  search = '',
+  limit = 200,
+} = {}) {
+  let rows;
+  const mid = rawMaterialId ? Number(rawMaterialId) : null;
+  if (mid) {
+    rows = await db.inventoryMovements.where('rawMaterialId').equals(mid).toArray();
+  } else {
+    rows = await db.inventoryMovements.toArray();
+  }
+  rows.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')) || (b.id - a.id));
+
+  const q = String(search || '').trim().toLocaleLowerCase('he');
+  if (q) {
+    rows = rows.filter((r) => {
+      const name = String(r.materialName || '').toLocaleLowerCase('he');
+      const reason = String(r.reason || '').toLocaleLowerCase('he');
+      const email = String(r.userEmail || '').toLocaleLowerCase('he');
+      return name.includes(q) || reason.includes(q) || email.includes(q);
+    });
+  }
+  if (limit > 0) rows = rows.slice(0, limit);
+  return rows;
+}
+
 export async function adjustInventoryStock({
   rawMaterialId,
   delta,
@@ -94,21 +133,25 @@ export async function adjustInventoryStock({
 
   let nextQty;
   let appliedDelta;
+  let kind = 'adjust';
   if (setQty != null && setQty !== '') {
     nextQty = sanitizeStockQty(setQty, { allowNegative: false });
     if (nextQty == null) throw new ValidationError('כמות לא תקינה');
     appliedDelta = Math.round((nextQty - current) * 1000) / 1000;
+    kind = 'set';
   } else {
     const d = sanitizeStockQty(delta, { allowNegative: true });
     if (d == null || d === 0) throw new ValidationError('יש להזין שינוי כמות (+/−)');
     nextQty = Math.round((current + d) * 1000) / 1000;
     if (nextQty < 0) throw new ValidationError('המלאי לא יכול להיות שלילי');
     appliedDelta = d;
+    kind = d > 0 ? 'receive' : 'issue';
   }
 
   const now = localDateTimeISO();
   const note = String(reason || '').trim().slice(0, 200);
   const unitVal = String(unit || existing?.unit || mat.unit || '').trim().slice(0, 24);
+  const user = await currentUserStamp();
 
   let nextMin = existing?.minQty ?? null;
   if (minQty !== undefined) {
@@ -119,53 +162,63 @@ export async function adjustInventoryStock({
     }
   }
 
-  if (existing) {
-    await db.inventoryBalances.update(existing.id, {
-      qtyOnHand: nextQty,
-      minQty: nextMin,
-      unit: unitVal,
-      lastAdjustedAt: now,
-      lastAdjustmentDelta: appliedDelta,
-      lastAdjustmentReason: note,
-    });
-    return db.inventoryBalances.get(existing.id);
-  }
+  let balance;
+  await db.transaction('rw', db.inventoryBalances, db.inventoryMovements, async () => {
+    if (existing) {
+      await db.inventoryBalances.update(existing.id, {
+        qtyOnHand: nextQty,
+        minQty: nextMin,
+        unit: unitVal,
+        lastAdjustedAt: now,
+        lastAdjustmentDelta: appliedDelta,
+        lastAdjustmentReason: note,
+      });
+      balance = await db.inventoryBalances.get(existing.id);
+    } else {
+      const id = await db.inventoryBalances.add({
+        rawMaterialId: mid,
+        qtyOnHand: nextQty,
+        minQty: nextMin,
+        unit: unitVal,
+        notes: '',
+        lastAdjustedAt: now,
+        lastAdjustmentDelta: appliedDelta,
+        lastAdjustmentReason: note,
+      });
+      balance = await db.inventoryBalances.get(id);
+    }
 
-  const id = await db.inventoryBalances.add({
-    rawMaterialId: mid,
-    qtyOnHand: nextQty,
-    minQty: nextMin,
-    unit: unitVal,
-    notes: '',
-    lastAdjustedAt: now,
-    lastAdjustmentDelta: appliedDelta,
-    lastAdjustmentReason: note,
+    // רק אם הכמות באמת השתנתה — לא רושמים תנועה על עדכון מינימום בלבד
+    if (appliedDelta !== 0) {
+      await db.inventoryMovements.add({
+        rawMaterialId: mid,
+        materialName: mat.name || '',
+        at: now,
+        kind,
+        delta: appliedDelta,
+        qtyBefore: current,
+        qtyAfter: nextQty,
+        unit: unitVal,
+        reason: note,
+        userEmail: user.userEmail,
+        userName: user.userName,
+      });
+    }
   });
-  return db.inventoryBalances.get(id);
+
+  return balance;
 }
 
 export async function setInventoryMinQty(rawMaterialId, minQty) {
+  const bal = await getInventoryBalanceForMaterial(rawMaterialId);
+  const mat = await db.rawMaterials.get(Number(rawMaterialId));
+  const current = bal ? Number(bal.qtyOnHand) || 0 : 0;
   return adjustInventoryStock({
     rawMaterialId,
-    delta: 0,
-    setQty: null,
+    setQty: current,
     minQty,
     reason: 'עדכון מינימום',
-  }).catch(async (err) => {
-    // delta 0 fails — do a no-op set to current qty
-    if (String(err?.message || '').includes('שינוי כמות')) {
-      const bal = await getInventoryBalanceForMaterial(rawMaterialId);
-      const mat = await db.rawMaterials.get(Number(rawMaterialId));
-      const current = bal ? Number(bal.qtyOnHand) || 0 : 0;
-      return adjustInventoryStock({
-        rawMaterialId,
-        setQty: current,
-        minQty,
-        reason: 'עדכון מינימום',
-        unit: bal?.unit || mat?.unit || '',
-      });
-    }
-    throw err;
+    unit: bal?.unit || mat?.unit || '',
   });
 }
 
@@ -185,6 +238,13 @@ export async function addInventoryItemToShortages(rawMaterialId, orderQuantity =
 
 export function inventoryLowCount(rows) {
   return (rows || []).filter((r) => r.isLow).length;
+}
+
+export function inventoryMovementKindLabel(kind) {
+  if (kind === 'receive') return 'קבלה';
+  if (kind === 'issue') return 'ניפוק';
+  if (kind === 'set') return 'הגדרה';
+  return 'התאמה';
 }
 
 export { sanitizeStockQty };
