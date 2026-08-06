@@ -1,9 +1,9 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=424';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=425';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=424';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=424';
+} from './validators.js?v=425';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=425';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1305,11 +1305,34 @@ export async function getRecipes(categoryId) {
   return rows;
 }
 
-export async function getRecipe(id) {
+export async function getRecipe(id, { versionId = null, useDefaultVersion = true } = {}) {
   const recipe = await db.recipes.get(Number(id));
   if (!recipe) return null;
-  const [ingredients, linkedProductIds, linkedProductCategoryIds, linkedProductGroupIds, compositionRows] = await Promise.all([
-    db.recipeIngredients.where('recipeId').equals(recipe.id).toArray(),
+
+  let versions = [];
+  let activeVersion = null;
+  if (db.recipeVersions) {
+    versions = await listRecipeVersions(recipe.id);
+    if (!versions.length && !recipe.parentRecipeId) {
+      activeVersion = await ensureDefaultRecipeVersion(recipe.id);
+      versions = await listRecipeVersions(recipe.id);
+    } else if (versionId) {
+      activeVersion = versions.find((v) => Number(v.id) === Number(versionId)) || null;
+    } else if (useDefaultVersion) {
+      activeVersion = versions.find((v) => v.isDefault) || versions[0] || null;
+    }
+  }
+
+  const allIngredients = await db.recipeIngredients.where('recipeId').equals(recipe.id).toArray();
+  let ingredients = allIngredients;
+  if (activeVersion) {
+    ingredients = allIngredients.filter((ing) =>
+      Number(ing.recipeVersionId) === Number(activeVersion.id)
+      || (!ing.recipeVersionId && activeVersion.isDefault));
+  }
+  ingredients.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+
+  const [linkedProductIds, linkedProductCategoryIds, linkedProductGroupIds, compositionRows] = await Promise.all([
     getRecipeProductLinks(recipe.id),
     getRecipeProductCategoryLinks(recipe.id),
     getRecipeProductGroupLinks(recipe.id),
@@ -1317,7 +1340,6 @@ export async function getRecipe(id) {
       ? db.productRecipeComponents.where('recipeId').equals(recipe.id).toArray()
       : Promise.resolve([]),
   ]);
-  ingredients.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   const fromComposition = (compositionRows || [])
     .map((c) => Number(c.productId))
     .filter(Boolean);
@@ -1329,6 +1351,9 @@ export async function getRecipe(id) {
   return {
     ...recipe,
     ingredients,
+    versions,
+    activeVersionId: activeVersion?.id || null,
+    activeVersion,
     linkedProductIds: mergedProductIds,
     linkedProductCategoryIds: linkedProductCategoryIds.length
       ? linkedProductCategoryIds.map(Number).filter(Boolean)
@@ -1337,6 +1362,159 @@ export async function getRecipe(id) {
       ? linkedProductGroupIds.map(Number).filter(Boolean)
       : (recipe.linkedProductGroupId ? [Number(recipe.linkedProductGroupId)] : []),
   };
+}
+
+export async function listRecipeVersions(recipeId) {
+  const rid = Number(recipeId);
+  if (!rid || !db.recipeVersions) return [];
+  const rows = await db.recipeVersions.where('recipeId').equals(rid).toArray();
+  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return rows;
+}
+
+export async function ensureDefaultRecipeVersion(recipeId) {
+  const rid = Number(recipeId);
+  if (!rid || !db.recipeVersions) return null;
+  const existing = await listRecipeVersions(rid);
+  if (existing.length) return existing.find((v) => v.isDefault) || existing[0];
+
+  const verId = await db.recipeVersions.add({
+    recipeId: rid,
+    name: 'גרסה 1',
+    sortOrder: 1,
+    isDefault: true,
+    createdAt: new Date().toISOString(),
+  });
+  const ings = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
+  for (const ing of ings) {
+    if (!ing.recipeVersionId) {
+      await db.recipeIngredients.update(ing.id, { recipeVersionId: verId });
+    }
+  }
+  return db.recipeVersions.get(verId);
+}
+
+export async function setDefaultRecipeVersion(recipeId, versionId) {
+  const rid = Number(recipeId);
+  const vid = Number(versionId);
+  if (!rid || !vid) throw new ValidationError('גרסת מתכון לא תקינה');
+  const versions = await listRecipeVersions(rid);
+  if (!versions.some((v) => Number(v.id) === vid)) {
+    throw new ValidationError('גרסה לא נמצאה במתכון');
+  }
+  await db.transaction('rw', db.recipeVersions, async () => {
+    for (const v of versions) {
+      await db.recipeVersions.update(v.id, { isDefault: Number(v.id) === vid });
+    }
+  });
+  await syncRecipePortionPresets(rid);
+  return listRecipeVersions(rid);
+}
+
+export async function renameRecipeVersion(versionId, name) {
+  const vid = Number(versionId);
+  const trimmed = sanitizeName(name, 40);
+  if (!vid) throw new ValidationError('גרסה לא תקינה');
+  if (!trimmed) throw new ValidationError('שם גרסה לא תקין');
+  await db.recipeVersions.update(vid, { name: trimmed });
+  return db.recipeVersions.get(vid);
+}
+
+export async function addRecipeVersion(recipeId, {
+  name = '',
+  copyFromVersionId = null,
+  ingredients = null,
+  setAsDefault = false,
+} = {}) {
+  const rid = Number(recipeId);
+  if (!rid) throw new ValidationError('מתכון לא תקין');
+  const recipe = await db.recipes.get(rid);
+  if (!recipe) throw new ValidationError('מתכון לא נמצא');
+  if (recipe.parentRecipeId) throw new ValidationError('לא ניתן ליצור גרסאות לתוספת לאחר הכנה');
+
+  await ensureDefaultRecipeVersion(rid);
+  const versions = await listRecipeVersions(rid);
+  const nextOrder = versions.reduce((m, v) => Math.max(m, v.sortOrder ?? 0), 0) + 1;
+  const label = sanitizeName(name, 40) || `גרסה ${nextOrder}`;
+
+  const verId = await db.recipeVersions.add({
+    recipeId: rid,
+    name: label,
+    sortOrder: nextOrder,
+    isDefault: false,
+    createdAt: new Date().toISOString(),
+  });
+
+  let sourceIngs = ingredients;
+  if (!sourceIngs && copyFromVersionId) {
+    const src = await getRecipe(rid, { versionId: copyFromVersionId, useDefaultVersion: false });
+    sourceIngs = src?.ingredients || [];
+  } else if (!sourceIngs) {
+    const def = await getRecipe(rid);
+    sourceIngs = def?.ingredients || [];
+  }
+
+  let order = 0;
+  for (const ing of sourceIngs) {
+    const qty = ing.scaledQuantity != null ? Number(ing.scaledQuantity) : Number(ing.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    order += 1;
+    const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+    await db.recipeIngredients.add({
+      recipeId: rid,
+      recipeVersionId: verId,
+      rawMaterialId: ing.rawMaterialId || null,
+      name: sanitizeName(ing.name, 80) || 'חומר',
+      quantity: roundQty(qty),
+      unit: formatRecipeUnitKind(kind),
+      unitKind: kind,
+      sortOrder: order,
+      priceSource: ing.priceSource === 'supplier' ? 'supplier' : 'max',
+    });
+  }
+
+  if (setAsDefault) {
+    await setDefaultRecipeVersion(rid, verId);
+  }
+  return verId;
+}
+
+/** שמירת כמויות מחושבות ממחשבון יחס כגרסה חדשה (הגרסה הישנה נשארת) */
+export async function createRecipeVersionFromScaled(recipeId, scaledIngredients, {
+  name = '',
+  setAsDefault = false,
+} = {}) {
+  if (!scaledIngredients?.length) throw new ValidationError('אין חומרים לשמירה');
+  return addRecipeVersion(recipeId, {
+    name,
+    ingredients: scaledIngredients,
+    setAsDefault,
+  });
+}
+
+export async function deleteRecipeVersion(recipeId, versionId) {
+  const rid = Number(recipeId);
+  const vid = Number(versionId);
+  const versions = await listRecipeVersions(rid);
+  if (versions.length <= 1) throw new ValidationError('לא ניתן למחוק את הגרסה היחידה');
+  const target = versions.find((v) => Number(v.id) === vid);
+  if (!target) throw new ValidationError('גרסה לא נמצאה');
+
+  await db.transaction('rw', db.recipeVersions, db.recipeIngredients, async () => {
+    const ings = await db.recipeIngredients
+      .where('recipeId').equals(rid)
+      .filter((i) => Number(i.recipeVersionId) === vid)
+      .toArray();
+    for (const ing of ings) await db.recipeIngredients.delete(ing.id);
+    await db.recipeVersions.delete(vid);
+  });
+
+  if (target.isDefault) {
+    const remaining = await listRecipeVersions(rid);
+    if (remaining[0]) await setDefaultRecipeVersion(rid, remaining[0].id);
+  } else {
+    await syncRecipePortionPresets(rid);
+  }
 }
 
 export async function getRecipeForProduct(productId) {
@@ -1392,6 +1570,7 @@ export async function addRecipe({
   if (catIds.length) await setRecipeProductCategoryLinks(recipeId, catIds);
   if (groupIds.length) await setRecipeProductGroupLinks(recipeId, groupIds);
   if (pids.length) await setRecipeProductLinks(recipeId, pids);
+  await ensureDefaultRecipeVersion(recipeId);
   await syncRecipePortionPresets(recipeId);
   return recipeId;
 }
@@ -1818,6 +1997,7 @@ export async function deleteRecipe(id) {
     'rw',
     db.recipes,
     db.recipeIngredients,
+    db.recipeVersions,
     db.recipeProductLinks,
     db.recipeProductCategoryLinks,
     db.recipeProductGroupLinks,
@@ -1825,6 +2005,7 @@ export async function deleteRecipe(id) {
     db.portionPresetIngredientSettings,
     async () => {
     await db.recipeIngredients.where('recipeId').equals(rid).delete();
+    if (db.recipeVersions) await db.recipeVersions.where('recipeId').equals(rid).delete();
     await db.recipeProductLinks.where('recipeId').equals(rid).delete();
     await db.recipeProductCategoryLinks.where('recipeId').equals(rid).delete();
     await db.recipeProductGroupLinks.where('recipeId').equals(rid).delete();
@@ -1843,8 +2024,9 @@ export async function deleteRecipe(id) {
 
 /** מוחק את כל המתכונים (רכיבים וקישורים) — קטגוריות וקבוצות נשארות */
 export async function deleteAllRecipes() {
-  await db.transaction('rw', db.recipes, db.recipeIngredients, db.recipeProductLinks, db.recipeProductCategoryLinks, db.recipeProductGroupLinks, async () => {
+  await db.transaction('rw', db.recipes, db.recipeVersions, db.recipeIngredients, db.recipeProductLinks, db.recipeProductCategoryLinks, db.recipeProductGroupLinks, async () => {
     await db.recipeIngredients.clear();
+    await db.recipeVersions?.clear?.();
     await db.recipeProductLinks.clear();
     await db.recipeProductCategoryLinks.clear();
     await db.recipeProductGroupLinks.clear();
@@ -2099,20 +2281,31 @@ async function syncRecipesAffectedByMaterial(materialId) {
   }
 }
 
-export async function addRecipeIngredient(recipeId, { rawMaterialId, name, quantity, unit, unitKind, sortOrder, priceSource }) {
+export async function addRecipeIngredient(recipeId, {
+  rawMaterialId, name, quantity, unit, unitKind, sortOrder, priceSource, recipeVersionId = null,
+}) {
   const rid = sanitizeProductId(recipeId);
   const trimmed = sanitizeName(name, 80);
   if (!rid) throw new ValidationError('מתכון לא תקין');
   if (!trimmed) throw new ValidationError('שם חומר לא תקין');
   const qty = sanitizeRecipeQuantity(quantity, { allowZero: false });
+  let verId = recipeVersionId ? Number(recipeVersionId) : null;
+  if (!verId) {
+    const def = await ensureDefaultRecipeVersion(rid);
+    verId = def?.id || null;
+  }
   const existing = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
-  const maxOrder = existing.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
+  const inVersion = verId
+    ? existing.filter((r) => Number(r.recipeVersionId) === Number(verId))
+    : existing;
+  const maxOrder = inVersion.reduce((m, r) => Math.max(m, r.sortOrder ?? 0), 0);
   const matId = rawMaterialId ? sanitizeProductId(rawMaterialId) : null;
   const kind = unitKind ? normalizeRecipeUnitKind(unitKind) : normalizeRecipeUnitKind(unit);
   const order = Number.isFinite(sortOrder) && sortOrder > 0 ? sortOrder : maxOrder + 1;
   const src = priceSource === 'supplier' ? 'supplier' : 'max';
   const ingId = await db.recipeIngredients.add({
     recipeId: rid,
+    recipeVersionId: verId,
     rawMaterialId: src === 'supplier' && matId ? matId : null,
     name: trimmed,
     quantity: qty,

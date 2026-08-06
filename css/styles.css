@@ -12053,6 +12053,23 @@ body.supplier-drag-active {
   margin-top: 12px;
 }
 
+.recipe-versions-bar {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2, #f1f5f9) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border, #cbd5e1) 70%, transparent);
+}
+
+.recipe-version-tabs {
+  margin-top: 0;
+  flex-wrap: wrap;
+}
+
+.recipe-version-actions {
+  align-items: center;
+}
+
 /* כשהתפריט פתוח — להעלות את ה-header מעל התוכן והניווט התחתון */
 .app-header.workspace-drawer-open {
   z-index: 300;

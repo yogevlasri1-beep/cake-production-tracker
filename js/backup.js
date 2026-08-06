@@ -1,9 +1,9 @@
-import { exportAllData, importAllData } from './db.js?v=424';
-import { APP_VERSION } from './version.js?v=424';
-import { defaultColorForIndex } from './chart.js?v=424';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=424';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=424';
-import { ValidationError } from './validators.js?v=424';
+import { exportAllData, importAllData } from './db.js?v=425';
+import { APP_VERSION } from './version.js?v=425';
+import { defaultColorForIndex } from './chart.js?v=425';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=425';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=425';
+import { ValidationError } from './validators.js?v=425';
 
 export const BACKUP_VERSION = 3;
 
@@ -184,6 +184,7 @@ export function enrichBackupData(raw) {
     recipeProductGroupLinks: raw.recipeProductGroupLinks || [],
     recipeCategories: raw.recipeCategories || [],
     recipes: raw.recipes || [],
+    recipeVersions: raw.recipeVersions || [],
     recipeIngredients: raw.recipeIngredients || [],
     bakingProfiles: raw.bakingProfiles || [],
     bakingProfileProducts: raw.bakingProfileProducts || [],
@@ -278,6 +279,7 @@ export function summarizeBackupData(data) {
     recipeGroups: data.recipeGroups?.length || 0,
     recipeCategories: data.recipeCategories?.length || 0,
     recipes: data.recipes?.length || 0,
+    recipeVersions: data.recipeVersions?.length || 0,
     recipeIngredients: data.recipeIngredients?.length || 0,
     recipeProductLinks: data.recipeProductLinks?.length || 0,
     recipeProductCategoryLinks: data.recipeProductCategoryLinks?.length || 0,
@@ -347,6 +349,7 @@ export function formatBackupSummary(counts) {
   if (counts.managerEmployees) parts.push(`${counts.managerEmployees} עובדים`);
   if (counts.settings) parts.push(`${counts.settings} הגדרות`);
   if (counts.recipes) parts.push(`${counts.recipes} מתכונים`);
+  if (counts.recipeVersions) parts.push(`${counts.recipeVersions} גרסאות מתכון`);
   if (counts.recipeIngredients) parts.push(`${counts.recipeIngredients} רכיבי מתכון`);
   if (counts.recipeProductLinks) parts.push(`${counts.recipeProductLinks} קישורי מתכון`);
   if (counts.recipeProductCategoryLinks) parts.push(`${counts.recipeProductCategoryLinks} קישורי קטגוריה`);
@@ -427,6 +430,7 @@ function validateBackupPayload(raw) {
   if (!Array.isArray(data.recipeProductGroupLinks)) data.recipeProductGroupLinks = [];
   if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
   if (!Array.isArray(data.recipes)) data.recipes = [];
+  if (!Array.isArray(data.recipeVersions)) data.recipeVersions = [];
   if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
   if (!Array.isArray(data.bakingProfiles)) data.bakingProfiles = [];
   if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];

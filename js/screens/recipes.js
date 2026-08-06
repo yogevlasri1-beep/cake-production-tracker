@@ -7,8 +7,9 @@ import {
   updateRecipeIngredient, syncProductCostFromRecipe, getRawMaterials, getSuppliers,
   setRecipeOrder, setRecipeGroupOrder, setRecipeSubCategoryOrder, moveRecipesToCategory,
   importParsedRecipes, scaleRecipeIngredients,
-  findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,
-  getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
+  listRecipeVersions, setDefaultRecipeVersion, renameRecipeVersion, addRecipeVersion,
+  createRecipeVersionFromScaled, deleteRecipeVersion, ensureDefaultRecipeVersion,
+  findOrCreateWordImportCategory, IMPORT_WORD_GROUP, IMPORT_WORD_SUB,  getExistingRecipeNameKeys, normalizeRecipeImportKey, formatRecipeIngredientsTotal,
   formatRecipeQuantity,
   getRecipeWeightSummary, formatKgWeight,
   formatSubdivisionWeight, gramsFromSubdivisionKg,
@@ -31,21 +32,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=424';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=424';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=424';
-import { renderRecipesMachines } from '../recipes-machines.js?v=424';
-import { renderRecipesPortions } from '../recipes-portions.js?v=424';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=424';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=424';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=424';
-import { openModal, closeModal } from '../modal.js?v=424';
-import { getCurrentUserRole } from '../auth.js?v=424';
-import { canAccessRecipeTab, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=424';
+} from '../kitchen-db.js?v=425';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=425';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=425';
+import { renderRecipesMachines } from '../recipes-machines.js?v=425';
+import { renderRecipesPortions } from '../recipes-portions.js?v=425';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=425';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=425';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=425';
+import { openModal, closeModal } from '../modal.js?v=425';
+import { getCurrentUserRole } from '../auth.js?v=425';
+import { canAccessRecipeTab, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=425';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=424';
-import { defaultColorForIndex } from '../chart.js?v=424';
+} from '../product-drag.js?v=425';
+import { defaultColorForIndex } from '../chart.js?v=425';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -747,7 +748,17 @@ async function renderRecipesRatio(container, { layout }) {
     if (id) sessionStorage.setItem(RATIO_RECIPE_KEY, id);
     const recipe = await getRecipe(Number(id));
     if (!recipe || !host) return;
-    bindRatioCalculator(recipe, host);
+    bindRatioCalculator(recipe, host, {
+      onVersionSaved: async (vid) => {
+        const updated = await getRecipe(Number(id), { versionId: vid });
+        bindRatioCalculator(updated, host, {
+          onVersionSaved: async (v2) => {
+            const again = await getRecipe(Number(id), { versionId: v2 });
+            bindRatioCalculator(again, host);
+          },
+        });
+      },
+    });
   };
 
   catPick?.addEventListener('change', () => {
@@ -2546,9 +2557,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=424');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=425');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=424');
+    const { navigateToWorkspace } = await import('../app.js?v=425');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
@@ -2835,7 +2846,7 @@ function printRatioSnapshot(snapshot) {
   }
 }
 
-function bindRatioCalculator(recipe, hostEl) {
+function bindRatioCalculator(recipe, hostEl, { onVersionSaved } = {}) {
   const ingredients = recipe.ingredients || [];
   if (!ingredients.length) {
     hostEl.innerHTML = '<p class="form-hint">אין חומרים במתכון זה</p>';
@@ -3057,8 +3068,9 @@ function bindRatioCalculator(recipe, hostEl) {
   hostEl.innerHTML = `
     <div class="ratio-actions">
       <button type="button" class="btn btn-secondary btn-sm" id="ratio-print-btn">🖨️ הדפס</button>
+      ${!recipe.parentRecipeId ? '<button type="button" class="btn btn-primary btn-sm" id="ratio-save-version-btn">💾 שמור כגרסה חדשה</button>' : ''}
     </div>
-    <p class="form-hint ratio-intro">סמן חומר גלם לשינוי, הזן כמות יעד — או הזן משקל יחידה ומספר יחידות. השדות מסתנכרנים אוטומטית.</p>
+    <p class="form-hint ratio-intro">סמן חומר גלם לשינוי, הזן כמות יעד — או הזן משקל יחידה ומספר יחידות. השדות מסתנכרנים אוטומטית. שמירה כגרסה חדשה משאירה את הגרסה הנוכחית כמו שהיא.</p>
     <div id="ratio-change-banner" class="ratio-change-banner"></div>
     <div id="ratio-error" class="ratio-error" role="alert"></div>
     <div class="form-group">
@@ -3119,6 +3131,38 @@ function bindRatioCalculator(recipe, hostEl) {
 
   hostEl.querySelector('#ratio-print-btn')?.addEventListener('click', () => {
     printRatioSnapshot(hostEl._ratioPrintSnapshot);
+  });
+
+  hostEl.querySelector('#ratio-save-version-btn')?.addEventListener('click', async () => {
+    if (!hostEl._ratioPrintSnapshot?.rows?.length) return showToast('אין כמויות מחושבות לשמירה');
+    const nextNum = (recipe.versions?.length || 1) + 1;
+    const name = prompt('שם לגרסה החדשה:', `גרסה ${nextNum} — יחס`);
+    if (name === null) return;
+    const makeDefault = confirm('לקבוע את הגרסה החדשה כברירת מחדל למנות?\n(ביטול = נשמרת כגרסה נוספת בלי לשנות מנות)');
+    try {
+      const cakeWG = getCakeWeightGrams();
+      const cakeCountNum = Number(state.cakeCount);
+      const useUnitsScale = state.scaleMode === 'units' && cakeCountNum > 0 && cakeWG;
+      let scaled;
+      if (useUnitsScale) {
+        scaled = scaleIngredientsToTargetGrams(ingredients, cakeCountNum * cakeWG);
+      } else {
+        scaled = scaleRecipeIngredients(ingredients, state.anchorId, Number(state.targetQty));
+      }
+      const vid = await createRecipeVersionFromScaled(recipe.id, scaled, {
+        name: name.trim(),
+        setAsDefault: makeDefault,
+      });
+      showToast(makeDefault ? 'נשמר כגרסה חדשה ונקבע למנות ✓' : 'נשמר כגרסה חדשה ✓');
+      if (typeof onVersionSaved === 'function') {
+        await onVersionSaved(vid);
+      } else {
+        const updated = await getRecipe(recipe.id, { versionId: vid });
+        bindRatioCalculator(updated, hostEl);
+      }
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשמירת גרסה');
+    }
   });
 
   render();
@@ -3818,6 +3862,102 @@ function openBakingProfileForm(container, { profile, layout, productCatalog }) {
   });
 }
 
+function recipeVersionsTabsHTML(recipe, { editable = false } = {}) {
+  if (recipe?.parentRecipeId) return '';
+  const versions = recipe?.versions || [];
+  if (!versions.length && !editable) return '';
+  const activeId = Number(recipe?.activeVersionId) || Number(versions.find((v) => v.isDefault)?.id) || Number(versions[0]?.id);
+  return `
+    <div class="recipe-versions-bar">
+      <div class="inventory-tabs recipe-version-tabs" role="tablist" aria-label="גרסאות מתכון">
+        ${versions.map((v) => `
+          <button type="button" class="login-gate-tab recipe-version-tab ${Number(v.id) === activeId ? 'active' : ''}"
+            data-version-id="${v.id}" title="${v.isDefault ? 'ברירת מחדל למנות' : 'בחר גרסה'}">
+            ${escapeHtml(v.name || 'גרסה')}${v.isDefault ? ' ★' : ''}
+          </button>`).join('')}
+        ${editable ? '<button type="button" class="login-gate-tab recipe-version-add" title="גרסה חדשה">+ גרסה</button>' : ''}
+      </div>
+      ${editable && activeId ? `
+      <div class="recipe-version-actions filter-row" style="gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button type="button" class="btn btn-secondary btn-sm" id="recipe-version-rename">שנה שם</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="recipe-version-set-default" ${versions.find((v) => Number(v.id) === activeId)?.isDefault ? 'disabled' : ''}>
+          ברירת מחדל למנות ★
+        </button>
+        ${versions.length > 1 ? '<button type="button" class="btn btn-danger btn-sm" id="recipe-version-delete">מחק גרסה</button>' : ''}
+      </div>` : ''}
+      ${!editable && versions.length ? '<p class="form-hint" style="margin:6px 0 0">★ = ברירת מחדל למנות בייצור</p>' : ''}
+    </div>`;
+}
+
+async function wireRecipeVersionControls(container, recipe, {
+  productCatalog, layout, returnToView = false, mode = 'form',
+} = {}) {
+  if (recipe?.parentRecipeId) return;
+  const reopen = async (versionId) => {
+    const updated = await getRecipe(recipe.id, { versionId: versionId || null });
+    closeModal();
+    if (mode === 'view') openRecipeView(container, updated, { productCatalog, layout });
+    else openRecipeForm(container, { recipe: updated, productCatalog, layout, returnToView });
+  };
+
+  document.querySelectorAll('.recipe-version-tab').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const vid = Number(btn.dataset.versionId);
+      if (vid === Number(recipe.activeVersionId)) return;
+      await reopen(vid);
+    });
+  });
+
+  document.querySelector('.recipe-version-add')?.addEventListener('click', async () => {
+    const name = prompt('שם לגרסה החדשה:', `גרסה ${(recipe.versions?.length || 0) + 1}`);
+    if (name === null) return;
+    try {
+      const vid = await addRecipeVersion(recipe.id, {
+        name: name.trim(),
+        copyFromVersionId: recipe.activeVersionId,
+      });
+      showToast('גרסה נוצרה ✓');
+      await reopen(vid);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('recipe-version-rename')?.addEventListener('click', async () => {
+    const current = recipe.versions?.find((v) => Number(v.id) === Number(recipe.activeVersionId));
+    const name = prompt('שם הגרסה:', current?.name || '');
+    if (name === null) return;
+    try {
+      await renameRecipeVersion(recipe.activeVersionId, name.trim());
+      showToast('שם עודכן ✓');
+      await reopen(recipe.activeVersionId);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('recipe-version-set-default')?.addEventListener('click', async () => {
+    try {
+      await setDefaultRecipeVersion(recipe.id, recipe.activeVersionId);
+      showToast('נקבע כברירת מחדל למנות ✓');
+      await reopen(recipe.activeVersionId);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('recipe-version-delete')?.addEventListener('click', async () => {
+    if (!confirm('למחוק את הגרסה הזו? החומרים שלה יימחקו.')) return;
+    try {
+      await deleteRecipeVersion(recipe.id, recipe.activeVersionId);
+      showToast('גרסה נמחקה');
+      await reopen(null);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+}
+
 function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategoryName, profileMap, matCtx, subRecipes = [] }) {
   const ingredients = recipe.ingredients || [];
   const isSubRecipe = !!recipe.parentRecipeId;
@@ -3908,6 +4048,7 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
           ${linkedNames?.length ? `<span class="recipe-meta-pill recipe-meta-products">🔗 ${linkedNames.map((n) => escapeHtml(n)).join(' · ')}</span>` : ''}
         </div>
       </header>
+      ${recipeVersionsTabsHTML(recipe, { editable: false })}
       ${yieldBlockHtml}
       <section class="recipe-sheet-section" aria-label="חומרי גלם">
         <h2 class="recipe-sheet-section-title">חומרי גלם</h2>
@@ -3964,6 +4105,9 @@ function buildRecipeViewHTML(recipe, { categoryPath, linkedNames, productCategor
 }
 
 async function openRecipeView(container, recipe, { productCatalog, layout }) {
+  if (recipe?.id && !recipe.parentRecipeId && !recipe.versions) {
+    recipe = await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null }) || recipe;
+  }
   const [products, profiles, mats, suppliers, subRecipeRows] = await Promise.all([
     getProducts(true), getBakingProfiles(), getRawMaterials(), getSuppliers(),
     recipe.parentRecipeId ? Promise.resolve([]) : getRecipeSubRecipes(recipe.id),
@@ -3992,6 +4136,7 @@ async function openRecipeView(container, recipe, { productCatalog, layout }) {
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  await wireRecipeVersionControls(container, recipe, { productCatalog, layout, mode: 'view' });
   document.getElementById('recipe-view-notes')?.addEventListener('click', () => {
     openRecipeNotesEditor(container, recipe, { productCatalog, layout });
   });
@@ -4081,7 +4226,12 @@ function openRatioCalculatorPicker(layout) {
   const loadRecipe = async () => {
     const recipe = await getRecipe(Number(pick?.value));
     if (!recipe || !host) return;
-    bindRatioCalculator(recipe, host);
+    bindRatioCalculator(recipe, host, {
+      onVersionSaved: async (vid) => {
+        const updated = await getRecipe(recipe.id, { versionId: vid });
+        bindRatioCalculator(updated, host);
+      },
+    });
   };
   pick?.addEventListener('change', loadRecipe);
   loadRecipe();
@@ -4157,6 +4307,9 @@ function bindMaterialSearchPicker(mats, suppliers) {
 }
 
 async function openRecipeForm(container, { recipe, categoryId, productCatalog, layout, returnToView, draft }) {
+  if (recipe?.id && !recipe.parentRecipeId && (!recipe.versions || recipe.activeVersionId == null)) {
+    recipe = await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null }) || recipe;
+  }
   const isEdit = !!recipe;
   const ingredients = recipe?.ingredients || [];
   const [mats, bakingProfiles, suppliers] = await Promise.all([
@@ -4174,6 +4327,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
     title: isEdit ? (recipe?.parentRecipeId ? 'עריכת תוספת לאחר הכנה' : 'עריכת מתכון') : 'מתכון חדש',
     modalClass: isEdit ? 'modal-recipe-edit' : 'modal-recipe-new',
     bodyHTML: `
+      ${isEdit && !recipe?.parentRecipeId ? recipeVersionsTabsHTML(recipe, { editable: true }) : ''}
       <div class="form-group">
         <label>שם מתכון</label>
         <input type="text" id="recipe-name" value="${recipe ? escapeHtml(recipe.name) : ''}" placeholder="לדוגמה: בצק שמרים" autofocus>
@@ -4231,6 +4385,12 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  if (isEdit && !recipe?.parentRecipeId) {
+    await wireRecipeVersionControls(container, recipe, {
+      productCatalog: catalog, layout: catalogLayout, returnToView, mode: 'form',
+    });
+  }
 
   if (catalogLayout && !recipe?.parentRecipeId) {
     bindRecipePlacementFields(catalogLayout.groups);
@@ -4321,10 +4481,12 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         quantity: qty,
         unitKind,
         priceSource: 'max',
+        recipeVersionId: recipe.activeVersionId || null,
       });
       closeModal();
       openRecipeForm(container, {
-        recipe: await getRecipe(recipe.id), productCatalog: catalog, layout: catalogLayout, returnToView,
+        recipe: await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null }),
+        productCatalog: catalog, layout: catalogLayout, returnToView,
       });
       showToast('נוסף ✓');
     } catch (err) {

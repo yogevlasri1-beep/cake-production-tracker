@@ -29,6 +29,7 @@ export const COLLECTION_TABLE = {
   recipeGroups: 'sync_recipe_groups',
   recipeCategories: 'sync_recipe_categories',
   recipes: 'sync_recipes',
+  recipeVersions: 'sync_recipe_versions',
   recipeIngredients: 'sync_recipe_ingredients',
   recipeProductLinks: 'sync_recipe_product_links',
   recipeProductCategoryLinks: 'sync_recipe_product_category_links',
@@ -134,7 +135,8 @@ export const COLLECTION_FKS = {
     linkedProductGroupId: 'categoryGroups',
     bakingProfileId: 'bakingProfiles',
   },
-  recipeIngredients: { recipeId: 'recipes', rawMaterialId: 'rawMaterials' },
+  recipeVersions: { recipeId: 'recipes' },
+  recipeIngredients: { recipeId: 'recipes', recipeVersionId: 'recipeVersions', rawMaterialId: 'rawMaterials' },
   recipeProductLinks: { recipeId: 'recipes', productId: 'products' },
   recipeProductCategoryLinks: { recipeId: 'recipes', categoryId: 'categories' },
   recipeProductGroupLinks: { recipeId: 'recipes', groupId: 'categoryGroups' },
@@ -230,6 +232,7 @@ export const SYNC_ORDER = [
   'rawMaterials',
   'products',
   'recipes',
+  'recipeVersions',
   'recipeIngredients',
   'rawMaterialPriceHistory',
   'inventoryBalances',
@@ -370,12 +373,13 @@ export function rowFingerprint(collection, row) {
       return n ? `${collection}|${n}|${row.supplierId ?? ''}|${row.supplierCategoryId ?? ''}` : '';
     case 'recipes':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.parentRecipeId ?? ''}` : '';
+    case 'recipeVersions':
+      return `${collection}|${row.recipeId ?? ''}|${n}|${row.sortOrder ?? ''}`;
     case 'recipeCategories':
       return n ? `${collection}|${n}|${row.groupId ?? ''}` : '';
     case 'recipeIngredients':
-      // Include rawMaterialId so pull-match does not fold two live cloud rows
-      // (same line, different supplier materials) onto one local row.
-      return `${collection}|${row.recipeId ?? ''}|${n}|${row.rawMaterialId ?? ''}|${row.sortOrder ?? ''}`;
+      // Include version + rawMaterialId so versions/suppliers don't collapse into one row.
+      return `${collection}|${row.recipeId ?? ''}|${row.recipeVersionId ?? ''}|${n}|${row.rawMaterialId ?? ''}|${row.sortOrder ?? ''}`;
     case 'portionPresetLinks':
       return row.portionPresetId != null
         ? `${collection}|${row.portionPresetId}|${row.linkType ?? ''}|${row.targetId ?? ''}`
@@ -561,7 +565,7 @@ export function rowDedupeFingerprint(collection, row) {
   if (!row) return '';
   if (collection === 'recipeIngredients') {
     const n = normName(row.name);
-    return `${collection}|${row.recipeId ?? ''}|${n}|${row.sortOrder ?? ''}`;
+    return `${collection}|${row.recipeId ?? ''}|${row.recipeVersionId ?? ''}|${n}|${row.sortOrder ?? ''}`;
   }
   if (collection === 'productionEntries') {
     const date = row.date ?? '';
