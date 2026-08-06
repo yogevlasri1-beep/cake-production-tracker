@@ -18,14 +18,14 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=417';
-import { describeDownloadMethod } from '../download.js?v=417';
-import { showToast, escapeHtml } from '../utils.js?v=417';
-import { openModal, closeModal } from '../modal.js?v=417';
-import { APP_VERSION } from '../version.js?v=417';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=417';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=417';
-import { canAccessBackupFull } from '../permissions.js?v=417';
+} from '../backup-service.js?v=418';
+import { describeDownloadMethod } from '../download.js?v=418';
+import { showToast, escapeHtml } from '../utils.js?v=418';
+import { openModal, closeModal } from '../modal.js?v=418';
+import { APP_VERSION } from '../version.js?v=418';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=418';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=418';
+import { canAccessBackupFull } from '../permissions.js?v=418';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -428,7 +428,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
     try {
-      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=417');
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=418');
       await setLiveSyncEnabled(e.target.checked);
       showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
       renderBackup(container, { navigate });
@@ -442,7 +442,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=417');
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=418');
       const pushed = await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
@@ -460,7 +460,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=417');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=418');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
@@ -478,7 +478,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=417');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=418');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -495,7 +495,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=417');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=418');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });

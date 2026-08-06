@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '417';
+const VERSION = '418';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -38,6 +38,7 @@ const PRECACHE = [
   v('./js/permissions.js'),
   v('./js/accounts-api.js'),
   v('./js/lot-trace.js'),
+  v('./js/inventory-db.js'),
   v('./js/sync/collections.js'),
   v('./js/sync/id-map.js'),
   v('./js/backup-folder-bridge.js'),
@@ -76,6 +77,7 @@ const PRECACHE = [
   v('./js/screens/haccp.js'),
   v('./js/screens/accounts.js'),
   v('./js/screens/lots.js'),
+  v('./js/screens/inventory.js'),
   v('./js/screens/login.js'),
   './icons/icon-192.png',
   './icons/icon-512.png',

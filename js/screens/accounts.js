@@ -1,15 +1,15 @@
-import { escapeHtml, showToast } from '../utils.js?v=417';
+import { escapeHtml, showToast } from '../utils.js?v=418';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=417';
+} from '../auth.js?v=418';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=417';
+} from '../accounts-api.js?v=418';
 
 export function accountsMeta() {
   return {
