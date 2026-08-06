@@ -22,16 +22,16 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=420';
-import { getProducts, getCategories } from '../db.js?v=420';
+} from '../kitchen-db.js?v=421';
+import { getProducts, getCategories } from '../db.js?v=421';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=420';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=420';
-import { openModal, closeModal } from '../modal.js?v=420';
-import { requestAutoBackupNow } from '../backup-service.js?v=420';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=420';
+} from '../supplier-import.js?v=421';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=421';
+import { openModal, closeModal } from '../modal.js?v=421';
+import { requestAutoBackupNow } from '../backup-service.js?v=421';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=421';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2362,13 +2362,15 @@ async function renderShortagesTab(body, container) {
                     value="${item.orderQuantity ?? ''}" placeholder="כמות" aria-label="כמות הזמנה">
                   <input type="text" class="shortage-unit-input" data-id="${item.id}" value="${escapeHtml(item.unit || '')}" placeholder="יח'" aria-label="יחידה">
                 </label>
+                ${!item.done && item.rawMaterialId ? `<button type="button" class="btn btn-secondary btn-sm shortage-receive-btn" data-id="${item.id}" title="קבל למלאי">📦 קבל</button>` : ''}
                 <button type="button" class="btn btn-danger btn-sm btn-icon shortage-del-btn" data-id="${item.id}" title="הסר">🗑</button>
               </li>`).join('')}
           </ul>
         </div>`).join('')}
       <textarea id="shortage-wa-text" class="wa-order-text" rows="8" readonly style="margin-top:12px">${escapeHtml(waText)}</textarea>
-      <div class="filter-row" style="margin-top:8px">
+      <div class="filter-row" style="margin-top:8px;flex-wrap:wrap;gap:8px">
         <button type="button" class="btn btn-primary btn-sm" id="copy-shortage-wa" style="flex:1">📋 העתק לוואטסאפ</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="receive-open-shortages">📦 קבל פתוחים למלאי</button>
         <button type="button" class="btn btn-secondary btn-sm" id="clear-done-shortages">נקה שהושלמו</button>
       </div>
     </div>`;
@@ -2440,6 +2442,33 @@ async function renderShortagesTab(body, container) {
         showToast(err.message || 'שגיאה');
       }
     });
+  });
+
+  body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const { receiveShortageToInventory } = await import('../inventory-db.js?v=421');
+        const result = await receiveShortageToInventory(btn.dataset.id);
+        requestAutoBackupNow().catch(() => {});
+        showToast(`נקלט למלאי: ${result.qty}${result.unit ? ` ${result.unit}` : ''}`);
+        renderSuppliers(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה בקבלה');
+      }
+    });
+  });
+
+  document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
+    if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
+    try {
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=421');
+      const { ok, skipped } = await receiveOpenShortagesToInventory();
+      requestAutoBackupNow().catch(() => {});
+      showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
+      renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   document.getElementById('copy-shortage-wa')?.addEventListener('click', async () => {

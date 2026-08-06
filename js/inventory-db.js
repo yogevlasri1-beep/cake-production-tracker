@@ -1,12 +1,13 @@
-import { db, ValidationError } from './db.js?v=420';
+import { db, ValidationError } from './db.js?v=421';
 import {
   getRawMaterials,
   getSupplierCategories,
   getSuppliers,
   addSupplierShortage,
   computeWeeklyMaterialNeeds,
-} from './kitchen-db.js?v=420';
-import { localDateTimeISO } from './utils.js?v=420';
+  updateSupplierShortage,
+} from './kitchen-db.js?v=421';
+import { localDateTimeISO } from './utils.js?v=421';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -18,7 +19,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=420');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=421');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -324,6 +325,64 @@ export function formatWhatsAppGapOrderText({ weekStart, rows }) {
   }
   lines.push('_נוצר מאפליקציית מעקב יצור — פער מלאי_');
   return lines.join('\n');
+}
+
+/**
+ * קבלת חוסר למלאי: מוסיף כמות ליתרה, רושם תנועת קבלה, ומסמן את החוסר כהושלם.
+ */
+export async function receiveShortageToInventory(shortageId, { qty = null } = {}) {
+  const id = Number(shortageId);
+  if (!id) throw new ValidationError('פריט חוסר לא תקין');
+  const row = await db.supplierShortages.get(id);
+  if (!row) throw new ValidationError('פריט חוסר לא נמצא');
+  if (!row.rawMaterialId) {
+    throw new ValidationError('לחוסר אין חומר מהמחסן — שייך חומר ואז קבל למלאי');
+  }
+  if (row.done) throw new ValidationError('החוסר כבר סומן כהושלם');
+
+  const receiveQty = qty != null && qty !== ''
+    ? sanitizeStockQty(qty, { allowNegative: false })
+    : (row.orderQuantity != null ? sanitizeStockQty(row.orderQuantity, { allowNegative: false }) : null);
+  if (receiveQty == null || receiveQty <= 0) {
+    throw new ValidationError('חסרה כמות לקבלה — הזן כמות בחוסר');
+  }
+
+  const mat = await db.rawMaterials.get(Number(row.rawMaterialId));
+  const unit = row.unit || mat?.unit || '';
+  const label = mat?.name || row.name || 'חומר';
+
+  await adjustInventoryStock({
+    rawMaterialId: row.rawMaterialId,
+    delta: receiveQty,
+    reason: `קבלה מחוסרים · ${label}`,
+    unit,
+  });
+  const stamp = localDateTimeISO().slice(0, 16).replace('T', ' ');
+  const receiveNote = `נקלט ${receiveQty}${unit ? ` ${unit}` : ''} · ${stamp}`;
+  const prevNotes = String(row.notes || '').trim();
+  await updateSupplierShortage(id, {
+    done: true,
+    notes: prevNotes ? `${prevNotes} · ${receiveNote}` : receiveNote,
+  });
+  return { shortageId: id, rawMaterialId: row.rawMaterialId, qty: receiveQty, unit };
+}
+
+/** קבלה מרובה של חוסרים פתוחים עם חומר מקושר וכמות */
+export async function receiveOpenShortagesToInventory() {
+  const items = await db.supplierShortages.filter((i) => !i.done && i.rawMaterialId && i.orderQuantity != null).toArray();
+  let ok = 0;
+  let skipped = 0;
+  const errors = [];
+  for (const item of items) {
+    try {
+      await receiveShortageToInventory(item.id);
+      ok++;
+    } catch (err) {
+      skipped++;
+      errors.push(err.message || String(err));
+    }
+  }
+  return { ok, skipped, errors };
 }
 
 export { sanitizeStockQty };
