@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=425';
+import { db, ValidationError } from './db.js?v=426';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -11,9 +11,9 @@ import {
   getPortionPresetIngredientsFormData,
   resolveRecipeIngredientMaterial,
   buildMaterialsByNameKey,
-} from './kitchen-db.js?v=425';
-import { localDateTimeISO, roundDecimal } from './utils.js?v=425';
-import { logAuditEvent } from './audit.js?v=425';
+} from './kitchen-db.js?v=426';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=426';
+import { logAuditEvent } from './audit.js?v=426';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -25,7 +25,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=425');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=426');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -116,7 +116,13 @@ export async function getInventoryMovements({
       const name = String(r.materialName || '').toLocaleLowerCase('he');
       const reason = String(r.reason || '').toLocaleLowerCase('he');
       const email = String(r.userEmail || '').toLocaleLowerCase('he');
-      return name.includes(q) || reason.includes(q) || email.includes(q);
+      const pkg = String(r.packagingBatchNumber || '').toLocaleLowerCase('he');
+      const runBatch = String(r.runBatchNumber || '').toLocaleLowerCase('he');
+      const batchNums = Array.isArray(r.ingredientBatches)
+        ? r.ingredientBatches.map((b) => String(b.packagingBatchNumber || '').toLocaleLowerCase('he')).join(' ')
+        : '';
+      return name.includes(q) || reason.includes(q) || email.includes(q)
+        || pkg.includes(q) || runBatch.includes(q) || batchNums.includes(q);
     });
   }
   if (limit > 0) rows = rows.slice(0, limit);
@@ -130,6 +136,7 @@ export async function adjustInventoryStock({
   minQty = undefined,
   reason = '',
   unit = '',
+  lotMeta = null,
 }) {
   const mid = Number(rawMaterialId);
   if (!mid) throw new ValidationError('חומר גלם לא תקין');
@@ -170,6 +177,22 @@ export async function adjustInventoryStock({
     }
   }
 
+  const lotFields = {};
+  if (lotMeta && typeof lotMeta === 'object') {
+    const pkg = String(lotMeta.packagingBatchNumber || '').trim().slice(0, 80);
+    if (pkg) lotFields.packagingBatchNumber = pkg;
+    if (lotMeta.productionRunId != null) lotFields.productionRunId = Number(lotMeta.productionRunId) || null;
+    if (lotMeta.runBatchNumber) lotFields.runBatchNumber = String(lotMeta.runBatchNumber).trim().slice(0, 80);
+    if (Array.isArray(lotMeta.ingredientBatches) && lotMeta.ingredientBatches.length) {
+      lotFields.ingredientBatches = lotMeta.ingredientBatches.slice(0, 20).map((b) => ({
+        packagingBatchNumber: String(b.packagingBatchNumber || '').trim().slice(0, 80),
+        name: String(b.name || '').trim().slice(0, 80),
+        rawMaterialId: b.rawMaterialId ? Number(b.rawMaterialId) : null,
+        supplierName: String(b.supplierName || '').trim().slice(0, 80),
+      })).filter((b) => b.packagingBatchNumber);
+    }
+  }
+
   let balance;
   let movementId = null;
   const wasCreate = !existing;
@@ -198,7 +221,6 @@ export async function adjustInventoryStock({
       balance = await db.inventoryBalances.get(id);
     }
 
-    // רק אם הכמות באמת השתנתה — לא רושמים תנועה על עדכון מינימום בלבד
     if (appliedDelta !== 0) {
       movementId = await db.inventoryMovements.add({
         rawMaterialId: mid,
@@ -212,6 +234,7 @@ export async function adjustInventoryStock({
         reason: note,
         userEmail: user.userEmail,
         userName: user.userName,
+        ...lotFields,
       });
     }
   });
@@ -230,6 +253,7 @@ export async function adjustInventoryStock({
         qtyAfter: nextQty,
         unit: unitVal,
         reason: note,
+        packagingBatchNumber: lotFields.packagingBatchNumber || null,
       },
     });
     logAuditEvent({
@@ -593,6 +617,7 @@ export function formatProductionIssueConfirm(preview) {
 export async function issueStockFromProduction(previewOrOpts, {
   reasonLabel = 'ניפוק מייצור',
   allowPartial = true,
+  lotMeta = null,
 } = {}) {
   const preview = previewOrOpts?.lines
     ? previewOrOpts
@@ -602,17 +627,32 @@ export async function issueStockFromProduction(previewOrOpts, {
 
   for (const line of preview.lines || []) {
     try {
+      const lineLot = lotMeta && typeof lotMeta === 'object'
+        ? {
+          ...lotMeta,
+          // אם יש מספרי מנה פר־חומר — מעדיפים התאמה לפי rawMaterialId / שם
+          packagingBatchNumber: (() => {
+            const batches = Array.isArray(lotMeta.ingredientBatches) ? lotMeta.ingredientBatches : [];
+            const match = batches.find((b) =>
+              (b.rawMaterialId && Number(b.rawMaterialId) === Number(line.rawMaterialId))
+              || (b.name && String(b.name).trim() === String(line.name || '').trim()));
+            return (match?.packagingBatchNumber || lotMeta.packagingBatchNumber || '').trim();
+          })(),
+        }
+        : null;
       await adjustInventoryStock({
         rawMaterialId: line.rawMaterialId,
         delta: -line.qty,
         reason: String(reasonLabel || 'ניפוק מייצור').slice(0, 200),
         unit: line.unit || '',
+        lotMeta: lineLot,
       });
       issued.push({
         rawMaterialId: line.rawMaterialId,
         name: line.name,
         qty: line.qty,
         unit: line.unit || '',
+        packagingBatchNumber: lineLot?.packagingBatchNumber || null,
       });
     } catch (err) {
       failed.push({ name: line.name, message: err.message || String(err) });

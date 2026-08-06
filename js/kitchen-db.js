@@ -1,9 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=425';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=426';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=425';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=425';
+} from './validators.js?v=426';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=426';
+import { logAuditEvent } from './audit.js?v=426';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1402,13 +1403,126 @@ export async function setDefaultRecipeVersion(recipeId, versionId) {
   if (!versions.some((v) => Number(v.id) === vid)) {
     throw new ValidationError('גרסה לא נמצאה במתכון');
   }
+  const prevDefault = versions.find((v) => v.isDefault) || versions[0] || null;
   await db.transaction('rw', db.recipeVersions, async () => {
     for (const v of versions) {
       await db.recipeVersions.update(v.id, { isDefault: Number(v.id) === vid });
     }
   });
+  if (prevDefault && Number(prevDefault.id) !== vid) {
+    await remapPortionPresetSettingsByIngredientName(rid, prevDefault.id, vid);
+  }
   await syncRecipePortionPresets(rid);
+  logAuditEvent({
+    entityTable: 'recipeVersions',
+    entityId: vid,
+    action: 'update',
+    snapshot: { recipeId: rid, name: versions.find((v) => Number(v.id) === vid)?.name, isDefault: true },
+  });
   return listRecipeVersions(rid);
+}
+
+/**
+ * מעתיק הגדרות אריזה/ספק לפי שם רכיב כשעוברים לגרסת ברירת מחדל אחרת.
+ */
+export async function remapPortionPresetSettingsByIngredientName(recipeId, fromVersionId, toVersionId) {
+  const rid = Number(recipeId);
+  const fromId = Number(fromVersionId);
+  const toId = Number(toVersionId);
+  if (!rid || !fromId || !toId || fromId === toId || !db.portionPresetIngredientSettings) return 0;
+
+  const [fromRecipe, toRecipe] = await Promise.all([
+    getRecipe(rid, { versionId: fromId, useDefaultVersion: false }),
+    getRecipe(rid, { versionId: toId, useDefaultVersion: false }),
+  ]);
+  const nameToNewId = new Map();
+  for (const ing of toRecipe?.ingredients || []) {
+    const key = normalizeMaterialKey(ing.name);
+    if (key && !nameToNewId.has(key)) nameToNewId.set(key, Number(ing.id));
+  }
+  const oldIdToName = new Map(
+    (fromRecipe?.ingredients || []).map((ing) => [Number(ing.id), normalizeMaterialKey(ing.name)]),
+  );
+
+  const presets = await db.groupPortionPresets.filter((p) => Number(p.sourceRecipeId) === rid).toArray();
+  let remapped = 0;
+  for (const preset of presets) {
+    const settings = await db.portionPresetIngredientSettings
+      .where('portionPresetId').equals(preset.id).toArray();
+    if (!settings.length) continue;
+    const nextRows = [];
+    for (const s of settings) {
+      const key = oldIdToName.get(Number(s.recipeIngredientId));
+      const newIngId = key ? nameToNewId.get(key) : null;
+      if (!newIngId) continue;
+      nextRows.push({
+        recipeIngredientId: newIngId,
+        packagingPortionCount: s.packagingPortionCount ?? null,
+        rawMaterialId: s.rawMaterialId ?? null,
+      });
+    }
+    if (!nextRows.length) continue;
+    await savePortionPresetIngredientSettings(preset.id, nextRows);
+    remapped += nextRows.length;
+  }
+  return remapped;
+}
+
+/** השוואת שתי גרסאות מתכון לפי שם רכיב */
+export async function compareRecipeVersions(recipeId, versionIdA, versionIdB) {
+  const rid = Number(recipeId);
+  const aId = Number(versionIdA);
+  const bId = Number(versionIdB);
+  if (!rid || !aId || !bId) throw new ValidationError('גרסאות להשוואה לא תקינות');
+  const [left, right, versions] = await Promise.all([
+    getRecipe(rid, { versionId: aId, useDefaultVersion: false }),
+    getRecipe(rid, { versionId: bId, useDefaultVersion: false }),
+    listRecipeVersions(rid),
+  ]);
+  if (!left || !right) throw new ValidationError('גרסה לא נמצאה');
+
+  const leftMap = new Map();
+  for (const ing of left.ingredients || []) {
+    const key = normalizeMaterialKey(ing.name) || String(ing.id);
+    leftMap.set(key, ing);
+  }
+  const rightMap = new Map();
+  for (const ing of right.ingredients || []) {
+    const key = normalizeMaterialKey(ing.name) || String(ing.id);
+    rightMap.set(key, ing);
+  }
+  const keys = [...new Set([...leftMap.keys(), ...rightMap.keys()])];
+  const rows = keys.map((key) => {
+    const a = leftMap.get(key);
+    const b = rightMap.get(key);
+    const qtyA = a != null ? Number(a.quantity) : null;
+    const qtyB = b != null ? Number(b.quantity) : null;
+    let status = 'same';
+    if (a && !b) status = 'removed';
+    else if (!a && b) status = 'added';
+    else if (qtyA !== qtyB || String(a?.unit || '') !== String(b?.unit || '')) status = 'changed';
+    return {
+      name: a?.name || b?.name || key,
+      qtyA,
+      unitA: a?.unit || '',
+      qtyB,
+      unitB: b?.unit || '',
+      status,
+    };
+  }).sort((x, y) => x.name.localeCompare(y.name, 'he'));
+
+  return {
+    recipeId: rid,
+    left: {
+      versionId: aId,
+      name: versions.find((v) => Number(v.id) === aId)?.name || left.activeVersion?.name || 'גרסה א',
+    },
+    right: {
+      versionId: bId,
+      name: versions.find((v) => Number(v.id) === bId)?.name || right.activeVersion?.name || 'גרסה ב',
+    },
+    rows,
+  };
 }
 
 export async function renameRecipeVersion(versionId, name) {
@@ -1476,6 +1590,12 @@ export async function addRecipeVersion(recipeId, {
   if (setAsDefault) {
     await setDefaultRecipeVersion(rid, verId);
   }
+  logAuditEvent({
+    entityTable: 'recipeVersions',
+    entityId: verId,
+    action: 'create',
+    snapshot: { recipeId: rid, name: label, setAsDefault: !!setAsDefault },
+  });
   return verId;
 }
 
@@ -1572,6 +1692,12 @@ export async function addRecipe({
   if (pids.length) await setRecipeProductLinks(recipeId, pids);
   await ensureDefaultRecipeVersion(recipeId);
   await syncRecipePortionPresets(recipeId);
+  logAuditEvent({
+    entityTable: 'recipes',
+    entityId: recipeId,
+    action: 'create',
+    snapshot: { name: trimmed, categoryId: cid },
+  });
   return recipeId;
 }
 
@@ -1625,6 +1751,13 @@ export async function updateRecipe(id, patch) {
   if ('notes' in data) data.notes = String(data.notes || '').trim().slice(0, 4000);
   if (Object.keys(data).length) await db.recipes.update(rid, data);
   await syncRecipePortionPresets(rid);
+  const next = await db.recipes.get(rid);
+  logAuditEvent({
+    entityTable: 'recipes',
+    entityId: rid,
+    action: 'update',
+    snapshot: { name: next?.name, categoryId: next?.categoryId },
+  });
 }
 
 export async function setRecipeOrder(categoryId, orderedIds) {
@@ -2020,6 +2153,12 @@ export async function deleteRecipe(id) {
   await syncRawMaterialsActiveFromRecipes();
   // אחרי מחיקת תוספת — מעדכנים את מנת המתכון הראשי
   if (parentId) await syncRecipePortionPresets(parentId);
+  logAuditEvent({
+    entityTable: 'recipes',
+    entityId: rid,
+    action: 'delete',
+    snapshot: { name: recipe?.name || null },
+  });
 }
 
 /** מוחק את כל המתכונים (רכיבים וקישורים) — קטגוריות וקבוצות נשארות */

@@ -10,10 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=425';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=425';
-import { defaultColorForIndex } from './chart.js?v=425';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=425';
+} from './validators.js?v=426';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=426';
+import { defaultColorForIndex } from './chart.js?v=426';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=426';
+import { logAuditEvent } from './audit.js?v=426';
 
 export { ValidationError };
 
@@ -6117,6 +6118,12 @@ export async function createFlow({ categoryId, categoryGroupId, name, withDefaul
   } else {
     await ensureFlowProductionStep(newFlowId);
   }
+  logAuditEvent({
+    entityTable: 'flows',
+    entityId: newFlowId,
+    action: 'create',
+    snapshot: { name: cleanName, categoryId: cid, categoryGroupId: gid },
+  });
   return newFlowId;
 }
 
@@ -6228,6 +6235,13 @@ export async function updateFlow(flowId, { name, isDefault } = {}) {
     }
     await db.flows.update(fid, patch);
   });
+  const next = await db.flows.get(fid);
+  logAuditEvent({
+    entityTable: 'flows',
+    entityId: fid,
+    action: 'update',
+    snapshot: { name: next?.name, isDefault: next?.isDefault },
+  });
 }
 
 export async function deleteFlow(flowId) {
@@ -6252,6 +6266,12 @@ export async function deleteFlow(flowId) {
       const remaining = siblings.filter((f) => f.id !== fid);
       if (remaining.length) await db.flows.update(remaining[0].id, { isDefault: true });
     }
+  });
+  logAuditEvent({
+    entityTable: 'flows',
+    entityId: fid,
+    action: 'delete',
+    snapshot: { name: flow.name },
   });
 }
 

@@ -1,5 +1,5 @@
-import { escapeHtml, formatDate, showToast } from '../utils.js?v=425';
-import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=425';
+import { escapeHtml, formatDate, showToast } from '../utils.js?v=426';
+import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=426';
 
 export function lotsMeta() {
   return {
@@ -56,6 +56,25 @@ function productionCard(hit) {
     </div>`;
 }
 
+function inventoryCard(hit) {
+  const delta = Number(hit.delta) || 0;
+  const deltaText = `${delta > 0 ? '+' : ''}${delta}${hit.unit ? ` ${hit.unit}` : ''}`;
+  return `
+    <div class="card lots-card">
+      <div class="card-title" style="margin-bottom:4px">${escapeHtml(hit.materialName)}</div>
+      <p class="form-hint" style="margin:0">
+        ניפוק מלאי · <strong dir="ltr">${escapeHtml(deltaText)}</strong>
+        ${hit.packagingBatchNumber ? ` · מנה <span dir="ltr">${escapeHtml(hit.packagingBatchNumber)}</span>` : ''}
+        ${hit.runBatchNumber ? ` · אצווה <span dir="ltr">${escapeHtml(hit.runBatchNumber)}</span>` : ''}
+      </p>
+      ${hit.reason ? `<p class="form-hint">${escapeHtml(hit.reason)}</p>` : ''}
+      ${hit.productionRunId ? `
+        <div class="accounts-actions">
+          <button type="button" class="btn btn-secondary lots-open-run" data-run-id="${hit.productionRunId}">פתח תזרים</button>
+        </div>` : ''}
+    </div>`;
+}
+
 function materialCard(hit) {
   return `
     <div class="card lots-card">
@@ -83,7 +102,8 @@ async function runSearch(container, query) {
       resultsEl.innerHTML = `<div class="card"><p class="form-hint">${escapeHtml(lotTraceEmptyHint())}</p></div>`;
       return;
     }
-    if (!result.productionHits.length && !result.materialHits.length) {
+    const invHits = result.inventoryHits || [];
+    if (!result.productionHits.length && !result.materialHits.length && !invHits.length) {
       resultsEl.innerHTML = `
         <div class="card">
           <div class="card-title">לא נמצאו תוצאות</div>
@@ -95,12 +115,14 @@ async function runSearch(container, query) {
       <div class="card">
         <p class="form-hint" style="margin:0">נמצאו
           <strong>${result.productionHits.length}</strong> אצוות ייצור ·
-          <strong>${result.materialHits.length}</strong> שימושי חומר גלם
+          <strong>${result.materialHits.length}</strong> שימושי חומר גלם ·
+          <strong>${invHits.length}</strong> תנועות מלאי
           עבור «${escapeHtml(result.query)}»
         </p>
       </div>
       ${result.productionHits.length ? `<h3 class="accounts-section-title">אצוות ייצור</h3>${result.productionHits.map(productionCard).join('')}` : ''}
       ${result.materialHits.length ? `<h3 class="accounts-section-title">מספרי מנה (חומרי גלם) → לאן נכנסו</h3>${result.materialHits.map(materialCard).join('')}` : ''}
+      ${invHits.length ? `<h3 class="accounts-section-title">תנועות מלאי מקושרות</h3>${invHits.map(inventoryCard).join('')}` : ''}
     `;
     bindResultActions(container, resultsEl);
   } catch (err) {
@@ -122,7 +144,7 @@ function bindResultActions(container, resultsEl) {
         main.dataset.runId = String(runId);
       }
       try {
-        const { navigateToWorkspace } = await import('../app.js?v=425');
+        const { navigateToWorkspace } = await import('../app.js?v=426');
         await navigateToWorkspace('production', 'process');
       } catch (err) {
         showToast(err.message || 'לא ניתן לפתוח תזרים');

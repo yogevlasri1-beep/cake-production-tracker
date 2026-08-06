@@ -28,10 +28,10 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=425';
+} from '../db.js?v=426';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=425').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=426').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -46,6 +46,23 @@ function batchLabelForRun(run) {
   return run?.batchNumber || run?.id || '';
 }
 
+function lotMetaFromPortion(run, entry) {
+  const batches = (entry?.ingredientBatches || [])
+    .filter((b) => String(b.packagingBatchNumber || '').trim())
+    .map((b) => ({
+      packagingBatchNumber: String(b.packagingBatchNumber || '').trim(),
+      name: String(b.name || '').trim(),
+      rawMaterialId: b.rawMaterialId ? Number(b.rawMaterialId) : null,
+      supplierName: String(b.supplierName || '').trim(),
+    }));
+  return {
+    packagingBatchNumber: batches[0]?.packagingBatchNumber || '',
+    productionRunId: run?.id || null,
+    runBatchNumber: String(run?.batchNumber || '').trim(),
+    ingredientBatches: batches,
+  };
+}
+
 async function offerInventoryIssueForPortion(run, entry, {
   stepIndex = null,
   batchIndex = null,
@@ -57,7 +74,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=425');
+    } = await import('../inventory-db.js?v=426');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -73,7 +90,11 @@ async function offerInventoryIssueForPortion(run, entry, {
     }
     if (!confirm(formatProductionIssueConfirm(preview))) return;
     const reason = `ניפוק מייצור · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`;
-    const result = await issueStockFromProduction(preview, { reasonLabel: reason, allowPartial: true });
+    const result = await issueStockFromProduction(preview, {
+      reasonLabel: reason,
+      allowPartial: true,
+      lotMeta: lotMetaFromPortion(run, entry),
+    });
     const meta = {
       inventoryIssued: true,
       inventoryIssuedAt: result.inventoryIssuedAt,
@@ -94,7 +115,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=425');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=426');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -120,7 +141,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=425');
+    } = await import('../inventory-db.js?v=426');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -130,7 +151,11 @@ async function resyncInventoryIssueForPortion(run, entry, {
     });
     if (!preview.lines.length) return;
     const reason = `ניפוק מייצור (עדכון) · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`;
-    const result = await issueStockFromProduction(preview, { reasonLabel: reason, allowPartial: true });
+    const result = await issueStockFromProduction(preview, {
+      reasonLabel: reason,
+      allowPartial: true,
+      lotMeta: lotMetaFromPortion(run, entry),
+    });
     const meta = {
       inventoryIssued: true,
       inventoryIssuedAt: result.inventoryIssuedAt,
@@ -145,12 +170,14 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=425';
-import { openModal, closeModal } from '../modal.js?v=425';
-import { requestAutoBackupNow } from '../backup-service.js?v=425';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=425';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=425';
-import { materialMatchesSearch } from '../kitchen-db.js?v=425';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=426';
+import { openModal, closeModal } from '../modal.js?v=426';
+import { requestAutoBackupNow } from '../backup-service.js?v=426';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=426';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=426';
+import { materialMatchesSearch } from '../kitchen-db.js?v=426';
+import { getCurrentUserRole } from '../auth.js?v=426';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=426';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1982,8 +2009,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=425');
-    const { db } = await import('../db.js?v=425');
+    const { getRecipe } = await import('../kitchen-db.js?v=426');
+    const { db } = await import('../db.js?v=426');
     const blocks = [];
 
     for (const row of rows) {
@@ -2808,7 +2835,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=425');
+    const kitchen = await import('../kitchen-db.js?v=426');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -4072,16 +4099,16 @@ async function renderManageView(container, ctx) {
           <label>תזרימים${isGroupTarget && groupId ? ` · ${escapeHtml(groups.find((g) => String(g.id) === String(groupId))?.name || '')}` : ''}</label>
           <p class="form-hint" style="margin-bottom:8px">לפי קטגוריות — לחץ על תזרים לעריכה</p>
           <div class="filter-row" style="margin-bottom:10px">
-            <button type="button" class="btn btn-primary btn-sm" id="new-flow-btn">+ תזרים חדש</button>
+            ${canManageFlows(getCurrentUserRole()) ? '<button type="button" class="btn btn-primary btn-sm" id="new-flow-btn">+ תזרים חדש</button>' : ''}
           </div>
           ${targetFlowListHTML}
           ${activeFlow ? `
             <div class="filter-row" style="margin-top:12px;margin-bottom:12px">
-              <button type="button" class="btn btn-secondary btn-sm" id="rename-flow-btn">✏️ שנה שם</button>
+              ${canManageFlows(getCurrentUserRole()) ? '<button type="button" class="btn btn-secondary btn-sm" id="rename-flow-btn">✏️ שנה שם</button>' : ''}
               <button type="button" class="btn btn-secondary btn-sm" id="flow-history-btn">📋 היסטוריה</button>
-              <button type="button" class="btn btn-secondary btn-sm" id="duplicate-flow-btn">📋 שכפל</button>
-              ${!activeFlow.isDefault ? `<button type="button" class="btn btn-secondary btn-sm" id="set-default-flow-btn">★ ברירת מחדל</button>` : ''}
-              ${targetFlowsOverview.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" id="delete-flow-btn">🗑 מחק</button>` : ''}
+              ${canManageFlows(getCurrentUserRole()) ? '<button type="button" class="btn btn-secondary btn-sm" id="duplicate-flow-btn">📋 שכפל</button>' : ''}
+              ${canManageFlows(getCurrentUserRole()) && !activeFlow.isDefault ? `<button type="button" class="btn btn-secondary btn-sm" id="set-default-flow-btn">★ ברירת מחדל</button>` : ''}
+              ${canManageFlows(getCurrentUserRole()) && targetFlowsOverview.length > 1 ? `<button type="button" class="btn btn-danger btn-sm" id="delete-flow-btn">🗑 מחק</button>` : ''}
             </div>` : ''}
         </div>
 
@@ -4393,6 +4420,7 @@ async function renderManageView(container, ctx) {
   }
 
   document.getElementById('new-flow-btn')?.addEventListener('click', () => {
+    if (!canManageFlows(getCurrentUserRole())) return showToast(PERMISSION_DENIED_MESSAGE);
     openModal({
       title: 'תזרים חדש',
       bodyHTML: `
@@ -4427,6 +4455,7 @@ async function renderManageView(container, ctx) {
   });
 
   document.getElementById('rename-flow-btn')?.addEventListener('click', () => {
+    if (!canManageFlows(getCurrentUserRole())) return showToast(PERMISSION_DENIED_MESSAGE);
     if (!activeFlow) return;
     openModal({
       title: 'שינוי שם תזרים',
@@ -4453,11 +4482,13 @@ async function renderManageView(container, ctx) {
   });
 
   document.getElementById('duplicate-flow-btn')?.addEventListener('click', () => {
+    if (!canManageFlows(getCurrentUserRole())) return showToast(PERMISSION_DENIED_MESSAGE);
     if (!activeFlow) return;
     openDuplicateFlowModal(container, ctx, activeFlow, steps.length);
   });
 
   document.getElementById('set-default-flow-btn')?.addEventListener('click', async () => {
+    if (!canManageFlows(getCurrentUserRole())) return showToast(PERMISSION_DENIED_MESSAGE);
     if (!activeFlow) return;
     try {
       await updateFlow(activeFlow.id, { isDefault: true });
@@ -4469,6 +4500,7 @@ async function renderManageView(container, ctx) {
   });
 
   document.getElementById('delete-flow-btn')?.addEventListener('click', async () => {
+    if (!canManageFlows(getCurrentUserRole())) return showToast(PERMISSION_DENIED_MESSAGE);
     if (!activeFlow || !confirm(`למחוק את התזרים «${activeFlow.name}»?`)) return;
     try {
       await deleteFlow(activeFlow.id);

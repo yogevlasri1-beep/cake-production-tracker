@@ -9,7 +9,7 @@ import {
   computeRunMetrics,
   getProducts,
   getCategories,
-} from './db.js?v=425';
+} from './db.js?v=426';
 
 function norm(s) {
   return String(s || '').trim().toLocaleLowerCase('he');
@@ -27,7 +27,14 @@ function matchesQuery(value, q) {
 export async function searchLotTrace(query) {
   const q = norm(query);
   if (!q) {
-    return { query: '', productionHits: [], materialHits: [] };
+    return { query: '', productionHits: [], materialHits: [], inventoryHits: [] };
+  }
+
+  let movements = [];
+  try {
+    movements = db.inventoryMovements ? await db.inventoryMovements.toArray() : [];
+  } catch {
+    movements = [];
   }
 
   const [runs, products, categories] = await Promise.all([
@@ -40,6 +47,7 @@ export async function searchLotTrace(query) {
 
   const productionHits = [];
   const materialHits = [];
+  const inventoryHits = [];
 
   for (const run of runs || []) {
     const tracking = collectRunIngredientBatchTracking(run);
@@ -105,10 +113,32 @@ export async function searchLotTrace(query) {
     }
   }
 
+  for (const m of movements || []) {
+    const pkg = String(m.packagingBatchNumber || '').trim();
+    const runBatch = String(m.runBatchNumber || '').trim();
+    const batchMatch = matchesQuery(pkg, q) || matchesQuery(runBatch, q)
+      || (Array.isArray(m.ingredientBatches)
+        && m.ingredientBatches.some((b) => matchesQuery(b.packagingBatchNumber, q)));
+    if (!batchMatch) continue;
+    inventoryHits.push({
+      movementId: m.id,
+      at: m.at || '',
+      kind: m.kind || '',
+      delta: m.delta,
+      unit: m.unit || '',
+      materialName: m.materialName || `חומר #${m.rawMaterialId}`,
+      packagingBatchNumber: pkg,
+      runBatchNumber: runBatch,
+      productionRunId: m.productionRunId || null,
+      reason: m.reason || '',
+    });
+  }
+
   productionHits.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   materialHits.sort((a, b) => String(b.runDate).localeCompare(String(a.runDate)));
+  inventoryHits.sort((a, b) => String(b.at).localeCompare(String(a.at)));
 
-  return { query: String(query || '').trim(), productionHits, materialHits };
+  return { query: String(query || '').trim(), productionHits, materialHits, inventoryHits };
 }
 
 function describeRunScope(run, catMap, productMap) {

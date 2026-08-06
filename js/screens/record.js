@@ -1,10 +1,48 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=425';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=425';
-import { openModal, closeModal } from '../modal.js?v=425';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=425';
+} from '../db.js?v=426';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=426';
+import { openModal, closeModal } from '../modal.js?v=426';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=426';
+import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=426';
+
+async function offerInventoryIssueForRecord({ productId, quantity, productName }) {
+  try {
+    const recipe = await getRecipeForProduct(productId);
+    if (!recipe?.id) return;
+
+    const {
+      previewProductionStockIssue,
+      issueStockFromProduction,
+      formatProductionIssueConfirm,
+    } = await import('../inventory-db.js?v=426');
+
+    const qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) return;
+
+    const ratio = recipeScaleRatioForProductCount(recipe, recipe.ingredients || [], qty);
+    const portionCount = ratio != null ? ratio : qty;
+
+    const preview = await previewProductionStockIssue({
+      recipeId: recipe.id,
+      portionCount,
+    });
+    if (!preview.lines.length) return;
+
+    const header = `רישום ייצור · ${productName || 'מוצר'} × ${qty}`;
+    if (!confirm(`${header}\n\n${formatProductionIssueConfirm(preview)}`)) return;
+
+    const result = await issueStockFromProduction(preview, {
+      reasonLabel: `ניפוק מרישום ייצור · ${productName || 'מוצר'} × ${qty}`.slice(0, 200),
+      allowPartial: true,
+    });
+    const failNote = result.failed.length ? ` · ${result.failed.length} נכשלו` : '';
+    showToast(`נופק מלאי: ${result.issued.length} חומרים${failNote}`);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בניפוק מלאי');
+  }
+}
 
 export async function renderRecord(container) {
   const date = container.dataset.selectedDate || todayISO();
@@ -175,8 +213,10 @@ export async function renderRecord(container) {
     try {
       await addProductionEntry({ date: d, productId, quantity });
       showToast('הרישום נשמר ✓');
+      const productName = productMap.get(Number(productId))?.name || '';
       document.getElementById('record-qty').value = '';
       container.dataset.selectedDate = d;
+      await offerInventoryIssueForRecord({ productId, quantity, productName });
       renderRecord(container);
     } catch (err) {
       showToast(err.message || 'שגיאה בשמירה');

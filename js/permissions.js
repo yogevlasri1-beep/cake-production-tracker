@@ -50,3 +50,18 @@ export function canAccessBackupFull(role) {
 export function canManageAccounts(role) {
   return role === 'manager' || role === 'admin';
 }
+
+/** עריכת מתכונים / גרסאות / חומרים — לא לייצור */
+export function canEditRecipes(role) {
+  return role === 'quality' || role === 'manager' || role === 'admin';
+}
+
+/** יצירה / מחיקה / שכפול תזרימים ושלבים — לא לייצור */
+export function canManageFlows(role) {
+  return role === 'quality' || role === 'manager' || role === 'admin';
+}
+
+/** התאמות מלאי ידניות — איכות ומעלה (ייצור לא רואה את העמדה) */
+export function canAdjustInventory(role) {
+  return role === 'quality' || role === 'manager' || role === 'admin';
+}

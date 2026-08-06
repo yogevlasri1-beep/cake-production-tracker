@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=425';
-import { openModal, closeModal } from '../modal.js?v=425';
-import { requestAutoBackupNow } from '../backup-service.js?v=425';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=426';
+import { openModal, closeModal } from '../modal.js?v=426';
+import { requestAutoBackupNow } from '../backup-service.js?v=426';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,8 +10,10 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=425';
-import { getSupplierCategories } from '../kitchen-db.js?v=425';
+} from '../inventory-db.js?v=426';
+import { getSupplierCategories } from '../kitchen-db.js?v=426';
+import { getCurrentUserRole } from '../auth.js?v=426';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=426';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -58,7 +60,7 @@ function tabsHtml(active) {
     </div>`;
 }
 
-function stockCard(row) {
+function stockCard(row, { allowAdjust = true } = {}) {
   const m = row.material;
   return `
     <div class="card inventory-card" data-material-id="${m.id}">
@@ -75,7 +77,7 @@ function stockCard(row) {
         ${stockBadge(row)}
       </div>
       <div class="accounts-actions">
-        <button type="button" class="btn btn-primary inventory-adjust" data-material-id="${m.id}">התאם מלאי</button>
+        ${allowAdjust ? `<button type="button" class="btn btn-primary inventory-adjust" data-material-id="${m.id}">התאם מלאי</button>` : ''}
         <button type="button" class="btn btn-secondary inventory-to-shortage" data-material-id="${m.id}">הוסף לחוסרים</button>
         <button type="button" class="btn btn-secondary inventory-show-moves" data-material-id="${m.id}" data-material-name="${escapeHtml(m.name)}">יומן</button>
       </div>
@@ -84,6 +86,9 @@ function stockCard(row) {
 
 function movementCard(m) {
   const deltaClass = Number(m.delta) > 0 ? 'lots-hit' : (Number(m.delta) < 0 ? '' : '');
+  const lotBits = [];
+  if (m.packagingBatchNumber) lotBits.push(`מנה <span dir="ltr">${escapeHtml(m.packagingBatchNumber)}</span>`);
+  if (m.runBatchNumber) lotBits.push(`אצווה <span dir="ltr">${escapeHtml(m.runBatchNumber)}</span>`);
   return `
     <div class="card inventory-card">
       <div class="accounts-card-head">
@@ -94,6 +99,7 @@ function movementCard(m) {
             <span class="${deltaClass}"><strong>${formatDelta(m.delta, m.unit)}</strong></span>
             · לפני: ${formatQty(m.qtyBefore, m.unit)} → אחרי: ${formatQty(m.qtyAfter, m.unit)}
           </p>
+          ${lotBits.length ? `<p class="form-hint" style="margin:4px 0 0">${lotBits.join(' · ')}</p>` : ''}
           ${m.reason ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(m.reason)}</p>` : ''}
           ${m.userEmail ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(m.userName || m.userEmail)}</p>` : ''}
         </div>
@@ -171,6 +177,7 @@ async function renderStockTab(container) {
   const search = container.dataset.invSearch || '';
   const categoryId = container.dataset.invCategory || '';
   const lowOnly = container.dataset.invLowOnly === '1';
+  const allowAdjust = canAdjustInventory(getCurrentUserRole());
 
   let cats = [];
   let rows = [];
@@ -215,7 +222,7 @@ async function renderStockTab(container) {
           <button type="submit" class="btn btn-primary">סנן</button>
         </form>
       </div>
-      ${rows.length ? rows.map(stockCard).join('') : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>'}
+      ${rows.length ? rows.map((r) => stockCard(r, { allowAdjust })).join('') : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>'}
     `,
     rows,
   };
@@ -249,7 +256,7 @@ async function renderMovementsTab(container) {
         <form id="inv-move-filter" class="lots-search-form" style="margin-top:12px">
           <div class="form-group">
             <label for="inv-move-search">חיפוש</label>
-            <input type="search" id="inv-move-search" value="${escapeHtml(search)}" placeholder="חומר / סיבה / משתמש">
+            <input type="search" id="inv-move-search" value="${escapeHtml(search)}" placeholder="חומר / סיבה / משתמש / מספר מנה">
           </div>
           ${materialId ? `<p class="form-hint">מסונן לפי חומר #${escapeHtml(materialId)} · <button type="button" class="btn btn-secondary" id="inv-clear-mat-filter">הצג הכל</button></p>` : ''}
           <button type="submit" class="btn btn-primary">סנן</button>
@@ -457,6 +464,10 @@ export async function renderInventory(container) {
 
   container.querySelectorAll('.inventory-adjust').forEach((btn) => {
     btn.addEventListener('click', () => {
+      if (!canAdjustInventory(getCurrentUserRole())) {
+        showToast(PERMISSION_DENIED_MESSAGE);
+        return;
+      }
       const id = Number(btn.dataset.materialId);
       const row = stockRows.find((r) => r.material.id === id);
       if (!row) return;
