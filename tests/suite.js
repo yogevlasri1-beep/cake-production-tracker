@@ -1,15 +1,15 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=421';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=422';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=421';
+} from '../js/validators.js?v=422';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
-} from '../js/calc.js?v=421';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=421';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=421';
+} from '../js/calc.js?v=422';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=422';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=422';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -17,28 +17,28 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=421';
-import { isAutoBackupDue } from '../js/backup-service.js?v=421';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=421';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=421';
+} from '../js/supabase-backup.js?v=422';
+import { isAutoBackupDue } from '../js/backup-service.js?v=422';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, getMaterialPortionProductIds } from '../js/kitchen-db.js?v=422';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=422';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=421';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=421';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=421';
-import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=421';
-import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel } from '../js/haccp-db.js?v=421';
-import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=421';
-import { WORKSPACES } from '../js/workspaces.js?v=421';
-import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=421';
-import { sanitizeAuditPayload } from '../js/audit.js?v=421';
+} from '../js/supplier-import.js?v=422';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=422';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange } from '../js/screens/reports.js?v=422';
+import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber } from '../js/db.js?v=422';
+import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel } from '../js/haccp-db.js?v=422';
+import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=422';
+import { WORKSPACES } from '../js/workspaces.js?v=422';
+import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=422';
+import { sanitizeAuditPayload } from '../js/audit.js?v=422';
 import {
   allowedWorkspaces, canAccessWorkspace, canAccessScreen, canAccessHaccpStep, canAccessRecipeTab, canAccessBackupFull, canManageAccounts,
-} from '../js/permissions.js?v=421';
-import { lotTraceEmptyHint } from '../js/lot-trace.js?v=421';
+} from '../js/permissions.js?v=422';
+import { lotTraceEmptyHint } from '../js/lot-trace.js?v=422';
 
 export async function runAllTests() {
   /* validators */
@@ -839,7 +839,7 @@ export async function runAllTests() {
   });
 
   test('inventoryMovementKindLabel', async () => {
-    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=421');
+    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=422');
     assertEqual(inventoryMovementKindLabel('receive'), 'קבלה');
     assertEqual(inventoryMovementKindLabel('issue'), 'ניפוק');
     assertEqual(inventoryMovementKindLabel('set'), 'הגדרה');
@@ -852,7 +852,7 @@ export async function runAllTests() {
   });
 
   test('receiveShortageToInventory — דורש מזהה', async () => {
-    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=421');
+    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=422');
     let threw = false;
     try {
       await receiveShortageToInventory(null);
@@ -861,6 +861,27 @@ export async function runAllTests() {
       assertOk(String(e.message || e).includes('לא תקין') || String(e.message || e).includes('חוסר'));
     }
     assertOk(threw);
+  });
+
+  test('previewProductionStockIssue — דורש מספר מנות', async () => {
+    const { previewProductionStockIssue, formatProductionIssueConfirm } = await import('../js/inventory-db.js?v=422');
+    let threw = false;
+    try {
+      await previewProductionStockIssue({ portionCount: 0 });
+    } catch (e) {
+      threw = true;
+      assertOk(String(e.message || e).includes('מנות'));
+    }
+    assertOk(threw);
+    const empty = await previewProductionStockIssue({ portionCount: 2, recipeId: null });
+    assertEqual(empty.lines.length, 0);
+    const text = formatProductionIssueConfirm({
+      lines: [{ name: 'קמח', qty: 2, unit: 'ק"ג', qtyOnHand: 5, shortfall: 0 }],
+      skipped: [],
+      hasShortfall: false,
+    });
+    assertOk(text.includes('קמח'));
+    assertOk(text.includes('לנפק'));
   });
 
   test('permissions — canAccessHaccpStep: production רק overview + monitor_log', () => {
@@ -1335,7 +1356,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=421');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=422');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });

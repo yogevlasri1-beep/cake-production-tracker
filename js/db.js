@@ -10,10 +10,10 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=421';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=421';
-import { defaultColorForIndex } from './chart.js?v=421';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=421';
+} from './validators.js?v=422';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=422';
+import { defaultColorForIndex } from './chart.js?v=422';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=422';
 
 export { ValidationError };
 
@@ -7658,6 +7658,10 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
       entry.fromRecipe = true;
       entry.sourceRecipeId = Number(preset.sourceRecipeId);
     }
+    if (preset.sourceRawMaterialId) {
+      entry.fromRawMaterial = true;
+      entry.sourceRawMaterialId = Number(preset.sourceRawMaterialId);
+    }
   }
 
   batches.push(entry);
@@ -7666,6 +7670,7 @@ export async function addRunStepPortionBatch(runId, stepIndex, { presetId, count
     portionBatches: batches,
     portionCount: sumPortionBatches(batches),
   });
+  return { batchIndex: batches.length - 1, entry };
 }
 
 export async function updateRunStepPortionBatch(runId, stepIndex, batchIndex, { count, date, note } = {}) {
@@ -8000,11 +8005,73 @@ export async function addRunPortionLog(runId, { presetId, count, date, note } = 
       entry.fromRecipe = true;
       entry.sourceRecipeId = Number(preset.sourceRecipeId);
     }
+    if (preset.sourceRawMaterialId) {
+      entry.fromRawMaterial = true;
+      entry.sourceRawMaterialId = Number(preset.sourceRawMaterialId);
+    }
   }
 
   logs.push(entry);
   await db.productionRuns.update(runId, { runPortionLogs: logs });
-  return entry.id;
+  return { logId: entry.id, entry };
+}
+
+export async function setRunStepPortionBatchInventoryIssue(runId, stepIndex, batchIndex, issueMeta) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const step = run.steps[stepIndex];
+  if (!step) throw new ValidationError('שלב לא תקין');
+  const batches = Array.isArray(step.portionBatches) ? [...step.portionBatches] : [];
+  const idx = Number(batchIndex);
+  if (idx < 0 || idx >= batches.length) throw new ValidationError('רשומת מנות לא נמצאה');
+  const next = { ...batches[idx] };
+  if (issueMeta?.inventoryIssued) {
+    next.inventoryIssued = true;
+    next.inventoryIssuedAt = issueMeta.inventoryIssuedAt || managerNowISO();
+    next.inventoryIssueLines = Array.isArray(issueMeta.inventoryIssueLines)
+      ? issueMeta.inventoryIssueLines.map((l) => ({
+        rawMaterialId: Number(l.rawMaterialId),
+        name: String(l.name || '').slice(0, 80),
+        qty: Number(l.qty),
+        unit: String(l.unit || '').slice(0, 24),
+      })).filter((l) => l.rawMaterialId && Number.isFinite(l.qty) && l.qty > 0)
+      : [];
+  } else {
+    next.inventoryIssued = false;
+    next.inventoryIssuedAt = null;
+    next.inventoryIssueLines = [];
+  }
+  batches[idx] = next;
+  await db.runStepStates.update(step.id, { portionBatches: batches });
+  return next;
+}
+
+export async function setRunPortionLogInventoryIssue(runId, logId, issueMeta) {
+  const run = await getProductionRun(runId);
+  if (!run) throw new ValidationError('תהליך לא נמצא');
+  const logs = [...getRunPortionLogs(run)];
+  const idx = logs.findIndex((l) => Number(l.id) === Number(logId));
+  if (idx < 0) throw new ValidationError('רשומת מנה לא נמצאה');
+  const next = { ...logs[idx] };
+  if (issueMeta?.inventoryIssued) {
+    next.inventoryIssued = true;
+    next.inventoryIssuedAt = issueMeta.inventoryIssuedAt || managerNowISO();
+    next.inventoryIssueLines = Array.isArray(issueMeta.inventoryIssueLines)
+      ? issueMeta.inventoryIssueLines.map((l) => ({
+        rawMaterialId: Number(l.rawMaterialId),
+        name: String(l.name || '').slice(0, 80),
+        qty: Number(l.qty),
+        unit: String(l.unit || '').slice(0, 24),
+      })).filter((l) => l.rawMaterialId && Number.isFinite(l.qty) && l.qty > 0)
+      : [];
+  } else {
+    next.inventoryIssued = false;
+    next.inventoryIssuedAt = null;
+    next.inventoryIssueLines = [];
+  }
+  logs[idx] = next;
+  await db.productionRuns.update(runId, { runPortionLogs: logs });
+  return next;
 }
 
 export async function updateRunPortionLog(runId, logId, { count, date, note } = {}) {

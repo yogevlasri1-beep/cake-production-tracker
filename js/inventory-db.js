@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=421';
+import { db, ValidationError } from './db.js?v=422';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -6,8 +6,13 @@ import {
   addSupplierShortage,
   computeWeeklyMaterialNeeds,
   updateSupplierShortage,
-} from './kitchen-db.js?v=421';
-import { localDateTimeISO } from './utils.js?v=421';
+  getRecipe,
+  getRecipeSubRecipes,
+  getPortionPresetIngredientsFormData,
+  resolveRecipeIngredientMaterial,
+  buildMaterialsByNameKey,
+} from './kitchen-db.js?v=422';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=422';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -19,7 +24,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=421');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=422');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -383,6 +388,234 @@ export async function receiveOpenShortagesToInventory() {
     }
   }
   return { ok, skipped, errors };
+}
+
+async function loadRecipeCostingIngredients(recipeId) {
+  const recipe = await getRecipe(Number(recipeId));
+  if (!recipe) return { recipe: null, ingredients: [] };
+  const ingredients = [...(recipe.ingredients || [])];
+  if (!recipe.parentRecipeId) {
+    const additions = await getRecipeSubRecipes(recipe.id);
+    for (const addition of additions) {
+      const full = await getRecipe(addition.id);
+      ingredients.push(...(full?.ingredients || []));
+    }
+  }
+  return { recipe, ingredients };
+}
+
+/**
+ * תצוגה מקדימה של ניפוק מלאי לפי מנה ממתכון / חומר גלם.
+ * qty = כמות במתכון × מספר מנות (כמו פער הזמנה שבועי).
+ */
+export async function previewProductionStockIssue({
+  portionPresetId = null,
+  recipeId = null,
+  rawMaterialId = null,
+  portionWeightKg = null,
+  portionCount,
+} = {}) {
+  const count = Number(portionCount);
+  if (!Number.isFinite(count) || count <= 0) {
+    throw new ValidationError('מספר מנות לא תקין לניפוק');
+  }
+
+  const lines = [];
+  const skipped = [];
+  const byMaterial = new Map();
+
+  const pushLine = (mid, name, qty, unit, qtyOnHand) => {
+    const q = sanitizeStockQty(qty, { allowNegative: false });
+    if (q == null || q <= 0) return;
+    const id = Number(mid);
+    if (!id) {
+      skipped.push(name || 'חומר');
+      return;
+    }
+    const prev = byMaterial.get(id);
+    if (prev) {
+      prev.qty = roundDecimal(prev.qty + q);
+      return;
+    }
+    byMaterial.set(id, {
+      rawMaterialId: id,
+      name: name || 'חומר',
+      qty: q,
+      unit: unit || '',
+      qtyOnHand: qtyOnHand != null ? Number(qtyOnHand) || 0 : 0,
+    });
+  };
+
+  const pid = portionPresetId ? Number(portionPresetId) : null;
+  if (pid) {
+    const preset = await db.groupPortionPresets.get(pid);
+    if (preset?.sourceRecipeId) {
+      try {
+        const form = await getPortionPresetIngredientsFormData(pid);
+        const balances = await getInventoryBalances();
+        const balMap = new Map(balances.map((b) => [b.rawMaterialId, b]));
+        for (const row of form.rows || []) {
+          const mid = row.rawMaterialId ? Number(row.rawMaterialId) : null;
+          if (!mid) {
+            skipped.push(row.name || 'חומר');
+            continue;
+          }
+          const bal = balMap.get(mid);
+          pushLine(
+            mid,
+            row.name,
+            Number(row.quantity) * count,
+            row.unit || bal?.unit || '',
+            bal ? bal.qtyOnHand : 0,
+          );
+        }
+      } catch {
+        /* נופל למתכון ישיר למטה */
+      }
+    } else if (preset?.sourceRawMaterialId) {
+      const mid = Number(preset.sourceRawMaterialId);
+      const mat = await db.rawMaterials.get(mid);
+      const bal = await getInventoryBalanceForMaterial(mid);
+      const w = portionWeightKg != null && portionWeightKg !== ''
+        ? Number(portionWeightKg)
+        : Number(preset.weight);
+      if (Number.isFinite(w) && w > 0) {
+        pushLine(mid, mat?.name || preset.name, w * count, mat?.unit || bal?.unit || 'ק"ג', bal?.qtyOnHand ?? 0);
+      } else {
+        skipped.push(mat?.name || preset.name || 'חומר');
+      }
+    }
+  }
+
+  if (!byMaterial.size && recipeId) {
+    const { ingredients } = await loadRecipeCostingIngredients(recipeId);
+    const [materials, balances] = await Promise.all([getRawMaterials(), getInventoryBalances()]);
+    const matById = new Map(materials.map((m) => [m.id, m]));
+    const byNameKey = buildMaterialsByNameKey(materials);
+    const balMap = new Map(balances.map((b) => [b.rawMaterialId, b]));
+    for (const ing of ingredients) {
+      const { mat } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
+      const mid = mat?.id || (ing.rawMaterialId ? Number(ing.rawMaterialId) : null);
+      if (!mid) {
+        skipped.push(ing.name || 'חומר');
+        continue;
+      }
+      const bal = balMap.get(mid);
+      pushLine(
+        mid,
+        mat?.name || ing.name,
+        Number(ing.quantity) * count,
+        mat?.unit || ing.unit || bal?.unit || '',
+        bal?.qtyOnHand ?? 0,
+      );
+    }
+  }
+
+  if (!byMaterial.size && rawMaterialId && !pid) {
+    const mid = Number(rawMaterialId);
+    const mat = await db.rawMaterials.get(mid);
+    const bal = await getInventoryBalanceForMaterial(mid);
+    const w = Number(portionWeightKg);
+    if (mat && Number.isFinite(w) && w > 0) {
+      pushLine(mid, mat.name, w * count, mat.unit || bal?.unit || 'ק"ג', bal?.qtyOnHand ?? 0);
+    }
+  }
+
+  for (const line of byMaterial.values()) {
+    line.shortfall = Math.max(0, roundDecimal(line.qty - (Number(line.qtyOnHand) || 0)));
+    lines.push(line);
+  }
+  lines.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+
+  return {
+    portionCount: count,
+    lines,
+    skipped,
+    hasShortfall: lines.some((l) => l.shortfall > 0),
+  };
+}
+
+export function formatProductionIssueConfirm(preview) {
+  const lines = preview?.lines || [];
+  const parts = ['לנפק מלאי לפי המנה?'];
+  for (const line of lines.slice(0, 12)) {
+    const stock = `במלאי ${line.qtyOnHand}`;
+    const warn = line.shortfall > 0 ? ' ⚠ חסר' : '';
+    parts.push(`• ${line.name}: −${line.qty}${line.unit ? ` ${line.unit}` : ''} (${stock})${warn}`);
+  }
+  if (lines.length > 12) parts.push(`…ועוד ${lines.length - 12}`);
+  if (preview?.skipped?.length) {
+    parts.push(`(${preview.skipped.length} בלי קישור למלאי — ידולגו)`);
+  }
+  if (preview?.hasShortfall) {
+    parts.push('יש חומרים עם יתרה נמוכה מהכמות — הניפוק ייכשל עליהם אלא אם תאשר דילוג.');
+  }
+  return parts.join('\n');
+}
+
+/**
+ * ניפוק מלאי בפועל לפי תצוגה מקדימה / פרמטרים.
+ * allowPartial: מדלג על שורות שנכשלות (מלאי שלילי) במקום לעצור.
+ */
+export async function issueStockFromProduction(previewOrOpts, {
+  reasonLabel = 'ניפוק מייצור',
+  allowPartial = true,
+} = {}) {
+  const preview = previewOrOpts?.lines
+    ? previewOrOpts
+    : await previewProductionStockIssue(previewOrOpts || {});
+  const issued = [];
+  const failed = [];
+
+  for (const line of preview.lines || []) {
+    try {
+      await adjustInventoryStock({
+        rawMaterialId: line.rawMaterialId,
+        delta: -line.qty,
+        reason: String(reasonLabel || 'ניפוק מייצור').slice(0, 200),
+        unit: line.unit || '',
+      });
+      issued.push({
+        rawMaterialId: line.rawMaterialId,
+        name: line.name,
+        qty: line.qty,
+        unit: line.unit || '',
+      });
+    } catch (err) {
+      failed.push({ name: line.name, message: err.message || String(err) });
+      if (!allowPartial) throw err;
+    }
+  }
+
+  if (!issued.length && failed.length) {
+    throw new ValidationError(failed[0].message || 'ניפוק מלאי נכשל');
+  }
+
+  return {
+    issued,
+    failed,
+    skipped: preview.skipped || [],
+    inventoryIssueLines: issued,
+    inventoryIssuedAt: localDateTimeISO(),
+  };
+}
+
+/** ביטול ניפוק — מחזיר כמויות ליתרה (תנועת קבלה עם סיבת ביטול) */
+export async function reverseStockIssueLines(lines, { reasonLabel = 'ביטול ניפוק מייצור' } = {}) {
+  const restored = [];
+  for (const line of lines || []) {
+    const qty = sanitizeStockQty(line.qty, { allowNegative: false });
+    const mid = Number(line.rawMaterialId);
+    if (!mid || qty == null || qty <= 0) continue;
+    await adjustInventoryStock({
+      rawMaterialId: mid,
+      delta: qty,
+      reason: String(reasonLabel || 'ביטול ניפוק מייצור').slice(0, 200),
+      unit: line.unit || '',
+    });
+    restored.push({ rawMaterialId: mid, qty, unit: line.unit || '', name: line.name || '' });
+  }
+  return { restored };
 }
 
 export { sanitizeStockQty };

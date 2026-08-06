@@ -19,6 +19,7 @@ import {
   getStepPortionBatches, getStepPortionTotal, portionBatchLineWeightKg,
   getRunPortionLogs, getRunMaterialProcessingLogs,
   addRunPortionLog, updateRunPortionLog, deleteRunPortionLog,
+  setRunStepPortionBatchInventoryIssue, setRunPortionLogInventoryIssue,
   addRunMaterialProcessingLog, deleteRunMaterialProcessingLog,
   computeRunMetrics, aggregateRunsMetrics,
   getRunSettings, setRunSettings, resolveNextBatchNumber,
@@ -27,21 +28,129 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=421';
+} from '../db.js?v=422';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=421').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=422').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
   });
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=421';
-import { openModal, closeModal } from '../modal.js?v=421';
-import { requestAutoBackupNow } from '../backup-service.js?v=421';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=421';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=421';
-import { materialMatchesSearch } from '../kitchen-db.js?v=421';
+
+function portionCanIssueInventory(entry) {
+  return !!(entry?.sourceRecipeId || entry?.sourceRawMaterialId || entry?.presetId);
+}
+
+function batchLabelForRun(run) {
+  return run?.batchNumber || run?.id || '';
+}
+
+async function offerInventoryIssueForPortion(run, entry, {
+  stepIndex = null,
+  batchIndex = null,
+  logId = null,
+} = {}) {
+  if (!portionCanIssueInventory(entry) || entry?.inventoryIssued) return;
+  try {
+    const {
+      previewProductionStockIssue,
+      issueStockFromProduction,
+      formatProductionIssueConfirm,
+    } = await import('../inventory-db.js?v=422');
+    const preview = await previewProductionStockIssue({
+      portionPresetId: entry.presetId || null,
+      recipeId: entry.sourceRecipeId || null,
+      rawMaterialId: entry.sourceRawMaterialId || null,
+      portionWeightKg: entry.weight ?? null,
+      portionCount: entry.count,
+    });
+    if (!preview.lines.length) {
+      if (preview.skipped.length) {
+        showToast(`מנה נשמרה · ${preview.skipped.length} חומרים בלי קישור למלאי`);
+      }
+      return;
+    }
+    if (!confirm(formatProductionIssueConfirm(preview))) return;
+    const reason = `ניפוק מייצור · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`;
+    const result = await issueStockFromProduction(preview, { reasonLabel: reason, allowPartial: true });
+    const meta = {
+      inventoryIssued: true,
+      inventoryIssuedAt: result.inventoryIssuedAt,
+      inventoryIssueLines: result.inventoryIssueLines,
+    };
+    if (logId != null) {
+      await setRunPortionLogInventoryIssue(run.id, logId, meta);
+    } else if (stepIndex != null && batchIndex != null) {
+      await setRunStepPortionBatchInventoryIssue(run.id, stepIndex, batchIndex, meta);
+    }
+    const failNote = result.failed.length ? ` · ${result.failed.length} נכשלו` : '';
+    showToast(`נופק מלאי: ${result.issued.length} חומרים${failNote}`);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בניפוק מלאי');
+  }
+}
+
+async function reverseInventoryIssueForPortion(run, entry) {
+  if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
+  try {
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=422');
+    await reverseStockIssueLines(entry.inventoryIssueLines, {
+      reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
+    });
+  } catch (err) {
+    showToast(err.message || 'שגיאה בביטול ניפוק');
+    throw err;
+  }
+}
+
+async function resyncInventoryIssueForPortion(run, entry, {
+  stepIndex = null,
+  batchIndex = null,
+  logId = null,
+} = {}) {
+  if (!entry?.inventoryIssued) return;
+  await reverseInventoryIssueForPortion(run, entry);
+  const cleared = { inventoryIssued: false, inventoryIssueLines: [] };
+  if (logId != null) await setRunPortionLogInventoryIssue(run.id, logId, cleared);
+  else if (stepIndex != null && batchIndex != null) {
+    await setRunStepPortionBatchInventoryIssue(run.id, stepIndex, batchIndex, cleared);
+  }
+  try {
+    const {
+      previewProductionStockIssue,
+      issueStockFromProduction,
+    } = await import('../inventory-db.js?v=422');
+    const preview = await previewProductionStockIssue({
+      portionPresetId: entry.presetId || null,
+      recipeId: entry.sourceRecipeId || null,
+      rawMaterialId: entry.sourceRawMaterialId || null,
+      portionWeightKg: entry.weight ?? null,
+      portionCount: entry.count,
+    });
+    if (!preview.lines.length) return;
+    const reason = `ניפוק מייצור (עדכון) · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`;
+    const result = await issueStockFromProduction(preview, { reasonLabel: reason, allowPartial: true });
+    const meta = {
+      inventoryIssued: true,
+      inventoryIssuedAt: result.inventoryIssuedAt,
+      inventoryIssueLines: result.inventoryIssueLines,
+    };
+    if (logId != null) await setRunPortionLogInventoryIssue(run.id, logId, meta);
+    else if (stepIndex != null && batchIndex != null) {
+      await setRunStepPortionBatchInventoryIssue(run.id, stepIndex, batchIndex, meta);
+    }
+    showToast(`מלאי עודכן לפי הכמות החדשה (${result.issued.length})`);
+  } catch (err) {
+    showToast(err.message || 'שגיאה בעדכון ניפוק');
+  }
+}
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=422';
+import { openModal, closeModal } from '../modal.js?v=422';
+import { requestAutoBackupNow } from '../backup-service.js?v=422';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=422';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=422';
+import { materialMatchesSearch } from '../kitchen-db.js?v=422';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -731,6 +840,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
               ${!editable ? `<span class="flow-portion-batch-date">${formatDate(b.date)}</span>` : ''}
               ${`
                 <span class="flow-portion-batch-name">${b.fromRecipe ? '<span class="flow-preset-recipe-star" title="ממתכון">★</span> ' : ''}${escapeHtml(b.name || 'מנה')}</span>
+                ${b.inventoryIssued ? '<span class="form-hint flow-portion-inv-issued" title="נופק למלאי">מלאי ✓</span>' : ''}
                 ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
                 ${b.extra ? `<span class="flow-portion-batch-extra">${escapeHtml(b.extra)}</span>` : ''}
               `}
@@ -1872,8 +1982,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=421');
-    const { db } = await import('../db.js?v=421');
+    const { getRecipe } = await import('../kitchen-db.js?v=422');
+    const { db } = await import('../db.js?v=422');
     const blocks = [];
 
     for (const row of rows) {
@@ -2475,6 +2585,7 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
         return `
         <li class="flow-portion-batch-item run-portion-log-item" data-log-id="${b.id}">
           <span class="flow-portion-batch-name">${b.fromRecipe ? '<span class="flow-preset-recipe-star" title="ממתכון">★</span> ' : ''}${escapeHtml(b.name || 'מנה')}</span>
+          ${b.inventoryIssued ? '<span class="form-hint flow-portion-inv-issued" title="נופק למלאי">מלאי ✓</span>' : ''}
           ${b.weight != null ? `<span class="flow-portion-batch-weight">${b.weight} ק"ג</span>` : ''}
           ${canEdit ? `
             <label class="flow-portion-batch-count-edit">
@@ -2697,7 +2808,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=421');
+    const kitchen = await import('../kitchen-db.js?v=422');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3368,9 +3479,10 @@ async function renderRunView(container, runId, ctx) {
       btn.dataset.saving = '1';
       btn.disabled = true;
       try {
-        await addRunStepPortionBatch(run.id, stepIndex, { presetId, count, date });
+        const { batchIndex, entry } = await addRunStepPortionBatch(run.id, stepIndex, { presetId, count, date });
         requestAutoBackupNow().catch(() => {});
         showToast('מנות נוספו ✓');
+        await offerInventoryIssueForPortion(run, entry, { stepIndex, batchIndex });
         container.dataset.runId = String(run.id);
         container.dataset.view = 'run';
         renderProcess(container);
@@ -3387,9 +3499,16 @@ async function renderRunView(container, runId, ctx) {
       const stepIndex = Number(input.dataset.step);
       const batchIndex = Number(input.dataset.batch);
       try {
+        const step = run.steps[stepIndex];
+        const prev = getStepPortionBatches(step)[batchIndex];
         await updateRunStepPortionBatch(run.id, stepIndex, batchIndex, { count: input.value });
         requestAutoBackupNow().catch(() => {});
         showToast('כמות עודכנה ✓');
+        if (prev?.inventoryIssued) {
+          const updatedRun = await getProductionRun(run.id);
+          const updated = getStepPortionBatches(updatedRun.steps[stepIndex])[batchIndex];
+          await resyncInventoryIssueForPortion(updatedRun, updated, { stepIndex, batchIndex });
+        }
         container.dataset.runId = String(run.id);
         container.dataset.view = 'run';
         renderProcess(container);
@@ -3420,6 +3539,9 @@ async function renderRunView(container, runId, ctx) {
       const batchIndex = Number(btn.dataset.batch);
       if (!confirm('להסיר רשומת מנות זו?')) return;
       try {
+        const step = run.steps[stepIndex];
+        const prev = getStepPortionBatches(step)[batchIndex];
+        await reverseInventoryIssueForPortion(run, prev);
         await deleteRunStepPortionBatch(run.id, stepIndex, batchIndex);
         requestAutoBackupNow().catch(() => {});
         showToast('הוסר ✓');
@@ -3456,13 +3578,14 @@ async function renderRunView(container, runId, ctx) {
       btn.disabled = true;
     }
     try {
-      await addRunPortionLog(run.id, {
+      const { logId, entry } = await addRunPortionLog(run.id, {
         presetId: document.getElementById('run-portion-add-preset')?.value || null,
         count: document.getElementById('run-portion-add-count')?.value,
         date: document.getElementById('run-portion-add-date')?.value,
       });
       requestAutoBackupNow().catch(() => {});
       showToast('מנה נוספה ✓');
+      await offerInventoryIssueForPortion(run, entry, { logId });
       refreshRunView();
     } catch (err) {
       if (btn) {
@@ -3476,9 +3599,15 @@ async function renderRunView(container, runId, ctx) {
   container.querySelectorAll('.run-portion-log-count').forEach((input) => {
     input.addEventListener('change', async () => {
       try {
+        const prev = getRunPortionLogs(run).find((l) => Number(l.id) === Number(input.dataset.logId));
         await updateRunPortionLog(run.id, input.dataset.logId, { count: input.value });
         requestAutoBackupNow().catch(() => {});
         showToast('כמות עודכנה ✓');
+        if (prev?.inventoryIssued) {
+          const updatedRun = await getProductionRun(run.id);
+          const updated = getRunPortionLogs(updatedRun).find((l) => Number(l.id) === Number(input.dataset.logId));
+          await resyncInventoryIssueForPortion(updatedRun, updated, { logId: input.dataset.logId });
+        }
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
@@ -3501,6 +3630,8 @@ async function renderRunView(container, runId, ctx) {
     btn.addEventListener('click', async () => {
       if (!confirm('להסיר מנה זו?')) return;
       try {
+        const prev = getRunPortionLogs(run).find((l) => Number(l.id) === Number(btn.dataset.logId));
+        await reverseInventoryIssueForPortion(run, prev);
         await deleteRunPortionLog(run.id, btn.dataset.logId);
         requestAutoBackupNow().catch(() => {});
         showToast('הוסר ✓');
