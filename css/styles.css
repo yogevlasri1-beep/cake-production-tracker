@@ -11212,6 +11212,70 @@ body.supplier-drag-active {
   font-size: 0.9rem;
 }
 
+.haccp-readiness-card {
+  margin-top: 12px;
+}
+
+.haccp-readiness-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.haccp-readiness-bar {
+  flex: 1;
+  min-width: 120px;
+  height: 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--border, #cbd5e1) 70%, transparent);
+  overflow: hidden;
+}
+
+.haccp-readiness-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--success, #059669);
+  border-radius: inherit;
+}
+
+.haccp-readiness-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.haccp-readiness-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border, #e2e8f0) 80%, transparent);
+}
+
+.haccp-readiness-list li.done .haccp-readiness-link {
+  color: var(--success, #059669);
+}
+
+.haccp-readiness-list li.missing .haccp-readiness-link {
+  color: var(--text, #0f172a);
+}
+
+.haccp-readiness-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-align: right;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .haccp-roadmap {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

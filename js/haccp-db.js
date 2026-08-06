@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=426';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=426';
-import { logAuditEvent } from './audit.js?v=426';
+import { db, ValidationError } from './db.js?v=428';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=428';
+import { logAuditEvent } from './audit.js?v=428';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -2851,6 +2851,23 @@ export async function getHaccpMonitoringLogs(planId, { limit = 200 } = {}) {
     .slice(0, Math.max(1, Number(limit) || 200));
 }
 
+/**
+ * טיוטת טקסט לפעולה מתקנת לפי CCP — למילוי אוטומטי ביומן ניטור בחריגה.
+ */
+export async function suggestCorrectiveNoteForDeviation(ccpId) {
+  const cid = sanitizeProductId(ccpId);
+  if (!cid) return '';
+  const actions = await getHaccpCorrectiveActionsForCcp(cid);
+  if (!actions.length) return '';
+  const a = actions[0];
+  const parts = [
+    a.immediateAction && `מיידי: ${a.immediateAction}`,
+    a.productControl && `בקרת מוצר: ${a.productControl}`,
+    a.notificationInstructions && `דיווח: ${a.notificationInstructions}`,
+  ].filter(Boolean);
+  return parts.join(' · ').slice(0, 2000);
+}
+
 export async function addHaccpMonitoringLog(planId, {
   ccpId,
   monitoringId = null,
@@ -2901,6 +2918,11 @@ export async function addHaccpMonitoringLog(planId, {
     throw new ValidationError('הזן ערך מדידה');
   }
 
+  let cleanCorrective = sanitizeTextField(correctiveNote, 2000);
+  if (cleanResult === 'deviation' && !cleanCorrective) {
+    cleanCorrective = await suggestCorrectiveNoteForDeviation(cid);
+  }
+
   const logRow = {
     planId: pid,
     ccpId: cid,
@@ -2913,7 +2935,7 @@ export async function addHaccpMonitoringLog(planId, {
     result: cleanResult,
     recordedByRole: sanitizeRole(recordedByRole),
     recordedByText: sanitizeTextField(recordedByText, 200),
-    correctiveNote: sanitizeTextField(correctiveNote, 2000),
+    correctiveNote: cleanCorrective,
     notes: sanitizeTextField(notes, 2000),
   };
   const id = await db.haccpMonitoringLogs.add(logRow);
@@ -2998,3 +3020,503 @@ export async function deleteHaccpMonitoringLog(id) {
   await db.haccpMonitoringLogs.delete(lid);
   logAuditEvent({ entityTable: 'haccpMonitoringLogs', entityId: lid, action: 'delete' });
 }
+
+/**
+ * בונה טיוטת תכנית מהצעות קיימות (seeds) לפי תלות בין שלבים.
+ * מדלג בשקט על שלבים שכבר מולאו; לא מוחק נתונים קיימים.
+ */
+export async function buildHaccpPlanDraft(planId, {
+  preferProductionFlow = true,
+  confirmCcpCandidates = true,
+} = {}) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) throw new ValidationError('בחר תכנית');
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const steps = [];
+  const run = async (label, fn) => {
+    try {
+      const count = await fn();
+      steps.push({
+        label,
+        ok: true,
+        skipped: false,
+        count: Number.isFinite(count) ? count : 0,
+        message: '',
+      });
+    } catch (err) {
+      const message = err?.message || String(err);
+      const skipped = /כבר/.test(message);
+      steps.push({
+        label,
+        ok: skipped,
+        skipped,
+        count: 0,
+        message,
+      });
+      if (!skipped) {
+        // ממשיכים — טיוטה חלקית עדיפה על עצירה מוחלטת
+      }
+    }
+  };
+
+  await run('PRP — אתחול נושאים', () => seedHaccpPrpControls(pid));
+
+  await run('תיאור מוצר — הרכב ממתכונים', async () => {
+    const suggestion = await suggestCompositionForHaccpPlan(pid);
+    if (!suggestion) throw new ValidationError('אין מתכונים/מוצרים להצעת הרכב');
+    const desc = await getHaccpProductDescription(pid);
+    if (String(desc.composition || '').trim()) {
+      throw new ValidationError('כבר יש הרכב בתיאור המוצר');
+    }
+    await saveHaccpProductDescription(pid, { ...desc, composition: suggestion });
+    return 1;
+  });
+
+  await run('תרשים זרימה', async () => {
+    const existing = await getHaccpFlowSteps(pid);
+    if (existing.length) throw new ValidationError('כבר יש שלבים בתרשים');
+    if (preferProductionFlow) {
+      const flows = await listProductionFlowsForHaccpPlan(pid);
+      const best = flows.sort((a, b) => b.stepCount - a.stepCount)[0];
+      if (best) {
+        return importHaccpFlowFromProduction(pid, best.id, { replace: false });
+      }
+    }
+    return seedDefaultHaccpFlowSteps(pid);
+  });
+
+  await run('ניתוח סיכונים — הצעות לכל שלב', async () => {
+    const flowSteps = await getHaccpFlowSteps(pid);
+    if (!flowSteps.length) throw new ValidationError('אין שלבי תרשים');
+    let added = 0;
+    for (const step of flowSteps) {
+      try {
+        added += await seedSuggestedHazardsForStep(pid, step.id);
+      } catch (err) {
+        if (!/כבר/.test(err?.message || '')) {
+          /* מדלגים על שלב בודד שנכשל */
+        }
+      }
+    }
+    if (!added) throw new ValidationError('כל הצעות הסיכון כבר קיימות');
+    return added;
+  });
+
+  if (confirmCcpCandidates) {
+    await run('CCP — אישור מועמדים (טיוטה Codex)', async () => {
+      const candidates = await getHaccpCcpCandidates(pid);
+      const bakeryTree = { q1: 'no', q2: 'yes', q3: 'no', q4: 'yes' }; // → ccp
+      let added = 0;
+      for (const h of candidates) {
+        if (!h.isCcpCandidate) continue;
+        try {
+          await addHaccpCcpFromHazard(pid, h.id, bakeryTree);
+          added += 1;
+        } catch {
+          /* מדלגים אם כבר מקושר / שגיאה נקודתית */
+        }
+      }
+      if (!added) throw new ValidationError('אין מועמדי CCP חדשים לאישור');
+      return added;
+    });
+  }
+
+  const confirmed = (await getHaccpCcps(pid)).filter((c) => c.decision === 'ccp');
+
+  await run('גבולות קריטיים ל-CCP', async () => {
+    let added = 0;
+    for (const ccp of confirmed) {
+      try {
+        added += await seedSuggestedLimitsForCcp(pid, ccp.id);
+      } catch (err) {
+        if (!/כבר/.test(err?.message || '')) { /* skip */ }
+      }
+    }
+    if (!added) throw new ValidationError('כבר יש גבולות או שאין CCP מאושרים');
+    return added;
+  });
+
+  await run('נהלי ניטור ל-CCP', async () => {
+    let added = 0;
+    for (const ccp of confirmed) {
+      try {
+        added += await seedSuggestedMonitoringForCcp(pid, ccp.id);
+      } catch (err) {
+        if (!/כבר/.test(err?.message || '')) { /* skip */ }
+      }
+    }
+    if (!added) throw new ValidationError('כבר יש נהלי ניטור או שאין CCP מאושרים');
+    return added;
+  });
+
+  await run('פעולות מתקנות ל-CCP', async () => {
+    let added = 0;
+    for (const ccp of confirmed) {
+      try {
+        added += await seedSuggestedCorrectiveForCcp(pid, ccp.id);
+      } catch (err) {
+        if (!/כבר/.test(err?.message || '')) { /* skip */ }
+      }
+    }
+    if (!added) throw new ValidationError('כבר יש פעולות מתקנות או שאין CCP מאושרים');
+    return added;
+  });
+
+  await run('נהלי אימות', () => seedSuggestedVerificationProcs(pid));
+  await run('קטלוג מסמכים', () => seedSuggestedHaccpDocuments(pid));
+
+  await db.haccpPlans.update(pid, {
+    status: 'in_progress',
+    currentStep: confirmed.length ? 'limits' : 'hazard',
+  });
+
+  const readiness = await getHaccpPlanReadiness(pid);
+  return {
+    planId: pid,
+    steps,
+    addedTotal: steps.reduce((s, x) => s + (x.count || 0), 0),
+    failed: steps.filter((s) => !s.ok && !s.skipped),
+    readiness,
+  };
+}
+
+/** ציון מוכנות תכנית להדפסה / ביקורת */
+export async function getHaccpPlanReadiness(planId) {
+  const pid = sanitizeProductId(planId);
+  if (!pid) {
+    return { planId: null, percent: 0, done: 0, total: 0, items: [] };
+  }
+  const plan = await db.haccpPlans.get(pid);
+  if (!plan) throw new ValidationError('תכנית לא נמצאה');
+
+  const [
+    members,
+    prp,
+    product,
+    intended,
+    flowSteps,
+    verifications,
+    hazards,
+    ccps,
+    limits,
+    monitoring,
+    corrective,
+    verificationProcs,
+    documents,
+  ] = await Promise.all([
+    getHaccpTeamMembers(),
+    getHaccpPrpControls(pid),
+    getHaccpProductDescription(pid),
+    getHaccpIntendedUse(pid),
+    getHaccpFlowSteps(pid),
+    db.haccpFlowVerifications.where('planId').equals(pid).toArray(),
+    getHaccpHazards(pid),
+    getHaccpCcps(pid),
+    getHaccpCriticalLimits(pid),
+    getHaccpMonitoring(pid),
+    getHaccpCorrectiveActions(pid),
+    getHaccpVerificationProcs(pid),
+    getHaccpDocuments(pid),
+  ]);
+
+  const activeMembers = members.filter((m) => m.active !== false);
+  const hasLeader = activeMembers.some((m) => m.isLeader);
+  const confirmedCcps = ccps.filter((c) => c.decision === 'ccp');
+  const limitsCovered = confirmedCcps.filter((c) =>
+    limits.some((l) => Number(l.ccpId) === Number(c.id))).length;
+  const monitoringCovered = confirmedCcps.filter((c) =>
+    monitoring.some((m) => Number(m.ccpId) === Number(c.id))).length;
+  const correctiveCovered = confirmedCcps.filter((c) =>
+    corrective.some((a) => Number(a.ccpId) === Number(c.id))).length;
+
+  const items = [
+    {
+      id: 'team',
+      stepId: 'team',
+      label: 'צוות HACCP עם מוביל',
+      done: activeMembers.length >= 1 && hasLeader,
+      detail: hasLeader
+        ? `${activeMembers.length} פעילים`
+        : (activeMembers.length ? 'חסר מוביל מערכת' : 'אין חברי צוות'),
+    },
+    {
+      id: 'prp',
+      stepId: 'prp',
+      label: 'שלד PRP לכל נושאי המדריך',
+      done: prp.length >= HACCP_PRP_TOPICS.length,
+      detail: `${prp.length}/${HACCP_PRP_TOPICS.length} נושאים`,
+    },
+    {
+      id: 'product',
+      stepId: 'product',
+      label: 'תיאור מוצר עם הרכב',
+      done: !!String(product?.composition || '').trim(),
+      detail: String(product?.composition || '').trim() ? 'הרכבים מולאו' : 'חסר הרכב',
+    },
+    {
+      id: 'intended_use',
+      stepId: 'intended_use',
+      label: 'שימוש מיועד',
+      done: !!(intended && (
+        String(intended.targetAudience || '').trim()
+        || (intended.consumptionModes || []).length
+        || (intended.channels || []).length
+      )),
+      detail: intended && (
+        String(intended.targetAudience || '').trim()
+        || (intended.consumptionModes || []).length
+        || (intended.channels || []).length
+      ) ? 'הוגדר' : 'חסר',
+    },
+    {
+      id: 'flow',
+      stepId: 'flow',
+      label: 'תרשים זרימה (≥3 שלבים)',
+      done: flowSteps.length >= 3,
+      detail: `${flowSteps.length} שלבים`,
+    },
+    {
+      id: 'flow_verify',
+      stepId: 'flow_verify',
+      label: 'אימות תרשים בשטח',
+      done: verifications.some((v) => v.matchResult === 'matches' || v.matchResult === 'partial')
+        || verifications.length > 0,
+      detail: verifications.length ? `${verifications.length} אימותים` : 'טרם אומת',
+    },
+    {
+      id: 'hazard',
+      stepId: 'hazard',
+      label: 'ניתוח גורמי סיכון',
+      done: hazards.length >= 1,
+      detail: `${hazards.length} סיכונים`,
+    },
+    {
+      id: 'ccp',
+      stepId: 'ccp',
+      label: 'לפחות CCP מאושר אחד',
+      done: confirmedCcps.length >= 1,
+      detail: `${confirmedCcps.length} CCP`,
+    },
+    {
+      id: 'limits',
+      stepId: 'limits',
+      label: 'גבול קריטי לכל CCP',
+      done: confirmedCcps.length > 0 && limitsCovered === confirmedCcps.length,
+      detail: confirmedCcps.length
+        ? `${limitsCovered}/${confirmedCcps.length} CCP עם גבול`
+        : 'אין CCP',
+    },
+    {
+      id: 'monitoring',
+      stepId: 'monitoring',
+      label: 'נוהל ניטור לכל CCP',
+      done: confirmedCcps.length > 0 && monitoringCovered === confirmedCcps.length,
+      detail: confirmedCcps.length
+        ? `${monitoringCovered}/${confirmedCcps.length} CCP עם ניטור`
+        : 'אין CCP',
+    },
+    {
+      id: 'corrective',
+      stepId: 'corrective',
+      label: 'פעולה מתקנת לכל CCP',
+      done: confirmedCcps.length > 0 && correctiveCovered === confirmedCcps.length,
+      detail: confirmedCcps.length
+        ? `${correctiveCovered}/${confirmedCcps.length} CCP עם פעולה`
+        : 'אין CCP',
+    },
+    {
+      id: 'verification',
+      stepId: 'verification',
+      label: 'נוהל אימות מערכת',
+      done: verificationProcs.length >= 1,
+      detail: `${verificationProcs.length} נהלים`,
+    },
+    {
+      id: 'documentation',
+      stepId: 'documentation',
+      label: 'קטלוג מסמכים',
+      done: documents.length >= 1,
+      detail: `${documents.length} מסמכים`,
+    },
+  ];
+
+  const done = items.filter((i) => i.done).length;
+  const total = items.length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  return {
+    planId: pid,
+    planName: plan.name,
+    percent,
+    done,
+    total,
+    items,
+    readyForPrint: percent >= 70 && confirmedCcps.length >= 1,
+    missing: items.filter((i) => !i.done),
+  };
+}
+
+/**
+ * שכפול תכנית למשפחת מוצרים אחרת (בלי יומן ניטור תפעולי).
+ */
+export async function cloneHaccpPlan(sourcePlanId, targetCategoryGroupId, { name = '' } = {}) {
+  const srcId = sanitizeProductId(sourcePlanId);
+  const gid = sanitizeProductId(targetCategoryGroupId);
+  if (!srcId || !gid) throw new ValidationError('בחר תכנית מקור ומשפחת יעד');
+  const source = await db.haccpPlans.get(srcId);
+  if (!source) throw new ValidationError('תכנית מקור לא נמצאה');
+  const group = await db.categoryGroups.get(gid);
+  if (!group) throw new ValidationError('משפחת מוצרים לא נמצאה');
+  const existing = await db.haccpPlans.where('categoryGroupId').equals(gid).first();
+  if (existing) throw new ValidationError('למשפחה זו כבר יש תכנית — מחק או בחר משפחה אחרת');
+
+  const newPlanId = await ensureHaccpPlanForGroup(gid, {
+    name: sanitizeName(name, 80) || `${source.name} (עותק)`,
+  });
+  // ensureHaccpPlanForGroup returns existing if present — we already guarded
+  await updateHaccpPlan(newPlanId, {
+    name: sanitizeName(name, 80) || `${source.name} (עותק)`,
+    status: 'draft',
+    currentStep: source.currentStep || 'team',
+    notes: source.notes || '',
+  });
+
+  const stepMap = new Map();
+  const hazardMap = new Map();
+  const ccpMap = new Map();
+  const limitMap = new Map();
+
+  const [
+    prp, product, intended, flowSteps, verifications, hazards, ccps,
+    limits, monitoring, corrective, verProcs, docs,
+  ] = await Promise.all([
+    getHaccpPrpControls(srcId),
+    getHaccpProductDescription(srcId),
+    getHaccpIntendedUse(srcId),
+    getHaccpFlowSteps(srcId),
+    db.haccpFlowVerifications.where('planId').equals(srcId).toArray(),
+    getHaccpHazards(srcId),
+    getHaccpCcps(srcId),
+    getHaccpCriticalLimits(srcId),
+    getHaccpMonitoring(srcId),
+    getHaccpCorrectiveActions(srcId),
+    getHaccpVerificationProcs(srcId),
+    getHaccpDocuments(srcId),
+  ]);
+
+  for (const row of prp) {
+    const { id, planId, ...rest } = row;
+    await db.haccpPrpControls.add({ ...rest, planId: newPlanId });
+  }
+
+  if (product && (product.composition || product.name || product.shelfLife)) {
+    const { id, planId, ...rest } = product;
+    await saveHaccpProductDescription(newPlanId, rest);
+  }
+
+  if (intended && (
+    String(intended.targetAudience || '').trim()
+    || (intended.consumptionModes || []).length
+    || (intended.channels || []).length
+  )) {
+    const { id, planId, ...rest } = intended;
+    const existingUse = await db.haccpIntendedUses.where('planId').equals(newPlanId).first();
+    if (existingUse) await db.haccpIntendedUses.update(existingUse.id, { ...rest, planId: newPlanId });
+    else await db.haccpIntendedUses.add({ ...rest, planId: newPlanId });
+  }
+
+  for (const step of flowSteps) {
+    const { id, planId, ...rest } = step;
+    const newId = await db.haccpFlowSteps.add({ ...rest, planId: newPlanId });
+    stepMap.set(Number(id), newId);
+  }
+
+  for (const v of verifications) {
+    const { id, planId, flowStepId, ...rest } = v;
+    await db.haccpFlowVerifications.add({
+      ...rest,
+      planId: newPlanId,
+      flowStepId: flowStepId ? (stepMap.get(Number(flowStepId)) || null) : null,
+    });
+  }
+
+  for (const h of hazards) {
+    const { id, planId, flowStepId, ...rest } = h;
+    const newFlowStepId = stepMap.get(Number(flowStepId));
+    if (!newFlowStepId) continue;
+    const newId = await db.haccpHazards.add({
+      ...rest,
+      planId: newPlanId,
+      flowStepId: newFlowStepId,
+    });
+    hazardMap.set(Number(id), newId);
+  }
+
+  for (const c of ccps) {
+    const { id, planId, flowStepId, hazardId, ...rest } = c;
+    const newFlowStepId = stepMap.get(Number(flowStepId));
+    if (!newFlowStepId) continue;
+    const newId = await db.haccpCcps.add({
+      ...rest,
+      planId: newPlanId,
+      flowStepId: newFlowStepId,
+      hazardId: hazardId ? (hazardMap.get(Number(hazardId)) || null) : null,
+    });
+    ccpMap.set(Number(id), newId);
+  }
+
+  for (const l of limits) {
+    const { id, planId, ccpId, ...rest } = l;
+    const newCcpId = ccpMap.get(Number(ccpId));
+    if (!newCcpId) continue;
+    const newId = await db.haccpCriticalLimits.add({
+      ...rest,
+      planId: newPlanId,
+      ccpId: newCcpId,
+    });
+    limitMap.set(Number(id), newId);
+  }
+
+  for (const m of monitoring) {
+    const { id, planId, ccpId, limitId, ...rest } = m;
+    const newCcpId = ccpMap.get(Number(ccpId));
+    if (!newCcpId) continue;
+    await db.haccpMonitoring.add({
+      ...rest,
+      planId: newPlanId,
+      ccpId: newCcpId,
+      limitId: limitId ? (limitMap.get(Number(limitId)) || null) : null,
+    });
+  }
+
+  for (const a of corrective) {
+    const { id, planId, ccpId, limitId, ...rest } = a;
+    const newCcpId = ccpMap.get(Number(ccpId));
+    if (!newCcpId) continue;
+    await db.haccpCorrectiveActions.add({
+      ...rest,
+      planId: newPlanId,
+      ccpId: newCcpId,
+      limitId: limitId ? (limitMap.get(Number(limitId)) || null) : null,
+    });
+  }
+
+  for (const v of verProcs) {
+    const { id, planId, ccpId, ...rest } = v;
+    await db.haccpVerificationProcs.add({
+      ...rest,
+      planId: newPlanId,
+      ccpId: ccpId ? (ccpMap.get(Number(ccpId)) || null) : null,
+    });
+  }
+
+  for (const d of docs) {
+    const { id, planId, ...rest } = d;
+    await db.haccpDocuments.add({ ...rest, planId: newPlanId });
+  }
+
+  await setActiveHaccpPlanId(newPlanId);
+  return newPlanId;
+}
+

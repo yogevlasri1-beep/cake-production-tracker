@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=426';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=426';
-import { openModal, closeModal } from '../modal.js?v=426';
-import { printHaccpPlan } from '../haccp-print.js?v=426';
-import { getCurrentUserRole } from '../auth.js?v=426';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=426';
+import { getCategoryGroups } from '../db.js?v=428';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=428';
+import { openModal, closeModal } from '../modal.js?v=428';
+import { printHaccpPlan } from '../haccp-print.js?v=428';
+import { getCurrentUserRole } from '../auth.js?v=428';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=428';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -123,7 +123,11 @@ import {
   HACCP_DOC_FORMATS,
   haccpDocKindLabel,
   haccpDocFormatLabel,
-} from '../haccp-db.js?v=426';
+  buildHaccpPlanDraft,
+  getHaccpPlanReadiness,
+  cloneHaccpPlan,
+  suggestCorrectiveNoteForDeviation,
+} from '../haccp-db.js?v=428';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 
@@ -182,6 +186,14 @@ export async function renderHaccp(container) {
   let verificationProcs = [];
   let documents = [];
   let prpControls = [];
+  let readiness = null;
+  if ((step.id === 'overview' || step.id === 'product' || step.id === 'prp') && activePlan) {
+    try {
+      readiness = await getHaccpPlanReadiness(activePlan.id);
+    } catch {
+      readiness = null;
+    }
+  }
   if (step.id === 'product' && activePlan) {
     [productDesc, familyProducts] = await Promise.all([
       getHaccpProductDescription(activePlan.id),
@@ -264,7 +276,7 @@ export async function renderHaccp(container) {
   }
 
   let body = '';
-  if (step.id === 'overview') body = renderOverview(members, plans, groups);
+  if (step.id === 'overview') body = renderOverview(members, plans, groups, activePlan, readiness);
   else if (step.id === 'prp') body = renderPrpSection(activePlan, prpControls, groupMap);
   else if (step.id === 'team') body = renderTeamSection(members);
   else if (step.id === 'product') {
@@ -329,7 +341,7 @@ export async function renderHaccp(container) {
     </div>`;
 
   bindHaccpEvents(container, {
-    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, monitoringLogs, correctiveActions, verificationProcs, documents, prpControls,
+    members, plans, groups, activePlan, productDesc, flowSteps, productionFlows, flowVerifications, hazards, ccps, ccpCandidates, criticalLimits, monitoring, monitoringLogs, correctiveActions, verificationProcs, documents, prpControls, readiness,
   });
 }
 
@@ -359,7 +371,9 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
         <div class="haccp-plan-meta">
           <span class="badge">${escapeHtml(HACCP_PLAN_STATUSES[activePlan.status] || activePlan.status)}</span>
           <span class="haccp-plan-family">${escapeHtml(groupMap.get(activePlan.categoryGroupId)?.name || '')}</span>
+          <button type="button" class="btn btn-primary btn-sm" id="haccp-build-draft">בנה טיוטה מהצעות</button>
           <button type="button" class="btn btn-secondary btn-sm haccp-print-plan">הדפס תכנית</button>
+          <button type="button" class="btn btn-secondary btn-sm" id="haccp-clone-plan">שכפל למשפחה</button>
           <button type="button" class="btn btn-secondary btn-sm" id="haccp-rename-plan">שנה שם</button>
           <button type="button" class="btn btn-danger btn-sm" id="haccp-delete-plan">מחק תכנית</button>
         </div>` : ''}
@@ -379,9 +393,39 @@ function renderPlanPicker(plans, groups, activePlan, groupMap) {
     </div>`;
 }
 
-function renderOverview(members, plans, groups) {
+function renderOverview(members, plans, groups, activePlan = null, readiness = null) {
   const leaders = members.filter((m) => m.isLeader && m.active !== false);
   const activeMembers = members.filter((m) => m.active !== false);
+  const readinessHtml = activePlan && readiness ? `
+    <div class="card haccp-readiness-card">
+      <div class="card-title">מוכנות תכנית — ${escapeHtml(activePlan.name)}</div>
+      <div class="haccp-readiness-score">
+        <div class="haccp-readiness-bar" aria-hidden="true">
+          <span style="width:${readiness.percent}%"></span>
+        </div>
+        <strong>${readiness.percent}%</strong>
+        <span class="form-hint">${readiness.done}/${readiness.total} סעיפים
+          ${readiness.readyForPrint ? '· מוכנה להדפסה/ביקורת בסיסית' : '· עוד לא מוכנה להדפסה'}</span>
+      </div>
+      <ul class="haccp-readiness-list">
+        ${readiness.items.map((item) => `
+          <li class="${item.done ? 'done' : 'missing'}">
+            <button type="button" class="haccp-readiness-link" data-haccp-step="${escapeHtml(item.stepId)}">
+              ${item.done ? '✓' : '○'} ${escapeHtml(item.label)}
+            </button>
+            <span class="form-hint">${escapeHtml(item.detail || '')}</span>
+          </li>`).join('')}
+      </ul>
+      <div class="haccp-inline-row">
+        <button type="button" class="btn btn-primary" id="haccp-build-draft">בנה טיוטה מהצעות</button>
+        <button type="button" class="btn btn-secondary haccp-print-plan">הדפס תכנית</button>
+      </div>
+      <p class="haccp-hint">«בנה טיוטה» ממלא PRP, תרשים, סיכונים, CCP מועמדים, גבולות, ניטור, פעולות מתקנות, אימות ומסמכים — ואז אפשר לערוך.</p>
+    </div>` : `
+    <div class="card">
+      <p class="haccp-hint">בחר או צור תכנית לפי משפחת מוצרים כדי לראות ציון מוכנות ולבנות טיוטה אוטומטית.</p>
+    </div>`;
+
   return `
     <div class="card">
       <div class="card-title">איפה אנחנו עומדים</div>
@@ -392,13 +436,13 @@ function renderOverview(members, plans, groups) {
           (מתוך ${groups.length} משפחות במערכת)</li>
         <li>השלבים הפעילים: PRP + הכנה + 5.1–5.7 + יומן ניטור</li>
       </ul>
-      <p class="haccp-hint">המלצה: אחרי הגדרת נהלי ניטור — רשום מדידות בפועל ביומן.</p>
+      <p class="haccp-hint">המלצה: התחל מבניית טיוטה, ואז השלם שימוש מיועד ואימות תרשים בשטח.</p>
       <div class="haccp-inline-row">
-        <button type="button" class="btn btn-primary" data-haccp-step="monitor_log">יומן ניטור</button>
+        <button type="button" class="btn btn-secondary" data-haccp-step="monitor_log">יומן ניטור</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">נהלי ניטור</button>
-        <button type="button" class="btn btn-secondary haccp-print-plan">הדפס תכנית פעילה</button>
       </div>
-    </div>`;
+    </div>
+    ${readinessHtml}`;
 }
 
 function prpStatusOptions(selected = 'not_started') {
@@ -2321,6 +2365,71 @@ function bindHaccpEvents(container, ctx) {
     }
   });
 
+  const runBuildDraft = async () => {
+    if (!ctx.activePlan) return showToast('בחר תכנית קודם');
+    if (!confirm('לבנות טיוטה אוטומטית מהצעות?\nימולאו רק חלקים ריקים — לא יימחקו נתונים קיימים.')) return;
+    const btn = document.getElementById('haccp-build-draft');
+    if (btn) btn.disabled = true;
+    try {
+      showToast('בונה טיוטה…');
+      const result = await buildHaccpPlanDraft(ctx.activePlan.id);
+      const failed = result.failed?.length || 0;
+      const msg = failed
+        ? `טיוטה חלקית: +${result.addedTotal} · ${failed} שלבים נכשלו · מוכנות ${result.readiness?.percent ?? '?'}%`
+        : `טיוטה מוכנה ✓ (+${result.addedTotal}) · מוכנות ${result.readiness?.percent ?? '?'}%`;
+      showToast(msg);
+      container.dataset.haccpStep = 'overview';
+      renderHaccp(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה בבניית טיוטה');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  document.querySelectorAll('#haccp-build-draft').forEach((btn) => {
+    btn.addEventListener('click', runBuildDraft);
+  });
+
+  document.getElementById('haccp-clone-plan')?.addEventListener('click', () => {
+    if (!ctx.activePlan) return;
+    const used = new Set((ctx.plans || []).map((p) => Number(p.categoryGroupId)));
+    const available = (ctx.groups || []).filter((g) => !used.has(Number(g.id)));
+    if (!available.length) return showToast('אין משפחה פנויה לשכפול');
+    openModal({
+      title: 'שכפול תכנית למשפחה אחרת',
+      bodyHTML: `
+        <p class="form-hint">יועתקו PRP, תיאור, שימוש מיועד, תרשים, סיכונים, CCP, גבולות, ניטור, פעולות מתקנות, אימות ומסמכים. יומן ניטור לא מועתק.</p>
+        <div class="form-group">
+          <label for="haccp-clone-family">משפחת יעד</label>
+          <select id="haccp-clone-family">
+            ${available.map((g) => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="haccp-clone-name">שם לתכנית החדשה</label>
+          <input type="text" id="haccp-clone-name" maxlength="80"
+            value="${escapeHtml(`${ctx.activePlan.name} (עותק)`)}">
+        </div>`,
+      footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
+        <button class="btn btn-primary" id="haccp-clone-save">שכפל</button>`,
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('haccp-clone-save')?.addEventListener('click', async () => {
+      try {
+        const gid = document.getElementById('haccp-clone-family')?.value;
+        const name = document.getElementById('haccp-clone-name')?.value;
+        await cloneHaccpPlan(ctx.activePlan.id, gid, { name });
+        closeModal();
+        showToast('תכנית שוכפלה ✓');
+        container.dataset.haccpStep = 'overview';
+        renderHaccp(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה בשכפול');
+      }
+    });
+  });
+
   document.getElementById('haccp-rename-plan')?.addEventListener('click', () => {
     if (!ctx.activePlan) return;
     openModal({
@@ -3854,22 +3963,38 @@ function bindHaccpEvents(container, ctx) {
     if (wrap) wrap.hidden = result !== 'deviation';
   }
 
+  async function maybePrefillCorrectiveNote() {
+    const result = document.getElementById('haccp-log-result')?.value;
+    const noteEl = document.getElementById('haccp-log-corrective');
+    const ccpId = document.getElementById('haccp-log-ccp')?.value;
+    if (result !== 'deviation' || !noteEl || noteEl.value.trim() || !ccpId) return;
+    try {
+      const suggestion = await suggestCorrectiveNoteForDeviation(ccpId);
+      if (suggestion) noteEl.value = suggestion;
+    } catch { /* ignore */ }
+  }
+
   function refreshLogLinkedOptions() {
     const ccpId = document.getElementById('haccp-log-ccp')?.value;
     const monSelect = document.getElementById('haccp-log-monitor');
     const limitSelect = document.getElementById('haccp-log-limit');
     if (monSelect) monSelect.innerHTML = monitorProcOptions(ctx.monitoring || [], ccpId);
     if (limitSelect) limitSelect.innerHTML = limitOptionsForCcp(ctx.criticalLimits || [], ccpId);
+    maybePrefillCorrectiveNote();
   }
 
   document.getElementById('haccp-log-ccp')?.addEventListener('change', refreshLogLinkedOptions);
-  document.getElementById('haccp-log-result')?.addEventListener('change', () => syncLogCorrectiveVisibility());
+  document.getElementById('haccp-log-result')?.addEventListener('change', () => {
+    syncLogCorrectiveVisibility();
+    maybePrefillCorrectiveNote();
+  });
   syncLogCorrectiveVisibility();
 
   document.getElementById('haccp-log-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     if (!ctx.activePlan) return showToast('בחר תכנית קודם');
     try {
+      const resultVal = document.getElementById('haccp-log-result')?.value;
       await addHaccpMonitoringLog(ctx.activePlan.id, {
         ccpId: document.getElementById('haccp-log-ccp')?.value,
         monitoringId: document.getElementById('haccp-log-monitor')?.value || null,
@@ -3878,13 +4003,15 @@ function bindHaccpEvents(container, ctx) {
         batchCode: document.getElementById('haccp-log-batch')?.value,
         value: document.getElementById('haccp-log-value')?.value,
         unit: document.getElementById('haccp-log-unit')?.value,
-        result: document.getElementById('haccp-log-result')?.value,
+        result: resultVal,
         recordedByRole: document.getElementById('haccp-log-role')?.value,
         recordedByText: document.getElementById('haccp-log-who')?.value,
         correctiveNote: document.getElementById('haccp-log-corrective')?.value,
         notes: document.getElementById('haccp-log-notes')?.value,
       });
-      showToast('מדידה נשמרה ✓');
+      showToast(resultVal === 'deviation'
+        ? 'חריגה נרשמה ✓ · מולאה טיוטת פעולה מתקנת מהנוהל'
+        : 'מדידה נשמרה ✓');
       renderHaccp(container);
     } catch (err) {
       showToast(err.message || 'שגיאה');

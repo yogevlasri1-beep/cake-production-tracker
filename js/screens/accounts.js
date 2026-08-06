@@ -1,22 +1,22 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=426';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=428';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=426';
+} from '../auth.js?v=428';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=426';
+} from '../accounts-api.js?v=428';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=426';
+} from '../audit.js?v=428';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
