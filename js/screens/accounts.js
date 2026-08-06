@@ -1,27 +1,54 @@
-import { escapeHtml, showToast } from '../utils.js?v=422';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=423';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=422';
+} from '../auth.js?v=423';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=422';
+} from '../accounts-api.js?v=423';
+import {
+  fetchAuditEvents,
+  auditActionLabel,
+  auditEntityLabel,
+  formatAuditSnapshotSummary,
+  auditKnownEntityTables,
+} from '../audit.js?v=423';
+
+const TAB_KEY = 'yitzurAccountsTab';
+const TAB_SUBTITLES = {
+  users: 'אישור משתמשים והרשאות',
+  audit: 'יומן פעולות כתיבה (HACCP ועוד)',
+};
 
 export function accountsMeta() {
+  const tab = sessionStorage.getItem(TAB_KEY) || 'users';
   return {
     title: 'חשבונות',
-    subtitle: 'אישור משתמשים והרשאות',
+    subtitle: TAB_SUBTITLES[tab] || TAB_SUBTITLES.users,
   };
+}
+
+function tabsHtml(active) {
+  return `
+    <div class="inventory-tabs" role="tablist">
+      <button type="button" class="login-gate-tab ${active === 'users' ? 'active' : ''}" data-accounts-tab="users">משתמשים</button>
+      <button type="button" class="login-gate-tab ${active === 'audit' ? 'active' : ''}" data-accounts-tab="audit">יומן ביקורת</button>
+    </div>`;
 }
 
 function statusBadge(status) {
   const label = userStatusLabel(status);
   const cls = status === 'active' ? 'ok' : status === 'rejected' ? 'danger' : 'warn';
   return `<span class="accounts-status accounts-status--${cls}">${escapeHtml(label)}</span>`;
+}
+
+function actionBadge(action) {
+  const cls = action === 'delete' ? 'danger' : action === 'create' ? 'ok' : 'warn';
+  return `<span class="accounts-status accounts-status--${cls}">${escapeHtml(auditActionLabel(action))}</span>`;
 }
 
 function profileCard(p, selfId) {
@@ -52,8 +79,26 @@ function profileCard(p, selfId) {
     </div>`;
 }
 
-export async function renderAccounts(container) {
-  container.innerHTML = `<div class="card"><p class="form-hint">טוען חשבונות...</p></div>`;
+function auditEventCard(ev) {
+  const summary = formatAuditSnapshotSummary(ev.snapshot);
+  return `
+    <div class="card accounts-card audit-event-card">
+      <div class="accounts-card-head">
+        <div>
+          <div class="card-title" style="margin-bottom:4px">${escapeHtml(auditEntityLabel(ev.entity_table))}</div>
+          <p class="form-hint" style="margin:0">${escapeHtml(formatDateTime(ev.at))}</p>
+          <p class="form-hint" style="margin:4px 0 0">
+            ${escapeHtml(ev.user_email || 'משתמש לא ידוע')}
+            ${ev.entity_id ? ` · מזהה: ${escapeHtml(String(ev.entity_id))}` : ''}
+          </p>
+          ${summary ? `<p class="form-hint" style="margin:4px 0 0">${escapeHtml(summary)}</p>` : ''}
+        </div>
+        ${actionBadge(ev.action)}
+      </div>
+    </div>`;
+}
+
+async function renderUsersTab(container) {
   const selfEmail = getCurrentUserEmail();
   const selfId = getStoredSession()?.user?.id || null;
 
@@ -61,20 +106,19 @@ export async function renderAccounts(container) {
   try {
     profiles = await listAccountProfiles();
   } catch (err) {
-    container.innerHTML = `
+    return `
       <div class="card" style="border:2px solid var(--danger)">
         <div class="card-title">לא ניתן לטעון חשבונות</div>
         <p style="font-size:0.9rem;line-height:1.5">${escapeHtml(err.message || err)}</p>
         <p class="form-hint">הרץ ב-Supabase SQL את המיגרציה <code>20260805200000_accounts_approval.sql</code> ואז רענן.</p>
       </div>`;
-    return;
   }
 
   const pending = profiles.filter((p) => p.status === 'pending');
   const active = profiles.filter((p) => p.status === 'active');
   const rejected = profiles.filter((p) => p.status === 'rejected');
 
-  container.innerHTML = `
+  return `
     <div class="card">
       <div class="card-title">ניהול חשבונות</div>
       <p class="form-hint" style="margin:0">מחובר כ: <strong>${escapeHtml(selfEmail || '—')}</strong>
@@ -90,11 +134,82 @@ export async function renderAccounts(container) {
     ${active.length ? active.map((p) => profileCard(p, selfId)).join('') : '<div class="card"><p class="form-hint">אין חשבונות פעילים</p></div>'}
     ${rejected.length ? `<h3 class="accounts-section-title">נדחו</h3>${rejected.map((p) => profileCard(p, selfId)).join('')}` : ''}
   `;
+}
 
+async function renderAuditTab(container) {
+  const action = container.dataset.auditAction || '';
+  const entityTable = container.dataset.auditEntity || '';
+  const search = container.dataset.auditSearch || '';
+
+  const entityOpts = [
+    '<option value="">כל הישויות</option>',
+    ...auditKnownEntityTables().map((t) =>
+      `<option value="${escapeHtml(t)}" ${entityTable === t ? 'selected' : ''}>${escapeHtml(auditEntityLabel(t))}</option>`),
+  ].join('');
+
+  let eventsHtml = '<div class="card"><p class="form-hint">טוען יומן...</p></div>';
+  let events = [];
+  let loadError = null;
+  try {
+    events = await fetchAuditEvents({ action, entityTable, search, limit: 120 });
+  } catch (err) {
+    loadError = err;
+  }
+
+  if (loadError) {
+    eventsHtml = `
+      <div class="card" style="border:2px solid var(--danger)">
+        <div class="card-title">לא ניתן לטעון יומן ביקורת</div>
+        <p style="font-size:0.9rem;line-height:1.5">${escapeHtml(loadError.message || loadError)}</p>
+        <p class="form-hint">ודא שהמיגרציות <code>20260805120000_audit_log.sql</code>
+          ו-<code>20260806180000_audit_log_manager_select.sql</code> רצו ב-Supabase.</p>
+      </div>`;
+  } else if (!events.length) {
+    eventsHtml = `
+      <div class="card">
+        <p class="form-hint" style="margin:0">אין אירועים עדיין — פעולות כתיבה ב-HACCP (CCP, גבולות, ניטור) נרשמות כאן אוטומטית.</p>
+      </div>`;
+  } else {
+    eventsHtml = events.map(auditEventCard).join('');
+  }
+
+  return `
+    <div class="card">
+      <div class="card-title">יומן ביקורת</div>
+      <p class="form-hint">רישום פעולות create/update/delete מהענן. נגיש למנהל ומנהל מערכת בלבד.</p>
+      <div class="filter-row" style="flex-wrap:wrap;gap:8px;align-items:end">
+        <div class="form-group" style="flex:1;min-width:140px;margin:0">
+          <label for="audit-action">פעולה</label>
+          <select id="audit-action">
+            <option value="" ${!action ? 'selected' : ''}>הכל</option>
+            <option value="create" ${action === 'create' ? 'selected' : ''}>יצירה</option>
+            <option value="update" ${action === 'update' ? 'selected' : ''}>עדכון</option>
+            <option value="delete" ${action === 'delete' ? 'selected' : ''}>מחיקה</option>
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:160px;margin:0">
+          <label for="audit-entity">ישות</label>
+          <select id="audit-entity">${entityOpts}</select>
+        </div>
+        <div class="form-group" style="flex:2;min-width:180px;margin:0">
+          <label for="audit-search">חיפוש</label>
+          <input type="search" id="audit-search" value="${escapeHtml(search)}" placeholder="אימייל / טבלה / מזהה">
+        </div>
+        <button type="button" class="btn btn-secondary" id="audit-apply">סנן</button>
+        <button type="button" class="btn btn-secondary" id="audit-refresh">רענון</button>
+      </div>
+      ${!loadError ? `<p class="form-hint" style="margin:10px 0 0">${events.length} אירועים אחרונים</p>` : ''}
+    </div>
+    ${eventsHtml}
+  `;
+}
+
+function wireUsersHandlers(container) {
   container.querySelector('#accounts-refresh')?.addEventListener('click', () => renderAccounts(container));
 
   container.querySelectorAll('.accounts-card').forEach((card) => {
     const userId = card.dataset.userId;
+    if (!userId) return;
     const roleSelect = card.querySelector('.accounts-role');
 
     card.querySelector('.accounts-approve')?.addEventListener('click', async () => {
@@ -128,4 +243,53 @@ export async function renderAccounts(container) {
       }
     });
   });
+}
+
+function wireAuditHandlers(container) {
+  const apply = () => {
+    container.dataset.auditAction = container.querySelector('#audit-action')?.value || '';
+    container.dataset.auditEntity = container.querySelector('#audit-entity')?.value || '';
+    container.dataset.auditSearch = container.querySelector('#audit-search')?.value || '';
+    renderAccounts(container);
+  };
+  container.querySelector('#audit-apply')?.addEventListener('click', apply);
+  container.querySelector('#audit-refresh')?.addEventListener('click', apply);
+  container.querySelector('#audit-search')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') apply();
+  });
+}
+
+export async function renderAccounts(container) {
+  const tab = container.dataset.accountsTab || sessionStorage.getItem(TAB_KEY) || 'users';
+  container.dataset.accountsTab = tab;
+  sessionStorage.setItem(TAB_KEY, tab);
+
+  container.innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      ${tabsHtml(tab)}
+    </div>
+    <div class="card"><p class="form-hint">טוען...</p></div>
+  `;
+
+  const body = tab === 'audit'
+    ? await renderAuditTab(container)
+    : await renderUsersTab(container);
+
+  container.innerHTML = `
+    <div class="card" style="margin-bottom:12px">
+      ${tabsHtml(tab)}
+    </div>
+    ${body}
+  `;
+
+  container.querySelectorAll('[data-accounts-tab]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.accountsTab = btn.dataset.accountsTab;
+      sessionStorage.setItem(TAB_KEY, btn.dataset.accountsTab);
+      renderAccounts(container);
+    });
+  });
+
+  if (tab === 'audit') wireAuditHandlers(container);
+  else wireUsersHandlers(container);
 }

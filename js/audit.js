@@ -1,10 +1,36 @@
-// RBAC שלב 3: audit trail מינימלי — תיעוד best-effort של פעולות כתיבה ל-Supabase.
-// כישלון רשת/הרשאות לא אמור לחסום שום פעולה עסקית: כל שגיאה נבלעת כאן.
-import { getValidSession } from './auth.js?v=422';
-import { getSupabaseBackupConfig, buildSupabaseRestUrl, getOrCreateDeviceId, getBackupScopeId } from './supabase-backup.js?v=422';
+// RBAC שלב 3+: audit trail — כתיבה best-effort + קריאה ליומן (מנהל/admin).
+// כישלון רשת/הרשאות בכתיבה לא חוסם פעולה עסקית.
+import { getValidSession } from './auth.js?v=423';
+import {
+  getSupabaseBackupConfig,
+  buildSupabaseRestUrl,
+  getOrCreateDeviceId,
+  getBackupScopeId,
+} from './supabase-backup.js?v=423';
+import { ValidationError } from './validators.js?v=423';
 
 const AUDIT_ACTIONS = ['create', 'update', 'delete'];
 const TABLE = 'sync_audit_log';
+
+const ENTITY_LABELS = {
+  haccpCcps: 'נקודות בקרה (CCP)',
+  haccpCriticalLimits: 'גבולות קריטיים',
+  haccpMonitoringLogs: 'יומן ניטור',
+  haccpHazards: 'סיכונים',
+  haccpPrp: 'PRP',
+  haccpTeam: 'צוות HACCP',
+  haccpProducts: 'מוצרי HACCP',
+  haccpFlowSteps: 'שלבי תרשים זרימה',
+  profiles: 'חשבונות',
+  inventoryBalances: 'יתרות מלאי',
+  inventoryMovements: 'תנועות מלאי',
+};
+
+const ACTION_LABELS = {
+  create: 'יצירה',
+  update: 'עדכון',
+  delete: 'מחיקה',
+};
 
 /** מנקה ומאמת קלט ל-audit event; מחזיר null אם הקלט לא תקין */
 export function sanitizeAuditPayload({ entityTable, entityId, action, snapshot } = {}) {
@@ -17,6 +43,34 @@ export function sanitizeAuditPayload({ entityTable, entityId, action, snapshot }
     action: act,
     snapshot: snapshot != null ? snapshot : null,
   };
+}
+
+export function auditActionLabel(action) {
+  return ACTION_LABELS[action] || String(action || '—');
+}
+
+export function auditEntityLabel(entityTable) {
+  const key = String(entityTable || '').trim();
+  if (!key) return '—';
+  return ENTITY_LABELS[key] || key;
+}
+
+/** סיכום קצר מ-snapshot לתצוגה ביומן */
+export function formatAuditSnapshotSummary(snapshot) {
+  if (snapshot == null) return '';
+  let obj = snapshot;
+  if (typeof snapshot === 'string') {
+    try { obj = JSON.parse(snapshot); } catch { return String(snapshot).slice(0, 120); }
+  }
+  if (typeof obj !== 'object' || !obj) return '';
+  const parts = [];
+  for (const key of ['name', 'title', 'label', 'ccpName', 'hazardName', 'result', 'status', 'email', 'role']) {
+    if (obj[key] != null && String(obj[key]).trim()) {
+      parts.push(String(obj[key]).trim());
+    }
+  }
+  if (!parts.length && obj.id != null) parts.push(`#${obj.id}`);
+  return parts.slice(0, 3).join(' · ').slice(0, 160);
 }
 
 /**
@@ -60,4 +114,82 @@ export async function logAuditEvent(event) {
   } catch {
     /* best-effort audit — כישלון רשת/הרשאות לא חוסם שום פעולה עסקית */
   }
+}
+
+/**
+ * שליפת אירועי audit מהענן (מנהל/admin דרך RLS).
+ * @param {{ action?: string, entityTable?: string, search?: string, limit?: number }} opts
+ */
+export async function fetchAuditEvents({
+  action = '',
+  entityTable = '',
+  search = '',
+  limit = 100,
+} = {}) {
+  const cfg = await getSupabaseBackupConfig();
+  const session = await getValidSession();
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token) {
+    throw new ValidationError('נדרשת התחברות');
+  }
+
+  const params = new URLSearchParams();
+  params.set('select', 'id,kitchen_id,entity_table,entity_id,action,user_id,user_email,at,snapshot,device_id');
+  params.set('kitchen_id', `eq.${getBackupScopeId()}`);
+  params.set('order', 'at.desc');
+  const lim = Math.min(Math.max(Number(limit) || 100, 1), 500);
+  params.set('limit', String(lim));
+
+  if (AUDIT_ACTIONS.includes(action)) {
+    params.set('action', `eq.${action}`);
+  }
+  const table = String(entityTable || '').trim();
+  if (table) {
+    params.set('entity_table', `eq.${table}`);
+  }
+  const q = String(search || '').trim();
+  if (q) {
+    const safe = q.replace(/[,.()]/g, ' ').slice(0, 80);
+    if (safe) {
+      params.set(
+        'or',
+        `(user_email.ilike.*${safe}*,entity_table.ilike.*${safe}*,entity_id.ilike.*${safe}*)`,
+      );
+    }
+  }
+
+  const base = buildSupabaseRestUrl(cfg.supabaseUrl, `/${TABLE}`);
+  if (!base) throw new ValidationError('כתובת Supabase לא תקינה');
+  const url = `${base}?${params.toString()}`;
+
+  const res = await fetch(url, {
+    headers: {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${session.access_token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const raw = await res.text();
+      try {
+        const j = JSON.parse(raw);
+        detail = j.message || j.error_description || j.error || raw;
+      } catch {
+        detail = raw;
+      }
+    } catch { /* ignore */ }
+    if (res.status === 401 || res.status === 403) {
+      throw new ValidationError('אין הרשאה לקרוא את יומן הביקורת (מנהל/מנהל מערכת בלבד)');
+    }
+    throw new ValidationError(detail || 'לא ניתן לטעון את יומן הביקורת');
+  }
+
+  const rows = await res.json().catch(() => []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+export function auditKnownEntityTables() {
+  return Object.keys(ENTITY_LABELS);
 }
