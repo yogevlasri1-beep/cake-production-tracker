@@ -1,6 +1,6 @@
-import { getSetting, setSetting } from './db.js?v=431';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=431';
-import { ValidationError } from './validators.js?v=431';
+import { getSetting, setSetting } from './db.js?v=432';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=432';
+import { ValidationError } from './validators.js?v=432';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -56,7 +56,7 @@ export function buildSupabaseHeaders(anonKey, extra = {}) {
 /** JWT של המשתמש המחובר — ל-RLS. דינמי כדי למנוע ייבוא מעגלי עם auth.js. */
 export async function resolveSupabaseUserAccessToken() {
   try {
-    const { getValidSession } = await import('./auth.js?v=431');
+    const { getValidSession } = await import('./auth.js?v=432');
     const session = await getValidSession();
     return session?.access_token || null;
   } catch {

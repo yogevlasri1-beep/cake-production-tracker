@@ -6,9 +6,11 @@ import {
   findDuplicateProductGroups, mergeProducts, mergeAllDuplicateProducts,
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
-} from '../db.js?v=431';
+  getPortionPresetsForProduct,
+} from '../db.js?v=432';
 import {
   getProductDetail,
+  buildProductProfileCompleteness,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
   addProductPortionComponent,
@@ -20,12 +22,12 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=431';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=431';
-import { openModal, closeModal } from '../modal.js?v=431';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=431';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=431';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=431';
+} from '../kitchen-db.js?v=432';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=432';
+import { openModal, closeModal } from '../modal.js?v=432';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=432';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=432';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=432';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -581,7 +583,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=431');
+    const { navigate } = await import('../app.js?v=432');
     navigate('backup');
   });
 
@@ -807,7 +809,7 @@ function bindProductDetailOpen(container) {
 
 function buildProductDetailHTML(detail, {
   allRecipes, portionMaterials = [], bakingProfiles, profileMap, linkedFlows = [], candidateFlows = [],
-  packagingMaterial = null, packagingSupplierName = '',
+  packagingMaterial = null, packagingSupplierName = '', portionPresets = [],
 }) {
   const { product, category, components, linkedRecipes, bakingProfile, bakingProfileLink, totalWeightGrams } = detail;
   const totalWeightText = totalWeightGrams > 0 ? formatKgWeight(totalWeightGrams / 1000) : '—';
@@ -816,6 +818,18 @@ function buildProductDetailHTML(detail, {
   const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
   const availablePortions = (portionMaterials || []).filter((m) => !usedPortionIds.has(m.id));
   const quickAddRecipes = linkedRecipes.filter((r) => !usedRecipeIds.has(r.id));
+  const completeness = buildProductProfileCompleteness({
+    product,
+    components,
+    linkedRecipes,
+    bakingProfile,
+    totalWeightGrams,
+    portionPresets,
+    linkedFlows,
+  });
+  const sellWeightText = Number(product.unitWeightKg) > 0
+    ? `${formatDecimal(product.unitWeightKg)} ק"ג/יח'`
+    : '';
 
   const compositionRows = components.length
     ? components.map((comp) => {
@@ -876,12 +890,76 @@ function buildProductDetailHTML(detail, {
 
   const linkedRecipesChips = linkedRecipes.length
     ? `<div class="product-detail-linked-recipes">
-        <p class="form-hint" style="margin:0 0 6px">שיוך למתכונים:</p>
+        <p class="form-hint" style="margin:0 0 6px">שיוך למתכונים (גם מחוץ להרכב):</p>
         <div class="product-detail-linked-recipes-list">
           ${linkedRecipes.map((r) => `<span class="recipe-meta-pill">${escapeHtml(r.name)}</span>`).join('')}
         </div>
       </div>`
     : '';
+
+  const completenessHtml = `
+    <div class="product-profile-completeness" aria-label="השלמת פרופיל">
+      <div class="product-profile-completeness-head">
+        <strong>פרופיל מוצר · ${completeness.percent}%</strong>
+        <span class="form-hint">${completeness.doneRequired}/${completeness.totalRequired} חובה
+          ${completeness.ready ? '· מוכן לייצור/מכירה בסיסי' : '· חסרים שדות חובה'}</span>
+      </div>
+      <div class="product-profile-completeness-bar" aria-hidden="true">
+        <span style="width:${completeness.percent}%"></span>
+      </div>
+      <ul class="product-profile-completeness-list">
+        ${completeness.items.map((item) => `
+          <li class="${item.done ? 'done' : 'missing'}${item.required ? '' : ' optional'}">
+            <span>${item.done ? '✓' : '○'} ${escapeHtml(item.label)}</span>
+            <span class="form-hint">${escapeHtml(item.detail || '')}${item.required ? '' : ' · רשות'}</span>
+          </li>`).join('')}
+      </ul>
+    </div>`;
+
+  const portionPresetsHtml = `
+    <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="מנות מתכון">
+      <summary class="recipe-sheet-section-title product-detail-collapse-summary">מנות מתכון / תזרים</summary>
+      <p class="form-hint">מנות שמוגדרות בעמדת מתכונים ומשויכות למוצר / קטגוריה / משפחה — לשימוש בתזרים ובשקילה.</p>
+      ${(portionPresets || []).length
+    ? `<ul class="product-portion-presets-list">
+          ${portionPresets.map((p) => `
+            <li>
+              <strong>${escapeHtml(p.name || 'מנה')}</strong>
+              <span class="form-hint">${p.weight ? `${formatDecimal(p.weight)} ${escapeHtml(p.weightUnit || 'ק"ג')}` : 'ללא משקל'}
+                ${p.sourceRecipeId ? ' · מממתכון' : ''}${p.sourceRawMaterialId ? ' · מחומר גלם' : ''}</span>
+            </li>`).join('')}
+        </ul>`
+    : '<p class="recipe-sheet-empty">אין מנות משויכות — הגדר ב«מתכונים» → מנות, או הוסף מנת הרכב למעלה</p>'}
+    </details>`;
+
+  const sellWeightSection = `
+    <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="מחיר ומשקל מכירה">
+      <summary class="recipe-sheet-section-title product-detail-collapse-summary">מחיר · משקל מכירה · אריזה</summary>
+      <div class="product-weight-summary">
+        <div class="product-weight-chip">
+          <span class="form-hint">משקל הרכב</span>
+          <strong>${totalWeightText}</strong>
+        </div>
+        <div class="product-weight-chip">
+          <span class="form-hint">משקל ליחידה (מכירה)</span>
+          <strong>${sellWeightText || '—'}</strong>
+        </div>
+        <div class="product-weight-chip">
+          <span class="form-hint">מחיר ללקוח</span>
+          <strong>${Number(product.unitPrice) > 0 ? formatMoney(product.unitPrice) : '—'}</strong>
+        </div>
+      </div>
+      ${productPriceUnitFieldsHTML(product)}
+      <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px;margin-top:8px">
+        <div class="form-group" style="flex:1;min-width:120px">
+          <label for="product-detail-units-carton">יחידות בקרטון</label>
+          <input type="number" id="product-detail-units-carton" min="0" step="1"
+            value="${product.unitsPerCarton || ''}" placeholder="אופציונלי">
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="product-detail-save-sell" style="margin-top:10px">שמור מחיר ומשקל</button>
+      <p class="form-hint" style="margin-top:8px">אריזה מספקים ועלויות נוספות — ב«עריכת פרטים» בתחתית.</p>
+    </details>`;
 
   const recipeOptions = availableRecipes.length
     ? availableRecipes.map((r) => `<option value="${r.id}">${escapeHtml(r.name)}</option>`).join('')
@@ -949,16 +1027,22 @@ function buildProductDetailHTML(detail, {
         <p class="recipe-sheet-breadcrumb">${category ? escapeHtml(category.name) : ''}</p>
         <h1 class="recipe-sheet-title">${escapeHtml(product.name)}</h1>
         <div class="recipe-sheet-meta">
-          <span class="recipe-meta-pill">⚖️ ${totalWeightText}</span>
+          <span class="recipe-meta-pill">⚖️ הרכב ${totalWeightText}</span>
+          ${sellWeightText ? `<span class="recipe-meta-pill">יח׳ ${escapeHtml(sellWeightText)}</span>` : ''}
+          ${Number(product.unitPrice) > 0 ? `<span class="recipe-meta-pill">💰 ${formatMoney(product.unitPrice)}</span>` : ''}
+          ${bakingProfile ? `<span class="recipe-meta-pill">🔥 ${escapeHtml(bakingProfile.name)}</span>` : ''}
           ${product.unitsPerCarton ? `<span class="recipe-meta-pill">📦 ${product.unitsPerCarton} יח׳ בקרטון</span>` : ''}
           ${packagingMaterial ? `<span class="recipe-meta-pill">🥡 ${escapeHtml(packagingMaterial.name)}${packagingSupplierName ? ` · ${escapeHtml(packagingSupplierName)}` : ''}</span>` : ''}
           ${product.active ? '' : '<span class="recipe-meta-pill">לא פעיל</span>'}
         </div>
+        ${completenessHtml}
         <div class="product-detail-collapse-toolbar">
           <button type="button" class="btn btn-secondary btn-sm" id="product-detail-collapse-all">🗂 מזער הכל</button>
           <button type="button" class="btn btn-secondary btn-sm" id="product-detail-expand-all">📂 פתח הכל</button>
         </div>
       </header>
+
+      ${sellWeightSection}
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="הרכב מוצר">
         <summary class="recipe-sheet-section-title product-detail-collapse-summary">הרכב מוצר · מתכונים ומנות</summary>
@@ -986,6 +1070,8 @@ function buildProductDetailHTML(detail, {
         <p class="form-hint" style="margin-top:8px">מנות מחומרי גלם — רק חומרים שסומנו כמנה בספקים</p>
       </details>
 
+      ${portionPresetsHtml}
+
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="אפייה">
         <summary class="recipe-sheet-section-title product-detail-collapse-summary">אפייה · שיוך פרופיל</summary>
         <div class="product-baking-product">
@@ -1006,8 +1092,8 @@ function buildProductDetailHTML(detail, {
         <button type="button" class="btn btn-primary btn-sm" id="product-save-flow-links" style="margin-top:10px">שמור שיוך תזרימים</button>
       </details>
 
-      <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="תמחור">
-        <summary class="recipe-sheet-section-title product-detail-collapse-summary">תמחור</summary>
+      <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="עלות ורווח">
+        <summary class="recipe-sheet-section-title product-detail-collapse-summary">עלות ורווח</summary>
         <div class="product-pricing-grid">
           <div class="product-pricing-row highlight">
             <span>עלות מומלצת (ספק)</span>
@@ -1025,11 +1111,6 @@ function buildProductDetailHTML(detail, {
             <span>אריזה${packagingMaterial ? ` · ${escapeHtml(packagingMaterial.name)}` : ''}</span>
             <span>${formatMoney(detail.currentCosts.packagingCost)}</span>
           </div>
-          ${product.unitsPerCarton ? `
-          <div class="product-pricing-row">
-            <span>יחידות בקרטון</span>
-            <span>${product.unitsPerCarton}</span>
-          </div>` : ''}
           ${packagingMaterial ? `
           <div class="product-pricing-row">
             <span>אריזה מספקים</span>
@@ -1043,7 +1124,7 @@ function buildProductDetailHTML(detail, {
             <span>סה״כ עלות</span>
             <span>${formatMoney(detail.currentCosts.totalCost)}</span>
           </div>
-          <p class="form-hint" style="margin:6px 0 0">סה״כ עלות = חומרי גלם + אריזה + נוספות · זה הסכום שמוצג ברשימת המוצרים</p>
+          <p class="form-hint" style="margin:6px 0 0">סה״כ עלות = חומרי גלם + אריזה + נוספות · מחיר ללקוח נשמר בסעיף «מחיר ומשקל»</p>
           ${detail.currentCosts.unitPrice > 0 ? `
           <div class="product-pricing-row">
             <span>מחיר ללקוח</span>
@@ -1064,12 +1145,13 @@ async function openProductDetailModal(container, productId) {
   let profileMap = new Map();
   let packagingMaterial = null;
   let packagingSupplierName = '';
+  let portionPresets = [];
 
   let linkedFlows = [];
   let candidateFlows = [];
 
   async function loadContext() {
-    const [d, layout, profiles, linked, candidates, packMats, suppliers, materials] = await Promise.all([
+    const [d, layout, profiles, linked, candidates, packMats, suppliers, materials, presets] = await Promise.all([
       getProductDetail(productId),
       getRecipesCatalogLayout(),
       getBakingProfiles(),
@@ -1078,10 +1160,12 @@ async function openProductDetailModal(container, productId) {
       getPackagingMaterials(),
       getSuppliers(),
       getRawMaterials(),
+      getPortionPresetsForProduct(productId),
     ]);
     detail = d;
     linkedFlows = linked;
     candidateFlows = candidates;
+    portionPresets = presets || [];
     bakingProfiles = profiles;
     profileMap = new Map(profiles.map((p) => [p.id, p]));
     const mid = Number(d?.product?.packagingMaterialId);
@@ -1103,7 +1187,7 @@ async function openProductDetailModal(container, productId) {
 
   const detailOpts = () => ({
     allRecipes, portionMaterials, bakingProfiles, profileMap, linkedFlows, candidateFlows,
-    packagingMaterial, packagingSupplierName,
+    packagingMaterial, packagingSupplierName, portionPresets,
   });
 
   async function refreshModal() {
@@ -1300,6 +1384,31 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     try {
       await updateProduct(productId, { rawMaterialsCostSource: 'manual' });
       showToast('עלות חומרי גלם: הזנה ידנית (בוטל חישוב ממתכונים)');
+      await refreshModal();
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  bindProductPriceUnitFields();
+
+  document.getElementById('product-detail-save-sell')?.addEventListener('click', async () => {
+    const root = document.querySelector('.modal-body') || document;
+    const priceUnit = root.querySelector('input[name="prod-price-unit"]:checked')?.value || 'unit';
+    const unitPrice = root.querySelector('#prod-price')?.value;
+    const unitWeightKg = root.querySelector('#prod-unit-weight')?.value;
+    const unitsPerCarton = root.querySelector('#product-detail-units-carton')?.value;
+    try {
+      await updateProduct(productId, {
+        priceUnit,
+        unitPrice: unitPrice === '' || unitPrice == null ? 0 : unitPrice,
+        unitWeightKg: (priceUnit === 'kg_units' || priceUnit === 'kg_with_units')
+          ? unitWeightKg
+          : null,
+        unitsPerCarton: unitsPerCarton === '' || unitsPerCarton == null ? null : unitsPerCarton,
+      });
+      showToast('מחיר ומשקל נשמרו ✓');
       await refreshModal();
       renderProducts(container);
     } catch (err) {

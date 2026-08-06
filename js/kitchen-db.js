@@ -1,10 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=431';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=432';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=431';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=431';
-import { logAuditEvent } from './audit.js?v=431';
+} from './validators.js?v=432';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=432';
+import { logAuditEvent } from './audit.js?v=432';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3088,6 +3088,123 @@ export async function getProductBakingProfileLink(productId) {
     scopeType,
     scopeId,
     scopeName,
+  };
+}
+
+/**
+ * ציון השלמות לפרופיל מוצר — מתכונים, מנות, מחיר, אפייה, משקל (+ תזרים/אריזה).
+ * פונקציה טהורה לבדיקות + UI.
+ */
+export function buildProductProfileCompleteness({
+  product = null,
+  components = [],
+  linkedRecipes = [],
+  bakingProfile = null,
+  totalWeightGrams = 0,
+  portionPresets = [],
+  linkedFlows = [],
+} = {}) {
+  const comps = components || [];
+  const recipeComps = comps.filter((c) => c.kind !== 'portion');
+  const portionComps = comps.filter((c) => c.kind === 'portion');
+  const priceUnit = product?.priceUnit || 'unit';
+  const needsUnitWeight = priceUnit === 'kg_units' || priceUnit === 'kg_with_units';
+  const unitWeightKg = Number(product?.unitWeightKg) || 0;
+  const unitPrice = Number(product?.unitPrice) || 0;
+  const compositionKg = (Number(totalWeightGrams) || 0) / 1000;
+
+  const items = [
+    {
+      id: 'composition',
+      label: 'הרכב מוצר',
+      done: recipeComps.length > 0 || portionComps.length > 0,
+      detail: recipeComps.length || portionComps.length
+        ? `${recipeComps.length} מתכונים · ${portionComps.length} מנות הרכב`
+        : 'חסר מתכון או מנה בהרכב',
+      required: true,
+    },
+    {
+      id: 'recipes',
+      label: 'שיוך למתכונים',
+      done: (linkedRecipes || []).length > 0 || recipeComps.length > 0,
+      detail: (linkedRecipes || []).length
+        ? `${linkedRecipes.length} מקושרים`
+        : (recipeComps.length ? 'דרך הרכב' : 'אין שיוך'),
+      required: true,
+    },
+    {
+      id: 'weight',
+      label: 'משקל הרכב',
+      done: compositionKg > 0,
+      detail: compositionKg > 0 ? `${formatKgWeight(compositionKg)}` : 'אין משקל בהרכב',
+      required: true,
+    },
+    {
+      id: 'price',
+      label: 'מחיר ללקוח',
+      done: unitPrice > 0,
+      detail: unitPrice > 0 ? `${unitPrice} ₪` : 'לא הוגדר',
+      required: true,
+    },
+    {
+      id: 'sell_weight',
+      label: 'משקל ליחידה (מכירה)',
+      done: !needsUnitWeight || unitWeightKg > 0,
+      detail: needsUnitWeight
+        ? (unitWeightKg > 0 ? `${unitWeightKg} ק"ג/יח'` : 'נדרש למצב תמחור זה')
+        : 'לא נדרש במצב תמחור הנוכחי',
+      required: needsUnitWeight,
+    },
+    {
+      id: 'baking',
+      label: 'פרופיל אפייה',
+      done: !!bakingProfile,
+      detail: bakingProfile?.name || 'לא שויך',
+      required: true,
+    },
+    {
+      id: 'portion_presets',
+      label: 'מנות מתכון / תזרים',
+      done: (portionPresets || []).length > 0 || portionComps.length > 0,
+      detail: (portionPresets || []).length
+        ? `${portionPresets.length} מנות משויכות`
+        : (portionComps.length ? 'יש מנות בהרכב' : 'אופציונלי'),
+      required: false,
+    },
+    {
+      id: 'flows',
+      label: 'תזרים ייצור',
+      done: (linkedFlows || []).length > 0,
+      detail: (linkedFlows || []).length
+        ? `${linkedFlows.length} תזרימים`
+        : 'אופציונלי — אפשר גם לפי קטגוריה',
+      required: false,
+    },
+    {
+      id: 'packaging',
+      label: 'אריזה',
+      done: !!product?.packagingMaterialId || Number(product?.packagingCost) > 0 || Number(product?.unitsPerCarton) > 0,
+      detail: product?.unitsPerCarton
+        ? `${product.unitsPerCarton} יח'/קרטון`
+        : (product?.packagingMaterialId ? 'חומר אריזה משויך' : 'אופציונלי'),
+      required: false,
+    },
+  ];
+
+  const required = items.filter((i) => i.required);
+  const doneRequired = required.filter((i) => i.done).length;
+  const doneAll = items.filter((i) => i.done).length;
+  const percent = required.length ? Math.round((doneRequired / required.length) * 100) : 0;
+
+  return {
+    percent,
+    doneRequired,
+    totalRequired: required.length,
+    doneAll,
+    totalAll: items.length,
+    items,
+    missingRequired: required.filter((i) => !i.done),
+    ready: doneRequired === required.length,
   };
 }
 
