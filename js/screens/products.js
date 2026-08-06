@@ -7,10 +7,14 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
   getPortionPresetsForProduct,
-} from '../db.js?v=432';
+} from '../db.js?v=433';
 import {
   getProductDetail,
   buildProductProfileCompleteness,
+  PRODUCT_ALLERGENS,
+  productAllergenLabel,
+  sanitizeProductAllergenIds,
+  sanitizeProductAllergensMode,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
   addProductPortionComponent,
@@ -22,12 +26,12 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=432';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=432';
-import { openModal, closeModal } from '../modal.js?v=432';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=432';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=432';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=432';
+} from '../kitchen-db.js?v=433';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=433';
+import { openModal, closeModal } from '../modal.js?v=433';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=433';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=433';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=433';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -583,7 +587,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=432');
+    const { navigate } = await import('../app.js?v=433');
     navigate('backup');
   });
 
@@ -818,6 +822,9 @@ function buildProductDetailHTML(detail, {
   const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
   const availablePortions = (portionMaterials || []).filter((m) => !usedPortionIds.has(m.id));
   const quickAddRecipes = linkedRecipes.filter((r) => !usedRecipeIds.has(r.id));
+  const allergenIds = sanitizeProductAllergenIds(detail.allergenIds ?? product.allergens);
+  const allergensMode = sanitizeProductAllergensMode(detail.allergensMode ?? product.allergensMode);
+  const computedAllergenIds = sanitizeProductAllergenIds(detail.computedAllergens?.allergenIds);
   const completeness = buildProductProfileCompleteness({
     product,
     components,
@@ -826,10 +833,15 @@ function buildProductDetailHTML(detail, {
     totalWeightGrams,
     portionPresets,
     linkedFlows,
+    allergenIds,
   });
   const sellWeightText = Number(product.unitWeightKg) > 0
     ? `${formatDecimal(product.unitWeightKg)} ק"ג/יח'`
     : '';
+  const allergenSummary = allergenIds.length
+    ? allergenIds.map((id) => productAllergenLabel(id)).join(' · ')
+    : '';
+  const shelfSummary = [product.shelfLife, product.storageConditions].map((s) => String(s || '').trim()).filter(Boolean).join(' · ');
 
   const compositionRows = components.length
     ? components.map((comp) => {
@@ -857,10 +869,14 @@ function buildProductDetailHTML(detail, {
       const defaultG = comp.recipeTotalGrams || 0;
       const weightKg = gramsToKgInput(comp.weightGrams);
       const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
+      const recipeId = Number(comp.recipeId || comp.recipe?.id) || '';
       return `
         <div class="product-composition-row" data-component-id="${comp.id}" data-kind="recipe">
           <div class="product-composition-main">
-            <span class="product-composition-name">${escapeHtml(comp.recipe?.name || 'מתכון')}
+            <span class="product-composition-name">
+              ${recipeId
+    ? `<button type="button" class="product-open-recipe product-composition-recipe-link" data-recipe-id="${recipeId}">${escapeHtml(comp.recipe?.name || 'מתכון')}</button>`
+    : escapeHtml(comp.recipe?.name || 'מתכון')}
               <span class="product-composition-kind-badge product-composition-kind-badge--recipe">מתכון</span>
             </span>
             <span class="product-composition-meta">בסיס: ${formatCompositionKg(defaultG)}</span>
@@ -890,12 +906,68 @@ function buildProductDetailHTML(detail, {
 
   const linkedRecipesChips = linkedRecipes.length
     ? `<div class="product-detail-linked-recipes">
-        <p class="form-hint" style="margin:0 0 6px">שיוך למתכונים (גם מחוץ להרכב):</p>
+        <p class="form-hint" style="margin:0 0 6px">שיוך למתכונים — לחץ לפתיחה:</p>
         <div class="product-detail-linked-recipes-list">
-          ${linkedRecipes.map((r) => `<span class="recipe-meta-pill">${escapeHtml(r.name)}</span>`).join('')}
+          ${linkedRecipes.map((r) => `
+            <button type="button" class="recipe-meta-pill product-open-recipe" data-recipe-id="${r.id}">
+              ${escapeHtml(r.name)}
+            </button>`).join('')}
         </div>
       </div>`
     : '';
+
+  const allergenChecks = PRODUCT_ALLERGENS.map((a) => `
+    <label class="product-allergen-item">
+      <input type="checkbox" class="product-allergen-cb" value="${a.id}"
+        ${allergenIds.includes(a.id) ? 'checked' : ''}
+        ${allergensMode === 'auto' ? 'disabled' : ''}>
+      <span>${escapeHtml(a.label)}</span>
+    </label>`).join('');
+
+  const allergensSection = `
+    <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="אלרגנים">
+      <summary class="recipe-sheet-section-title product-detail-collapse-summary">אלרגנים · סימון מוצר</summary>
+      <div class="product-allergens-mode" role="radiogroup" aria-label="מצב אלרגנים">
+        <label class="product-allergens-mode-option">
+          <input type="radio" name="product-allergens-mode" value="auto" ${allergensMode === 'auto' ? 'checked' : ''}>
+          אוטומטי מהרכב
+        </label>
+        <label class="product-allergens-mode-option">
+          <input type="radio" name="product-allergens-mode" value="manual" ${allergensMode === 'manual' ? 'checked' : ''}>
+          ידני
+        </label>
+      </div>
+      <p class="form-hint">
+        ${allergensMode === 'auto'
+    ? (computedAllergenIds.length
+      ? `חושב מהרכב: ${escapeHtml(computedAllergenIds.map((id) => productAllergenLabel(id)).join(' · '))}`
+      : 'לא זוהו אלרגנים מהרכב (לפי שמות רכיבים / חומרי גלם)')
+    : 'בחר ידנית — או לחץ «חשב מהרכב» ואז שמור'}
+      </p>
+      <div class="product-allergens-grid">${allergenChecks}</div>
+      <div class="product-allergens-actions">
+        <button type="button" class="btn btn-secondary btn-sm" id="product-allergens-recompute">↻ חשב מהרכב</button>
+        <button type="button" class="btn btn-primary btn-sm" id="product-allergens-save">שמור אלרגנים</button>
+      </div>
+    </details>`;
+
+  const shelfSection = `
+    <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="חיי מדף ואחסון">
+      <summary class="recipe-sheet-section-title product-detail-collapse-summary">חיי מדף · תנאי אחסון</summary>
+      <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px">
+        <div class="form-group" style="flex:1;min-width:160px">
+          <label for="product-detail-shelf-life">חיי מדף</label>
+          <input type="text" id="product-detail-shelf-life" maxlength="120"
+            value="${escapeHtml(product.shelfLife || '')}" placeholder='לדוגמה: 5 ימים בטמפ׳ חדר'>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="product-detail-storage">תנאי אחסון</label>
+        <textarea id="product-detail-storage" rows="2" maxlength="400"
+          placeholder="קירור / הקפאה / יבש…">${escapeHtml(product.storageConditions || '')}</textarea>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="product-detail-save-shelf" style="margin-top:8px">שמור חיי מדף</button>
+    </details>`;
 
   const completenessHtml = `
     <div class="product-profile-completeness" aria-label="השלמת פרופיל">
@@ -1031,6 +1103,8 @@ function buildProductDetailHTML(detail, {
           ${sellWeightText ? `<span class="recipe-meta-pill">יח׳ ${escapeHtml(sellWeightText)}</span>` : ''}
           ${Number(product.unitPrice) > 0 ? `<span class="recipe-meta-pill">💰 ${formatMoney(product.unitPrice)}</span>` : ''}
           ${bakingProfile ? `<span class="recipe-meta-pill">🔥 ${escapeHtml(bakingProfile.name)}</span>` : ''}
+          ${allergenSummary ? `<span class="recipe-meta-pill" title="${escapeHtml(allergenSummary)}">⚠ ${allergenIds.length} אלרגנים</span>` : ''}
+          ${shelfSummary ? `<span class="recipe-meta-pill" title="${escapeHtml(shelfSummary)}">⏳ מדף</span>` : ''}
           ${product.unitsPerCarton ? `<span class="recipe-meta-pill">📦 ${product.unitsPerCarton} יח׳ בקרטון</span>` : ''}
           ${packagingMaterial ? `<span class="recipe-meta-pill">🥡 ${escapeHtml(packagingMaterial.name)}${packagingSupplierName ? ` · ${escapeHtml(packagingSupplierName)}` : ''}</span>` : ''}
           ${product.active ? '' : '<span class="recipe-meta-pill">לא פעיל</span>'}
@@ -1067,9 +1141,11 @@ function buildProductDetailHTML(detail, {
           </label>
           <button type="button" class="btn btn-secondary btn-sm" id="product-add-portion-btn">+ הוסף מנה</button>
         </div>
-        <p class="form-hint" style="margin-top:8px">מנות מחומרי גלם — רק חומרים שסומנו כמנה בספקים</p>
+        <p class="form-hint" style="margin-top:8px">מנות מחומרי גלם — רק חומרים שסומנו כמנה בספקים · לחץ על שם מתכון לפתיחה</p>
       </details>
 
+      ${allergensSection}
+      ${shelfSection}
       ${portionPresetsHtml}
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="אפייה">
@@ -1083,6 +1159,11 @@ function buildProductDetailHTML(detail, {
         </div>
         ${productBakingHtml}
         ${componentBakingRows ? `<div class="product-baking-recipes"><p class="product-detail-subtitle">מתכוני הרכב:</p><ul>${componentBakingRows}</ul></div>` : ''}
+        <div class="product-baking-actions">
+          <button type="button" class="btn btn-secondary btn-sm" id="product-share-baking" ${bakingProfile ? '' : 'disabled'}>
+            📤 שתף / הדפס אפייה למוצר
+          </button>
+        </div>
       </details>
 
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="תזרימי ייצור">
@@ -1409,6 +1490,103 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
         unitsPerCarton: unitsPerCarton === '' || unitsPerCarton == null ? null : unitsPerCarton,
       });
       showToast('מחיר ומשקל נשמרו ✓');
+      await refreshModal();
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  async function openLinkedRecipe(recipeId) {
+    const id = Number(recipeId);
+    if (!id) return;
+    try {
+      const { requestOpenRecipe } = await import('./recipes.js?v=433');
+      const { navigateToWorkspace } = await import('../app.js?v=433');
+      requestOpenRecipe(id);
+      closeModal();
+      await navigateToWorkspace('recipes', 'recipes');
+    } catch (err) {
+      showToast(err.message || 'לא ניתן לפתוח מתכון');
+    }
+  }
+
+  document.querySelectorAll('.product-open-recipe').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openLinkedRecipe(btn.dataset.recipeId);
+    });
+  });
+
+  document.getElementById('product-share-baking')?.addEventListener('click', async () => {
+    try {
+      const { shareBakingForProduct } = await import('./recipes.js?v=433');
+      const method = await shareBakingForProduct(productId);
+      if (method === 'cancelled') return;
+      if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
+      else showToast('הקובץ הורד');
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשיתוף אפייה');
+    }
+  });
+
+  const syncAllergenChecksDisabled = () => {
+    const mode = document.querySelector('input[name="product-allergens-mode"]:checked')?.value || 'auto';
+    document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
+      cb.disabled = mode === 'auto';
+    });
+  };
+  document.querySelectorAll('input[name="product-allergens-mode"]').forEach((radio) => {
+    radio.addEventListener('change', syncAllergenChecksDisabled);
+  });
+
+  document.getElementById('product-allergens-recompute')?.addEventListener('click', async () => {
+    try {
+      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=433');
+      const computed = await computeProductAllergensFromComposition(productId);
+      const ids = new Set(sanitizeProductAllergenIds(computed.allergenIds));
+      document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
+        cb.checked = ids.has(cb.value);
+      });
+      const autoRadio = document.querySelector('input[name="product-allergens-mode"][value="auto"]');
+      if (autoRadio) autoRadio.checked = true;
+      syncAllergenChecksDisabled();
+      showToast(ids.size ? `זוהו ${ids.size} אלרגנים מהרכב` : 'לא זוהו אלרגנים מהרכב');
+    } catch (err) {
+      showToast(err.message || 'שגיאה בחישוב אלרגנים');
+    }
+  });
+
+  document.getElementById('product-allergens-save')?.addEventListener('click', async () => {
+    const mode = document.querySelector('input[name="product-allergens-mode"]:checked')?.value || 'auto';
+    let allergens = [...document.querySelectorAll('.product-allergen-cb:checked')].map((cb) => cb.value);
+    try {
+      if (mode === 'auto') {
+        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=433');
+        const computed = await computeProductAllergensFromComposition(productId);
+        allergens = sanitizeProductAllergenIds(computed.allergenIds);
+      } else {
+        allergens = sanitizeProductAllergenIds(allergens);
+      }
+      await updateProduct(productId, {
+        allergens,
+        allergensMode: mode === 'manual' ? 'manual' : 'auto',
+      });
+      showToast('אלרגנים נשמרו ✓');
+      await refreshModal();
+      renderProducts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
+  });
+
+  document.getElementById('product-detail-save-shelf')?.addEventListener('click', async () => {
+    const shelfLife = document.getElementById('product-detail-shelf-life')?.value || '';
+    const storageConditions = document.getElementById('product-detail-storage')?.value || '';
+    try {
+      await updateProduct(productId, { shelfLife, storageConditions });
+      showToast('חיי מדף נשמרו ✓');
       await refreshModal();
       renderProducts(container);
     } catch (err) {

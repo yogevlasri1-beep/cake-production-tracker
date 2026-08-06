@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=432';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=432';
-import { defaultColorForIndex } from './chart.js?v=432';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=432';
-import { logAuditEvent } from './audit.js?v=432';
+} from './validators.js?v=433';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=433';
+import { defaultColorForIndex } from './chart.js?v=433';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=433';
+import { logAuditEvent } from './audit.js?v=433';
 
 export { ValidationError };
 
@@ -4593,6 +4593,15 @@ export async function importAllData(payload) {
   await repairRecipeCategoryPlacement();
 }
 
+function sanitizeProductAllergensField(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(list.map((x) => String(x || '').trim()).filter(Boolean))];
+}
+
+function sanitizeProductAllergensModeField(raw) {
+  return String(raw || '').trim() === 'manual' ? 'manual' : 'auto';
+}
+
 function productDefaults(fields) {
   const name = sanitizeName(fields.name);
   if (!name) throw new ValidationError('שם מוצר לא תקין');
@@ -4610,6 +4619,10 @@ function productDefaults(fields) {
     rawMaterialsCostSource: sanitizeRawMaterialsCostSource(fields.rawMaterialsCostSource),
     packagingCost: sanitizeMoney(fields.packagingCost),
     additionalCosts: sanitizeMoney(fields.additionalCosts),
+    allergens: sanitizeProductAllergensField(fields.allergens),
+    allergensMode: sanitizeProductAllergensModeField(fields.allergensMode),
+    shelfLife: String(fields.shelfLife || '').trim(),
+    storageConditions: String(fields.storageConditions || '').trim(),
     active: fields.active !== false,
   };
 }
@@ -4667,6 +4680,18 @@ export async function updateProduct(id, data) {
   }
   if ('packagingMaterialId' in patch) {
     patch.packagingMaterialId = sanitizeProductId(patch.packagingMaterialId) || null;
+  }
+  if ('allergens' in patch) {
+    patch.allergens = sanitizeProductAllergensField(patch.allergens);
+  }
+  if ('allergensMode' in patch) {
+    patch.allergensMode = sanitizeProductAllergensModeField(patch.allergensMode);
+  }
+  if ('shelfLife' in patch) {
+    patch.shelfLife = String(patch.shelfLife || '').trim();
+  }
+  if ('storageConditions' in patch) {
+    patch.storageConditions = String(patch.storageConditions || '').trim();
   }
   return db.products.update(id, patch);
 }

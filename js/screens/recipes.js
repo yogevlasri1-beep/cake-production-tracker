@@ -33,25 +33,26 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=432';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=432';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=432';
-import { renderRecipesMachines } from '../recipes-machines.js?v=432';
-import { renderRecipesPortions } from '../recipes-portions.js?v=432';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=432';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=432';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=432';
-import { openModal, closeModal } from '../modal.js?v=432';
-import { getCurrentUserRole } from '../auth.js?v=432';
-import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=432';
+} from '../kitchen-db.js?v=433';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=433';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=433';
+import { renderRecipesMachines } from '../recipes-machines.js?v=433';
+import { renderRecipesPortions } from '../recipes-portions.js?v=433';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=433';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=433';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=433';
+import { openModal, closeModal } from '../modal.js?v=433';
+import { getCurrentUserRole } from '../auth.js?v=433';
+import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=433';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=432';
-import { defaultColorForIndex } from '../chart.js?v=432';
+} from '../product-drag.js?v=433';
+import { defaultColorForIndex } from '../chart.js?v=433';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
 const RECIPE_TAB_KEY = 'yitzurRecipeTab';
+const PENDING_RECIPE_KEY = 'yitzurOpenRecipeId';
 const RECIPE_SEARCH_KEY = 'yitzurRecipeSearch';
 const RECIPE_EDIT_SEARCH_KEY = 'yitzurRecipeEditSearch';
 const RATIO_RECIPE_KEY = 'yitzurRatioRecipeId';
@@ -389,6 +390,48 @@ export function recipesMeta() {
   return { title: 'מתכונים', subtitle: meta?.subtitle || '' };
 }
 
+/** פתיחת מתכון אחרי ניווט מעמדת מוצרים */
+export function requestOpenRecipe(recipeId) {
+  const id = Number(recipeId);
+  if (!id) return;
+  try {
+    sessionStorage.setItem(PENDING_RECIPE_KEY, String(id));
+    sessionStorage.setItem(RECIPE_TAB_KEY, 'browse');
+  } catch { /* ignore */ }
+}
+
+function consumePendingRecipe() {
+  try {
+    const id = Number(sessionStorage.getItem(PENDING_RECIPE_KEY) || '');
+    if (!id) return null;
+    sessionStorage.removeItem(PENDING_RECIPE_KEY);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+/** שיתוף/הדפסת כרטיס אפייה למוצר בודד (מפרופיל מוצר) */
+export async function shareBakingForProduct(productId) {
+  const pid = Number(productId);
+  if (!pid) throw new Error('מוצר לא תקין');
+  const productCatalog = await getProductsCatalogLayout();
+  const bakingIndex = await buildProductBakingIndex();
+  const allItems = collectBakingProductItems(productCatalog, bakingIndex)
+    .filter((item) => Number(item.productId) === pid);
+  const byOven = splitBakingItemsByOven(allItems);
+  if (!byOven.large.length && !byOven.small.length) {
+    throw new Error('אין פרופיל אפייה לשיתוף למוצר זה');
+  }
+  const html = buildBakingPrintHtml({
+    viewMode: 'product',
+    largeItems: byOven.large,
+    smallItems: byOven.small,
+    printedAt: new Date().toLocaleString('he-IL'),
+  });
+  return shareBakingHtml(html, { viewMode: 'product' });
+}
+
 export async function renderRecipes(container) {
   const tab = getRecipeTab(container);
   container.dataset.recipeTab = tab;
@@ -458,6 +501,19 @@ async function renderRecipesBrowse(container, { layout, productCatalog }) {
 
   bindCatalogToggles(container);
   bindRecipeRowOpen(container, layout, productCatalog);
+
+  const pendingRecipeId = consumePendingRecipe();
+  if (pendingRecipeId) {
+    setTimeout(async () => {
+      try {
+        const recipe = await getRecipe(pendingRecipeId);
+        if (recipe) openRecipeView(container, recipe, { productCatalog, layout });
+        else showToast('המתכון לא נמצא');
+      } catch (err) {
+        showToast(err.message || 'לא ניתן לפתוח מתכון');
+      }
+    }, 120);
+  }
 }
 
 async function renderRecipesEdit(container, { layout, productCatalog }) {
@@ -2558,9 +2614,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=432');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=433');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=432');
+    const { navigateToWorkspace } = await import('../app.js?v=433');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');

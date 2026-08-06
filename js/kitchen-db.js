@@ -1,10 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=432';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=433';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=432';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=432';
-import { logAuditEvent } from './audit.js?v=432';
+} from './validators.js?v=433';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=433';
+import { logAuditEvent } from './audit.js?v=433';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2869,7 +2869,7 @@ function ingredientsWithScaledQuantity(ingredients) {
 }
 
 /** חומרי המתכון לחישוב משקל/עלות, כולל תוספות לאחר הכנה. */
-async function getRecipeCostingIngredients(recipe) {
+export async function getRecipeCostingIngredients(recipe) {
   const ingredients = [...(recipe?.ingredients || [])];
   if (!recipe?.id || recipe.parentRecipeId) return ingredients;
   const additions = await getRecipeSubRecipes(recipe.id);
@@ -3091,6 +3091,118 @@ export async function getProductBakingProfileLink(productId) {
   };
 }
 
+/** אלרגנים למוצר — אותם מזהים כמו ב-HACCP (נספח סימון) */
+export const PRODUCT_ALLERGENS = [
+  { id: 'gluten', label: 'דגנים המכילים גלוטן' },
+  { id: 'milk', label: 'חלב ומוצריו' },
+  { id: 'eggs', label: 'ביצים' },
+  { id: 'peanuts', label: 'בוטנים' },
+  { id: 'tree_nuts', label: 'אגוזים' },
+  { id: 'sesame', label: 'שומשום' },
+  { id: 'soy', label: 'סויה' },
+  { id: 'mustard', label: 'חרדל' },
+  { id: 'celery', label: 'סלרי' },
+  { id: 'lupin', label: 'תורמוס' },
+  { id: 'fish', label: 'דגים' },
+  { id: 'crustaceans', label: 'סרטנים' },
+  { id: 'molluscs', label: 'רכיכות' },
+  { id: 'sulphites', label: 'סולפיטים' },
+];
+
+/** רמזי שם בעברית לזיהוי אלרגן מחומר/רכיב */
+export const ALLERGEN_NAME_HINTS = {
+  gluten: ['קמח', 'גלוטן', 'חיטה', 'שיפון', 'שעורה', 'כוסמין', 'סולת', 'פירורי', 'בצק'],
+  milk: ['חלב', 'חמאה', 'שמנת', 'גבינה', 'קוטג', 'ריקוטה', 'יוגורט', 'מארגרין'],
+  eggs: ['ביצ', 'חלמון', 'חלבון ביצה'],
+  peanuts: ['בוטן', 'בוטנים', 'חמאת בוטנים'],
+  tree_nuts: ['אגוז', 'שקדים', 'שקדי', 'לוז', 'פקאן', 'קשיו', 'פיסטוק', 'מקדמיה'],
+  sesame: ['שומשום', 'טחינה'],
+  soy: ['סויה', 'טופו', 'לציטין'],
+  mustard: ['חרדל'],
+  celery: ['סלרי'],
+  lupin: ['תורמוס'],
+  fish: ['דגים', 'טונה', 'סלמון', 'אנשובי'],
+  crustaceans: ['סרטן', 'שרימפ', 'חסילון'],
+  molluscs: ['קלמרי', 'צדפה', 'רכיכ'],
+  sulphites: ['סולפיט', 'גופרית'],
+};
+
+export function productAllergenLabel(id) {
+  return PRODUCT_ALLERGENS.find((a) => a.id === id)?.label || id || '—';
+}
+
+export function sanitizeProductAllergenIds(raw) {
+  const allowed = new Set(PRODUCT_ALLERGENS.map((a) => a.id));
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(list.map((x) => String(x || '').trim()).filter((id) => allowed.has(id)))];
+}
+
+export function sanitizeProductAllergensMode(raw) {
+  return String(raw || '').trim() === 'manual' ? 'manual' : 'auto';
+}
+
+/** זיהוי אלרגנים משם חומר/רכיב */
+export function inferAllergensFromName(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return [];
+  const hits = [];
+  for (const [id, hints] of Object.entries(ALLERGEN_NAME_HINTS)) {
+    if (hints.some((h) => n.includes(String(h).toLowerCase()))) hits.push(id);
+  }
+  return hits;
+}
+
+/**
+ * איחוד אלרגנים מהרכב מוצר:
+ * חומרי גלם משויכים (שדה allergens) + זיהוי לפי שם רכיב/חומר.
+ */
+export async function computeProductAllergensFromComposition(productId) {
+  const pid = sanitizeProductId(productId);
+  if (!pid) return { allergenIds: [], sources: [] };
+
+  const [recipeComps, portionComps, materials] = await Promise.all([
+    getProductRecipeComponents(pid),
+    getProductPortionComponents(pid),
+    getRawMaterials(),
+  ]);
+  const matById = new Map(materials.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(materials);
+  const found = new Set();
+  const sources = [];
+
+  const addFromName = (label, name, extraIds = []) => {
+    const inferred = [
+      ...sanitizeProductAllergenIds(extraIds),
+      ...inferAllergensFromName(name),
+    ];
+    if (!inferred.length) return;
+    for (const id of inferred) found.add(id);
+    sources.push({ label, name: name || label, allergenIds: inferred });
+  };
+
+  for (const comp of recipeComps) {
+    const recipe = await getRecipe(comp.recipeId);
+    if (!recipe) continue;
+    const ings = await getRecipeCostingIngredients(recipe);
+    for (const ing of ings) {
+      const { mat } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
+      const matAllergens = sanitizeProductAllergenIds(mat?.allergens);
+      addFromName(recipe.name, ing.name || mat?.name, matAllergens);
+    }
+  }
+
+  for (const comp of portionComps) {
+    const mat = matById.get(Number(comp.rawMaterialId));
+    if (!mat) continue;
+    addFromName(mat.name, mat.name, sanitizeProductAllergenIds(mat.allergens));
+  }
+
+  return {
+    allergenIds: PRODUCT_ALLERGENS.map((a) => a.id).filter((id) => found.has(id)),
+    sources,
+  };
+}
+
 /**
  * ציון השלמות לפרופיל מוצר — מתכונים, מנות, מחיר, אפייה, משקל (+ תזרים/אריזה).
  * פונקציה טהורה לבדיקות + UI.
@@ -3103,6 +3215,7 @@ export function buildProductProfileCompleteness({
   totalWeightGrams = 0,
   portionPresets = [],
   linkedFlows = [],
+  allergenIds = null,
 } = {}) {
   const comps = components || [];
   const recipeComps = comps.filter((c) => c.kind !== 'portion');
@@ -3112,6 +3225,9 @@ export function buildProductProfileCompleteness({
   const unitWeightKg = Number(product?.unitWeightKg) || 0;
   const unitPrice = Number(product?.unitPrice) || 0;
   const compositionKg = (Number(totalWeightGrams) || 0) / 1000;
+  const allergens = allergenIds != null
+    ? sanitizeProductAllergenIds(allergenIds)
+    : sanitizeProductAllergenIds(product?.allergens);
 
   const items = [
     {
@@ -3181,6 +3297,24 @@ export function buildProductProfileCompleteness({
       required: false,
     },
     {
+      id: 'allergens',
+      label: 'אלרגנים',
+      done: allergens.length > 0,
+      detail: allergens.length
+        ? `${allergens.length} סומנו`
+        : 'אופציונלי — ניתן לחשב מהרכב',
+      required: false,
+    },
+    {
+      id: 'shelf_life',
+      label: 'חיי מדף / אחסון',
+      done: !!(String(product?.shelfLife || '').trim() || String(product?.storageConditions || '').trim()),
+      detail: String(product?.shelfLife || '').trim()
+        || String(product?.storageConditions || '').trim()
+        || 'אופציונלי',
+      required: false,
+    },
+    {
       id: 'packaging',
       label: 'אריזה',
       done: !!product?.packagingMaterialId || Number(product?.packagingCost) > 0 || Number(product?.unitsPerCarton) > 0,
@@ -3214,12 +3348,13 @@ export async function getProductDetail(productId) {
   const product = await db.products.get(pid);
   if (!product) throw new ValidationError('מוצר לא נמצא');
 
-  const [totals, linkedRecipes, bakingLink, profiles, category] = await Promise.all([
+  const [totals, linkedRecipes, bakingLink, profiles, category, computedAllergens] = await Promise.all([
     computeProductCompositionCostTotals(pid),
     getRecipesForProduct(pid),
     getProductBakingProfileLink(pid),
     getBakingProfiles(),
     db.categories.get(product.categoryId),
+    computeProductAllergensFromComposition(pid),
   ]);
   const profileMap = new Map(profiles.map((p) => [p.id, p]));
 
@@ -3241,6 +3376,20 @@ export async function getProductDetail(productId) {
     if (stored !== recommendedCost) {
       await db.products.update(pid, { rawMaterialsCost: recommendedCost });
       product.rawMaterialsCost = recommendedCost;
+    }
+  }
+
+  const allergensMode = sanitizeProductAllergensMode(product.allergensMode);
+  let allergenIds = sanitizeProductAllergenIds(product.allergens);
+  if (allergensMode === 'auto') {
+    allergenIds = computedAllergens.allergenIds;
+    // שמירה שקטה של תוצאת auto כדי שהרשימה/HACCP יוכלו להיעזר
+    const prev = sanitizeProductAllergenIds(product.allergens).join(',');
+    const next = allergenIds.join(',');
+    if (prev !== next) {
+      await db.products.update(pid, { allergens: allergenIds, allergensMode: 'auto' });
+      product.allergens = allergenIds;
+      product.allergensMode = 'auto';
     }
   }
 
@@ -3271,6 +3420,9 @@ export async function getProductDetail(productId) {
       totalCost,
     },
     margin: unitPrice > 0 ? sanitizeMoney(unitPrice - totalCost) : null,
+    allergensMode,
+    allergenIds,
+    computedAllergens,
   };
 }
 
@@ -3768,6 +3920,7 @@ export async function addRawMaterial({
   packagingKind, packUnitsCount, packProductsPerUnit,
   packLinkedProductId, packLinkedCategoryId,
   synonyms,
+  allergens,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -3801,6 +3954,7 @@ export async function addRawMaterial({
       : sanitizeProcessedPricePerKg(processedPricePerKg),
     isFree: !simplePricing && !!isFree,
     synonyms: sanitizeMaterialSynonyms(synonyms),
+    allergens: sanitizeProductAllergenIds(allergens),
     ...packaging,
     active: simplePricing,
     sortOrder: maxOrder + 1,
@@ -3840,6 +3994,7 @@ export async function updateRawMaterial(id, patch) {
   }
   if ('isFree' in data) data.isFree = !!data.isFree;
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
+  if ('allergens' in data) data.allergens = sanitizeProductAllergenIds(data.allergens);
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
     || 'packLinkedProductId' in data || 'packLinkedCategoryId' in data) {
     const current = await db.rawMaterials.get(mid);

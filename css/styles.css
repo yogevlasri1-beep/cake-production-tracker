@@ -4281,6 +4281,77 @@ textarea {
   gap: 8px;
 }
 
+.product-detail-linked-recipes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+button.recipe-meta-pill.product-open-recipe,
+button.product-composition-recipe-link {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  appearance: none;
+}
+
+button.recipe-meta-pill.product-open-recipe:hover,
+button.product-composition-recipe-link:hover {
+  text-decoration: underline;
+  border-color: var(--primary, #2563eb);
+}
+
+.product-composition-recipe-link {
+  display: inline;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  color: var(--primary, #2563eb);
+  font-weight: 600;
+}
+
+.product-allergens-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 8px;
+}
+
+.product-allergens-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+
+.product-allergens-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 10px;
+  margin: 8px 0 12px;
+}
+
+.product-allergen-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.product-allergen-item input:disabled + span {
+  opacity: 0.85;
+}
+
+.product-allergens-actions,
+.product-baking-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .product-portion-presets-list li {
   padding: 8px 12px;
   border-radius: 10px;
