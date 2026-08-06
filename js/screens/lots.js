@@ -1,5 +1,5 @@
-import { escapeHtml, formatDate, showToast } from '../utils.js?v=423';
-import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=423';
+import { escapeHtml, formatDate, showToast } from '../utils.js?v=424';
+import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=424';
 
 export function lotsMeta() {
   return {
@@ -122,7 +122,7 @@ function bindResultActions(container, resultsEl) {
         main.dataset.runId = String(runId);
       }
       try {
-        const { navigateToWorkspace } = await import('../app.js?v=423');
+        const { navigateToWorkspace } = await import('../app.js?v=424');
         await navigateToWorkspace('production', 'process');
       } catch (err) {
         showToast(err.message || 'לא ניתן לפתוח תזרים');

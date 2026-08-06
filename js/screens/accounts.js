@@ -1,27 +1,27 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=423';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=424';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=423';
+} from '../auth.js?v=424';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=423';
+} from '../accounts-api.js?v=424';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=423';
+} from '../audit.js?v=424';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
   users: 'אישור משתמשים והרשאות',
-  audit: 'יומן פעולות כתיבה (HACCP ועוד)',
+  audit: 'יומן פעולות — HACCP, מלאי וחשבונות',
 };
 
 export function accountsMeta() {
@@ -167,7 +167,7 @@ async function renderAuditTab(container) {
   } else if (!events.length) {
     eventsHtml = `
       <div class="card">
-        <p class="form-hint" style="margin:0">אין אירועים עדיין — פעולות כתיבה ב-HACCP (CCP, גבולות, ניטור) נרשמות כאן אוטומטית.</p>
+        <p class="form-hint" style="margin:0">אין אירועים עדיין — פעולות ב-HACCP, התאמות מלאי, ואישור/דחיית חשבונות נרשמות כאן אוטומטית.</p>
       </div>`;
   } else {
     eventsHtml = events.map(auditEventCard).join('');
@@ -176,7 +176,7 @@ async function renderAuditTab(container) {
   return `
     <div class="card">
       <div class="card-title">יומן ביקורת</div>
-      <p class="form-hint">רישום פעולות create/update/delete מהענן. נגיש למנהל ומנהל מערכת בלבד.</p>
+      <p class="form-hint">רישום פעולות create/update/delete מהענן — HACCP, התאמות מלאי, ואישורי חשבונות. נגיש למנהל ומנהל מערכת בלבד.</p>
       <div class="filter-row" style="flex-wrap:wrap;gap:8px;align-items:end">
         <div class="form-group" style="flex:1;min-width:140px;margin:0">
           <label for="audit-action">פעולה</label>

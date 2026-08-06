@@ -1,13 +1,13 @@
 // RBAC שלב 3+: audit trail — כתיבה best-effort + קריאה ליומן (מנהל/admin).
 // כישלון רשת/הרשאות בכתיבה לא חוסם פעולה עסקית.
-import { getValidSession } from './auth.js?v=423';
+import { getValidSession } from './auth.js?v=424';
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
   getOrCreateDeviceId,
   getBackupScopeId,
-} from './supabase-backup.js?v=423';
-import { ValidationError } from './validators.js?v=423';
+} from './supabase-backup.js?v=424';
+import { ValidationError } from './validators.js?v=424';
 
 const AUDIT_ACTIONS = ['create', 'update', 'delete'];
 const TABLE = 'sync_audit_log';
@@ -64,13 +64,23 @@ export function formatAuditSnapshotSummary(snapshot) {
   }
   if (typeof obj !== 'object' || !obj) return '';
   const parts = [];
-  for (const key of ['name', 'title', 'label', 'ccpName', 'hazardName', 'result', 'status', 'email', 'role']) {
-    if (obj[key] != null && String(obj[key]).trim()) {
-      parts.push(String(obj[key]).trim());
+  for (const key of [
+    'materialName', 'name', 'title', 'label', 'ccpName', 'hazardName',
+    'email', 'role', 'status', 'kind', 'delta', 'qtyAfter', 'reason', 'result',
+  ]) {
+    if (obj[key] != null && String(obj[key]).trim() !== '') {
+      let val = String(obj[key]).trim();
+      if (key === 'delta' && Number.isFinite(Number(obj[key]))) {
+        const n = Number(obj[key]);
+        val = `${n > 0 ? '+' : ''}${n}${obj.unit ? ` ${obj.unit}` : ''}`;
+      } else if (key === 'qtyAfter' && Number.isFinite(Number(obj[key]))) {
+        val = `יתרה ${obj[key]}${obj.unit ? ` ${obj.unit}` : ''}`;
+      }
+      parts.push(val);
     }
   }
   if (!parts.length && obj.id != null) parts.push(`#${obj.id}`);
-  return parts.slice(0, 3).join(' · ').slice(0, 160);
+  return [...new Set(parts)].slice(0, 4).join(' · ').slice(0, 180);
 }
 
 /**

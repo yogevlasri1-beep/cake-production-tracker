@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=423';
+import { db, ValidationError } from './db.js?v=424';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -11,8 +11,9 @@ import {
   getPortionPresetIngredientsFormData,
   resolveRecipeIngredientMaterial,
   buildMaterialsByNameKey,
-} from './kitchen-db.js?v=423';
-import { localDateTimeISO, roundDecimal } from './utils.js?v=423';
+} from './kitchen-db.js?v=424';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=424';
+import { logAuditEvent } from './audit.js?v=424';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -24,7 +25,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=423');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=424');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -170,6 +171,8 @@ export async function adjustInventoryStock({
   }
 
   let balance;
+  let movementId = null;
+  const wasCreate = !existing;
   await db.transaction('rw', db.inventoryBalances, db.inventoryMovements, async () => {
     if (existing) {
       await db.inventoryBalances.update(existing.id, {
@@ -197,7 +200,7 @@ export async function adjustInventoryStock({
 
     // רק אם הכמות באמת השתנתה — לא רושמים תנועה על עדכון מינימום בלבד
     if (appliedDelta !== 0) {
-      await db.inventoryMovements.add({
+      movementId = await db.inventoryMovements.add({
         rawMaterialId: mid,
         materialName: mat.name || '',
         at: now,
@@ -212,6 +215,36 @@ export async function adjustInventoryStock({
       });
     }
   });
+
+  if (appliedDelta !== 0) {
+    logAuditEvent({
+      entityTable: 'inventoryMovements',
+      entityId: movementId || `${mid}:${now}`,
+      action: 'create',
+      snapshot: {
+        materialName: mat.name || '',
+        rawMaterialId: mid,
+        kind,
+        delta: appliedDelta,
+        qtyBefore: current,
+        qtyAfter: nextQty,
+        unit: unitVal,
+        reason: note,
+      },
+    });
+    logAuditEvent({
+      entityTable: 'inventoryBalances',
+      entityId: balance?.id || mid,
+      action: wasCreate ? 'create' : 'update',
+      snapshot: {
+        materialName: mat.name || '',
+        rawMaterialId: mid,
+        qtyOnHand: nextQty,
+        unit: unitVal,
+        reason: note,
+      },
+    });
+  }
 
   return balance;
 }

@@ -1,13 +1,14 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=423';
+} from './supabase-backup.js?v=424';
 import {
   getValidSession,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=423';
-import { ValidationError } from './validators.js?v=423';
+} from './auth.js?v=424';
+import { ValidationError } from './validators.js?v=424';
+import { logAuditEvent } from './audit.js?v=424';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {
@@ -77,7 +78,19 @@ export async function updateAccountProfile(userId, patch) {
     throw new ValidationError(detail || 'עדכון החשבון נכשל');
   }
   const rows = await res.json().catch(() => []);
-  return Array.isArray(rows) ? rows[0] : null;
+  const updated = Array.isArray(rows) ? rows[0] : null;
+  logAuditEvent({
+    entityTable: 'profiles',
+    entityId: userId,
+    action: 'update',
+    snapshot: {
+      email: updated?.email || null,
+      role: updated?.role ?? body.role ?? null,
+      status: updated?.status ?? body.status ?? null,
+      display_name: updated?.display_name ?? body.display_name ?? null,
+    },
+  });
+  return updated;
 }
 
 export function roleOptionsHtml(selected) {
