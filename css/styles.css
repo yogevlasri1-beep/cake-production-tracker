@@ -12022,6 +12022,31 @@ body.supplier-drag-active {
   margin-top: 12px;
 }
 
+.lots-search-form .form-group {
+  margin-bottom: 10px;
+}
+
+.lots-subhead {
+  margin: 14px 0 6px;
+  font-size: 0.9rem;
+  color: var(--text-muted, #64748b);
+}
+
+.lots-list {
+  margin: 0;
+  padding-right: 18px;
+  line-height: 1.55;
+  font-size: 0.92rem;
+}
+
+.lots-list .lots-hit {
+  font-weight: 700;
+}
+
+.lots-card .accounts-card-head {
+  margin-bottom: 4px;
+}
+
 /* כשהתפריט פתוח — להעלות את ה-header מעל התוכן והניווט התחתון */
 .app-header.workspace-drawer-open {
   z-index: 300;

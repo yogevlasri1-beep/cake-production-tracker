@@ -35,6 +35,12 @@ export const WORKSPACES = {
     icon: '👥',
     defaultScreen: 'accounts',
   },
+  lots: {
+    id: 'lots',
+    label: 'מעקב אצוות',
+    icon: '🔗',
+    defaultScreen: 'lots',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';

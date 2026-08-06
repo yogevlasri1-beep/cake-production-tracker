@@ -1,12 +1,12 @@
 // מטריצת הרשאות לפי תפקיד.
 // עמדת «חשבונות» למנהל/מנהל מערכת בלבד — אישור משתמשים ובחירת תפקיד.
 
-const STAFF_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp'];
+const STAFF_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp', 'lots'];
 const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts'];
 
 const WORKSPACE_ACCESS = {
-  production: ['production', 'recipes', 'haccp'],
-  quality: ['production', 'suppliers', 'recipes', 'haccp'],
+  production: ['production', 'recipes', 'haccp', 'lots'],
+  quality: ['production', 'suppliers', 'recipes', 'haccp', 'lots'],
   manager: ALL_WORKSPACES,
   admin: ALL_WORKSPACES,
 };

@@ -1,20 +1,22 @@
-import { escapeHtml, showToast } from '../utils.js?v=416';
+import { escapeHtml, showToast } from '../utils.js?v=417';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=416';
+} from '../auth.js?v=417';
 import {
   listAccountProfiles,
   updateAccountProfile,
   roleOptionsHtml,
-} from '../accounts-api.js?v=416';
+} from '../accounts-api.js?v=417';
 
-export const accountsMeta = {
-  title: 'חשבונות',
-  subtitle: 'אישור משתמשים והרשאות',
-};
+export function accountsMeta() {
+  return {
+    title: 'חשבונות',
+    subtitle: 'אישור משתמשים והרשאות',
+  };
+}
 
 function statusBadge(status) {
   const label = userStatusLabel(status);
@@ -75,15 +77,21 @@ export async function renderAccounts(container) {
   container.innerHTML = `
     <div class="card">
       <div class="card-title">ניהול חשבונות</div>
-      <p class="form-hint" style="margin:0">מחובר כ: <strong>${escapeHtml(selfEmail || '—')}</strong></p>
+      <p class="form-hint" style="margin:0">מחובר כ: <strong>${escapeHtml(selfEmail || '—')}</strong>
+        · תפקיד: <strong>${escapeHtml(userRoleLabel(getStoredSession()?.role))}</strong></p>
       <p class="form-hint">משתמשים חדשים נרשמים בדף הכניסה וממתינים לאישור כאן. בחר תפקיד לפני אישור.</p>
       <p class="form-hint" style="margin:0">ממתינים: <strong>${pending.length}</strong> · פעילים: <strong>${active.length}</strong> · נדחו: <strong>${rejected.length}</strong></p>
+      <div class="accounts-actions" style="margin-top:10px">
+        <button type="button" class="btn btn-secondary" id="accounts-refresh">רענון</button>
+      </div>
     </div>
-    ${pending.length ? `<h3 class="accounts-section-title">ממתינים לאישור</h3>${pending.map((p) => profileCard(p, selfId)).join('')}` : ''}
+    ${pending.length ? `<h3 class="accounts-section-title">ממתינים לאישור</h3>${pending.map((p) => profileCard(p, selfId)).join('')}` : '<div class="card"><p class="form-hint">אין ממתינים כרגע. כשמישהו נרשם — הוא יופיע כאן.</p></div>'}
     <h3 class="accounts-section-title">פעילים</h3>
     ${active.length ? active.map((p) => profileCard(p, selfId)).join('') : '<div class="card"><p class="form-hint">אין חשבונות פעילים</p></div>'}
     ${rejected.length ? `<h3 class="accounts-section-title">נדחו</h3>${rejected.map((p) => profileCard(p, selfId)).join('')}` : ''}
   `;
+
+  container.querySelector('#accounts-refresh')?.addEventListener('click', () => renderAccounts(container));
 
   container.querySelectorAll('.accounts-card').forEach((card) => {
     const userId = card.dataset.userId;

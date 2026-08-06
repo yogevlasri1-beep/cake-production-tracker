@@ -1,13 +1,13 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=416';
+} from './supabase-backup.js?v=417';
 import {
   getValidSession,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=416';
-import { ValidationError } from './validators.js?v=416';
+} from './auth.js?v=417';
+import { ValidationError } from './validators.js?v=417';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {
@@ -27,7 +27,16 @@ export async function listAccountProfiles() {
   const url = `${buildSupabaseRestUrl(cfg.supabaseUrl, '/profiles')}?select=id,email,role,status,display_name,updated_at&order=updated_at.desc`;
   const res = await fetch(url, { headers: profileHeaders(cfg, session.access_token) });
   if (!res.ok) {
-    const detail = await res.text().catch(() => '');
+    let detail = '';
+    try {
+      const raw = await res.text();
+      try {
+        const j = JSON.parse(raw);
+        detail = j.message || j.error_description || j.error || raw;
+      } catch {
+        detail = raw;
+      }
+    } catch { /* ignore */ }
     throw new ValidationError(detail || 'לא ניתן לטעון חשבונות — ודא שהמיגרציה רצה ב-Supabase');
   }
   const rows = await res.json().catch(() => []);
