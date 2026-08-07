@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=435';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=435';
-import { openModal, closeModal } from '../modal.js?v=435';
-import { printHaccpPlan } from '../haccp-print.js?v=435';
-import { getCurrentUserRole } from '../auth.js?v=435';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=435';
+import { getCategoryGroups } from '../db.js?v=436';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=436';
+import { openModal, closeModal } from '../modal.js?v=436';
+import { printHaccpPlan } from '../haccp-print.js?v=436';
+import { getCurrentUserRole } from '../auth.js?v=436';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=436';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -17,6 +17,7 @@ import {
   seedHaccpPrpControls,
   HACCP_TEAM_ROLES,
   HACCP_PLAN_STATUSES,
+  buildHaccpTeamRoleCoverage,
   HACCP_ALLERGENS,
   HACCP_PROCESS_TECHS,
   HACCP_CONSUMPTION_MODES,
@@ -132,7 +133,7 @@ import {
   createHaccpPlanFromBakeryTemplate,
   getHaccpDeviationDashboard,
   HACCP_BAKERY_TEMPLATES,
-} from '../haccp-db.js?v=435';
+} from '../haccp-db.js?v=436';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
@@ -2413,6 +2414,31 @@ function renderTeamSection(members) {
     .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
     .join('');
 
+  const coverage = buildHaccpTeamRoleCoverage(members);
+  const coverageList = `
+    <div class="haccp-team-coverage" aria-label="כיסוי עמדות צוות">
+      <div class="haccp-team-coverage-head">
+        <strong>עמדות צוות</strong>
+        <span class="form-hint">${coverage.doneCount}/${coverage.totalCount} מסומנות
+          · ירוק = יש אחראי · אדום = חסר</span>
+      </div>
+      <ul class="haccp-team-coverage-list">
+        ${coverage.slots.map((slot) => `
+          <li class="haccp-team-slot ${slot.done ? 'is-filled' : 'is-missing'}${slot.required ? ' is-required' : ''}">
+            <button type="button" class="haccp-team-slot-btn"
+              data-coverage-id="${escapeHtml(slot.id)}"
+              data-coverage-kind="${escapeHtml(slot.kind)}"
+              title="${slot.done ? 'מולא' : 'לחץ לבחירת העמדה בטופס'}">
+              <span class="haccp-team-slot-mark" aria-hidden="true">${slot.done ? '✓' : '○'}</span>
+              <span class="haccp-team-slot-label">${escapeHtml(slot.label)}${slot.required ? ' *' : ''}</span>
+              <span class="haccp-team-slot-who">${slot.done
+    ? escapeHtml(slot.names.join(' · ') || 'מולא')
+    : 'חסר אחראי'}</span>
+            </button>
+          </li>`).join('')}
+      </ul>
+    </div>`;
+
   const rows = members.length
     ? members.map((m) => `
         <div class="haccp-member-row ${m.active === false ? 'is-inactive' : ''}">
@@ -2445,13 +2471,15 @@ function renderTeamSection(members) {
         שאר השלבים (תיאור מוצר, תרשים, CCP…) נשארים נפרדים לכל תכנית.
       </p>
 
+      ${coverageList}
+
       <div class="haccp-add-member">
         <div class="form-group">
           <label for="haccp-member-name">שם</label>
           <input type="text" id="haccp-member-name" placeholder="שם מלא" maxlength="80">
         </div>
         <div class="form-group">
-          <label for="haccp-member-role">תחום</label>
+          <label for="haccp-member-role">תחום / עמדה</label>
           <select id="haccp-member-role">${roleOptions}</select>
         </div>
         <div class="form-group">
@@ -2679,6 +2707,26 @@ function bindHaccpEvents(container, ctx) {
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
+  });
+
+  container.querySelectorAll('.haccp-team-slot-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const kind = btn.dataset.coverageKind;
+      const id = btn.dataset.coverageId;
+      const roleSelect = document.getElementById('haccp-member-role');
+      const leaderCb = document.getElementById('haccp-member-leader');
+      const nameInput = document.getElementById('haccp-member-name');
+      if (kind === 'leader') {
+        if (leaderCb) leaderCb.checked = true;
+        if (roleSelect && !roleSelect.value) roleSelect.value = 'quality';
+        showToast('סמן מוביל מערכת — הזן שם והוסף');
+      } else if (id && roleSelect) {
+        roleSelect.value = id;
+        if (leaderCb) leaderCb.checked = false;
+        showToast(`נבחרה עמדה: ${haccpRoleLabel(id)} — הזן שם והוסף`);
+      }
+      nameInput?.focus();
+    });
   });
 
   container.querySelectorAll('.haccp-del-member').forEach((btn) => {

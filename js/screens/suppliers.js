@@ -22,16 +22,16 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=435';
-import { getProducts, getCategories } from '../db.js?v=435';
+} from '../kitchen-db.js?v=436';
+import { getProducts, getCategories } from '../db.js?v=436';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=435';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=435';
-import { openModal, closeModal } from '../modal.js?v=435';
-import { requestAutoBackupNow } from '../backup-service.js?v=435';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=435';
+} from '../supplier-import.js?v=436';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=436';
+import { openModal, closeModal } from '../modal.js?v=436';
+import { requestAutoBackupNow } from '../backup-service.js?v=436';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=436';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2447,7 +2447,7 @@ async function renderShortagesTab(body, container) {
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
-        const { receiveShortageToInventory } = await import('../inventory-db.js?v=435');
+        const { receiveShortageToInventory } = await import('../inventory-db.js?v=436');
         const result = await receiveShortageToInventory(btn.dataset.id);
         requestAutoBackupNow().catch(() => {});
         showToast(`נקלט למלאי: ${result.qty}${result.unit ? ` ${result.unit}` : ''}`);
@@ -2461,7 +2461,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=435');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=436');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

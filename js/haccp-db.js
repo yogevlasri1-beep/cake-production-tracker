@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=435';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=435';
-import { logAuditEvent } from './audit.js?v=435';
+import { db, ValidationError } from './db.js?v=436';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=436';
+import { logAuditEvent } from './audit.js?v=436';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -242,6 +242,9 @@ export const HACCP_TEAM_ROLES = [
   { id: 'other', label: 'אחר' },
 ];
 
+/** עמדות שנבדקות ברשימת כיסוי צוות (בלי «אחר») */
+export const HACCP_TEAM_COVERAGE_ROLES = HACCP_TEAM_ROLES.filter((r) => r.id !== 'other');
+
 export const HACCP_PLAN_STATUSES = {
   draft: 'טיוטה',
   in_progress: 'בתהליך',
@@ -252,6 +255,44 @@ const ACTIVE_PLAN_SETTING_KEY = 'haccpActivePlanId';
 
 export function haccpRoleLabel(roleId) {
   return HACCP_TEAM_ROLES.find((r) => r.id === roleId)?.label || roleId || '—';
+}
+
+/**
+ * כיסוי עמדות צוות: מוביל + כל תפקיד מוגדר.
+ * done = יש אחראי פעיל (ירוק ברשימה), אחרת אדום.
+ */
+export function buildHaccpTeamRoleCoverage(members = []) {
+  const active = (members || []).filter((m) => m && m.active !== false);
+  const leaders = active.filter((m) => m.isLeader);
+  const slots = [
+    {
+      id: 'leader',
+      kind: 'leader',
+      label: 'מוביל מערכת',
+      done: leaders.length > 0,
+      names: leaders.map((m) => m.name).filter(Boolean),
+      required: true,
+    },
+    ...HACCP_TEAM_COVERAGE_ROLES.map((role) => {
+      const assigned = active.filter((m) => m.role === role.id);
+      return {
+        id: role.id,
+        kind: 'role',
+        label: role.label,
+        done: assigned.length > 0,
+        names: assigned.map((m) => m.name).filter(Boolean),
+        required: role.id === 'quality' || role.id === 'production',
+      };
+    }),
+  ];
+  const doneCount = slots.filter((s) => s.done).length;
+  return {
+    slots,
+    doneCount,
+    totalCount: slots.length,
+    requiredDone: slots.filter((s) => s.required).every((s) => s.done),
+    allDone: doneCount === slots.length,
+  };
 }
 
 function sanitizeRole(role) {
