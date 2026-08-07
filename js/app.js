@@ -1,25 +1,25 @@
-import { initDB } from './db.js?v=433';
-import { renderHome, homeMeta } from './screens/home.js?v=433';
-import { renderProducts, productsMeta } from './screens/products.js?v=433';
-import { renderManager, managerMeta } from './screens/manager.js?v=433';
-import { renderProcess, processMeta } from './screens/process.js?v=433';
-import { renderReports, reportsMeta } from './screens/reports.js?v=433';
-import { renderBackup, backupMeta } from './screens/backup.js?v=433';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=433';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=433';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=433';
-import { renderAccounts, accountsMeta } from './screens/accounts.js?v=433';
-import { renderLots, lotsMeta } from './screens/lots.js?v=433';
-import { renderInventory, inventoryMeta } from './screens/inventory.js?v=433';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=433';
-import { initIOSInstallPrompt } from './ios-install.js?v=433';
-import { initNetworkCheck } from './network.js?v=433';
-import { registerServiceWorker } from './sw-register.js?v=433';
-import { APP_VERSION } from './version.js?v=433';
-import { showToast } from './utils.js?v=433';
-import { getCurrentUserRole } from './auth.js?v=433';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=433';
-import './modal.js?v=433';
+import { initDB } from './db.js?v=434';
+import { renderHome, homeMeta } from './screens/home.js?v=434';
+import { renderProducts, productsMeta } from './screens/products.js?v=434';
+import { renderManager, managerMeta } from './screens/manager.js?v=434';
+import { renderProcess, processMeta } from './screens/process.js?v=434';
+import { renderReports, reportsMeta } from './screens/reports.js?v=434';
+import { renderBackup, backupMeta } from './screens/backup.js?v=434';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=434';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=434';
+import { renderHaccp, haccpMeta } from './screens/haccp.js?v=434';
+import { renderAccounts, accountsMeta } from './screens/accounts.js?v=434';
+import { renderLots, lotsMeta } from './screens/lots.js?v=434';
+import { renderInventory, inventoryMeta } from './screens/inventory.js?v=434';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=434';
+import { initIOSInstallPrompt } from './ios-install.js?v=434';
+import { initNetworkCheck } from './network.js?v=434';
+import { registerServiceWorker } from './sw-register.js?v=434';
+import { APP_VERSION } from './version.js?v=434';
+import { showToast } from './utils.js?v=434';
+import { getCurrentUserRole, getCurrentWorkspaceAccess } from './auth.js?v=434';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=434';
+import './modal.js?v=434';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -83,7 +83,8 @@ function updateWorkspaceChrome() {
 
 function applyRolePermissionsToMenu() {
   const role = getCurrentUserRole();
-  const allowed = new Set(allowedWorkspaces(role));
+  const access = getCurrentWorkspaceAccess();
+  const allowed = new Set(allowedWorkspaces(role, access));
   document.querySelectorAll('.workspace-menu-item[data-workspace]').forEach((btn) => {
     btn.classList.toggle('hidden', !allowed.has(btn.dataset.workspace));
   });
@@ -164,7 +165,7 @@ function initWorkspaceMenu() {
       e.stopPropagation();
       const ws = btn.dataset.workspace;
       if (!WORKSPACES[ws]) return;
-      if (!canAccessWorkspace(getCurrentUserRole(), ws)) {
+      if (!canAccessWorkspace(getCurrentUserRole(), ws, getCurrentWorkspaceAccess())) {
         showToast(PERMISSION_DENIED_MESSAGE);
         closeWorkspaceDrawer();
         return;
@@ -190,7 +191,7 @@ function initWorkspaceMenu() {
 }
 
 async function navigate(screen) {
-  if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace)) {
+  if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace, getCurrentWorkspaceAccess())) {
     showToast(PERMISSION_DENIED_MESSAGE);
     currentWorkspace = 'production';
     saveWorkspace('production');
@@ -256,10 +257,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=433');
+  const { getValidSession } = await import('./auth.js?v=434');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=433');
+    const { renderLoginGate } = await import('./screens/login.js?v=434');
     renderLoginGate(() => startApp());
     return;
   }
@@ -274,11 +275,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=433');
+        const { forceAppUpdate } = await import('./sw-register.js?v=434');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=433').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=434').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -292,7 +293,7 @@ async function startApp() {
     initRecipesSubNav();
     initSuppliersSubNav();
     applyRolePermissionsToMenu();
-    if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace)) {
+    if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace, getCurrentWorkspaceAccess())) {
       currentWorkspace = 'production';
       saveWorkspace('production');
     }
@@ -302,14 +303,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=433');
+    } = await import('./supabase-sync.js?v=434');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=433');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=434');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
@@ -353,7 +354,7 @@ export { navigate, navigateToWorkspace };
 
 async function navigateToWorkspace(workspaceId, screen) {
   if (!WORKSPACES[workspaceId]) return;
-  if (!canAccessWorkspace(getCurrentUserRole(), workspaceId)) {
+  if (!canAccessWorkspace(getCurrentUserRole(), workspaceId, getCurrentWorkspaceAccess())) {
     showToast(PERMISSION_DENIED_MESSAGE);
     return;
   }

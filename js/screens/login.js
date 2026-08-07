@@ -1,5 +1,5 @@
-import { signIn, signUp } from '../auth.js?v=433';
-import { escapeHtml } from '../utils.js?v=433';
+import { signIn, signUp } from '../auth.js?v=434';
+import { escapeHtml } from '../utils.js?v=434';
 
 export function renderLoginGate(onSuccess, options = {}) {
   const overlay = document.createElement('div');

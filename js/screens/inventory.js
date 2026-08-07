@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=433';
-import { openModal, closeModal } from '../modal.js?v=433';
-import { requestAutoBackupNow } from '../backup-service.js?v=433';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=434';
+import { openModal, closeModal } from '../modal.js?v=434';
+import { requestAutoBackupNow } from '../backup-service.js?v=434';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,10 +10,10 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=433';
-import { getSupplierCategories } from '../kitchen-db.js?v=433';
-import { getCurrentUserRole } from '../auth.js?v=433';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=433';
+} from '../inventory-db.js?v=434';
+import { getSupplierCategories } from '../kitchen-db.js?v=434';
+import { getCurrentUserRole } from '../auth.js?v=434';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=434';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',

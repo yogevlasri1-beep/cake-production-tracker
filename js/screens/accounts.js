@@ -1,26 +1,34 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=433';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=434';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=433';
+} from '../auth.js?v=434';
 import {
   listAccountProfiles,
   updateAccountProfile,
+  createAccountUser,
   roleOptionsHtml,
-} from '../accounts-api.js?v=433';
+  effectiveWorkspaceAccess,
+} from '../accounts-api.js?v=434';
+import {
+  MANAGEABLE_WORKSPACES,
+  workspaceLabel,
+  defaultWorkspacesForRole,
+  sanitizeWorkspaceAccess,
+} from '../permissions.js?v=434';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=433';
+} from '../audit.js?v=434';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
-  users: 'אישור משתמשים והרשאות',
+  users: 'יצירת חשבונות והרשאות עמדות',
   audit: 'יומן פעולות — HACCP, מלאי וחשבונות',
 };
 
@@ -51,10 +59,37 @@ function actionBadge(action) {
   return `<span class="accounts-status accounts-status--${cls}">${escapeHtml(auditActionLabel(action))}</span>`;
 }
 
+function workspaceChecksHtml(selectedIds, { disabled = false, name = 'accounts-ws' } = {}) {
+  const selected = new Set(selectedIds || []);
+  return `
+    <div class="accounts-ws-grid" role="group" aria-label="הרשאות עמדות">
+      ${MANAGEABLE_WORKSPACES.map((id) => `
+        <label class="accounts-ws-item">
+          <input type="checkbox" class="${name}" value="${id}"
+            ${selected.has(id) ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+          <span>${escapeHtml(workspaceLabel(id))}</span>
+        </label>`).join('')}
+    </div>`;
+}
+
+function readWorkspaceChecks(root, selector = '.accounts-ws') {
+  return [...(root?.querySelectorAll(`${selector}:checked`) || [])].map((cb) => cb.value);
+}
+
+function setWorkspaceChecks(root, ids, selector = '.accounts-ws') {
+  const set = new Set(ids || []);
+  root?.querySelectorAll(selector).forEach((cb) => {
+    cb.checked = set.has(cb.value);
+  });
+}
+
 function profileCard(p, selfId) {
   const isSelf = p.id === selfId;
   const email = p.email || '—';
   const name = p.display_name || '';
+  const role = p.role || 'production';
+  const selectedWs = effectiveWorkspaceAccess(p);
+  const custom = sanitizeWorkspaceAccess(p.workspace_access);
   return `
     <div class="card accounts-card" data-user-id="${escapeHtml(p.id)}">
       <div class="accounts-card-head">
@@ -66,15 +101,60 @@ function profileCard(p, selfId) {
         ${statusBadge(p.status || 'pending')}
       </div>
       <div class="form-group" style="margin-top:12px">
-        <label>תפקיד / הרשאות</label>
+        <label>תפקיד (תבנית הרשאות)</label>
         <select class="accounts-role" ${isSelf ? 'disabled title="לא ניתן לשנות את התפקיד של עצמך מכאן"' : ''}>
-          ${roleOptionsHtml(p.role || 'production')}
+          ${roleOptionsHtml(role)}
         </select>
+        <p class="form-hint" style="margin:6px 0 0">שינוי תפקיד ממלא מחדש את סימוני העמדות לפי ברירת המחדל.</p>
+      </div>
+      <div class="form-group">
+        <label>הרשאות באפליקציה (עמדות)</label>
+        ${workspaceChecksHtml(selectedWs, { disabled: isSelf, name: 'accounts-ws' })}
+        <p class="form-hint" style="margin:6px 0 0">
+          ${custom
+    ? 'מותאם אישית למשתמש זה'
+    : 'לפי תפקיד — סמן/בטל עמדות ולחץ שמירה כדי להתאים'}
+        </p>
       </div>
       <div class="accounts-actions">
         ${p.status !== 'active' ? `<button type="button" class="btn btn-primary accounts-approve">אשר כניסה</button>` : ''}
         ${p.status !== 'rejected' && !isSelf ? `<button type="button" class="btn btn-secondary accounts-reject">דחה</button>` : ''}
-        ${p.status === 'active' && !isSelf ? `<button type="button" class="btn btn-secondary accounts-save-role">שמור תפקיד</button>` : ''}
+        ${!isSelf ? `<button type="button" class="btn btn-secondary accounts-save-perms">שמור הרשאות</button>` : ''}
+        ${!isSelf && custom ? `<button type="button" class="btn btn-secondary accounts-reset-perms">אפס לתפקיד</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function createAccountCardHtml() {
+  const defaults = defaultWorkspacesForRole('production');
+  return `
+    <div class="card accounts-create-card" id="accounts-create-card">
+      <div class="card-title">צור חשבון חדש</div>
+      <p class="form-hint">המנהל יוצר אימייל + סיסמה, בוחר תפקיד והרשאות עמדות — המשתמש יכול להיכנס מיד (סטטוס פעיל).</p>
+      <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px">
+        <div class="form-group" style="flex:1;min-width:180px">
+          <label for="accounts-create-email">אימייל</label>
+          <input type="email" id="accounts-create-email" autocomplete="off" placeholder="name@example.com">
+        </div>
+        <div class="form-group" style="flex:1;min-width:160px">
+          <label for="accounts-create-password">סיסמה (לפחות 6)</label>
+          <input type="text" id="accounts-create-password" autocomplete="new-password" placeholder="סיסמה זמנית">
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label for="accounts-create-name">שם לתצוגה</label>
+          <input type="text" id="accounts-create-name" maxlength="80" placeholder="אופציונלי">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="accounts-create-role">תפקיד</label>
+        <select id="accounts-create-role">${roleOptionsHtml('production')}</select>
+      </div>
+      <div class="form-group">
+        <label>הרשאות עמדות</label>
+        ${workspaceChecksHtml(defaults, { name: 'accounts-create-ws' })}
+      </div>
+      <div class="accounts-actions">
+        <button type="button" class="btn btn-primary" id="accounts-create-submit">+ צור חשבון</button>
       </div>
     </div>`;
 }
@@ -123,13 +203,14 @@ async function renderUsersTab(container) {
       <div class="card-title">ניהול חשבונות</div>
       <p class="form-hint" style="margin:0">מחובר כ: <strong>${escapeHtml(selfEmail || '—')}</strong>
         · תפקיד: <strong>${escapeHtml(userRoleLabel(getStoredSession()?.role))}</strong></p>
-      <p class="form-hint">משתמשים חדשים נרשמים בדף הכניסה וממתינים לאישור כאן. בחר תפקיד לפני אישור.</p>
+      <p class="form-hint">אפשר ליצור חשבון כאן, או לאשר מי שנרשם בדף הכניסה. לכל משתמש בוחרים תפקיד + עמדות באפליקציה.</p>
       <p class="form-hint" style="margin:0">ממתינים: <strong>${pending.length}</strong> · פעילים: <strong>${active.length}</strong> · נדחו: <strong>${rejected.length}</strong></p>
       <div class="accounts-actions" style="margin-top:10px">
         <button type="button" class="btn btn-secondary" id="accounts-refresh">רענון</button>
       </div>
     </div>
-    ${pending.length ? `<h3 class="accounts-section-title">ממתינים לאישור</h3>${pending.map((p) => profileCard(p, selfId)).join('')}` : '<div class="card"><p class="form-hint">אין ממתינים כרגע. כשמישהו נרשם — הוא יופיע כאן.</p></div>'}
+    ${createAccountCardHtml()}
+    ${pending.length ? `<h3 class="accounts-section-title">ממתינים לאישור</h3>${pending.map((p) => profileCard(p, selfId)).join('')}` : '<div class="card"><p class="form-hint">אין ממתינים כרגע.</p></div>'}
     <h3 class="accounts-section-title">פעילים</h3>
     ${active.length ? active.map((p) => profileCard(p, selfId)).join('') : '<div class="card"><p class="form-hint">אין חשבונות פעילים</p></div>'}
     ${rejected.length ? `<h3 class="accounts-section-title">נדחו</h3>${rejected.map((p) => profileCard(p, selfId)).join('')}` : ''}
@@ -207,14 +288,61 @@ async function renderAuditTab(container) {
 function wireUsersHandlers(container) {
   container.querySelector('#accounts-refresh')?.addEventListener('click', () => renderAccounts(container));
 
-  container.querySelectorAll('.accounts-card').forEach((card) => {
+  const createRole = container.querySelector('#accounts-create-role');
+  createRole?.addEventListener('change', () => {
+    const card = container.querySelector('#accounts-create-card');
+    setWorkspaceChecks(card, defaultWorkspacesForRole(createRole.value), '.accounts-create-ws');
+  });
+
+  container.querySelector('#accounts-create-submit')?.addEventListener('click', async () => {
+    const card = container.querySelector('#accounts-create-card');
+    const email = container.querySelector('#accounts-create-email')?.value || '';
+    const password = container.querySelector('#accounts-create-password')?.value || '';
+    const display_name = container.querySelector('#accounts-create-name')?.value || '';
+    const role = container.querySelector('#accounts-create-role')?.value || 'production';
+    const workspace_access = readWorkspaceChecks(card, '.accounts-create-ws');
+    const btn = container.querySelector('#accounts-create-submit');
+    if (btn) btn.disabled = true;
+    try {
+      if (!workspace_access.length) {
+        showToast('יש לבחור לפחות עמדה אחת');
+        return;
+      }
+      await createAccountUser({
+        email,
+        password,
+        role,
+        display_name,
+        workspace_access,
+        status: 'active',
+      });
+      showToast('החשבון נוצר ופעיל ✓');
+      await renderAccounts(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה ביצירת חשבון');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  container.querySelectorAll('.accounts-card[data-user-id]').forEach((card) => {
     const userId = card.dataset.userId;
     if (!userId) return;
     const roleSelect = card.querySelector('.accounts-role');
 
+    roleSelect?.addEventListener('change', () => {
+      setWorkspaceChecks(card, defaultWorkspacesForRole(roleSelect.value), '.accounts-ws');
+    });
+
     card.querySelector('.accounts-approve')?.addEventListener('click', async () => {
       try {
-        await updateAccountProfile(userId, { status: 'active', role: roleSelect.value });
+        const workspace_access = readWorkspaceChecks(card, '.accounts-ws');
+        if (!workspace_access.length) return showToast('יש לבחור לפחות עמדה אחת');
+        await updateAccountProfile(userId, {
+          status: 'active',
+          role: roleSelect.value,
+          workspace_access,
+        });
         showToast('החשבון אושר');
         await renderAccounts(container);
       } catch (err) {
@@ -233,13 +361,31 @@ function wireUsersHandlers(container) {
       }
     });
 
-    card.querySelector('.accounts-save-role')?.addEventListener('click', async () => {
+    card.querySelector('.accounts-save-perms')?.addEventListener('click', async () => {
       try {
-        await updateAccountProfile(userId, { role: roleSelect.value });
-        showToast(`עודכן ל${userRoleLabel(roleSelect.value)}`);
+        const workspace_access = readWorkspaceChecks(card, '.accounts-ws');
+        if (!workspace_access.length) return showToast('יש לבחור לפחות עמדה אחת');
+        await updateAccountProfile(userId, {
+          role: roleSelect.value,
+          workspace_access,
+        });
+        showToast(`הרשאות עודכנו · ${userRoleLabel(roleSelect.value)}`);
         await renderAccounts(container);
       } catch (err) {
         showToast(err.message || 'שגיאה בעדכון');
+      }
+    });
+
+    card.querySelector('.accounts-reset-perms')?.addEventListener('click', async () => {
+      try {
+        await updateAccountProfile(userId, {
+          role: roleSelect.value,
+          workspace_access: null,
+        });
+        showToast('חזרה להרשאות לפי תפקיד');
+        await renderAccounts(container);
+      } catch (err) {
+        showToast(err.message || 'שגיאה באיפוס');
       }
     });
   });

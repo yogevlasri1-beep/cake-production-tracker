@@ -40,8 +40,17 @@ workspace. Sync uses the signed-in user's JWT; all active users still share the 
 
 To add a staff account:
 
-1. In the app: login screen → **הרשמה** (email + password), then approve in **חשבונות**.
-2. Or Supabase dashboard → **Authentication → Users → Add user** (then set role/status
-   on `public.profiles`).
-   Mark the email as confirmed (or turn off "Confirm email" under Providers → Email if
-   you'd rather staff not need to click a confirmation link).
+1. In the app: **חשבונות** → **צור חשבון חדש** (email + password + role + workspace
+   checkboxes). The account is created as `active` immediately.
+2. Or login screen → **הרשמה**, then approve in **חשבונות** and set workspaces.
+3. Or Supabase dashboard → **Authentication → Users → Add user** (then set role/status/
+   `workspace_access` on `public.profiles`).
+
+Per-user workspace permissions: column `profiles.workspace_access` (jsonb array of
+workspace ids). `NULL` = follow the role matrix in `js/permissions.js`.
+
+Mark the email as confirmed (or turn off "Confirm email" under Providers → Email if
+you'd rather staff not need to click a confirmation link).
+
+Migration for workspace overrides:
+`migrations/20260807100000_profiles_workspace_access.sql`

@@ -1,5 +1,5 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=433';
-import { ValidationError } from './validators.js?v=433';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=434';
+import { ValidationError } from './validators.js?v=434';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
@@ -56,7 +56,7 @@ function toSession(tokenResponse) {
 
 async function fetchProfile(cfg, session) {
   if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token || !session?.user?.id) return null;
-  const url = `${buildSupabaseRestUrl(cfg.supabaseUrl, '/profiles')}?id=eq.${session.user.id}&select=role,display_name,status,email`;
+  const url = `${buildSupabaseRestUrl(cfg.supabaseUrl, '/profiles')}?id=eq.${session.user.id}&select=role,display_name,status,email,workspace_access`;
   try {
     const res = await fetch(url, {
       headers: {
@@ -93,6 +93,7 @@ async function attachProfile(cfg, session, { requireActive = false } = {}) {
     role,
     status,
     display_name: profile?.display_name || null,
+    workspace_access: Array.isArray(profile?.workspace_access) ? profile.workspace_access : null,
   });
   if (requireActive && status !== 'active') {
     clearSession();
@@ -178,6 +179,40 @@ export async function signUp(email, password) {
   };
 }
 
+/**
+ * יצירת משתמש Auth בלי להחליף את ה-session הנוכחי (למנהל שיוצר חשבון).
+ * מחזיר { userId, email }.
+ */
+export async function registerAuthUser(email, password) {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) {
+    throw new ValidationError('Supabase לא מוגדר');
+  }
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  const cleanPassword = String(password || '');
+  if (!cleanEmail || !cleanPassword) {
+    throw new ValidationError('יש למלא אימייל וסיסמה');
+  }
+  if (cleanPassword.length < 6) {
+    throw new ValidationError('הסיסמה חייבת להכיל לפחות 6 תווים');
+  }
+
+  const json = await authFetch(cfg, '/signup', {
+    email: cleanEmail,
+    password: cleanPassword,
+  });
+
+  const user = json?.user || (json?.id ? json : null);
+  const userId = user?.id || json?.id;
+  if (!userId) {
+    throw new ValidationError('יצירת המשתמש נכשלה — אין מזהה מהשרת');
+  }
+  return {
+    userId,
+    email: user?.email || cleanEmail,
+  };
+}
+
 export async function signOut() {
   const session = getStoredSession();
   clearSession();
@@ -251,6 +286,12 @@ export function getCurrentUserStatus() {
 
 export function getCurrentUserDisplayName() {
   return getStoredSession()?.display_name || null;
+}
+
+/** הרשאות עמדות מותאמות מהפרופיל (null = לפי תפקיד) */
+export function getCurrentWorkspaceAccess() {
+  const raw = getStoredSession()?.workspace_access;
+  return Array.isArray(raw) ? raw : null;
 }
 
 export function userRoleLabel(role) {

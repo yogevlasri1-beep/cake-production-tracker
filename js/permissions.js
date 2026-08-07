@@ -1,5 +1,15 @@
-// מטריצת הרשאות לפי תפקיד.
-// עמדת «חשבונות» למנהל/מנהל מערכת בלבד — אישור משתמשים ובחירת תפקיד.
+// מטריצת הרשאות לפי תפקיד + אופציה להרשאות מותאמות (עמדות) למשתמש.
+
+export const MANAGEABLE_WORKSPACES = [
+  'production',
+  'suppliers',
+  'recipes',
+  'manager',
+  'haccp',
+  'lots',
+  'inventory',
+  'accounts',
+];
 
 const STAFF_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp', 'lots', 'inventory'];
 const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts'];
@@ -11,6 +21,17 @@ const WORKSPACE_ACCESS = {
   admin: ALL_WORKSPACES,
 };
 
+const WORKSPACE_LABELS = {
+  production: 'תיעוד יצור',
+  suppliers: 'ספקים',
+  recipes: 'מתכונים',
+  manager: 'מנהל',
+  haccp: 'HACCP',
+  lots: 'מעקב אצוות',
+  inventory: 'מלאי',
+  accounts: 'חשבונות',
+};
+
 // שלבי HACCP הנגישים ל-production — שאר התפקידים רואים הכל
 const HACCP_PRODUCTION_STEPS = new Set(['overview', 'monitor_log']);
 
@@ -19,17 +40,41 @@ const RECIPES_PRODUCTION_TABS = new Set(['browse', 'baking', 'ratio', 'machines'
 
 export const PERMISSION_DENIED_MESSAGE = 'אין הרשאה למסך זה';
 
-export function allowedWorkspaces(role) {
-  return WORKSPACE_ACCESS[role] || WORKSPACE_ACCESS.production;
+/** מנקה רשימת עמדות; null = השתמש בברירת מחדל של התפקיד */
+export function sanitizeWorkspaceAccess(raw) {
+  if (raw == null) return null;
+  const list = Array.isArray(raw) ? raw : [];
+  const allowed = new Set(MANAGEABLE_WORKSPACES);
+  const cleaned = [...new Set(list.map((id) => String(id || '').trim()).filter((id) => allowed.has(id)))];
+  return cleaned.length ? cleaned : null;
 }
 
-export function canAccessWorkspace(role, workspaceId) {
-  return allowedWorkspaces(role).includes(workspaceId);
+export function defaultWorkspacesForRole(role) {
+  return [...(WORKSPACE_ACCESS[role] || WORKSPACE_ACCESS.production)];
 }
 
-export function canAccessScreen(role, workspaceId, screenId) {
-  if (!canAccessWorkspace(role, workspaceId)) return false;
-  if (workspaceId === 'haccp') return canAccessHaccpStep(role, screenId);
+export function workspaceLabel(id) {
+  return WORKSPACE_LABELS[id] || id || '—';
+}
+
+/**
+ * עמדות מותרות: אם יש workspaceAccess מותאם — הוא גובר; אחרת לפי תפקיד.
+ * @param {string} role
+ * @param {string[]|null|undefined} workspaceAccess
+ */
+export function allowedWorkspaces(role, workspaceAccess = null) {
+  const custom = sanitizeWorkspaceAccess(workspaceAccess);
+  if (custom) return custom;
+  return defaultWorkspacesForRole(role);
+}
+
+export function canAccessWorkspace(role, workspaceId, workspaceAccess = null) {
+  return allowedWorkspaces(role, workspaceAccess).includes(workspaceId);
+}
+
+export function canAccessScreen(role, screenWorkspaceId, screenId, workspaceAccess = null) {
+  if (!canAccessWorkspace(role, screenWorkspaceId, workspaceAccess)) return false;
+  if (screenWorkspaceId === 'haccp') return canAccessHaccpStep(role, screenId);
   return true;
 }
 
