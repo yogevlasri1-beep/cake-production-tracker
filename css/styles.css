@@ -12581,6 +12581,56 @@ body.supplier-drag-active {
 .accounts-ws-item input:disabled + span {
   opacity: 0.75;
 }
+
+.accounts-qr-btn {
+  min-width: 2.4rem;
+  padding-inline: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.accounts-qr-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.accounts-qr-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 12px;
+}
+
+.accounts-qr-img {
+  display: block;
+  width: 220px;
+  height: 220px;
+  image-rendering: pixelated;
+}
+
+.accounts-qr-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.accounts-qr-url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  direction: ltr;
+  text-align: left;
+}
+
+.lots-search-form {
+  display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;

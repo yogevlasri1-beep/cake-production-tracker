@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '438';
+const VERSION = '439';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -15,6 +15,7 @@ const PRECACHE = [
   v('./js/vendor/chart.umd.min.js'),
   v('./js/vendor/xlsx.full.min.js'),
   v('./js/vendor/fflate.min.js'),
+  v('./js/vendor/qrcode.min.js'),
   v('./js/app.js'),
   v('./js/version.js'),
   v('./js/db.js'),
@@ -28,6 +29,7 @@ const PRECACHE = [
   v('./js/import.js'),
   v('./js/import-flow.js'),
   v('./js/download.js'),
+  v('./js/app-qr.js'),
   v('./js/xlsx-loader.js'),
   v('./js/backup.js'),
   v('./js/backup-service.js'),

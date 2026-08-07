@@ -1,30 +1,38 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=438';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=439';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=438';
+} from '../auth.js?v=439';
 import {
   listAccountProfiles,
   updateAccountProfile,
   createAccountUser,
   roleOptionsHtml,
   effectiveWorkspaceAccess,
-} from '../accounts-api.js?v=438';
+} from '../accounts-api.js?v=439';
 import {
   MANAGEABLE_WORKSPACES,
   workspaceLabel,
   defaultWorkspacesForRole,
   sanitizeWorkspaceAccess,
-} from '../permissions.js?v=438';
+} from '../permissions.js?v=439';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=438';
+} from '../audit.js?v=439';
+import { openModal, closeModal } from '../modal.js?v=439';
+import {
+  getAppShareUrl,
+  createAppQrDataUrl,
+  downloadAppQrImage,
+  copyTextToClipboard,
+} from '../app-qr.js?v=439';
+import { describeDownloadMethod } from '../download.js?v=439';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
@@ -208,6 +216,7 @@ async function renderUsersTab(container) {
       <p class="form-hint" style="margin:0">ממתינים: <strong>${pending.length}</strong> · פעילים: <strong>${active.length}</strong> · נדחו: <strong>${rejected.length}</strong></p>
       <div class="accounts-actions" style="margin-top:10px">
         <button type="button" class="btn btn-secondary" id="accounts-refresh">רענון</button>
+        <button type="button" class="btn btn-secondary btn-sm accounts-qr-btn" id="accounts-app-qr" title="QR לאפליקציה" aria-label="QR לאפליקציה">QR</button>
       </div>
     </div>
     ${createAccountCardHtml()}
@@ -286,8 +295,77 @@ async function renderAuditTab(container) {
   `;
 }
 
+async function openAppQrModal() {
+  const appUrl = getAppShareUrl();
+  openModal({
+    title: 'QR לאפליקציה',
+    modalClass: 'modal-accounts-app-qr',
+    bodyHTML: `
+      <div class="accounts-qr-modal">
+        <p class="form-hint" style="margin:0 0 12px">סריקה פותחת את האפליקציה במכשיר.</p>
+        <div class="accounts-qr-frame" id="accounts-qr-frame" aria-busy="true">
+          <p class="form-hint" style="margin:0">טוען QR...</p>
+        </div>
+        <div class="accounts-qr-url-row">
+          <input type="text" id="accounts-qr-url" class="accounts-qr-url" value="${escapeHtml(appUrl)}" readonly dir="ltr" aria-label="כתובת האפליקציה">
+          <button type="button" class="btn btn-secondary btn-sm" id="accounts-qr-copy">העתק</button>
+        </div>
+      </div>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-primary" id="accounts-qr-download">הורדה לגלריה</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+
+  const copyBtn = document.getElementById('accounts-qr-copy');
+  copyBtn?.addEventListener('click', async () => {
+    const url = document.getElementById('accounts-qr-url')?.value || appUrl;
+    try {
+      await copyTextToClipboard(url);
+      showToast('הכתובת הועתקה');
+    } catch {
+      showToast('לא ניתן להעתיק — העתק ידנית');
+    }
+  });
+
+  const frame = document.getElementById('accounts-qr-frame');
+  let qrDataUrl = '';
+  try {
+    const { url, dataUrl } = await createAppQrDataUrl(appUrl);
+    qrDataUrl = dataUrl;
+    const urlInput = document.getElementById('accounts-qr-url');
+    if (urlInput) urlInput.value = url;
+    if (frame) {
+      frame.removeAttribute('aria-busy');
+      frame.innerHTML = `<img src="${dataUrl}" alt="QR לאפליקציה" class="accounts-qr-img" width="220" height="220">`;
+    }
+  } catch (err) {
+    if (frame) {
+      frame.removeAttribute('aria-busy');
+      frame.innerHTML = `<p class="form-hint" style="margin:0;color:var(--danger)">${escapeHtml(err.message || 'שגיאה ביצירת QR')}</p>`;
+    }
+  }
+
+  document.getElementById('accounts-qr-download')?.addEventListener('click', async () => {
+    if (!qrDataUrl) return showToast('אין QR להורדה');
+    try {
+      const method = await downloadAppQrImage(qrDataUrl);
+      const tip = describeDownloadMethod(method);
+      if (method === 'share') showToast('נפתח Share — בחר «שמור תמונה» / גלריה');
+      else if (method === 'cancelled') showToast('בוטל');
+      else showToast(tip || 'ה-QR הורד');
+    } catch (err) {
+      showToast(err.message || 'ההורדה נכשלה');
+    }
+  });
+}
+
 function wireUsersHandlers(container) {
   container.querySelector('#accounts-refresh')?.addEventListener('click', () => renderAccounts(container));
+  container.querySelector('#accounts-app-qr')?.addEventListener('click', () => {
+    openAppQrModal().catch((err) => showToast(err.message || 'שגיאה ב-QR'));
+  });
 
   const createRole = container.querySelector('#accounts-create-role');
   createRole?.addEventListener('change', () => {
