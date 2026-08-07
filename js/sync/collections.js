@@ -124,6 +124,7 @@ export const COLLECTION_FKS = {
     productId: 'products',
     categoryId: 'categories',
     categoryGroupId: 'categoryGroups',
+    employeeId: 'managerEmployees',
   },
   recipeGroups: { linkedCategoryGroupId: 'categoryGroups' },
   recipeCategories: { groupId: 'recipeGroups', linkedCategoryId: 'categories' },

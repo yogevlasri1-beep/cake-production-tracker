@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=441';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=441';
-import { defaultColorForIndex } from './chart.js?v=441';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=441';
-import { logAuditEvent } from './audit.js?v=441';
+} from './validators.js?v=442';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=442';
+import { defaultColorForIndex } from './chart.js?v=442';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=442';
+import { logAuditEvent } from './audit.js?v=442';
 
 export { ValidationError };
 
@@ -9636,6 +9636,57 @@ export async function addManagerPlanFlowSteps({
   return rows.length;
 }
 
+const WEEKLY_MATERIALIZE_FIELDS = [
+  'itemKind', 'productId', 'categoryId', 'categoryGroupId',
+  'label', 'quantity',
+  'portionPresetId', 'portionName', 'portionWeight', 'portionExtra',
+  'flowId', 'flowPreparationId', 'flowCleaningTaskId', 'flowStepId',
+  'assigneeName', 'employeeId',
+];
+
+/** מעתיק פריטים מתוכנית שבועית לתוכניות היומיות של אותו שבוע — idempotent, לא דורס עריכות ידניות קיימות */
+export async function materializeWeeklyPlanToDailyPlans(weekStart) {
+  if (!isValidISODate(weekStart)) throw new ValidationError('תאריך לא תקין');
+  const weeklyItems = await getManagerPlanItems('weekly', weekStart);
+  const results = [];
+  for (let dayOffset = 0; dayOffset <= 6; dayOffset++) {
+    const dayItems = weeklyItems.filter((i) => (i.dayOffset ?? 0) === dayOffset);
+    if (!dayItems.length) continue;
+    const date = addDaysISO(weekStart, dayOffset);
+    const existingDaily = await getManagerPlanItems('daily', date);
+    const alreadyMaterialized = new Set(
+      existingDaily.filter((i) => i.sourceWeeklyItemId).map((i) => i.sourceWeeklyItemId),
+    );
+    let sortOrder = existingDaily.length
+      ? Math.max(...existingDaily.map((i) => i.sortOrder ?? 0)) + 1
+      : 1;
+    const rows = [];
+    for (const item of dayItems) {
+      if (alreadyMaterialized.has(item.id)) continue;
+      const copy = {};
+      for (const key of WEEKLY_MATERIALIZE_FIELDS) {
+        if (item[key] !== undefined) copy[key] = item[key];
+      }
+      rows.push({
+        ...copy,
+        planType: 'daily',
+        anchorDate: date,
+        dayOffset: 0,
+        done: false,
+        sortOrder: sortOrder++,
+        sourceKind: 'weekly',
+        sourceWeeklyItemId: item.id,
+      });
+    }
+    if (rows.length) {
+      await upsertManagerPlan({ planType: 'daily', anchorDate: date });
+      await db.managerPlanItems.bulkAdd(rows);
+      results.push({ date, added: rows.length });
+    }
+  }
+  return results;
+}
+
 /** סנכרון אוטומטי של משימות מתזרימים לתוכנית — idempotent */
 export async function syncDailyPlanFromFlows({ planType = 'daily', anchorDate, dayOffset = 0 } = {}) {
   if (!isValidISODate(anchorDate)) return 0;
@@ -9736,6 +9787,15 @@ export async function updateManagerPlanItem(id, patch) {
     next.assigneeName = patch.assigneeName == null || patch.assigneeName === ''
       ? null
       : sanitizeName(String(patch.assigneeName), 40);
+  }
+  if (patch.employeeId !== undefined) {
+    if (patch.employeeId) {
+      const emp = await db.managerEmployees.get(Number(patch.employeeId));
+      if (!emp) throw new ValidationError('עובד לא נמצא');
+      next.employeeId = emp.id;
+    } else {
+      next.employeeId = null;
+    }
   }
   if (patch.dayOffset !== undefined) next.dayOffset = Number(patch.dayOffset) || 0;
   if (patch.anchorDate !== undefined && patch.anchorDate && /^\d{4}-\d{2}-\d{2}$/.test(patch.anchorDate)) {

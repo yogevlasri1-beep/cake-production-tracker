@@ -8903,6 +8903,19 @@ body {
   gap: 6px;
 }
 
+.plan-assignee-pick.is-active {
+  background: #1d4ed8;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+.manager-plan-source-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  opacity: 0.55;
+}
+
 .manager-plan-product-group {
   margin-bottom: 10px;
   padding: 8px 10px;

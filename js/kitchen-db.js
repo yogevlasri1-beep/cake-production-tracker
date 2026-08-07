@@ -1,10 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=441';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=443';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=441';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=441';
-import { logAuditEvent } from './audit.js?v=441';
+} from './validators.js?v=443';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=443';
+import { logAuditEvent } from './audit.js?v=443';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -5046,7 +5046,7 @@ export async function backfillRawMaterialPriceHistory() {
   }
 }
 
-/* ── תוכנית ייצור שבועית ── */
+/* ── תחזית רכש שבועית (תוכנית ייצור לחישוב הזמנת חומרי גלם) ── */
 
 export async function getWeeklyPlan(weekStart) {
   const ws = weekStart || weekStartISO();

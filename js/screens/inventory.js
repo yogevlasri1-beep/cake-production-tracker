@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=441';
-import { openModal, closeModal } from '../modal.js?v=441';
-import { requestAutoBackupNow } from '../backup-service.js?v=441';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=443';
+import { openModal, closeModal } from '../modal.js?v=443';
+import { requestAutoBackupNow } from '../backup-service.js?v=443';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,15 +10,15 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=441';
-import { getSupplierCategories } from '../kitchen-db.js?v=441';
-import { getCurrentUserRole } from '../auth.js?v=441';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=441';
+} from '../inventory-db.js?v=443';
+import { getSupplierCategories } from '../kitchen-db.js?v=443';
+import { getCurrentUserRole } from '../auth.js?v=443';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=443';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
   movements: 'יומן תנועות מלאי',
-  gap: 'פער מול תוכנית ייצור שבועית',
+  gap: 'פער מול תחזית רכש שבועית',
 };
 
 export function inventoryMeta() {
@@ -318,7 +318,7 @@ async function renderGapTab(container) {
           <button type="button" class="btn btn-primary" id="inv-gap-add-all" ${result.shortageCount ? '' : 'disabled'}>הוסף את כל הפערים לחוסרים</button>
         </div>
       </div>
-      ${rows.length ? rows.map(gapCard).join('') : `<div class="card"><p class="form-hint">${result.allRows.length ? 'אין פערים — המלאי מכסה את התוכנית.' : 'אין צרכים מתוכננים. הגדר תוכנית ייצור שבועית בעמדת ספקים ← הזמנה, עם מתכונים מקושרים.'}</p></div>`}
+      ${rows.length ? rows.map(gapCard).join('') : `<div class="card"><p class="form-hint">${result.allRows.length ? 'אין פערים — המלאי מכסה את התוכנית.' : 'אין צרכים מתוכננים. הגדר תחזית רכש שבועית בעמדת ספקים ← הזמנה, עם מתכונים מקושרים.'}</p></div>`}
       <textarea id="inv-gap-wa-text" class="hidden" aria-hidden="true">${escapeHtml(waText)}</textarea>
     `,
   };

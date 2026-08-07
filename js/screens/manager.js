@@ -4,7 +4,7 @@ import {
   getManagerPlan, upsertManagerPlan, getManagerPlanItems,
   addManagerPlanItem, addManagerPlanProductWithChecklists, addManagerPlanFlowChecklists,
   updateManagerPlanItem, deleteManagerPlanItem, clearManagerPlanItems, deleteManagerPlanItemsByKind,
-  importActiveRunToDailyPlan, resolveFlowsForProduct,
+  importActiveRunToDailyPlan, resolveFlowsForProduct, materializeWeeklyPlanToDailyPlans,
   getPortionPresetsForProduct, getAllFlowsOverview, getFlowStepsForFlow,
   collectPlanProductFlowsForExport,
   getActiveProductionRuns, ensureRunPreparationChecks, ensureRunCleaningChecks,
@@ -17,20 +17,20 @@ import {
   getDepartmentCleaningLists, getDepartmentCleaningTasks,
   addDepartmentCleaningList, updateDepartmentCleaningList, deleteDepartmentCleaningList,
   addDepartmentCleaningTask, updateDepartmentCleaningTask, deleteDepartmentCleaningTask, setDepartmentCleaningTaskOrder,
-} from '../db.js?v=441';
+} from '../db.js?v=443';
 import {
   todayISO, formatDate, formatDateHebrew, escapeHtml, showToast,
   weekStartISO, weekDayLabels, addDaysISO, progressBar, currentMonth, monthLabel, formatDecimal,
-} from '../utils.js?v=441';
-import { openModal, closeModal } from '../modal.js?v=441';
-import { renderTargets } from './targets.js?v=441';
-import { renderPurchasingInManager } from './purchasing.js?v=441';
-import { forceAppUpdate } from '../sw-register.js?v=441';
-import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=441';
+} from '../utils.js?v=443';
+import { openModal, closeModal } from '../modal.js?v=443';
+import { renderTargets } from './targets.js?v=443';
+import { renderPurchasingInManager } from './purchasing.js?v=443';
+import { forceAppUpdate } from '../sw-register.js?v=443';
+import { bindFlowChecklistDragLists, bindImprovementDragLists } from '../product-drag.js?v=443';
 import {
   buildDailyPlanExportHtml, organizeDailyPlanForExport,
   buildDailyPlanBodyHtml, buildDailyPlanFlowsPageHtml, saveDailyPlanAsHtml, printDailyPlanHtml,
-} from '../daily-plan-export.js?v=441';
+} from '../daily-plan-export.js?v=443';
 
 function syncManagerPlanNavigation(container) {
   const today = todayISO();
@@ -549,7 +549,7 @@ function planTableActionsHTML(item) {
 }
 
 function planTableRowAttrs(item) {
-  return `class="manager-plan-item${item.done ? ' is-done' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}" data-assignee="${escapeHtml(item.assigneeName || '')}"`;
+  return `class="manager-plan-item${item.done ? ' is-done' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}" data-assignee="${escapeHtml(item.assigneeName || '')}" data-employee-id="${item.employeeId ?? ''}"`;
 }
 
 function planProductTableRow(item) {
@@ -1171,11 +1171,12 @@ function renderPlanAddProductHTML(products, layout, {
     `)}`;
 }
 
-function openAssigneeModal(container, { id, currentName = '', employees = [] }) {
+function openAssigneeModal(container, { id, currentName = '', currentEmployeeId = null, employees = [] }) {
+  const currentEmpId = currentEmployeeId != null && currentEmployeeId !== '' ? Number(currentEmployeeId) : null;
   const chips = employees.length
     ? `<div class="manager-plan-assignee-chips">
         ${employees.map((e) => `
-          <button type="button" class="btn btn-secondary btn-sm plan-assignee-pick" data-name="${escapeHtml(e.name)}">${escapeHtml(e.name)}</button>
+          <button type="button" class="btn btn-secondary btn-sm plan-assignee-pick${e.id === currentEmpId ? ' is-active' : ''}" data-id="${e.id}" data-name="${escapeHtml(e.name)}">${escapeHtml(e.name)}</button>
         `).join('')}
       </div>`
     : '<p class="form-hint">אין עובדים ברשימה — אפשר להקליד שם חופשי או להוסיף בצוות</p>';
@@ -1196,12 +1197,20 @@ function openAssigneeModal(container, { id, currentName = '', employees = [] }) 
   document.querySelectorAll('.plan-assignee-pick').forEach((btn) => {
     btn.addEventListener('click', () => {
       const input = document.getElementById('plan-assignee-name');
-      if (input) input.value = btn.dataset.name || '';
+      if (input) {
+        input.value = btn.dataset.name || '';
+        input.dataset.employeeId = btn.dataset.id || '';
+      }
+      document.querySelectorAll('.plan-assignee-pick').forEach((b) => b.classList.toggle('is-active', b === btn));
     });
+  });
+  document.getElementById('plan-assignee-name')?.addEventListener('input', (e) => {
+    delete e.target.dataset.employeeId;
+    document.querySelectorAll('.plan-assignee-pick').forEach((b) => b.classList.remove('is-active'));
   });
   document.getElementById('clear-plan-assignee')?.addEventListener('click', async () => {
     try {
-      await updateManagerPlanItem(id, { assigneeName: null });
+      await updateManagerPlanItem(id, { assigneeName: null, employeeId: null });
       closeModal();
       showToast('הוסר אחראי ✓');
       renderManager(container);
@@ -1210,9 +1219,17 @@ function openAssigneeModal(container, { id, currentName = '', employees = [] }) 
     }
   });
   document.getElementById('save-plan-assignee')?.addEventListener('click', async () => {
-    const name = document.getElementById('plan-assignee-name')?.value?.trim() || '';
+    const input = document.getElementById('plan-assignee-name');
+    const name = input?.value?.trim() || '';
+    const fromChip = input?.dataset.employeeId ? Number(input.dataset.employeeId) : null;
+    const matched = fromChip
+      ? employees.find((e) => e.id === fromChip)
+      : employees.find((e) => e.name === name);
     try {
-      await updateManagerPlanItem(id, { assigneeName: name || null });
+      await updateManagerPlanItem(id, {
+        assigneeName: name || null,
+        employeeId: matched ? matched.id : null,
+      });
       closeModal();
       showToast(name ? `אחראי: ${name} ✓` : 'הוסר אחראי ✓');
       renderManager(container);
@@ -1229,6 +1246,9 @@ function planItemRow(item, { showDay = false, productFlowNamesMap = null } = {})
   const assigneeBadge = item.assigneeName
     ? `<span class="manager-plan-assignee">👤 ${escapeHtml(item.assigneeName)}</span>`
     : '';
+  const sourceBadge = item.sourceKind === 'weekly'
+    ? '<span class="manager-plan-source-tag" title="נוצר מהתוכנית השבועית">🗓</span>'
+    : '';
   let bodyInner;
   if (isPortion) {
     const target = item.label.includes('→') ? item.label.split('→').pop().trim() : item.label;
@@ -1236,7 +1256,7 @@ function planItemRow(item, { showDay = false, productFlowNamesMap = null } = {})
         <span class="manager-plan-label">🍽 ${escapeHtml(item.portionName || item.label)}</span>
         <span class="manager-plan-portion-detail">${item.portionWeight != null ? `${item.portionWeight} ק"ג` : ''}${item.portionExtra ? ` · ${escapeHtml(item.portionExtra)}` : ''}</span>
         <span class="manager-plan-portion-target">→ ${escapeHtml(target)}</span>
-        ${assigneeBadge}
+        ${assigneeBadge}${sourceBadge}
         <label class="manager-plan-qty-edit">
           <input type="number" class="plan-item-qty-input" min="1" step="1" inputmode="numeric" value="${item.quantity || 1}" aria-label="כמות מנות">
           <span>מנות לייצור</span>
@@ -1244,15 +1264,15 @@ function planItemRow(item, { showDay = false, productFlowNamesMap = null } = {})
   } else if (isFlowStep) {
     bodyInner = `
         <span class="manager-plan-label">📋 ${escapeHtml(item.label)}</span>
-        ${assigneeBadge}`;
+        ${assigneeBadge}${sourceBadge}`;
   } else if (item.itemKind === 'flow_preparation') {
     bodyInner = `
         <span class="manager-plan-label">✅ ${escapeHtml(item.label)}</span>
-        ${assigneeBadge}`;
+        ${assigneeBadge}${sourceBadge}`;
   } else if (item.itemKind === 'flow_cleaning') {
     bodyInner = `
         <span class="manager-plan-label">🧹 ${escapeHtml(item.label)}</span>
-        ${assigneeBadge}`;
+        ${assigneeBadge}${sourceBadge}`;
   } else if (item.itemKind === 'product') {
     const flowDetail = productFlowNamesMap?.get(item.productId)
       ? `<span class="manager-plan-flow-label">תזרים: ${escapeHtml(productFlowNamesMap.get(item.productId))}</span>`
@@ -1260,16 +1280,16 @@ function planItemRow(item, { showDay = false, productFlowNamesMap = null } = {})
     bodyInner = `
         <span class="manager-plan-label">📦 ${escapeHtml(item.label)}</span>
         ${flowDetail}
-        ${assigneeBadge}
+        ${assigneeBadge}${sourceBadge}
         ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   } else {
     bodyInner = `
         <span class="manager-plan-label">${escapeHtml(item.label)}</span>
-        ${assigneeBadge}
+        ${assigneeBadge}${sourceBadge}
         ${item.quantity ? `<span class="manager-plan-qty">× ${formatDecimal(item.quantity)}</span>` : ''}`;
   }
   return `
-    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}${item.itemKind === 'flow_cleaning' ? ' manager-plan-item--flow-clean' : ''}${item.itemKind === 'product' ? ' manager-plan-item--product' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}" data-assignee="${escapeHtml(item.assigneeName || '')}">
+    <div class="manager-plan-item${item.done ? ' is-done' : ''}${isPortion ? ' manager-plan-item--portion' : ''}${isFlowStep ? ' manager-plan-item--flow-step' : ''}${item.itemKind === 'flow_preparation' ? ' manager-plan-item--flow-prep' : ''}${item.itemKind === 'flow_cleaning' ? ' manager-plan-item--flow-clean' : ''}${item.itemKind === 'product' ? ' manager-plan-item--product' : ''}" data-id="${item.id}" data-kind="${escapeHtml(item.itemKind || 'text')}" data-label="${escapeHtml(item.label || '')}" data-qty="${item.quantity ?? ''}" data-assignee="${escapeHtml(item.assigneeName || '')}" data-employee-id="${item.employeeId ?? ''}">
       <label class="manager-plan-check">
         <input type="checkbox" class="plan-item-done" ${item.done ? 'checked' : ''}>
       </label>
@@ -1345,6 +1365,7 @@ function bindPlanItems(container, planType, anchorDate, { employees = [] } = {})
       openAssigneeModal(container, {
         id: row.dataset.id,
         currentName: row.dataset.assignee || '',
+        currentEmployeeId: row.dataset.employeeId || null,
         employees,
       });
     });
@@ -1868,6 +1889,8 @@ async function renderWeeklyPlan(container) {
         <input type="date" id="week-start" value="${weekStart}">
       </div>
       <p class="form-hint">${formatDate(weekStart)} — ${formatDate(weekEnd)}</p>
+      <button type="button" class="btn btn-primary btn-sm" id="materialize-week-btn" style="width:100%;margin-top:8px">🔄 עדכן ימים בתוכנית היומית</button>
+      <p class="form-hint" style="margin-top:6px;margin-bottom:0">מוסיף לתוכנית היומית של כל יום את מה שתוכנן כאן — לא דורס עריכות ידניות שכבר קיימות ביומי.</p>
     </div>
 
     <div class="card">
@@ -1934,6 +1957,17 @@ async function renderWeeklyPlan(container) {
   document.getElementById('week-start')?.addEventListener('change', (e) => {
     container.dataset.weekStart = weekStartISO(e.target.value);
     renderManager(container);
+  });
+
+  document.getElementById('materialize-week-btn')?.addEventListener('click', async () => {
+    try {
+      const res = await materializeWeeklyPlanToDailyPlans(weekStart);
+      const added = res.reduce((sum, r) => sum + r.added, 0);
+      showToast(added ? `עודכנו ${res.length} ימים · ${added} פריטים נוספו ✓` : 'אין פריטים חדשים להעביר');
+      renderManager(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    }
   });
 
   container.querySelectorAll('.manager-plan-week-tab').forEach((btn) => {
