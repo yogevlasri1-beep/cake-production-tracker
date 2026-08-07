@@ -1,30 +1,30 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=436';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=437';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=436';
+} from '../auth.js?v=437';
 import {
   listAccountProfiles,
   updateAccountProfile,
   createAccountUser,
   roleOptionsHtml,
   effectiveWorkspaceAccess,
-} from '../accounts-api.js?v=436';
+} from '../accounts-api.js?v=437';
 import {
   MANAGEABLE_WORKSPACES,
   workspaceLabel,
   defaultWorkspacesForRole,
   sanitizeWorkspaceAccess,
-} from '../permissions.js?v=436';
+} from '../permissions.js?v=437';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=436';
+} from '../audit.js?v=437';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {

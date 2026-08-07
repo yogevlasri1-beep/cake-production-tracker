@@ -2410,11 +2410,10 @@ function renderDocumentationSection(activePlan, documents, groupMap) {
 }
 
 function renderTeamSection(members) {
-  const roleOptions = HACCP_TEAM_ROLES
-    .map((r) => `<option value="${r.id}">${escapeHtml(r.label)}</option>`)
-    .join('');
-
   const coverage = buildHaccpTeamRoleCoverage(members);
+  const coverageByRole = new Map(
+    coverage.slots.filter((s) => s.kind === 'role').map((s) => [s.id, s]),
+  );
   const coverageList = `
     <div class="haccp-team-coverage" aria-label="כיסוי עמדות צוות">
       <div class="haccp-team-coverage-head">
@@ -2479,8 +2478,13 @@ function renderTeamSection(members) {
           <input type="text" id="haccp-member-name" placeholder="שם מלא" maxlength="80">
         </div>
         <div class="form-group">
-          <label for="haccp-member-role">תחום / עמדה</label>
-          <select id="haccp-member-role">${roleOptions}</select>
+          <label id="haccp-member-role-label">תחום / עמדה</label>
+          ${renderTeamRolePicker({
+    id: 'haccp-member-role',
+    members,
+    coverageByRole,
+    selected: 'quality',
+  })}
         </div>
         <div class="form-group">
           <label for="haccp-member-notes">סמכויות / הערות</label>
@@ -2497,6 +2501,177 @@ function renderTeamSection(members) {
         ${rows}
       </div>
     </div>`;
+}
+
+/** בורר תפקיד עם צבעי ירוק/אדום (native option לא צובע אמין במובייל) */
+function renderTeamRolePicker({
+  id,
+  members = [],
+  coverageByRole = null,
+  selected = 'quality',
+  labelledBy = '',
+} = {}) {
+  const coverage = coverageByRole || new Map(
+    buildHaccpTeamRoleCoverage(members)
+      .slots
+      .filter((s) => s.kind === 'role')
+      .map((s) => [s.id, s]),
+  );
+  const selectedRole = HACCP_TEAM_ROLES.some((r) => r.id === selected) ? selected : 'quality';
+  const selectedSlot = coverage.get(selectedRole);
+  const selectedFilled = selectedRole === 'other' ? null : !!selectedSlot?.done;
+  const selectedLabel = selectedRole === 'other'
+    ? 'אחר'
+    : `${selectedFilled ? '✓' : '○'} ${haccpRoleLabel(selectedRole)}${
+      selectedFilled && selectedSlot?.names?.length ? ` — ${selectedSlot.names.join(' · ')}` : (selectedFilled ? '' : ' — חסר')
+    }`;
+  const triggerClass = selectedFilled === true
+    ? 'is-filled'
+    : selectedFilled === false
+      ? 'is-missing'
+      : 'is-neutral';
+  const ariaLabelledBy = labelledBy
+    ? `aria-labelledby="${escapeHtml(labelledBy)}"`
+    : `aria-label="תחום / עמדה"`;
+
+  const items = HACCP_TEAM_ROLES.map((r) => {
+    if (r.id === 'other') {
+      return `
+        <button type="button" class="haccp-role-picker-item is-neutral"
+          role="option" data-role="${r.id}" aria-selected="${selectedRole === r.id ? 'true' : 'false'}">
+          <span class="haccp-role-picker-item-mark">·</span>
+          <span class="haccp-role-picker-item-label">${escapeHtml(r.label)}</span>
+          <span class="haccp-role-picker-item-who">אופציונלי</span>
+        </button>`;
+    }
+    const slot = coverage.get(r.id);
+    const done = !!slot?.done;
+    return `
+      <button type="button" class="haccp-role-picker-item ${done ? 'is-filled' : 'is-missing'}"
+        role="option" data-role="${r.id}" aria-selected="${selectedRole === r.id ? 'true' : 'false'}">
+        <span class="haccp-role-picker-item-mark">${done ? '✓' : '○'}</span>
+        <span class="haccp-role-picker-item-label">${escapeHtml(r.label)}</span>
+        <span class="haccp-role-picker-item-who">${done
+    ? escapeHtml(slot.names.join(' · ') || 'מולא')
+    : 'חסר אחראי'}</span>
+      </button>`;
+  }).join('');
+
+  return `
+    <div class="haccp-role-picker" data-picker-id="${escapeHtml(id)}">
+      <input type="hidden" id="${escapeHtml(id)}" value="${escapeHtml(selectedRole)}">
+      <button type="button" class="haccp-role-picker-trigger ${triggerClass}"
+        aria-haspopup="listbox" aria-expanded="false" ${ariaLabelledBy}>
+        <span class="haccp-role-picker-trigger-text">${escapeHtml(selectedLabel)}</span>
+        <span class="haccp-role-picker-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="haccp-role-picker-menu hidden" role="listbox" hidden>
+        ${items}
+      </div>
+    </div>`;
+}
+
+function bindTeamRolePickers(root = document) {
+  root.querySelectorAll('.haccp-role-picker').forEach((picker) => {
+    if (picker.dataset.bound === '1') return;
+    picker.dataset.bound = '1';
+    const trigger = picker.querySelector('.haccp-role-picker-trigger');
+    const menu = picker.querySelector('.haccp-role-picker-menu');
+    const hidden = picker.querySelector('input[type="hidden"]');
+    if (!trigger || !menu || !hidden) return;
+
+    const close = () => {
+      menu.classList.add('hidden');
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+      picker.classList.remove('is-open');
+    };
+    const open = () => {
+      document.querySelectorAll('.haccp-role-picker.is-open').forEach((other) => {
+        if (other === picker) return;
+        other.querySelector('.haccp-role-picker-menu')?.classList.add('hidden');
+        const m = other.querySelector('.haccp-role-picker-menu');
+        if (m) m.hidden = true;
+        other.querySelector('.haccp-role-picker-trigger')?.setAttribute('aria-expanded', 'false');
+        other.classList.remove('is-open');
+      });
+      menu.classList.remove('hidden');
+      menu.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+      picker.classList.add('is-open');
+    };
+
+    trigger.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (picker.classList.contains('is-open')) close();
+      else open();
+    });
+
+    menu.querySelectorAll('.haccp-role-picker-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const role = item.dataset.role;
+        if (!role) return;
+        hidden.value = role;
+        const mark = item.querySelector('.haccp-role-picker-item-mark')?.textContent || '';
+        const label = item.querySelector('.haccp-role-picker-item-label')?.textContent || '';
+        const who = item.querySelector('.haccp-role-picker-item-who')?.textContent || '';
+        const textEl = trigger.querySelector('.haccp-role-picker-trigger-text');
+        if (textEl) textEl.textContent = `${mark} ${label}${who ? ` — ${who}` : ''}`.replace(/\s+/g, ' ').trim();
+        trigger.classList.remove('is-filled', 'is-missing', 'is-neutral');
+        if (item.classList.contains('is-filled')) trigger.classList.add('is-filled');
+        else if (item.classList.contains('is-missing')) trigger.classList.add('is-missing');
+        else trigger.classList.add('is-neutral');
+        menu.querySelectorAll('.haccp-role-picker-item').forEach((opt) => {
+          opt.setAttribute('aria-selected', opt === item ? 'true' : 'false');
+        });
+        close();
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  });
+
+  if (!bindTeamRolePickers._docBound) {
+    bindTeamRolePickers._docBound = true;
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.haccp-role-picker')) return;
+      document.querySelectorAll('.haccp-role-picker.is-open').forEach((picker) => {
+        picker.querySelector('.haccp-role-picker-menu')?.classList.add('hidden');
+        const menu = picker.querySelector('.haccp-role-picker-menu');
+        if (menu) menu.hidden = true;
+        picker.querySelector('.haccp-role-picker-trigger')?.setAttribute('aria-expanded', 'false');
+        picker.classList.remove('is-open');
+      });
+    });
+  }
+}
+
+function setTeamRolePickerValue(pickerOrId, roleId) {
+  const picker = typeof pickerOrId === 'string'
+    ? document.querySelector(`.haccp-role-picker[data-picker-id="${pickerOrId}"]`)
+    : pickerOrId;
+  if (!picker) return;
+  const item = picker.querySelector(`.haccp-role-picker-item[data-role="${CSS.escape(String(roleId))}"]`);
+  const hidden = picker.querySelector('input[type="hidden"]');
+  const trigger = picker.querySelector('.haccp-role-picker-trigger');
+  if (!item || !hidden || !trigger) return;
+  hidden.value = roleId;
+  const mark = item.querySelector('.haccp-role-picker-item-mark')?.textContent || '';
+  const label = item.querySelector('.haccp-role-picker-item-label')?.textContent || '';
+  const who = item.querySelector('.haccp-role-picker-item-who')?.textContent || '';
+  const textEl = trigger.querySelector('.haccp-role-picker-trigger-text');
+  if (textEl) {
+    textEl.textContent = `${mark} ${label}${who ? ` — ${who}` : ''}`.replace(/\s+/g, ' ').trim();
+  }
+  trigger.classList.remove('is-filled', 'is-missing', 'is-neutral');
+  if (item.classList.contains('is-filled')) trigger.classList.add('is-filled');
+  else if (item.classList.contains('is-missing')) trigger.classList.add('is-missing');
+  else trigger.classList.add('is-neutral');
+  picker.querySelectorAll('.haccp-role-picker-item').forEach((opt) => {
+    opt.setAttribute('aria-selected', opt === item ? 'true' : 'false');
+  });
 }
 
 function bindHaccpEvents(container, ctx) {
@@ -2713,21 +2888,22 @@ function bindHaccpEvents(container, ctx) {
     btn.addEventListener('click', () => {
       const kind = btn.dataset.coverageKind;
       const id = btn.dataset.coverageId;
-      const roleSelect = document.getElementById('haccp-member-role');
       const leaderCb = document.getElementById('haccp-member-leader');
       const nameInput = document.getElementById('haccp-member-name');
       if (kind === 'leader') {
         if (leaderCb) leaderCb.checked = true;
-        if (roleSelect && !roleSelect.value) roleSelect.value = 'quality';
+        setTeamRolePickerValue('haccp-member-role', 'quality');
         showToast('סמן מוביל מערכת — הזן שם והוסף');
-      } else if (id && roleSelect) {
-        roleSelect.value = id;
+      } else if (id) {
+        setTeamRolePickerValue('haccp-member-role', id);
         if (leaderCb) leaderCb.checked = false;
         showToast(`נבחרה עמדה: ${haccpRoleLabel(id)} — הזן שם והוסף`);
       }
       nameInput?.focus();
     });
   });
+
+  bindTeamRolePickers(container);
 
   container.querySelectorAll('.haccp-del-member').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -2746,8 +2922,6 @@ function bindHaccpEvents(container, ctx) {
     btn.addEventListener('click', () => {
       const member = ctx.members.find((m) => String(m.id) === String(btn.dataset.id));
       if (!member) return;
-      const roleOptions = HACCP_TEAM_ROLES.map((r) =>
-        `<option value="${r.id}" ${member.role === r.id ? 'selected' : ''}>${escapeHtml(r.label)}</option>`).join('');
       openModal({
         title: 'עריכת חבר צוות',
         bodyHTML: `
@@ -2756,8 +2930,12 @@ function bindHaccpEvents(container, ctx) {
             <input type="text" id="edit-haccp-name" value="${escapeHtml(member.name)}" maxlength="80">
           </div>
           <div class="form-group">
-            <label for="edit-haccp-role">תחום</label>
-            <select id="edit-haccp-role">${roleOptions}</select>
+            <label id="edit-haccp-role-label">תחום / עמדה</label>
+            ${renderTeamRolePicker({
+    id: 'edit-haccp-role',
+    members: ctx.members,
+    selected: member.role || 'quality',
+  })}
           </div>
           <div class="form-group">
             <label for="edit-haccp-notes">סמכויות / הערות</label>
@@ -2774,6 +2952,7 @@ function bindHaccpEvents(container, ctx) {
         footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button>
           <button class="btn btn-primary" id="save-haccp-member">שמור</button>`,
       });
+      bindTeamRolePickers(document.querySelector('.modal-body') || document);
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
       document.getElementById('save-haccp-member')?.addEventListener('click', async () => {
         try {
