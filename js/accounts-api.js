@@ -1,20 +1,20 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=437';
+} from './supabase-backup.js?v=438';
 import {
   getValidSession,
   registerAuthUser,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=437';
-import { ValidationError } from './validators.js?v=437';
-import { logAuditEvent } from './audit.js?v=437';
+} from './auth.js?v=438';
+import { ValidationError } from './validators.js?v=438';
+import { logAuditEvent } from './audit.js?v=438';
 import {
   canManageAccounts,
   sanitizeWorkspaceAccess,
   defaultWorkspacesForRole,
-} from './permissions.js?v=437';
+} from './permissions.js?v=438';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {
@@ -137,6 +137,7 @@ export async function updateAccountProfile(userId, patch) {
 
 /**
  * יצירת חשבון עובד מעמדת חשבונות (בלי להחליף את ה-session של המנהל).
+ * מעדיף Edge Function create-staff-user (מאשר אימייל); נופל חזרה ל-signup רגיל.
  */
 export async function createAccountUser({
   email,
@@ -156,17 +157,48 @@ export async function createAccountUser({
     throw new ValidationError('סטטוס יצירה לא חוקי');
   }
 
-  const { userId, email: createdEmail } = await registerAuthUser(email, password);
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (cleanEmail.includes('+')) {
+    throw new ValidationError('אימייל עם + לא נתמך — השתמש בכתובת רגילה');
+  }
+
+  const access = workspace_access === undefined
+    ? null
+    : sanitizeWorkspaceAccess(workspace_access);
+
+  const viaFunction = await tryCreateStaffUserViaFunction(session, {
+    email: cleanEmail,
+    password,
+    role,
+    display_name: display_name || null,
+    workspace_access: access,
+    status,
+  });
+  if (viaFunction) {
+    logAuditEvent({
+      entityTable: 'profiles',
+      entityId: viaFunction.id,
+      action: 'create',
+      snapshot: {
+        email: viaFunction.email || cleanEmail,
+        role: viaFunction.role || role,
+        status: viaFunction.status || status,
+        display_name: viaFunction.display_name || display_name || null,
+        workspace_access: viaFunction.workspace_access ?? access,
+        created_by: session.user?.email || null,
+        via: 'edge_function',
+      },
+    });
+    return viaFunction;
+  }
+
+  const { userId, email: createdEmail } = await registerAuthUser(cleanEmail, password);
 
   const cfg = await getSupabaseBackupConfig();
   const ready = await waitForProfileRow(cfg, session.access_token, userId);
   if (!ready) {
     throw new ValidationError('המשתמש נוצר אך פרופיל עדיין לא מוכן — רענן ואשר ידנית');
   }
-
-  const access = workspace_access === undefined
-    ? null
-    : sanitizeWorkspaceAccess(workspace_access);
 
   const updated = await updateAccountProfile(userId, {
     role,
@@ -186,6 +218,7 @@ export async function createAccountUser({
       display_name: display_name || null,
       workspace_access: access,
       created_by: session.user?.email || null,
+      via: 'signup_fallback',
     },
   });
 
@@ -197,6 +230,38 @@ export async function createAccountUser({
     display_name: display_name || null,
     workspace_access: access,
   };
+}
+
+async function tryCreateStaffUserViaFunction(session, payload) {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token) return null;
+  const base = String(cfg.supabaseUrl || '').replace(/\/$/, '');
+  const url = `${base}/functions/v1/create-staff-user`;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.anonKey,
+        Authorization: `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    // Function not deployed yet — silent fallback to signup
+    if (res.status === 404 || res.status === 503) return null;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // If function exists but failed, surface the error (don't silently create unconfirmed user)
+      if (res.status === 401 || res.status === 403 || res.status === 400) {
+        throw new ValidationError(json.error || 'יצירת המשתמש נכשלה');
+      }
+      return null;
+    }
+    return json.user || null;
+  } catch (err) {
+    if (err instanceof ValidationError) throw err;
+    return null;
+  }
 }
 
 export function roleOptionsHtml(selected) {

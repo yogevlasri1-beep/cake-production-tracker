@@ -52,5 +52,37 @@ workspace ids). `NULL` = follow the role matrix in `js/permissions.js`.
 Mark the email as confirmed (or turn off "Confirm email" under Providers → Email if
 you'd rather staff not need to click a confirmation link).
 
+### Recommended: Edge Function `create-staff-user`
+
+Creates staff with **email already confirmed** (avoids "Email not confirmed" on login).
+
+```bash
+# from repo root, with supabase CLI logged in
+supabase functions deploy create-staff-user --project-ref ravhjceukjsjfigcqgob
+```
+
+Set secrets: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+The app calls `POST /functions/v1/create-staff-user` from **חשבונות** and falls back to
+Auth signup if the function is not deployed.
+
+### One-time SQL — confirm stuck users
+
+If users were created while Confirm email was on:
+
+```sql
+UPDATE auth.users
+SET email_confirmed_at = COALESCE(email_confirmed_at, now())
+WHERE email_confirmed_at IS NULL;
+```
+
+Also activate profiles for manager-created staff if needed:
+
+```sql
+UPDATE public.profiles
+SET status = 'active', updated_at = now()
+WHERE email LIKE 'fake%' AND status = 'pending';
+```
+
 Migration for workspace overrides:
 `migrations/20260807100000_profiles_workspace_access.sql`

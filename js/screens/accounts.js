@@ -1,30 +1,30 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=437';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=438';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=437';
+} from '../auth.js?v=438';
 import {
   listAccountProfiles,
   updateAccountProfile,
   createAccountUser,
   roleOptionsHtml,
   effectiveWorkspaceAccess,
-} from '../accounts-api.js?v=437';
+} from '../accounts-api.js?v=438';
 import {
   MANAGEABLE_WORKSPACES,
   workspaceLabel,
   defaultWorkspacesForRole,
   sanitizeWorkspaceAccess,
-} from '../permissions.js?v=437';
+} from '../permissions.js?v=438';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=437';
+} from '../audit.js?v=438';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
@@ -130,7 +130,8 @@ function createAccountCardHtml() {
   return `
     <div class="card accounts-create-card" id="accounts-create-card">
       <div class="card-title">צור חשבון חדש</div>
-      <p class="form-hint">המנהל יוצר אימייל + סיסמה, בוחר תפקיד והרשאות עמדות — המשתמש יכול להיכנס מיד (סטטוס פעיל).</p>
+      <p class="form-hint">המנהל יוצר אימייל + סיסמה, בוחר תפקיד והרשאות עמדות — המשתמש יכול להיכנס מיד (סטטוס פעיל).
+        השתמש באימייל רגיל בלי + · אם ההתחברות נכשלת ב«אימייל לא אושר» — כבה Confirm email ב-Supabase או פרוס את הפונקציה create-staff-user.</p>
       <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px">
         <div class="form-group" style="flex:1;min-width:180px">
           <label for="accounts-create-email">אימייל</label>

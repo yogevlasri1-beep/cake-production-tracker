@@ -1,5 +1,5 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=437';
-import { ValidationError } from './validators.js?v=437';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=438';
+import { ValidationError } from './validators.js?v=438';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
@@ -119,7 +119,9 @@ async function authFetch(cfg, path, body) {
       ? 'אימייל או סיסמה שגויים'
       : detail === 'User already registered'
         ? 'האימייל כבר רשום במערכת'
-        : detail || 'שגיאת התחברות';
+        : /email not confirmed/i.test(String(detail || ''))
+          ? 'האימייל עדיין לא אושר ב-Supabase. אשר ב-Authentication → Users, או כבה Confirm email.'
+          : detail || 'שגיאת התחברות';
     throw new ValidationError(mapped);
   }
   return json;
@@ -143,10 +145,13 @@ export async function signUp(email, password) {
   if (!cfg.supabaseUrl || !cfg.anonKey) {
     throw new ValidationError('Supabase לא מוגדר');
   }
-  const cleanEmail = String(email || '').trim();
+  const cleanEmail = String(email || '').trim().toLowerCase();
   const cleanPassword = String(password || '');
   if (!cleanEmail || !cleanPassword) {
     throw new ValidationError('יש למלא אימייל וסיסמה');
+  }
+  if (cleanEmail.includes('+')) {
+    throw new ValidationError('אימייל עם + לא נתמך — השתמש בכתובת רגילה');
   }
   if (cleanPassword.length < 6) {
     throw new ValidationError('הסיסמה חייבת להכיל לפחות 6 תווים');
@@ -192,6 +197,9 @@ export async function registerAuthUser(email, password) {
   const cleanPassword = String(password || '');
   if (!cleanEmail || !cleanPassword) {
     throw new ValidationError('יש למלא אימייל וסיסמה');
+  }
+  if (cleanEmail.includes('+')) {
+    throw new ValidationError('אימייל עם + לא נתמך — השתמש בכתובת רגילה (למשל name@gmail.com)');
   }
   if (cleanPassword.length < 6) {
     throw new ValidationError('הסיסמה חייבת להכיל לפחות 6 תווים');
