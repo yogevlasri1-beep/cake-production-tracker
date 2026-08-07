@@ -47,6 +47,12 @@ export const WORKSPACES = {
     icon: '📦',
     defaultScreen: 'inventory',
   },
+  productCatalog: {
+    id: 'productCatalog',
+    label: 'קטלוג מוצרים',
+    icon: '🧁',
+    defaultScreen: 'productCatalog',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';

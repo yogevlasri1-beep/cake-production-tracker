@@ -8,15 +8,25 @@ export const MANAGEABLE_WORKSPACES = [
   'haccp',
   'lots',
   'inventory',
+  'productCatalog',
   'accounts',
 ];
 
-const STAFF_WORKSPACES = ['production', 'suppliers', 'recipes', 'manager', 'haccp', 'lots', 'inventory'];
+const STAFF_WORKSPACES = [
+  'production',
+  'suppliers',
+  'recipes',
+  'manager',
+  'haccp',
+  'lots',
+  'inventory',
+  'productCatalog',
+];
 const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts'];
 
 const WORKSPACE_ACCESS = {
-  production: ['production', 'recipes', 'haccp', 'lots'],
-  quality: ['production', 'suppliers', 'recipes', 'haccp', 'lots', 'inventory'],
+  production: ['production', 'recipes', 'haccp', 'lots', 'productCatalog'],
+  quality: ['production', 'suppliers', 'recipes', 'haccp', 'lots', 'inventory', 'productCatalog'],
   manager: ALL_WORKSPACES,
   admin: ALL_WORKSPACES,
 };
@@ -29,6 +39,7 @@ const WORKSPACE_LABELS = {
   haccp: 'HACCP',
   lots: 'מעקב אצוות',
   inventory: 'מלאי',
+  productCatalog: 'קטלוג מוצרים',
   accounts: 'חשבונות',
 };
 
@@ -108,5 +119,10 @@ export function canManageFlows(role) {
 
 /** התאמות מלאי ידניות — איכות ומעלה (ייצור לא רואה את העמדה) */
 export function canAdjustInventory(role) {
+  return role === 'quality' || role === 'manager' || role === 'admin';
+}
+
+/** ניהול נראות/תמונות בקטלוג מוצרים — איכות ומעלה */
+export function canManageProductCatalog(role) {
   return role === 'quality' || role === 'manager' || role === 'admin';
 }

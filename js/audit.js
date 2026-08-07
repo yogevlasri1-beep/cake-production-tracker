@@ -1,13 +1,13 @@
 // RBAC שלב 3+: audit trail — כתיבה best-effort + קריאה ליומן (מנהל/admin).
 // כישלון רשת/הרשאות בכתיבה לא חוסם פעולה עסקית.
-import { getValidSession } from './auth.js?v=439';
+import { getValidSession } from './auth.js?v=440';
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
   getOrCreateDeviceId,
   getBackupScopeId,
-} from './supabase-backup.js?v=439';
-import { ValidationError } from './validators.js?v=439';
+} from './supabase-backup.js?v=440';
+import { ValidationError } from './validators.js?v=440';
 
 const AUDIT_ACTIONS = ['create', 'update', 'delete'];
 const TABLE = 'sync_audit_log';

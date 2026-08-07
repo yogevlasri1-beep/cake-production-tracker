@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=439';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=439';
-import { defaultColorForIndex } from './chart.js?v=439';
-import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=439';
-import { logAuditEvent } from './audit.js?v=439';
+} from './validators.js?v=440';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=440';
+import { defaultColorForIndex } from './chart.js?v=440';
+import { localDateTimeISO, parseLocalDateTimeIso } from './utils.js?v=440';
+import { logAuditEvent } from './audit.js?v=440';
 
 export { ValidationError };
 
@@ -4602,6 +4602,30 @@ function sanitizeProductAllergensModeField(raw) {
   return String(raw || '').trim() === 'manual' ? 'manual' : 'auto';
 }
 
+/** תמונת מוצר לקטלוג — data URL דחוס בלבד */
+function sanitizeProductImageDataUrl(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (!/^data:image\/(jpeg|jpg|png|webp);base64,/i.test(s)) {
+    throw new ValidationError('תמונת מוצר לא תקינה');
+  }
+  // ~700KB base64 ≈ גבול סביר לסנכרון
+  if (s.length > 700_000) throw new ValidationError('תמונת המוצר גדולה מדי — נסה תמונה קטנה יותר');
+  return s;
+}
+
+function sanitizeInCatalogFlag(raw, { defaultTrue = true } = {}) {
+  if (raw === undefined) return defaultTrue;
+  if (raw === null) return defaultTrue;
+  return raw !== false && raw !== 0 && raw !== '0' && raw !== 'false';
+}
+
+export function isProductInCatalog(product) {
+  if (!product) return false;
+  return product.inCatalog !== false;
+}
+
 function productDefaults(fields) {
   const name = sanitizeName(fields.name);
   if (!name) throw new ValidationError('שם מוצר לא תקין');
@@ -4624,6 +4648,8 @@ function productDefaults(fields) {
     shelfLife: String(fields.shelfLife || '').trim(),
     storageConditions: String(fields.storageConditions || '').trim(),
     active: fields.active !== false,
+    inCatalog: sanitizeInCatalogFlag(fields.inCatalog, { defaultTrue: true }),
+    imageDataUrl: sanitizeProductImageDataUrl(fields.imageDataUrl),
   };
 }
 
@@ -4693,7 +4719,21 @@ export async function updateProduct(id, data) {
   if ('storageConditions' in patch) {
     patch.storageConditions = String(patch.storageConditions || '').trim();
   }
+  if ('inCatalog' in patch) {
+    patch.inCatalog = sanitizeInCatalogFlag(patch.inCatalog, { defaultTrue: true });
+  }
+  if ('imageDataUrl' in patch) {
+    patch.imageDataUrl = sanitizeProductImageDataUrl(patch.imageDataUrl);
+  }
   return db.products.update(id, patch);
+}
+
+export async function setProductCatalogVisibility(id, inCatalog) {
+  return updateProduct(id, { inCatalog: !!inCatalog });
+}
+
+export async function setProductCatalogImage(id, imageDataUrl) {
+  return updateProduct(id, { imageDataUrl: imageDataUrl || null });
 }
 
 export async function setCategoryOrder(categoryIds) {
