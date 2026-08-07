@@ -1,11 +1,11 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=434';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=434';
-import { openModal, closeModal } from '../modal.js?v=434';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=434';
-import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=434';
+} from '../db.js?v=435';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=435';
+import { openModal, closeModal } from '../modal.js?v=435';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=435';
+import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=435';
 
 async function offerInventoryIssueForRecord({ productId, quantity, productName }) {
   try {
@@ -16,7 +16,7 @@ async function offerInventoryIssueForRecord({ productId, quantity, productName }
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=434');
+    } = await import('../inventory-db.js?v=435');
 
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) return;

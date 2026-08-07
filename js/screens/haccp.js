@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=434';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=434';
-import { openModal, closeModal } from '../modal.js?v=434';
-import { printHaccpPlan } from '../haccp-print.js?v=434';
-import { getCurrentUserRole } from '../auth.js?v=434';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=434';
+import { getCategoryGroups } from '../db.js?v=435';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=435';
+import { openModal, closeModal } from '../modal.js?v=435';
+import { printHaccpPlan } from '../haccp-print.js?v=435';
+import { getCurrentUserRole } from '../auth.js?v=435';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=435';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -132,7 +132,7 @@ import {
   createHaccpPlanFromBakeryTemplate,
   getHaccpDeviationDashboard,
   HACCP_BAKERY_TEMPLATES,
-} from '../haccp-db.js?v=434';
+} from '../haccp-db.js?v=435';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
@@ -583,7 +583,8 @@ function renderOverview(members, plans, groups, activePlan = null, readiness = n
           (מתוך ${groups.length} משפחות במערכת)</li>
         <li>השלבים הפעילים: PRP + הכנה + 5.1–5.7 + יומן ניטור</li>
       </ul>
-      <p class="haccp-hint">המלצה: צור תכנית «מתבנית מאפייה», הפעל מצב אשף, והשלם אימות תרשים + שמות צוות.</p>
+      <p class="haccp-hint">המלצה: צור תכנית «מתבנית מאפייה», הפעל מצב אשף, והשלם אימות תרשים.
+        הצוות משותף לכל התכניות — ממלאים פעם אחת ב־3.1.</p>
       <div class="haccp-inline-row">
         <button type="button" class="btn btn-secondary" data-haccp-step="monitor_log">יומן ניטור</button>
         <button type="button" class="btn btn-secondary" data-haccp-step="monitoring">נהלי ניטור</button>
@@ -2437,6 +2438,11 @@ function renderTeamSection(members) {
       <p class="haccp-hint">
         צוות רב־תחומי המוכר על ידי הנהלת המפעל. לכל חבר מוגדרות אחריות וסמכות כתובות,
         כולל מוביל מערכת בעל יכולת לקבל החלטות ולדרוש משאבים.
+      </p>
+      <p class="haccp-hint haccp-team-shared-note">
+        <strong>צוות משותף לכל תכניות HACCP</strong> (שטרודל, רונדו ליין, מאפינס וכו׳).
+        ממלאים פעם אחת — התכניות החדשות יורשות את אותו צוות. עריכה כאן משפיעה על כולן.
+        שאר השלבים (תיאור מוצר, תרשים, CCP…) נשארים נפרדים לכל תכנית.
       </p>
 
       <div class="haccp-add-member">

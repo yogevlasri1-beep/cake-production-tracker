@@ -11607,6 +11607,14 @@ body.supplier-drag-active {
   line-height: 1.5;
 }
 
+.haccp-team-shared-note {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1e3a8a;
+}
+
 .haccp-overview-list {
   margin: 0 0 14px;
   padding-right: 18px;
