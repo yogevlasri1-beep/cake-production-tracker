@@ -2484,6 +2484,7 @@ function renderTeamSection(members) {
     members,
     coverageByRole,
     selected: 'quality',
+    labelledBy: 'haccp-member-role-label',
   })}
         </div>
         <div class="form-group">
@@ -2653,7 +2654,7 @@ function setTeamRolePickerValue(pickerOrId, roleId) {
     ? document.querySelector(`.haccp-role-picker[data-picker-id="${pickerOrId}"]`)
     : pickerOrId;
   if (!picker) return;
-  const item = picker.querySelector(`.haccp-role-picker-item[data-role="${CSS.escape(String(roleId))}"]`);
+  const item = picker.querySelector(`.haccp-role-picker-item[data-role="${String(roleId).replace(/"/g, '')}"]`);
   const hidden = picker.querySelector('input[type="hidden"]');
   const trigger = picker.querySelector('.haccp-role-picker-trigger');
   if (!item || !hidden || !trigger) return;
@@ -2935,6 +2936,7 @@ function bindHaccpEvents(container, ctx) {
     id: 'edit-haccp-role',
     members: ctx.members,
     selected: member.role || 'quality',
+    labelledBy: 'edit-haccp-role-label',
   })}
           </div>
           <div class="form-group">
