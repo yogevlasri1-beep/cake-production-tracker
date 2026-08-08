@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>בדיקות — מעקב יצור</title>
+  <title>בדיקות אינטגרציה — מעקב יצור</title>
   <style>
     body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; background: #f8fafc; }
     h1 { color: #1d4ed8; }
@@ -15,17 +15,17 @@
 </head>
 <body>
   <p><a href="../">← חזרה לאפליקציה</a></p>
-  <div id="results"><p>מריץ בדיקות...</p></div>
+  <div id="results"><p>מריץ בדיקות אינטגרציה (IndexedDB אמיתי)...</p></div>
   <script src="../js/vendor/dexie.min.js"></script>
   <script type="module">
-    import { runAllTests } from './suite.js?v=450';
+    import { runIntegrationTests } from './integration.js?v=450';
     import { renderResults, summary } from './runner.js?v=450';
 
-    runAllTests().then(() => {
+    runIntegrationTests().then(() => {
       renderResults(document.getElementById('results'));
       window.__TEST_SUMMARY__ = summary();
     }).catch((e) => {
-      document.getElementById('results').innerHTML = `<p class="fail">שגיאה: ${e.message}</p>`;
+      document.getElementById('results').innerHTML = `<p class="fail">שגיאה: ${e.message}</p><pre>${(e.stack || '').replace(/</g, '&lt;')}</pre>`;
       window.__TEST_SUMMARY__ = { passed: 0, failed: 1, failures: [{ name: 'run', message: e.message }], total: 1 };
     });
   </script>

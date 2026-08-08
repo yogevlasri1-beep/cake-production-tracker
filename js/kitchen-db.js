@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=449';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=450';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=449';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=449';
-import { logAuditEvent } from './audit.js?v=449';
-import { markMetaDeleted } from './sync/id-map.js?v=449';
+} from './validators.js?v=450';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=450';
+import { logAuditEvent } from './audit.js?v=450';
+import { markMetaDeleted } from './sync/id-map.js?v=450';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4408,6 +4408,159 @@ export async function getDuplicateMaterialGroups() {
     .sort((a, b) => a.name.localeCompare(b.name, 'he'));
 }
 
+function stripHebrewNiqqud(s) {
+  return s.replace(/[\u0591-\u05C7]/g, '');
+}
+
+/** נרמול «רך» להשוואת דמיון שמות — חזק יותר מ-normalizeMaterialKey: מסיר ניקוד, גרשיים/מקף עברי, רווחים כפולים */
+function looseNameKey(name) {
+  let s = stripHebrewNiqqud(String(name || ''));
+  s = s.replace(/[׳״"'‘’“”]/g, '');
+  s = s.replace(/[־\-_]/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s.toLocaleLowerCase('he');
+}
+
+function nameTokens(looseKey) {
+  return looseKey.split(' ').filter(Boolean);
+}
+
+/** מרחק Levenshtein — נקרא רק על מחרוזות קצרות שכבר עברו סינון bucket, אז ה-O(n*m) זניח */
+function levenshteinDistance(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+/** האם שני שמות (אחרי נרמול רך) דומים מספיק כדי להציע קיבוץ — לא זהים (זה טיפול «כפילויות») */
+function looseNamesAreSimilar(a, b) {
+  if (!a || !b || a === b) return false;
+  const minLen = Math.min(a.length, b.length);
+  if (minLen < 2) return false; // מגבלת רעש: שם קצר מדי בלי containment ברור
+  if (a.includes(b) || b.includes(a)) return true;
+
+  const aTokens = new Set(nameTokens(a));
+  const bTokens = new Set(nameTokens(b));
+  if (aTokens.size && bTokens.size) {
+    const overlap = [...aTokens].filter((t) => t.length >= 2 && bTokens.has(t));
+    const union = new Set([...aTokens, ...bTokens]);
+    if (overlap.length && overlap.length / union.size >= 0.5) return true;
+  }
+
+  if (Math.max(a.length, b.length) <= 14) {
+    const ratio = 1 - levenshteinDistance(a, b) / Math.max(a.length, b.length);
+    if (ratio >= 0.72) return true;
+  }
+  return false;
+}
+
+/**
+ * מקבץ חומרי גלם לפי דמיון שמות (לא רק זהות מדויקת) — להצעה בלבד, בלי איחוד אוטומטי.
+ * יעיל על כמויות גדולות: משווה רק בתוך "דליים" (אותה מילה ראשונה / אותה אות ראשונה)
+ * במקום O(n²) על כל הזוגות. אות ראשונה (לא 2) כי טעויות/חסרות אות תנועה מוקדמת
+ * (למשל «סכר» מול «סוכר») כבר משנות את התו השני.
+ */
+export async function getSimilarMaterialNameGroups({ minGroupSize = 2 } = {}) {
+  const all = await db.rawMaterials.toArray();
+  const byKey = new Map(); // normalizeMaterialKey → materials[] (שם זהה — לא חלק מהתכונה הזו)
+  for (const m of all) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(m);
+  }
+
+  const entries = [...byKey.entries()].map(([key, materials]) => ({
+    key,
+    loose: looseNameKey(materials[0].name),
+    materials,
+  })).filter((e) => e.loose);
+
+  // דליים: מילה ראשונה + אות ראשונה — מגבילים השוואות לזוגות שסביר שדומים
+  const byFirstToken = new Map();
+  const byPrefix = new Map();
+  for (const e of entries) {
+    const tokens = nameTokens(e.loose);
+    const firstToken = tokens[0] || '';
+    if (firstToken) {
+      if (!byFirstToken.has(firstToken)) byFirstToken.set(firstToken, []);
+      byFirstToken.get(firstToken).push(e);
+    }
+    const prefix = e.loose.slice(0, 1);
+    if (prefix) {
+      if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
+      byPrefix.get(prefix).push(e);
+    }
+  }
+
+  const parent = new Map(entries.map((e) => [e.key, e.key]));
+  function find(k) {
+    while (parent.get(k) !== k) {
+      parent.set(k, parent.get(parent.get(k)));
+      k = parent.get(k);
+    }
+    return k;
+  }
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+
+  for (const e of entries) {
+    const tokens = nameTokens(e.loose);
+    const candidates = new Set([
+      ...(byFirstToken.get(tokens[0] || '') || []),
+      ...(byPrefix.get(e.loose.slice(0, 1)) || []),
+    ]);
+    for (const other of candidates) {
+      if (other.key === e.key) continue;
+      if (looseNamesAreSimilar(e.loose, other.loose)) union(e.key, other.key);
+    }
+  }
+
+  const clusters = new Map();
+  for (const e of entries) {
+    const root = find(e.key);
+    if (!clusters.has(root)) clusters.set(root, []);
+    clusters.get(root).push(e);
+  }
+
+  const groups = [];
+  for (const members of clusters.values()) {
+    if (members.length < minGroupSize) continue;
+    const materials = members.flatMap((e) => e.materials).sort((a, b) => a.id - b.id);
+    const names = [...new Set(members.map((e) => e.materials[0].name))];
+    const suggestedTargetId = [...members]
+      .sort((a, b) => (
+        b.materials.length - a.materials.length
+        || b.materials[0].name.length - a.materials[0].name.length
+        || a.materials[0].id - b.materials[0].id
+      ))[0].materials[0].id;
+    groups.push({
+      id: members.map((e) => e.key).sort().join('|'),
+      names,
+      materials,
+      suggestedTargetId,
+    });
+  }
+  groups.sort((a, b) => a.names[0].localeCompare(b.names[0], 'he'));
+  return groups;
+}
+
 /** בונה מילים נרדפות לאיחוד — שמות/מילים נרדפות של הרשומות המאוחדות (בלי שם היעד) */
 export function buildMergedMaterialSynonyms(keep, others = []) {
   if (!keep) return [];
@@ -4591,10 +4744,10 @@ export function pickMergeRecipeDefaultId(keep, others, { preservedIds = [] } = {
   return null;
 }
 
-async function retargetMaterialRefs(fromId, toId) {
+async function retargetMaterialRefs(fromId, toId, { productsCache } = {}) {
   if (!fromId || !toId || fromId === toId) return;
   if (db.products) {
-    const products = await db.products.toArray();
+    const products = productsCache || await db.products.toArray();
     for (const p of products) {
       if (Number(p.packagingMaterialId) === fromId) {
         await db.products.update(p.id, { packagingMaterialId: toId });
@@ -4658,13 +4811,23 @@ async function retargetMaterialRefs(fromId, toId) {
   }
 }
 
-async function renameRecipeIngredientsMaterialName(fromName, toName) {
-  const fromKey = normalizeMaterialKey(fromName);
+/**
+ * מעדכן recipeIngredients.name לשם היעד עבור כל השמות הישנים בבת אחת —
+ * סריקה אחת של הטבלה (לא סריקה מלאה בנפרד לכל חומר שנספג באיחוד).
+ */
+async function renameRecipeIngredientsMaterialNames(fromNames, toName, ingredientsCache) {
   const to = sanitizeName(toName, 80);
-  if (!fromKey || !to || fromKey === normalizeMaterialKey(to)) return;
-  const ings = await db.recipeIngredients.toArray();
+  if (!to) return;
+  const toKey = normalizeMaterialKey(to);
+  const fromKeys = new Set(
+    (fromNames || [])
+      .map((n) => normalizeMaterialKey(n))
+      .filter((k) => k && k !== toKey),
+  );
+  if (!fromKeys.size) return;
+  const ings = ingredientsCache || await db.recipeIngredients.toArray();
   for (const ing of ings) {
-    if (normalizeMaterialKey(ing.name) === fromKey) {
+    if (fromKeys.has(normalizeMaterialKey(ing.name))) {
       await db.recipeIngredients.update(ing.id, { name: to });
     }
   }
@@ -4691,8 +4854,9 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
   if (!ids.length) return;
 
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
+    const productsCache = db.products ? await db.products.toArray() : null;
     for (const mid of ids) {
-      await mergeMaterialIntoKeep(keep, mid);
+      await mergeMaterialIntoKeep(keep, mid, { productsCache });
     }
   });
   await syncRawMaterialLatestPrice(keep);
@@ -4703,7 +4867,7 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
  * סופג רשומה ליעד: מעביר מרכיבי מתכון (רק החלפת מזהה — בלי מחיקת שורות),
  * היסטוריית מחירים וקישורים, ואז מוחק את הרשומה המאוחדת.
  */
-async function mergeMaterialIntoKeep(keep, mid) {
+async function mergeMaterialIntoKeep(keep, mid, { productsCache } = {}) {
   if (!keep || !mid || keep === mid) return;
   const fromMat = await db.rawMaterials.get(mid);
   if (!fromMat) return;
@@ -4736,7 +4900,7 @@ async function mergeMaterialIntoKeep(keep, mid) {
     }
   }
 
-  await retargetMaterialRefs(mid, keep);
+  await retargetMaterialRefs(mid, keep, { productsCache });
   await db.rawMaterials.delete(mid);
   // Tombstone immediately so a live-sync pull can't resurrect the absorbed row
   // before pushDelete runs.
@@ -4765,9 +4929,7 @@ async function alignCrossSupplierMaterialOffer(keepMat, fromMat, { clearRecipeDe
   if (Object.keys(patch).length) {
     await db.rawMaterials.update(fromMat.id, patch);
   }
-  if (normalizeMaterialKey(fromName) !== normalizeMaterialKey(keepName)) {
-    await renameRecipeIngredientsMaterialName(fromName, keepName);
-  }
+  // recipeIngredients.name מעודכן בבת אחת ב-mergeSelectedRawMaterials (לא כאן — נמנע מסריקה חוזרת).
 }
 
 /**
@@ -4813,9 +4975,18 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   });
 
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
+    // סריקה אחת של recipeIngredients לכל שמות היעד שהשתנו (במקום אחת לכל חומר נספג)
+    const namesToRename = [
+      ...absorbIntoKeep.map((mat) => mat.name),
+      ...absorbIntoOffer.map(({ mat }) => mat.name),
+      ...preserve.map((mat) => mat.name),
+    ];
+    const ingredientsCache = await db.recipeIngredients.toArray();
+    await renameRecipeIngredientsMaterialNames(namesToRename, keepMat.name, ingredientsCache);
+    const productsCache = db.products ? await db.products.toArray() : null;
+
     for (const mat of absorbIntoKeep) {
-      await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
-      await mergeMaterialIntoKeep(keep, mat.id);
+      await mergeMaterialIntoKeep(keep, mat.id, { productsCache });
     }
     for (const mat of preserve) {
       const keepDefaultOnOffer = defaultId === mat.id;
@@ -4825,8 +4996,7 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
       preservedOfferIds.push(mat.id);
     }
     for (const { target, mat } of absorbIntoOffer) {
-      await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
-      await mergeMaterialIntoKeep(target.id, mat.id);
+      await mergeMaterialIntoKeep(target.id, mat.id, { productsCache });
     }
 
     const patch = { ...fillPatch, synonyms };
@@ -4884,11 +5054,20 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
 
   const touched = new Set();
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
+    const targetName = primaryMat?.name;
+    if (targetName) {
+      const ingredientsCache = await db.recipeIngredients.toArray();
+      await renameRecipeIngredientsMaterialNames(
+        absorbMats.map((mat) => mat.name),
+        targetName,
+        ingredientsCache,
+      );
+    }
+    const productsCache = db.products ? await db.products.toArray() : null;
     for (const mat of absorbMats) {
       let target = mat.supplierId ? keepBySupplier.get(mat.supplierId) : null;
       if (!target || !keeps.includes(target)) target = primary;
-      await renameRecipeIngredientsMaterialName(mat.name, primaryMat?.name || mat.name);
-      await mergeMaterialIntoKeep(target, mat.id);
+      await mergeMaterialIntoKeep(target, mat.id, { productsCache });
       touched.add(target);
     }
     for (const [kid, syns] of synonymsByKeep) {

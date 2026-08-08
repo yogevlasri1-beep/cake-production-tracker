@@ -16,5 +16,11 @@
   },
   "peerDependencies": {
     "@capacitor/core": ">=7.0.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.5.0"
+  },
+  "scripts": {
+    "test": "bash scripts/run-tests.sh"
   }
 }
