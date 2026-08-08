@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=445';
+import { db, ValidationError } from './db.js?v=446';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -11,9 +11,9 @@ import {
   getPortionPresetIngredientsFormData,
   resolveRecipeIngredientMaterial,
   buildMaterialsByNameKey,
-} from './kitchen-db.js?v=445';
-import { localDateTimeISO, roundDecimal } from './utils.js?v=445';
-import { logAuditEvent } from './audit.js?v=445';
+} from './kitchen-db.js?v=446';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=446';
+import { logAuditEvent } from './audit.js?v=446';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -25,7 +25,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=445');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=446');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -81,7 +81,10 @@ export async function getInventoryStockRows({ search = '', categoryId = null, lo
       isLow,
       unit: bal?.unit || mat.unit || '',
       categoryName: catMap.get(mat.supplierCategoryId)?.name || 'ללא קטגוריה',
+      supplierId: mat.supplierId ? Number(mat.supplierId) : null,
       supplierName: mat.supplierId ? (supMap.get(mat.supplierId)?.name || '') : '',
+      isPackaging: !!catMap.get(mat.supplierCategoryId)?.isPackaging,
+      isCleaning: !!catMap.get(mat.supplierCategoryId)?.isCleaning,
       lastAdjustedAt: bal?.lastAdjustedAt || null,
       lastAdjustmentReason: bal?.lastAdjustmentReason || '',
     });
@@ -89,8 +92,13 @@ export async function getInventoryStockRows({ search = '', categoryId = null, lo
 
   rows.sort((a, b) => {
     if (a.isLow !== b.isLow) return a.isLow ? -1 : 1;
-    const cat = a.categoryName.localeCompare(b.categoryName, 'he');
-    if (cat) return cat;
+    const sa = a.supplierName || '\uffff';
+    const sb = b.supplierName || '\uffff';
+    const bySup = sa.localeCompare(sb, 'he');
+    if (bySup) return bySup;
+    const kindRank = (r) => (r.isPackaging ? 1 : r.isCleaning ? 2 : 0);
+    const kr = kindRank(a) - kindRank(b);
+    if (kr) return kr;
     return String(a.material.name || '').localeCompare(String(b.material.name || ''), 'he');
   });
   return rows;

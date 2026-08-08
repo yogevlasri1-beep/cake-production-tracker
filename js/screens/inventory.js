@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=445';
-import { openModal, closeModal } from '../modal.js?v=445';
-import { requestAutoBackupNow } from '../backup-service.js?v=445';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=446';
+import { openModal, closeModal } from '../modal.js?v=446';
+import { requestAutoBackupNow } from '../backup-service.js?v=446';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,10 +10,10 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=445';
-import { getSupplierCategories } from '../kitchen-db.js?v=445';
-import { getCurrentUserRole } from '../auth.js?v=445';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=445';
+} from '../inventory-db.js?v=446';
+import { getSupplierCategories } from '../kitchen-db.js?v=446';
+import { getCurrentUserRole } from '../auth.js?v=446';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=446';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -67,7 +67,7 @@ function stockCard(row, { allowAdjust = true } = {}) {
       <div class="accounts-card-head">
         <div>
           <div class="card-title" style="margin-bottom:4px">${escapeHtml(m.name)}</div>
-          <p class="form-hint" style="margin:0">${escapeHtml(row.categoryName)}${row.supplierName ? ` · ${escapeHtml(row.supplierName)}` : ''}</p>
+          <p class="form-hint" style="margin:0">${escapeHtml(row.categoryName)}</p>
           <p class="form-hint" style="margin:4px 0 0">
             במלאי: <strong>${formatQty(row.qtyOnHand, row.unit)}</strong>
             ${row.minQty != null ? ` · מינימום: ${formatQty(row.minQty, row.unit)}` : ''}
@@ -82,6 +82,98 @@ function stockCard(row, { allowAdjust = true } = {}) {
         <button type="button" class="btn btn-secondary inventory-show-moves" data-material-id="${m.id}" data-material-name="${escapeHtml(m.name)}">יומן</button>
       </div>
     </div>`;
+}
+
+const INV_SUPPLIER_COLLAPSE_KEY = 'yitzurInventorySupplierCollapsed';
+
+function getCollapsedSupplierIds() {
+  try {
+    const raw = sessionStorage.getItem(INV_SUPPLIER_COLLAPSE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedSupplierIds(set) {
+  try {
+    sessionStorage.setItem(INV_SUPPLIER_COLLAPSE_KEY, JSON.stringify([...set]));
+  } catch { /* ignore */ }
+}
+
+function groupStockRowsBySupplier(rows) {
+  const map = new Map();
+  for (const row of rows) {
+    const key = row.supplierId != null ? String(row.supplierId) : 'none';
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        supplierId: row.supplierId,
+        supplierName: row.supplierName || 'ללא ספק',
+        raw: [],
+        packaging: [],
+        cleaning: [],
+      });
+    }
+    const g = map.get(key);
+    if (row.isPackaging) g.packaging.push(row);
+    else if (row.isCleaning) g.cleaning.push(row);
+    else g.raw.push(row);
+  }
+
+  const sortByName = (a, b) => String(a.material.name || '').localeCompare(String(b.material.name || ''), 'he');
+  const groups = [...map.values()];
+  for (const g of groups) {
+    g.raw.sort(sortByName);
+    g.packaging.sort(sortByName);
+    g.cleaning.sort(sortByName);
+    g.lowCount = [...g.raw, ...g.packaging, ...g.cleaning].filter((r) => r.isLow).length;
+    g.totalCount = g.raw.length + g.packaging.length + g.cleaning.length;
+  }
+  groups.sort((a, b) => {
+    if (a.key === 'none') return 1;
+    if (b.key === 'none') return -1;
+    return a.supplierName.localeCompare(b.supplierName, 'he');
+  });
+  return groups;
+}
+
+function stockSectionHtml(title, sectionRows, { allowAdjust }) {
+  if (!sectionRows.length) return '';
+  return `
+    <div class="inventory-kind-section">
+      <h4 class="inventory-kind-title">${escapeHtml(title)}
+        <span class="inventory-kind-count">(${sectionRows.length})</span>
+      </h4>
+      <div class="inventory-kind-list">
+        ${sectionRows.map((r) => stockCard(r, { allowAdjust })).join('')}
+      </div>
+    </div>`;
+}
+
+function stockSupplierGroupHtml(group, { allowAdjust, collapsed }) {
+  const meta = [];
+  if (group.raw.length) meta.push(`${group.raw.length} חומרי גלם`);
+  if (group.packaging.length) meta.push(`${group.packaging.length} אריזות`);
+  if (group.cleaning.length) meta.push(`${group.cleaning.length} ניקיון`);
+  if (group.lowCount) meta.push(`${group.lowCount} מתחת למינימום`);
+
+  return `
+    <section class="inventory-supplier-group${collapsed ? ' is-collapsed' : ''}" data-supplier-key="${escapeHtml(group.key)}">
+      <button type="button" class="inventory-supplier-toggle" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <span class="inventory-supplier-chevron" aria-hidden="true"></span>
+        <span class="inventory-supplier-heading">
+          <span class="inventory-supplier-name">${escapeHtml(group.supplierName)}</span>
+          <span class="inventory-supplier-meta">${escapeHtml(meta.join(' · '))}</span>
+        </span>
+      </button>
+      <div class="inventory-supplier-body">
+        ${stockSectionHtml('חומרי גלם', group.raw, { allowAdjust })}
+        ${stockSectionHtml('אריזות', group.packaging, { allowAdjust })}
+        ${stockSectionHtml('חומרי ניקיון', group.cleaning, { allowAdjust })}
+      </div>
+    </section>`;
 }
 
 function movementCard(m) {
@@ -109,7 +201,7 @@ function movementCard(m) {
 
 async function openAdjustModal(row, onDone) {
   const m = row.material;
-  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=445');
+  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=446');
   openModal({
     title: `התאמת מלאי — ${m.name}`,
     bodyHTML: `
@@ -161,7 +253,7 @@ async function openAdjustModal(row, onDone) {
       }
       const unit = row.unit || m.unit || '';
       if (!hasSet && packagingBatchNumber && Number(deltaVal) > 0) {
-        const { receiveInventoryLot } = await import('../inventory-db.js?v=445');
+        const { receiveInventoryLot } = await import('../inventory-db.js?v=446');
         await receiveInventoryLot({
           rawMaterialId: m.id, qty: deltaVal, unit, packagingBatchNumber, reason,
         });
@@ -212,17 +304,26 @@ async function renderStockTab(container) {
   }
 
   const lowCount = inventoryLowCount(rows);
+  const collapsed = getCollapsedSupplierIds();
+  const groups = groupStockRowsBySupplier(rows);
   const catOptions = [
     `<option value="">כל הקטגוריות</option>`,
     ...cats.map((c) => `<option value="${c.id}" ${String(c.id) === String(categoryId) ? 'selected' : ''}>${escapeHtml(c.name)}</option>`),
   ].join('');
 
+  const groupsHtml = groups.length
+    ? groups.map((g) => stockSupplierGroupHtml(g, {
+      allowAdjust,
+      collapsed: collapsed.has(g.key),
+    })).join('')
+    : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>';
+
   return {
     html: `
       <div class="card">
-        <div class="card-title">יתרות חומרי גלם</div>
-        <p class="form-hint">התאם מלאי אחרי ספירה או קבלה. חומר מתחת למינימום — אפשר להוסיף לחוסרים.</p>
-        <p class="form-hint" style="margin:0">מוצגים: <strong>${rows.length}</strong>${lowCount ? ` · מתחת למינימום: <strong style="color:var(--danger)">${lowCount}</strong>` : ''}</p>
+        <div class="card-title">יתרות לפי ספקים</div>
+        <p class="form-hint">מקובץ לפי ספק · בכל ספק: חומרי גלם ואז אריזות. אפשר למזער ספק בלחיצה על הכותרת.</p>
+        <p class="form-hint" style="margin:0">מוצגים: <strong>${rows.length}</strong> · ספקים: <strong>${groups.length}</strong>${lowCount ? ` · מתחת למינימום: <strong style="color:var(--danger)">${lowCount}</strong>` : ''}</p>
         <form id="inv-filter-form" class="lots-search-form" style="margin-top:12px">
           <div class="form-group">
             <label for="inv-search">חיפוש</label>
@@ -239,7 +340,9 @@ async function renderStockTab(container) {
           <button type="submit" class="btn btn-primary">סנן</button>
         </form>
       </div>
-      ${rows.length ? rows.map((r) => stockCard(r, { allowAdjust })).join('') : '<div class="card"><p class="form-hint">אין חומרי גלם להצגה. הוסף במחסן שבעמדת ספקים.</p></div>'}
+      <div class="inventory-supplier-groups">
+        ${groupsHtml}
+      </div>
     `,
     rows,
   };
@@ -418,6 +521,21 @@ export async function renderInventory(container) {
     container.dataset.invCategory = container.querySelector('#inv-category')?.value || '';
     container.dataset.invLowOnly = container.querySelector('#inv-low-only')?.checked ? '1' : '0';
     renderInventory(container);
+  });
+
+  container.querySelectorAll('.inventory-supplier-toggle').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const group = btn.closest('.inventory-supplier-group');
+      if (!group) return;
+      const key = group.dataset.supplierKey || '';
+      group.classList.toggle('is-collapsed');
+      const isCollapsed = group.classList.contains('is-collapsed');
+      btn.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+      const set = getCollapsedSupplierIds();
+      if (isCollapsed) set.add(key);
+      else set.delete(key);
+      saveCollapsedSupplierIds(set);
+    });
   });
 
   container.querySelector('#inv-move-filter')?.addEventListener('submit', (e) => {

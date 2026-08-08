@@ -12913,3 +12913,105 @@ body.supplier-drag-active {
     grid-template-columns: 1fr;
   }
 }
+
+/* ——— מלאי לפי ספקים ——— */
+.inventory-supplier-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inventory-supplier-group {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.inventory-supplier-toggle {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0;
+  background: #f8fafc;
+  text-align: right;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.inventory-supplier-toggle:hover {
+  background: #f1f5f9;
+}
+
+.inventory-supplier-chevron::before {
+  content: '▾';
+  display: inline-block;
+  font-size: 0.85rem;
+  color: var(--text-muted, #64748b);
+  transition: transform 0.15s ease;
+}
+
+.inventory-supplier-group.is-collapsed .inventory-supplier-chevron::before {
+  transform: rotate(-90deg);
+}
+
+.inventory-supplier-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inventory-supplier-name {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.inventory-supplier-meta {
+  font-size: 0.82rem;
+  color: var(--text-muted, #64748b);
+}
+
+.inventory-supplier-body {
+  padding: 0 12px 12px;
+}
+
+.inventory-supplier-group.is-collapsed .inventory-supplier-body {
+  display: none;
+}
+
+.inventory-kind-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #e2e8f0);
+}
+
+.inventory-kind-section:first-child {
+  border-top: 0;
+  padding-top: 4px;
+}
+
+.inventory-kind-title {
+  margin: 0 4px 8px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.inventory-kind-count {
+  font-weight: 600;
+  color: var(--text-muted, #64748b);
+}
+
+.inventory-kind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inventory-kind-list .inventory-card {
+  margin: 0;
+}
