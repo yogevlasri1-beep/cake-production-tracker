@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=448';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=448';
-import { logAuditEvent } from './audit.js?v=448';
+import { db, ValidationError } from './db.js?v=449';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=449';
+import { logAuditEvent } from './audit.js?v=449';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [

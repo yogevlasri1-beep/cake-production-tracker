@@ -33,21 +33,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=448';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=448';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=448';
-import { renderRecipesMachines } from '../recipes-machines.js?v=448';
-import { renderRecipesPortions } from '../recipes-portions.js?v=448';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=448';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=448';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=448';
-import { openModal, closeModal } from '../modal.js?v=448';
-import { getCurrentUserRole } from '../auth.js?v=448';
-import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=448';
+} from '../kitchen-db.js?v=449';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=449';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=449';
+import { renderRecipesMachines } from '../recipes-machines.js?v=449';
+import { renderRecipesPortions } from '../recipes-portions.js?v=449';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=449';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=449';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=449';
+import { openModal, closeModal } from '../modal.js?v=449';
+import { getCurrentUserRole } from '../auth.js?v=449';
+import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=449';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=448';
-import { defaultColorForIndex } from '../chart.js?v=448';
+} from '../product-drag.js?v=449';
+import { defaultColorForIndex } from '../chart.js?v=449';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2614,9 +2614,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=448');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=449');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=448');
+    const { navigateToWorkspace } = await import('../app.js?v=449');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
@@ -2769,21 +2769,22 @@ function materialComparisonPriceDisplay(mat) {
   return ppk != null ? ppk : (Number(mat?.unitPrice) || 0);
 }
 
-function ingredientMaterialOptionHTML(mat, { supplierName, isCurrent }) {
+function ingredientMaterialOptionHTML(mat, { supplierName, isCurrent, offerCount = 1 }) {
   const perKg = getMaterialEffectivePricePerKg(mat);
   const price = isFreeMaterial(mat)
     ? 'ללא עלות'
     : (perKg != null && perKg > 0 ? `${formatMoney(perKg)}/ק"ג` : 'ללא מחיר');
   const synonyms = getMaterialSynonyms(mat);
   const alias = synonyms.length ? ` · גם: ${synonyms.slice(0, 2).join(', ')}` : '';
+  const offersMeta = offerCount > 1 ? ` · ${offerCount} ספקים` : '';
   return `
     <button type="button" class="ing-mat-option${isCurrent ? ' active' : ''}" data-id="${mat.id}">
       <span class="ing-mat-option-name">${escapeHtml(mat.name)}${isCurrent ? ' ✓' : ''}</span>
-      <span class="ing-mat-option-meta">${escapeHtml(supplierName || 'ללא ספק')} · ${escapeHtml(price)}${escapeHtml(alias)}</span>
+      <span class="ing-mat-option-meta">${escapeHtml(supplierName || 'ללא ספק')} · ${escapeHtml(price)}${escapeHtml(offersMeta)}${escapeHtml(alias)}</span>
     </button>`;
 }
 
-/** רשימת חומרי גלם גלויה עם חיפוש חי — במקום תפריט שנפתח רק בהקלדה */
+/** רשימת חומרי גלם גלויה עם חיפוש חי — מקובצת לפי שם (הצעות ספק לא מופיעות כאופציות כפולות) */
 function bindIngredientMaterialBrowser({ mats, supMap, currentMatId, ingredientName, onPick }) {
   const searchEl = document.getElementById('change-ing-mat-search');
   const listEl = document.getElementById('change-ing-mat-browse');
@@ -2792,20 +2793,37 @@ function bindIngredientMaterialBrowser({ mats, supMap, currentMatId, ingredientN
 
   const supplierNameOf = (mat) => supMap.get(mat.supplierId) || '';
   const nameKey = normalizeMaterialKey(ingredientName || '');
-  // החומר המשויך ואלה ששמם תואם עולים לראש, כדי שההתאמה הסבירה תהיה מיד מול העיניים
-  const rank = (mat) => {
-    if (mat.id === currentMatId) return 0;
-    if (nameKey && normalizeMaterialKey(mat.name) === nameKey) return 1;
+
+  // קיבוץ לפי שם — שורה אחת לכל חומר; בוחרים את ברירת המחדל / הנוכחי / הראשון
+  const byName = new Map();
+  for (const m of mats || []) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(m);
+  }
+  const grouped = [...byName.values()].map((offers) => {
+    const current = offers.find((o) => o.id === currentMatId);
+    const recipeDefault = offers.find((o) => o.isRecipeDefault);
+    const primary = current || recipeDefault || offers[0];
+    return { primary, offers, offerCount: offers.length };
+  });
+
+  const rank = (g) => {
+    if (g.offers.some((o) => o.id === currentMatId)) return 0;
+    if (nameKey && normalizeMaterialKey(g.primary.name) === nameKey) return 1;
     return 2;
   };
-  const ordered = [...mats].sort((a, b) => (
-    rank(a) - rank(b) || a.name.localeCompare(b.name, 'he')
+  const ordered = grouped.sort((a, b) => (
+    rank(a) - rank(b) || a.primary.name.localeCompare(b.primary.name, 'he')
   ));
 
   const render = (query = '') => {
     const term = query.trim();
     const filtered = term
-      ? ordered.filter((m) => materialMatchesSearch(m, term, { supplierName: supplierNameOf(m) }))
+      ? ordered.filter((g) => g.offers.some((m) => materialMatchesSearch(m, term, {
+        supplierName: supplierNameOf(m),
+      })))
       : ordered;
     if (countEl) {
       countEl.textContent = filtered.length
@@ -2813,9 +2831,10 @@ function bindIngredientMaterialBrowser({ mats, supMap, currentMatId, ingredientN
         : 'לא נמצאו התאמות';
     }
     listEl.innerHTML = filtered.length
-      ? filtered.map((m) => ingredientMaterialOptionHTML(m, {
-        supplierName: supplierNameOf(m),
-        isCurrent: m.id === currentMatId,
+      ? filtered.map((g) => ingredientMaterialOptionHTML(g.primary, {
+        supplierName: supplierNameOf(g.primary),
+        isCurrent: g.offers.some((o) => o.id === currentMatId),
+        offerCount: g.offerCount,
       })).join('')
       : '<p class="form-hint" style="padding:12px">אין חומר גלם תואם. אפשר לשמור את השם שהוקלד בלי שיוך.</p>';
   };

@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=448';
+import { db, getSetting, setSetting } from './db.js?v=449';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=448';
+} from './supabase-backup.js?v=449';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,7 +23,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=448';
+} from './sync/collections.js?v=449';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -33,8 +33,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=448';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=448';
+} from './sync/id-map.js?v=449';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=449';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -516,13 +516,30 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     return true;
   }
 
+  if (existingMeta?.deletedAt) {
+    // Tombstone local — never resurrect from cloud until a newer non-deleted remote wins.
+    if (!shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) return false;
+  }
+
   if (existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
-    // Only trust the timestamp when the row it maps to is actually here. A mapping
-    // can outlive its row (partial wipe, restore, interrupted pull), and skipping on
-    // timestamp alone would hide that row from this device for good. A tombstoned
-    // mapping is different: the row is missing on purpose, so leave it missing.
-    if (existingMeta.deletedAt) return false;
-    if (await readLocalRecord(collection, existingMeta.localKey)) return false;
+    // Local mapping is newer (or equal). If the row is still here, keep it.
+    // If the row is missing, it was deleted locally — do NOT recreate from older cloud data
+    // (this used to revive materials right after merge/absorb).
+    return false;
+  }
+
+  // Pending local delete not yet flushed — don't undo a merge mid-sync.
+  if (existingMeta) {
+    const pendingDelete = await db.syncQueue
+      .where('status')
+      .equals('pending')
+      .filter((op) => (
+        op.type === 'delete'
+        && op.collection === collection
+        && String(op.localKey) === String(existingMeta.localKey)
+      ))
+      .first();
+    if (pendingDelete) return false;
   }
 
   const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});

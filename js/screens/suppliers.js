@@ -23,18 +23,18 @@ import {
   getMaterialPortionProductIds,
   applyPackagingLinks,
   sanitizeBarcode,
-  shouldPreserveMaterialAsSupplierOffer,
-} from '../kitchen-db.js?v=448';
-import { getProducts, getCategories } from '../db.js?v=448';
+  classifyMaterialsForMerge,
+} from '../kitchen-db.js?v=449';
+import { getProducts, getCategories } from '../db.js?v=449';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=448';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=448';
-import { openModal, closeModal } from '../modal.js?v=448';
-import { requestAutoBackupNow } from '../backup-service.js?v=448';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=448';
-import { openBarcodeScanner } from '../barcode-scan.js?v=448';
+} from '../supplier-import.js?v=449';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=449';
+import { openModal, closeModal } from '../modal.js?v=449';
+import { requestAutoBackupNow } from '../backup-service.js?v=449';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=449';
+import { openBarcodeScanner } from '../barcode-scan.js?v=449';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -740,8 +740,7 @@ async function openMergeSelectedMaterialsModal(container) {
     const keepId = Number(document.querySelector('.manual-mat-keep-radio:checked')?.value);
     const keep = mats.find((m) => m.id === keepId) || mats[0];
     const others = mats.filter((m) => m.id !== keep.id);
-    const preserve = others.filter((m) => shouldPreserveMaterialAsSupplierOffer(keep, m));
-    const absorb = others.filter((m) => !shouldPreserveMaterialAsSupplierOffer(keep, m));
+    const { absorbIntoKeep, preserve, absorbIntoOffer } = classifyMaterialsForMerge(keep, others);
     const syns = buildMergedMaterialSynonyms(keep, others);
     const synText = syns.length ? syns.join(' · ') : '—';
     const keepSupName = keep.supplierId ? (supMap.get(keep.supplierId) || 'ספק') : 'ללא ספק';
@@ -752,13 +751,14 @@ async function openMergeSelectedMaterialsModal(container) {
         : '';
       return `${m.name} (${s}${pkg})`;
     });
+    const absorbCount = absorbIntoKeep.length + absorbIntoOffer.length;
     previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong> · ${escapeHtml(keepSupName)}
       · מילים נרדפות: ${escapeHtml(synText)}
       ${preserve.length
-    ? `<br>יתווספו לרשימת הספקים תחת «${escapeHtml(keep.name)}»: ${escapeHtml(preserveNames.join(' · '))} — עם מחיר ופרטי אריזה`
+    ? `<br>הצעות ספק שיישארו תחת «${escapeHtml(keep.name)}»: ${escapeHtml(preserveNames.join(' · '))}`
     : ''}
-      ${absorb.length
-    ? `<br>יאוחדו ליעד (בלי הצעה נפרדת): ${absorb.length}`
+      ${absorbCount
+    ? `<br>יאוחדו ליעד / להצעה קיימת (יימחקו מהרשימה): ${absorbCount}`
     : ''}`;
   }
 
@@ -884,17 +884,22 @@ async function openMergeDuplicatesModal(container) {
       let remaining = await getDuplicateMaterialGroups();
       while (remaining.length) {
         const g = remaining[0];
+        // ספק אחד לכל מפתח; חומרים בלי ספק מתאחדים יחד (לא כל אחד בנפרד)
         const bySupplier = new Map();
         for (const m of g.materials) {
-          const key = m.supplierId || `id:${m.id}`;
+          const key = m.supplierId ? `s:${m.supplierId}` : 'none';
           if (!bySupplier.has(key)) bySupplier.set(key, m.id);
         }
         const keepIds = [...bySupplier.values()];
         const mergeIds = g.materials.map((m) => m.id).filter((id) => !keepIds.includes(id));
         if (mergeIds.length) {
           await mergeDuplicateMaterialsKeeping(keepIds, mergeIds);
-        } else {
-          await mergeDuplicateMaterialsKeeping([g.materials[0].id], g.materials.slice(1).map((m) => m.id));
+        } else if (g.materials.length > 1) {
+          // ספקים שונים בלבד — מאחדים לשם אחד דרך איחוד נבחרים (הצעות נשמרות)
+          await mergeSelectedRawMaterials(
+            g.materials[0].id,
+            g.materials.slice(1).map((m) => m.id),
+          );
         }
         requestAutoBackupNow().catch(() => {});
         remaining = await getDuplicateMaterialGroups();
@@ -2593,7 +2598,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=448');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=449');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2615,7 +2620,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=448');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=449');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2633,7 +2638,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=448');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=449');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

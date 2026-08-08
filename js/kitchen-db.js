@@ -1,10 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=448';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=449';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=448';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=448';
-import { logAuditEvent } from './audit.js?v=448';
+} from './validators.js?v=449';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=449';
+import { logAuditEvent } from './audit.js?v=449';
+import { markMetaDeleted } from './sync/id-map.js?v=449';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4515,15 +4516,67 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
 /**
  * האם רשומה שאינה יעד צריכה להישאר כהצעת ספק נפרדת תחת שם היעד.
  * רק כשיש ספק שונה מהיעד + מחיר — בלי מחיר אין טעם בהצעה נפרדת.
+ * אם ליעד אין ספק — לא משאירים הצעות בנפרד בהתחלה (קודם סופגים ליעד כדי לצמצם כפילויות).
  */
 export function shouldPreserveMaterialAsSupplierOffer(keep, other) {
   if (!keep || !other || keep.id === other.id) return false;
+  const keepSup = Number(keep.supplierId) || 0;
+  if (!keepSup) return false;
   const otherSup = Number(other.supplierId) || 0;
   if (!otherSup) return false;
   if ((Number(other.unitPrice) || 0) <= 0) return false;
-  const keepSup = Number(keep.supplierId) || 0;
-  if (keepSup && otherSup === keepSup) return false;
+  if (otherSup === keepSup) return false;
   return true;
+}
+
+/**
+ * ממיין חומרים לאיחוד: ספיגה ליעד / הצעת ספק אחת לכל ספק אחר / ספיגה להצעה קיימת.
+ * אם ליעד אין ספק — סופגים קודם את ההצעה הראשונה עם מחיר (היעד מקבל ספק+מחיר), והשאר לפי הכלל הרגיל.
+ */
+export function classifyMaterialsForMerge(keep, others = []) {
+  const absorbIntoKeep = [];
+  const preserve = [];
+  const absorbIntoOffer = []; // { target, mat }
+  if (!keep) return { absorbIntoKeep, preserve, absorbIntoOffer };
+
+  let workingKeep = keep;
+  const queue = [...(others || [])];
+
+  // יעד בלי ספק: קודם סופגים הצעה אחת עם מחיר כדי שהיעד יהפוך לרשומה «אמיתית»
+  if (!(Number(workingKeep.supplierId) || 0)) {
+    const idx = queue.findIndex((m) => (Number(m.supplierId) || 0) > 0 && (Number(m.unitPrice) || 0) > 0);
+    if (idx >= 0) {
+      const [first] = queue.splice(idx, 1);
+      absorbIntoKeep.push(first);
+      workingKeep = {
+        ...workingKeep,
+        supplierId: first.supplierId,
+        unitPrice: first.unitPrice || workingKeep.unitPrice,
+      };
+    }
+  }
+
+  const offerBySupplier = new Map();
+  const keepSup = Number(workingKeep.supplierId) || 0;
+  if (keepSup) offerBySupplier.set(keepSup, workingKeep);
+
+  for (const mat of queue) {
+    if (!shouldPreserveMaterialAsSupplierOffer(workingKeep, mat)) {
+      absorbIntoKeep.push(mat);
+      continue;
+    }
+    const sup = Number(mat.supplierId);
+    if (offerBySupplier.has(sup)) {
+      const target = offerBySupplier.get(sup);
+      if (target.id === workingKeep.id) absorbIntoKeep.push(mat);
+      else absorbIntoOffer.push({ target, mat });
+    } else {
+      offerBySupplier.set(sup, mat);
+      preserve.push(mat);
+    }
+  }
+
+  return { absorbIntoKeep, preserve, absorbIntoOffer, workingKeep };
 }
 
 /** איזו רשומה תשמש ברירת מחדל למתכונים אחרי איחוד (מבין היעד + הצעות שנשמרו) */
@@ -4627,6 +4680,7 @@ function materialMergeTxTables() {
   if (db.inventoryBalances) tables.push(db.inventoryBalances);
   if (db.inventoryMovements) tables.push(db.inventoryMovements);
   if (db.activeLots) tables.push(db.activeLots);
+  if (db.syncMeta) tables.push(db.syncMeta);
   return tables;
 }
 
@@ -4684,6 +4738,11 @@ async function mergeMaterialIntoKeep(keep, mid) {
 
   await retargetMaterialRefs(mid, keep);
   await db.rawMaterials.delete(mid);
+  // Tombstone immediately so a live-sync pull can't resurrect the absorbed row
+  // before pushDelete runs.
+  try {
+    await markMetaDeleted('rawMaterials', mid, new Date().toISOString());
+  } catch { /* syncMeta optional in older DBs */ }
 }
 
 /**
@@ -4714,9 +4773,9 @@ async function alignCrossSupplierMaterialOffer(keepMat, fromMat, { clearRecipeDe
 /**
  * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
  * - שם היעד נשאר; שמות שאינם יעד → מילים נרדפות.
- * - ספק אחר עם מחיר → הצעה נפרדת תחת שם היעד (מחיר, כמות אריזה וכו').
- * - בלי מחיר / אותו ספק → נספג ליעד (בלי למחוק/להוסיף מרכיבים במתכון).
- * - ברירת מחדל למתכונים נשמרת על ההצעה המתאימה; מבנה המתכון לא משתנה.
+ * - ספק אחר עם מחיר → הצעה אחת תחת שם היעד (מחיר, כמות אריזה וכו').
+ * - בלי מחיר / אותו ספק / כפילות לאותו ספק → נספג (בלי לשנות מבנה מתכון).
+ * - ברירת מחדל למתכונים נשמרת על ההצעה המתאימה.
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -4733,15 +4792,16 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   }
   if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
 
-  const preserveOthers = others.filter((m) => shouldPreserveMaterialAsSupplierOffer(keepMat, m));
-  const absorbOthers = others.filter((m) => !shouldPreserveMaterialAsSupplierOffer(keepMat, m));
+  const {
+    absorbIntoKeep,
+    preserve,
+    absorbIntoOffer,
+  } = classifyMaterialsForMerge(keepMat, others);
 
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
-  // ממלאים חסרים ביעד רק ממה שנספג (לא מהצעות ספק שנשמרות בנפרד)
-  const fillPatch = materialFieldFillPatch(keepMat, absorbOthers, {
+  const fillPatch = materialFieldFillPatch(keepMat, absorbIntoKeep, {
     preserveCrossSupplierOffers: false,
   });
-  // isRecipeDefault מטופל בנפרד לפי ההצעה ששרדה
   delete fillPatch.isRecipeDefault;
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
@@ -4749,20 +4809,24 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
 
   const preservedOfferIds = [];
   const defaultId = pickMergeRecipeDefaultId(keepMat, others, {
-    preservedIds: preserveOthers.map((m) => m.id),
+    preservedIds: preserve.map((m) => m.id),
   });
 
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    for (const mat of absorbOthers) {
+    for (const mat of absorbIntoKeep) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
       await mergeMaterialIntoKeep(keep, mat.id);
     }
-    for (const mat of preserveOthers) {
+    for (const mat of preserve) {
       const keepDefaultOnOffer = defaultId === mat.id;
       await alignCrossSupplierMaterialOffer(keepMat, mat, {
         clearRecipeDefault: !keepDefaultOnOffer,
       });
       preservedOfferIds.push(mat.id);
+    }
+    for (const { target, mat } of absorbIntoOffer) {
+      await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
+      await mergeMaterialIntoKeep(target.id, mat.id);
     }
 
     const patch = { ...fillPatch, synonyms };
@@ -4772,7 +4836,8 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   });
 
   if (defaultId) {
-    await setRawMaterialRecipeDefault(defaultId, true);
+    const stillThere = await db.rawMaterials.get(defaultId);
+    await setRawMaterialRecipeDefault(stillThere ? defaultId : keep, true);
   }
   await syncRawMaterialLatestPrice(keep);
   if (preferredUnitPrice != null) {
