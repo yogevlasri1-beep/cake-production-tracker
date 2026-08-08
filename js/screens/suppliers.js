@@ -22,16 +22,18 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=446';
-import { getProducts, getCategories } from '../db.js?v=446';
+  sanitizeBarcode,
+} from '../kitchen-db.js?v=447';
+import { getProducts, getCategories } from '../db.js?v=447';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=446';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=446';
-import { openModal, closeModal } from '../modal.js?v=446';
-import { requestAutoBackupNow } from '../backup-service.js?v=446';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=446';
+} from '../supplier-import.js?v=447';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=447';
+import { openModal, closeModal } from '../modal.js?v=447';
+import { requestAutoBackupNow } from '../backup-service.js?v=447';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=447';
+import { openBarcodeScanner } from '../barcode-scan.js?v=447';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -961,6 +963,12 @@ function bindBrowseResultsHandlers(body, container) {
     });
   });
 
+  bindMaterialBarcodeScanButtons(body.querySelector('#browse-results'), {
+    onAssigned: async () => {
+      await renderSuppliers(container);
+    },
+  });
+
   body.querySelectorAll('#browse-results .category-toggle-browse').forEach((btn) => {
     btn.addEventListener('click', () => {
       btn.closest('.supplier-browse-cat')?.classList.toggle('is-collapsed');
@@ -1009,7 +1017,7 @@ async function renderBrowseTab(body, container) {
   body.innerHTML = `
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
+      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
       ${hasData ? `
       <div class="form-group" style="margin:0">
         <input type="search" id="browse-search" class="catalog-search-input"
@@ -1043,6 +1051,83 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
     </div>`;
 }
 
+function renderMaterialBarcodeMeta(m) {
+  const code = sanitizeBarcode(m?.barcode);
+  if (!code) return '';
+  return `<span class="mat-barcode-chip" title="ברקוד משויך">${escapeHtml(code)}</span>`;
+}
+
+function renderBarcodeAssignButton(materialId, { hasBarcode = false } = {}) {
+  return `
+    <button type="button"
+      class="btn btn-secondary btn-sm btn-icon mat-barcode-scan-btn${hasBarcode ? ' has-barcode' : ''}"
+      data-id="${materialId}"
+      title="${hasBarcode ? 'סרוק מחדש / עדכן ברקוד' : 'צלם וסרוק ברקוד לשייך לחומר'}">
+      📷
+    </button>`;
+}
+
+async function scanAndAssignMaterialBarcode(materialId, { onDone } = {}) {
+  const mid = Number(materialId);
+  if (!mid) return;
+  openBarcodeScanner({
+    title: '📷 סריקת ברקוד לשייך',
+    hint: 'כוון את המצלמה לברקוד על האריזה',
+    onDecode: async (text) => {
+      const code = sanitizeBarcode(text);
+      if (!code) {
+        showToast('לא זוהה ברקוד');
+        return;
+      }
+      try {
+        await updateRawMaterial(mid, { barcode: code });
+        showToast(`ברקוד שויך: ${code}`);
+        requestAutoBackupNow().catch(() => {});
+        if (onDone) await onDone(code);
+      } catch (e) {
+        showToast(e.message || 'שגיאה בשיוך ברקוד');
+      }
+    },
+  });
+}
+
+function bindMaterialBarcodeScanButtons(root, { onAssigned } = {}) {
+  root?.querySelectorAll('.mat-barcode-scan-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      scanAndAssignMaterialBarcode(btn.dataset.id, { onDone: onAssigned });
+    });
+  });
+}
+
+function bindMaterialBarcodeFormField() {
+  const input = document.getElementById('mat-barcode');
+  const scanBtn = document.getElementById('mat-barcode-scan');
+  const clearBtn = document.getElementById('mat-barcode-clear');
+  if (!input) return;
+  scanBtn?.addEventListener('click', () => {
+    openBarcodeScanner({
+      title: '📷 סריקת ברקוד לשייך',
+      hint: 'כוון את המצלמה לברקוד על האריזה',
+      onDecode: (text) => {
+        const code = sanitizeBarcode(text);
+        if (!code) {
+          showToast('לא זוהה ברקוד');
+          return;
+        }
+        input.value = code;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        showToast(`ברקוד: ${code}`);
+      },
+    });
+  });
+  clearBtn?.addEventListener('click', () => {
+    input.value = '';
+    input.focus();
+  });
+}
+
 function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
   const isActive = forceActive || m.active === true;
   const rowClass = isActive ? 'browse-material-row--active' : 'browse-material-row--inactive';
@@ -1050,14 +1135,19 @@ function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
     ? ' <span class="recipe-default-badge" title="ברירת מחדל למתכונים">★</span>'
     : '';
   const packMeta = renderPackagingMetaLine(m).replace(/^\s·\s*/, '');
+  const hasBarcode = !!sanitizeBarcode(m.barcode);
   return `
-        <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
-          <span class="browse-mat-main">
-            <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
-            <span class="browse-mat-price">${formatMaterialPriceMeta(m)}</span>
-            ${packMeta ? `<span class="browse-mat-pack">${packMeta}</span>` : ''}
-          </span>
-        </button>`;
+        <div class="browse-material-item" data-material-id="${m.id}">
+          <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
+            <span class="browse-mat-main">
+              <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
+              <span class="browse-mat-price">${formatMaterialPriceMeta(m)}</span>
+              ${packMeta ? `<span class="browse-mat-pack">${packMeta}</span>` : ''}
+              ${hasBarcode ? `<span class="browse-mat-barcode">${renderMaterialBarcodeMeta(m)}</span>` : ''}
+            </span>
+          </button>
+          ${renderBarcodeAssignButton(m.id, { hasBarcode })}
+        </div>`;
 }
 
 function renderBrowseSupplierMaterialsHTML(materials, { isPackaging = false, isCleaning = false } = {}) {
@@ -1149,6 +1239,17 @@ async function openMaterialDetailModal(container, materialId) {
         ${mat.packLinkedProductId || mat.packLinkedCategoryId ? `<span class="form-hint" id="mat-pack-link-label">טוען שיוך...</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
       </div>
+      <div class="form-group material-detail-barcode" style="margin-top:12px">
+        <label>ברקוד</label>
+        <div class="mat-barcode-row">
+          <input type="text" id="mat-detail-barcode" readonly
+            value="${escapeHtml(sanitizeBarcode(mat.barcode) || '')}"
+            placeholder="לא משויך עדיין — לחץ 📷 לסריקה">
+          ${renderBarcodeAssignButton(mat.id, { hasBarcode: !!sanitizeBarcode(mat.barcode) })}
+          ${sanitizeBarcode(mat.barcode) ? '<button type="button" class="btn btn-secondary btn-sm" id="mat-detail-barcode-clear" title="הסר שיוך">✕</button>' : ''}
+        </div>
+        <p class="form-hint">צלם/סרוק את הברקוד על האריזה כדי לשייך אותו לחומר</p>
+      </div>
       ${isCleaningMat ? '' : `
       <div class="form-group" style="margin-top:12px">
         <button type="button" class="btn ${mat.isRecipeDefault ? 'btn-primary' : 'btn-secondary'} btn-sm" id="mat-detail-recipe-default" style="width:100%">
@@ -1193,6 +1294,25 @@ async function openMaterialDetailModal(container, materialId) {
   });
 
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  bindMaterialBarcodeScanButtons(document.querySelector('.modal-material-detail') || document, {
+    onAssigned: async () => {
+      closeModal();
+      await renderSuppliers(container);
+      openMaterialDetailModal(container, mat.id);
+    },
+  });
+  document.getElementById('mat-detail-barcode-clear')?.addEventListener('click', async () => {
+    try {
+      await updateRawMaterial(mat.id, { barcode: null });
+      showToast('שיוך הברקוד הוסר');
+      requestAutoBackupNow().catch(() => {});
+      closeModal();
+      await renderSuppliers(container);
+      openMaterialDetailModal(container, mat.id);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
   document.getElementById('mat-detail-recipe-default')?.addEventListener('click', async () => {
     try {
       await setRawMaterialRecipeDefault(mat.id, !mat.isRecipeDefault);
@@ -1484,10 +1604,12 @@ function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMat
           <div class="list-item-meta">
             ${formatMaterialPriceMeta(m)}
             ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
+            ${sanitizeBarcode(m.barcode) ? ` · ברקוד ${escapeHtml(sanitizeBarcode(m.barcode))}` : ''}
           </div>
           ${m.packagingKind ? `<div class="list-item-pack-meta">${renderPackagingMetaLine(m).replace(/^\s·\s*/, '')}</div>` : ''}
         </button>
         <div class="list-item-actions">
+          ${renderBarcodeAssignButton(m.id, { hasBarcode: !!sanitizeBarcode(m.barcode) })}
           <button type="button" class="btn btn-secondary btn-sm dup-mat-sup" data-id="${m.id}" title="הוסף אצל ספק נוסף">+ספק</button>
           <button type="button" class="btn btn-danger btn-sm del-mat" data-id="${m.id}">🗑</button>
         </div>
@@ -1525,6 +1647,12 @@ function bindEditMaterialListHandlers(host, container, materials, selectedMatCat
       const mat = materials.find((m) => m.id === Number(btn.dataset.id));
       if (mat) openEditMaterialModal(container, mat);
     });
+  });
+
+  bindMaterialBarcodeScanButtons(host, {
+    onAssigned: async () => {
+      await renderSuppliers(container);
+    },
   });
 
   host.querySelectorAll('.dup-mat-sup').forEach((btn) => {
@@ -1786,6 +1914,17 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
     .join('');
   return `
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+    <div class="form-group mat-barcode-group">
+      <label for="mat-barcode">ברקוד</label>
+      <div class="mat-barcode-row">
+        <input type="text" id="mat-barcode" inputmode="numeric" autocomplete="off"
+          value="${mat ? escapeHtml(sanitizeBarcode(mat.barcode) || '') : ''}"
+          placeholder="סרוק או הקלד ברקוד...">
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" id="mat-barcode-scan" title="צלם וסרוק ברקוד">📷</button>
+        <button type="button" class="btn btn-secondary btn-sm btn-icon" id="mat-barcode-clear" title="נקה ברקוד">✕</button>
+      </div>
+      <p class="form-hint">שיוך ברקוד מהאריזה — לסריקה מהירה בקבלה ובמלאי</p>
+    </div>
     <div class="form-group mat-synonyms-group">
       <label>מילים נרדפות</label>
       <div class="mat-synonyms-add-row">
@@ -1971,6 +2110,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
   if (isPackaging) bindPackagingFormFields();
   else if (!isCleaning) bindMaterialPricePreviewFields();
   bindMaterialSynonymsUI(synonyms);
+  bindMaterialBarcodeFormField();
 
   const portionCb = document.getElementById('mat-as-portion');
   const portionFields = document.getElementById('mat-portion-fields');
@@ -1993,6 +2133,7 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         processedPricePerKg: simplePrice ? null : document.getElementById('mat-processed-price')?.value,
         isFree: !simplePrice && !!document.getElementById('mat-is-free')?.checked,
         synonyms: readMaterialSynonymsFromForm(),
+        barcode: document.getElementById('mat-barcode')?.value,
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       const portionEnabled = !!document.getElementById('mat-as-portion')?.checked;
@@ -2448,7 +2589,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=446');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=447');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2470,7 +2611,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=446');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=447');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2488,7 +2629,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=446');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=447');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

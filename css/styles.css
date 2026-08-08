@@ -10542,6 +10542,69 @@ body.supplier-drag-active {
   white-space: nowrap;
 }
 
+.browse-material-item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.browse-material-item .browse-material-row {
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.browse-material-item .mat-barcode-scan-btn {
+  flex-shrink: 0;
+  align-self: stretch;
+  min-width: 44px;
+  border-radius: 10px;
+}
+
+.browse-material-item .mat-barcode-scan-btn.has-barcode {
+  border-color: #6ee7b7;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.browse-mat-barcode {
+  margin-top: 2px;
+}
+
+.mat-barcode-chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: #0f766e;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 6px;
+  padding: 1px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mat-barcode-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.mat-barcode-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.list-item-actions .mat-barcode-scan-btn.has-barcode {
+  border-color: #6ee7b7;
+  background: #ecfdf5;
+  color: #047857;
+}
+
 .browse-material-row {
   display: flex;
   align-items: flex-start;

@@ -1,5 +1,5 @@
-import { openModal, closeModal } from './modal.js?v=446';
-import { showToast } from './utils.js?v=446';
+import { openModal, closeModal } from './modal.js?v=447';
+import { showToast } from './utils.js?v=447';
 
 let zxingLoadPromise = null;
 
@@ -8,7 +8,7 @@ function loadZXing() {
   if (!zxingLoadPromise) {
     zxingLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = './js/vendor/zxing.min.js?v=446';
+      script.src = './js/vendor/zxing.min.js?v=447';
       script.onload = () => (window.ZXing ? resolve(window.ZXing) : reject(new Error('ZXing לא נטען')));
       script.onerror = () => reject(new Error('טעינת ספריית הסריקה נכשלה'));
       document.head.appendChild(script);
@@ -33,8 +33,18 @@ function cameraErrorMessage(err) {
 /**
  * פותח מודאל סריקה במצלמה. מנסה BarcodeDetector (כרום/אנדרואיד) לפני טעינת ZXing (fallback לאייפון).
  * onDecode(text) נקרא פעם אחת עם הערך שנסרק; המודאל נסגר אוטומטית אחרי decode מוצלח.
+ * @param {object} [opts]
+ * @param {(text: string) => void} [opts.onDecode]
+ * @param {() => void} [opts.onCancel]
+ * @param {string} [opts.title] — כותרת המודאל (ברירת מחדל: סריקת מספר מנה)
+ * @param {string} [opts.hint] — טקסט סטטוס התחלתי אחרי שהמצלמה עלתה
  */
-export async function openBarcodeScanner({ onDecode, onCancel } = {}) {
+export async function openBarcodeScanner({
+  onDecode,
+  onCancel,
+  title = '📷 סריקת מספר מנה',
+  hint = 'כוון את המצלמה לקוד',
+} = {}) {
   let stream = null;
   let stopped = false;
   let zxingReader = null;
@@ -49,7 +59,7 @@ export async function openBarcodeScanner({ onDecode, onCancel } = {}) {
   };
 
   openModal({
-    title: '📷 סריקת מספר מנה',
+    title,
     modalClass: 'barcode-scan-modal',
     bodyHTML: `
       <div class="barcode-scan-video-wrap">
@@ -95,7 +105,7 @@ export async function openBarcodeScanner({ onDecode, onCancel } = {}) {
     try {
       const formats = await window.BarcodeDetector.getSupportedFormats();
       const detector = new window.BarcodeDetector({ formats });
-      if (statusEl) statusEl.textContent = 'כוון למספר המנה...';
+      if (statusEl) statusEl.textContent = hint;
       const tick = async () => {
         if (stopped) return;
         try {
@@ -114,7 +124,7 @@ export async function openBarcodeScanner({ onDecode, onCancel } = {}) {
     const ZXing = await loadZXing();
     if (stopped) return;
     zxingReader = new ZXing.BrowserMultiFormatReader();
-    if (statusEl) statusEl.textContent = 'כוון למספר המנה...';
+    if (statusEl) statusEl.textContent = hint;
     zxingReader.decodeFromVideoElementContinuously(video, (result) => {
       if (result) finishWithDecode(result.getText());
       // NotFoundException fires continuously while nothing is detected — ignore.

@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=446';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=446';
-import { defaultColorForIndex } from './chart.js?v=446';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=446';
-import { logAuditEvent } from './audit.js?v=446';
+} from './validators.js?v=447';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=447';
+import { defaultColorForIndex } from './chart.js?v=447';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=447';
+import { logAuditEvent } from './audit.js?v=447';
 
 export { ValidationError };
 
@@ -3344,6 +3344,10 @@ db.version(83).stores({
 
 db.version(84).stores({
   activeLots: '++id, rawMaterialId, status, packagingBatchNumber',
+});
+
+db.version(85).stores({
+  rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder, barcode',
 });
 
 async function migrateFlowPreparationsToGroup(tx) {

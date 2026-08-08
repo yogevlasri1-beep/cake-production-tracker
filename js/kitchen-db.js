@@ -1,10 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=446';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=447';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=446';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=446';
-import { logAuditEvent } from './audit.js?v=446';
+} from './validators.js?v=447';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=447';
+import { logAuditEvent } from './audit.js?v=447';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3914,6 +3914,27 @@ export function rawMaterialPricingFromPerKg({ pricePerKg, packageWeightKg } = {}
   return { unitPrice, packageWeightGrams: grams };
 }
 
+/** ברקוד מוצר/אריזה (EAN וכו') — מחרוזת קצרה או null לניקוי */
+export function sanitizeBarcode(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return null;
+  return s.slice(0, 64);
+}
+
+export async function findRawMaterialsByBarcode(barcode, { excludeId = null } = {}) {
+  const code = sanitizeBarcode(barcode);
+  if (!code) return [];
+  const exclude = excludeId ? Number(excludeId) : null;
+  let rows = [];
+  try {
+    rows = await db.rawMaterials.where('barcode').equals(code).toArray();
+  } catch {
+    rows = (await db.rawMaterials.toArray()).filter((m) => sanitizeBarcode(m.barcode) === code);
+  }
+  if (exclude) rows = rows.filter((m) => Number(m.id) !== exclude);
+  return rows;
+}
+
 export async function addRawMaterial({
   supplierCategoryId, name, unit, unitPrice, supplierId, packageWeightGrams,
   processedPricePerKg, isFree,
@@ -3921,6 +3942,7 @@ export async function addRawMaterial({
   packLinkedProductId, packLinkedCategoryId,
   synonyms,
   allergens,
+  barcode,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -3942,6 +3964,13 @@ export async function addRawMaterial({
     },
     { categoryIsPackaging: isPack },
   );
+  const code = sanitizeBarcode(barcode);
+  if (code) {
+    const conflicts = await findRawMaterialsByBarcode(code);
+    if (conflicts.length) {
+      throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+    }
+  }
   const id = await db.rawMaterials.add({
     supplierCategoryId: cid,
     name: trimmed,
@@ -3955,6 +3984,7 @@ export async function addRawMaterial({
     isFree: !simplePricing && !!isFree,
     synonyms: sanitizeMaterialSynonyms(synonyms),
     allergens: sanitizeProductAllergenIds(allergens),
+    barcode: code,
     ...packaging,
     active: simplePricing,
     sortOrder: maxOrder + 1,
@@ -3995,6 +4025,16 @@ export async function updateRawMaterial(id, patch) {
   if ('isFree' in data) data.isFree = !!data.isFree;
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
   if ('allergens' in data) data.allergens = sanitizeProductAllergenIds(data.allergens);
+  if ('barcode' in data) {
+    const code = sanitizeBarcode(data.barcode);
+    if (code) {
+      const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
+      if (conflicts.length) {
+        throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+      }
+    }
+    data.barcode = code;
+  }
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
     || 'packLinkedProductId' in data || 'packLinkedCategoryId' in data) {
     const current = await db.rawMaterials.get(mid);
@@ -4219,12 +4259,14 @@ export function getMaterialSynonyms(material) {
   return sanitizeMaterialSynonyms(material?.synonyms);
 }
 
-/** חיפוש חומר גלם לפי שם, מילים נרדפות או שם ספק */
+/** חיפוש חומר גלם לפי שם, מילים נרדפות, ברקוד או שם ספק */
 export function materialMatchesSearch(material, query, { supplierName = '' } = {}) {
   const q = String(query || '').trim().toLocaleLowerCase('he');
   if (!q) return true;
   const name = String(material?.name || '').toLocaleLowerCase('he');
   if (name.includes(q)) return true;
+  const code = String(material?.barcode || '').toLocaleLowerCase('he');
+  if (code && code.includes(q)) return true;
   const sup = String(supplierName || '').toLocaleLowerCase('he');
   if (sup && sup.includes(q)) return true;
   return getMaterialSynonyms(material).some((s) => s.toLocaleLowerCase('he').includes(q));
