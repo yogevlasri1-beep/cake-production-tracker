@@ -49,6 +49,7 @@ export const COLLECTION_TABLE = {
   rawMaterials: 'sync_raw_materials',
   inventoryBalances: 'sync_inventory_balances',
   inventoryMovements: 'sync_inventory_movements',
+  activeLots: 'sync_active_lots',
   rawMaterialPriceHistory: 'sync_raw_material_price_history',
   supplierShortages: 'sync_supplier_shortages',
   weeklyProductionPlans: 'sync_weekly_production_plans',
@@ -169,6 +170,7 @@ export const COLLECTION_FKS = {
   rawMaterialPriceHistory: { rawMaterialId: 'rawMaterials' },
   inventoryBalances: { rawMaterialId: 'rawMaterials' },
   inventoryMovements: { rawMaterialId: 'rawMaterials' },
+  activeLots: { rawMaterialId: 'rawMaterials' },
   supplierShortages: { supplierId: 'suppliers', rawMaterialId: 'rawMaterials' },
   weeklyProductionPlanItems: { planId: 'weeklyProductionPlans', productId: 'products' },
   managerEmployees: { responsibilityAreaId: 'managerResponsibilityAreas' },
@@ -238,6 +240,7 @@ export const SYNC_ORDER = [
   'rawMaterialPriceHistory',
   'inventoryBalances',
   'inventoryMovements',
+  'activeLots',
   'supplierShortages',
   'flows',
   'flowSteps',
@@ -471,6 +474,10 @@ export function rowFingerprint(collection, row) {
     case 'inventoryMovements':
       return row.at
         ? `${collection}|${row.rawMaterialId ?? ''}|${row.at}|${row.delta ?? ''}|${row.kind ?? ''}`
+        : '';
+    case 'activeLots':
+      return row.packagingBatchNumber
+        ? `${collection}|${row.rawMaterialId ?? ''}|${normName(row.packagingBatchNumber)}|${row.receivedAt ?? ''}`
         : '';
     case 'weeklyProductionPlanItems':
       return row.planId != null ? `${collection}|${row.planId}|${row.productId ?? ''}` : '';

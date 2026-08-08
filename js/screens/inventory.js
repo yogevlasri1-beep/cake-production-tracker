@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=444';
-import { openModal, closeModal } from '../modal.js?v=444';
-import { requestAutoBackupNow } from '../backup-service.js?v=444';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=445';
+import { openModal, closeModal } from '../modal.js?v=445';
+import { requestAutoBackupNow } from '../backup-service.js?v=445';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,10 +10,10 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=444';
-import { getSupplierCategories } from '../kitchen-db.js?v=444';
-import { getCurrentUserRole } from '../auth.js?v=444';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=444';
+} from '../inventory-db.js?v=445';
+import { getSupplierCategories } from '../kitchen-db.js?v=445';
+import { getCurrentUserRole } from '../auth.js?v=445';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=445';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -107,8 +107,9 @@ function movementCard(m) {
     </div>`;
 }
 
-function openAdjustModal(row, onDone) {
+async function openAdjustModal(row, onDone) {
   const m = row.material;
+  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=445');
   openModal({
     title: `התאמת מלאי — ${m.name}`,
     bodyHTML: `
@@ -120,6 +121,12 @@ function openAdjustModal(row, onDone) {
       <div class="form-group">
         <label for="inv-set">או הגדר כמות סופית</label>
         <input type="number" id="inv-set" step="any" min="0" placeholder="אופציונלי" dir="ltr" value="">
+      </div>
+      <div class="form-group">
+        <label for="inv-lot">מספר מנה (בקבלה בלבד — אופציונלי)</label>
+        ${renderLotPickerFieldHTML({
+    inputHtml: '<input type="text" id="inv-lot" placeholder="מספר על האריזה">',
+  })}
       </div>
       <div class="form-group">
         <label for="inv-min">כמות מינימום (התראה)</label>
@@ -137,6 +144,7 @@ function openAdjustModal(row, onDone) {
     `,
   });
 
+  bindLotPickerFields(document.getElementById('modal-body'));
   document.getElementById('inv-cancel')?.addEventListener('click', () => closeModal());
   document.getElementById('inv-save')?.addEventListener('click', async () => {
     const errEl = document.querySelector('.inv-adjust-error');
@@ -144,20 +152,29 @@ function openAdjustModal(row, onDone) {
     const setVal = document.getElementById('inv-set')?.value;
     const minVal = document.getElementById('inv-min')?.value;
     const reason = document.getElementById('inv-reason')?.value || '';
+    const packagingBatchNumber = document.getElementById('inv-lot')?.value?.trim();
     try {
       const hasSet = setVal !== '' && setVal != null;
       const hasDelta = deltaVal !== '' && deltaVal != null;
       if (!hasSet && !hasDelta) {
         throw new Error('הזן שינוי או כמות סופית');
       }
-      await adjustInventoryStock({
-        rawMaterialId: m.id,
-        delta: hasSet ? undefined : deltaVal,
-        setQty: hasSet ? setVal : null,
-        minQty: minVal,
-        reason,
-        unit: row.unit || m.unit || '',
-      });
+      const unit = row.unit || m.unit || '';
+      if (!hasSet && packagingBatchNumber && Number(deltaVal) > 0) {
+        const { receiveInventoryLot } = await import('../inventory-db.js?v=445');
+        await receiveInventoryLot({
+          rawMaterialId: m.id, qty: deltaVal, unit, packagingBatchNumber, reason,
+        });
+      } else {
+        await adjustInventoryStock({
+          rawMaterialId: m.id,
+          delta: hasSet ? undefined : deltaVal,
+          setQty: hasSet ? setVal : null,
+          minQty: minVal,
+          reason,
+          unit,
+        });
+      }
       closeModal();
       showToast('המלאי עודכן');
       requestAutoBackupNow();

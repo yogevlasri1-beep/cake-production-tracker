@@ -9,7 +9,7 @@ import {
   computeRunMetrics,
   getProducts,
   getCategories,
-} from './db.js?v=444';
+} from './db.js?v=445';
 
 function norm(s) {
   return String(s || '').trim().toLocaleLowerCase('he');
@@ -27,7 +27,9 @@ function matchesQuery(value, q) {
 export async function searchLotTrace(query) {
   const q = norm(query);
   if (!q) {
-    return { query: '', productionHits: [], materialHits: [], inventoryHits: [] };
+    return {
+      query: '', productionHits: [], materialHits: [], inventoryHits: [], activeLotHits: [],
+    };
   }
 
   let movements = [];
@@ -36,6 +38,19 @@ export async function searchLotTrace(query) {
   } catch {
     movements = [];
   }
+
+  let activeLots = [];
+  let rawMaterials = [];
+  try {
+    [activeLots, rawMaterials] = await Promise.all([
+      db.activeLots ? db.activeLots.toArray() : [],
+      db.rawMaterials.toArray(),
+    ]);
+  } catch {
+    activeLots = [];
+    rawMaterials = [];
+  }
+  const materialNameMap = new Map((rawMaterials || []).map((m) => [m.id, m.name]));
 
   const [runs, products, categories] = await Promise.all([
     getAllProductionRuns(),
@@ -134,11 +149,29 @@ export async function searchLotTrace(query) {
     });
   }
 
+  const activeLotHits = [];
+  for (const lot of activeLots || []) {
+    if (!matchesQuery(lot.packagingBatchNumber, q)) continue;
+    activeLotHits.push({
+      lotId: lot.id,
+      packagingBatchNumber: lot.packagingBatchNumber,
+      materialName: materialNameMap.get(lot.rawMaterialId) || `חומר #${lot.rawMaterialId}`,
+      qtyOnHand: lot.qtyOnHand,
+      unit: lot.unit || '',
+      status: lot.status || 'open',
+      receivedAt: lot.receivedAt || '',
+      supplierName: lot.supplierName || '',
+    });
+  }
+
   productionHits.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   materialHits.sort((a, b) => String(b.runDate).localeCompare(String(a.runDate)));
   inventoryHits.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  activeLotHits.sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)));
 
-  return { query: String(query || '').trim(), productionHits, materialHits, inventoryHits };
+  return {
+    query: String(query || '').trim(), productionHits, materialHits, inventoryHits, activeLotHits,
+  };
 }
 
 function describeRunScope(run, catMap, productMap) {

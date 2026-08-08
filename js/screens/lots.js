@@ -1,5 +1,7 @@
-import { escapeHtml, formatDate, showToast } from '../utils.js?v=444';
-import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=444';
+import {
+  escapeHtml, formatDate, formatDateTime, showToast,
+} from '../utils.js?v=445';
+import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=445';
 
 export function lotsMeta() {
   return {
@@ -92,6 +94,22 @@ function materialCard(hit) {
     </div>`;
 }
 
+function activeLotCard(hit) {
+  const isOpen = hit.status !== 'closed';
+  return `
+    <div class="card lots-card">
+      <div class="accounts-card-head">
+        <div>
+          <div class="card-title" style="margin-bottom:4px">מנה <span dir="ltr">${escapeHtml(hit.packagingBatchNumber)}</span></div>
+          <p class="form-hint" style="margin:0">${escapeHtml(hit.materialName)}${hit.supplierName ? ` · ${escapeHtml(hit.supplierName)}` : ''}</p>
+          <p class="form-hint" style="margin:4px 0 0">נותרו: <strong>${escapeHtml(String(hit.qtyOnHand ?? ''))}</strong>${hit.unit ? ` ${escapeHtml(hit.unit)}` : ''}
+            · ${isOpen ? 'פעילה במחסן' : 'סגורה'} · התקבלה ${escapeHtml(formatDateTime(hit.receivedAt))}</p>
+        </div>
+        ${isOpen ? `<button type="button" class="btn btn-secondary lots-close-lot" data-lot-id="${hit.lotId}">סגור מנה</button>` : ''}
+      </div>
+    </div>`;
+}
+
 async function runSearch(container, query) {
   const resultsEl = container.querySelector('#lots-results');
   if (!resultsEl) return;
@@ -103,7 +121,8 @@ async function runSearch(container, query) {
       return;
     }
     const invHits = result.inventoryHits || [];
-    if (!result.productionHits.length && !result.materialHits.length && !invHits.length) {
+    const activeLotHits = result.activeLotHits || [];
+    if (!result.productionHits.length && !result.materialHits.length && !invHits.length && !activeLotHits.length) {
       resultsEl.innerHTML = `
         <div class="card">
           <div class="card-title">לא נמצאו תוצאות</div>
@@ -114,12 +133,14 @@ async function runSearch(container, query) {
     resultsEl.innerHTML = `
       <div class="card">
         <p class="form-hint" style="margin:0">נמצאו
+          <strong>${activeLotHits.length}</strong> מנות במחסן ·
           <strong>${result.productionHits.length}</strong> אצוות ייצור ·
           <strong>${result.materialHits.length}</strong> שימושי חומר גלם ·
           <strong>${invHits.length}</strong> תנועות מלאי
           עבור «${escapeHtml(result.query)}»
         </p>
       </div>
+      ${activeLotHits.length ? `<h3 class="accounts-section-title">מנות במחסן</h3>${activeLotHits.map(activeLotCard).join('')}` : ''}
       ${result.productionHits.length ? `<h3 class="accounts-section-title">אצוות ייצור</h3>${result.productionHits.map(productionCard).join('')}` : ''}
       ${result.materialHits.length ? `<h3 class="accounts-section-title">מספרי מנה (חומרי גלם) → לאן נכנסו</h3>${result.materialHits.map(materialCard).join('')}` : ''}
       ${invHits.length ? `<h3 class="accounts-section-title">תנועות מלאי מקושרות</h3>${invHits.map(inventoryCard).join('')}` : ''}
@@ -144,10 +165,23 @@ function bindResultActions(container, resultsEl) {
         main.dataset.runId = String(runId);
       }
       try {
-        const { navigateToWorkspace } = await import('../app.js?v=444');
+        const { navigateToWorkspace } = await import('../app.js?v=445');
         await navigateToWorkspace('production', 'process');
       } catch (err) {
         showToast(err.message || 'לא ניתן לפתוח תזרים');
+      }
+    });
+  });
+  resultsEl.querySelectorAll('.lots-close-lot').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const { closeActiveLot } = await import('../inventory-db.js?v=445');
+        await closeActiveLot(btn.dataset.lotId);
+        showToast('המנה נסגרה ✓');
+        const input = container.querySelector('#lots-query');
+        runSearch(container, input?.value || '');
+      } catch (err) {
+        showToast(err.message || 'שגיאה');
       }
     });
   });

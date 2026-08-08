@@ -1,7 +1,7 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=444';
+} from './kitchen-db.js?v=445';
 import {
   saveRunPortionIngredientBatches,
   saveRunStepPortionIngredientBatches,
@@ -10,10 +10,11 @@ import {
   getStepPortionBatches,
   getSuggestedPackagingBatchNumbers,
   lookupPackagingBatchSuggestion,
-} from './db.js?v=444';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=444';
-import { openModal, closeModal } from './modal.js?v=444';
-import { requestAutoBackupNow } from './backup-service.js?v=444';
+} from './db.js?v=445';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=445';
+import { openModal, closeModal } from './modal.js?v=445';
+import { requestAutoBackupNow } from './backup-service.js?v=445';
+import { renderLotPickerFieldHTML, bindLotPickerFields } from './lot-picker.js?v=445';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
@@ -64,6 +65,19 @@ function buildPackagingListHTML(rows) {
     </ul>`;
 }
 
+function packagingNumberRowHTML({ name, rawMaterialId }, index, numIndex, value, { removable } = {}) {
+  const inputHtml = `<input type="text" class="portion-ing-packaging" data-index="${index}" data-num="${numIndex}"
+    inputmode="text" autocomplete="off" placeholder="מספר על האריזה"
+    value="${value ? escapeHtml(String(value)) : ''}"
+    aria-label="מספר מנה על האריזה — ${escapeHtml(name)}">`;
+  return `
+    <div class="portion-packaging-number-row">
+      ${renderLotPickerFieldHTML({ inputHtml, rawMaterialId })}
+      <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-remove"
+        data-index="${index}" title="הסר מספר" aria-label="הסר מספר"${removable ? '' : ' disabled'}>×</button>
+    </div>`;
+}
+
 function packagingNumbersFieldHTML(row, index) {
   const nums = (row.packagingBatchNumbers || []).length
     ? row.packagingBatchNumbers
@@ -74,15 +88,7 @@ function packagingNumbersFieldHTML(row, index) {
     <div class="portion-packaging-numbers" data-index="${index}">
       <span class="portion-packaging-count-label">מספרי מנה (אריזה)</span>
       <div class="portion-packaging-number-list">
-        ${list.map((num, numIndex) => `
-          <div class="portion-packaging-number-row">
-            <input type="text" class="portion-ing-packaging" data-index="${index}" data-num="${numIndex}"
-              inputmode="text" autocomplete="off" placeholder="מספר על האריזה"
-              value="${num ? escapeHtml(String(num)) : ''}"
-              aria-label="מספר מנה על האריזה — ${escapeHtml(row.name)}">
-            <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-remove"
-              data-index="${index}" title="הסר מספר" aria-label="הסר מספר"${list.length <= 1 ? ' disabled' : ''}>×</button>
-          </div>`).join('')}
+        ${list.map((num, numIndex) => packagingNumberRowHTML(row, index, numIndex, num, { removable: list.length > 1 })).join('')}
       </div>
       <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-add" data-index="${index}">
         + הוסף מספר מנה
@@ -125,16 +131,23 @@ function bindPackagingNumberControls(modalRoot) {
       if (!wrap) return;
       const numIndex = wrap.querySelectorAll('.portion-packaging-number-row').length;
       const suggested = lastNonEmptyPackagingValue(wrap);
+      const rawMaterialId = wrap.querySelector('.lot-picker-field')?.dataset.rawMaterialId || null;
+      const name = wrap.querySelector('.portion-ing-packaging')?.getAttribute('aria-label')?.split(' — ')[1] || '';
       const row = document.createElement('div');
       row.className = 'portion-packaging-number-row';
       row.innerHTML = `
-        <input type="text" class="portion-ing-packaging" data-index="${index}" data-num="${numIndex}"
-          inputmode="text" autocomplete="off" placeholder="מספר על האריזה"
-          value="${suggested ? escapeHtml(suggested) : ''}">
+        ${renderLotPickerFieldHTML({
+        inputHtml: `<input type="text" class="portion-ing-packaging" data-index="${index}" data-num="${numIndex}"
+            inputmode="text" autocomplete="off" placeholder="מספר על האריזה"
+            value="${suggested ? escapeHtml(suggested) : ''}"
+            aria-label="מספר מנה על האריזה — ${escapeHtml(name)}">`,
+        rawMaterialId,
+      })}
         <button type="button" class="btn btn-secondary btn-sm portion-packaging-num-remove"
           data-index="${index}" title="הסר מספר" aria-label="הסר מספר">×</button>`;
       wrap.appendChild(row);
       wrap.querySelectorAll('.portion-packaging-num-remove').forEach((b) => { b.disabled = false; });
+      bindLotPickerFields(row);
       const input = row.querySelector('input');
       input?.focus();
       input?.select?.();
@@ -331,6 +344,7 @@ export async function openRunPortionIngredientBatchesModal({
 
   const modalRoot = document.querySelector('.modal-portion-ingredients') || document;
   bindPackagingNumberControls(modalRoot);
+  bindLotPickerFields(modalRoot);
   // Focus first suggested field and select so editing (+1) is quick
   const firstSuggested = modalRoot.querySelector('.portion-packaging-suggest-hint')
     ?.closest('.portion-packaging-numbers')

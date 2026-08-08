@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=444';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=444';
-import { defaultColorForIndex } from './chart.js?v=444';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=444';
-import { logAuditEvent } from './audit.js?v=444';
+} from './validators.js?v=445';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=445';
+import { defaultColorForIndex } from './chart.js?v=445';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=445';
+import { logAuditEvent } from './audit.js?v=445';
 
 export { ValidationError };
 
@@ -3342,6 +3342,10 @@ db.version(83).stores({
   }
 });
 
+db.version(84).stores({
+  activeLots: '++id, rawMaterialId, status, packagingBatchNumber',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3843,7 +3847,7 @@ export async function resetAllData() {
     'recipeGroups', 'recipeCategories', 'recipes', 'recipeVersions', 'recipeIngredients',
     'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
     'productRecipeComponents', 'supplierCategories', 'suppliers', 'rawMaterials',
-    'inventoryBalances', 'inventoryMovements',
+    'inventoryBalances', 'inventoryMovements', 'activeLots',
   'rawMaterialPriceHistory', 'weeklyProductionPlans', 'weeklyProductionPlanItems',
     'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents',
     'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
@@ -3864,6 +3868,7 @@ export async function resetAllData() {
     await db.rawMaterialPriceHistory?.clear?.();
     await db.inventoryBalances?.clear?.();
     await db.inventoryMovements?.clear?.();
+    await db.activeLots?.clear?.();
     await db.rawMaterials.clear();
     await db.suppliers.clear();
     await db.supplierCategories.clear();
@@ -4044,6 +4049,7 @@ export async function exportAllData() {
     haccpMonitoringLogs,
     inventoryBalances,
     inventoryMovements,
+    activeLots,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -4122,6 +4128,7 @@ export async function exportAllData() {
     db.haccpMonitoringLogs?.toArray?.() ?? Promise.resolve([]),
     db.inventoryBalances?.toArray?.() ?? Promise.resolve([]),
     db.inventoryMovements?.toArray?.() ?? Promise.resolve([]),
+    db.activeLots?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4200,6 +4207,7 @@ export async function exportAllData() {
     haccpMonitoringLogs,
     inventoryBalances,
     inventoryMovements,
+    activeLots,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4254,6 +4262,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
   if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
   if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
+  if (!Array.isArray(payload.activeLots)) payload.activeLots = [];
   if (!Array.isArray(payload.rawMaterialPriceHistory)) payload.rawMaterialPriceHistory = [];
   if (!Array.isArray(payload.supplierShortages)) payload.supplierShortages = [];
   if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
@@ -4296,6 +4305,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.haccpMonitoringLogs)) payload.haccpMonitoringLogs = [];
   if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
   if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
+  if (!Array.isArray(payload.activeLots)) payload.activeLots = [];
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4326,7 +4336,7 @@ export async function importAllData(payload) {
       'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
       'recipeGroups', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
       'recipeCategories', 'recipes', 'recipeVersions', 'recipeIngredients', 'supplierCategories', 'suppliers',
-      'rawMaterials', 'inventoryBalances', 'inventoryMovements', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
+      'rawMaterials', 'inventoryBalances', 'inventoryMovements', 'activeLots', 'rawMaterialPriceHistory', 'supplierShortages', 'weeklyProductionPlans',
       'weeklyProductionPlanItems', 'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
       'productRecipeComponents',
       'productPortionComponents',
@@ -4353,6 +4363,7 @@ export async function importAllData(payload) {
       await db.haccpMonitoringLogs?.clear?.();
       await db.inventoryBalances?.clear?.();
       await db.inventoryMovements?.clear?.();
+      await db.activeLots?.clear?.();
       await db.haccpPrpControls?.clear?.();
       await db.haccpDocuments?.clear?.();
       await db.haccpVerificationProcs?.clear?.();
@@ -4505,6 +4516,7 @@ export async function importAllData(payload) {
       if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
       if (payload.inventoryBalances?.length) await db.inventoryBalances.bulkPut(payload.inventoryBalances);
       if (payload.inventoryMovements?.length) await db.inventoryMovements.bulkPut(payload.inventoryMovements);
+      if (payload.activeLots?.length) await db.activeLots.bulkPut(payload.activeLots);
       if (payload.supplierShortages?.length) await db.supplierShortages.bulkPut(payload.supplierShortages);
       if (payload.rawMaterialPriceHistory?.length) await db.rawMaterialPriceHistory.bulkPut(payload.rawMaterialPriceHistory);
       if (payload.weeklyProductionPlans.length) await db.weeklyProductionPlans.bulkPut(payload.weeklyProductionPlans);

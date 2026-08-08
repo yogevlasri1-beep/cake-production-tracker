@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=444';
+import { db, getSetting, setSetting } from './db.js?v=445';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=444';
+} from './supabase-backup.js?v=445';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,7 +23,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=444';
+} from './sync/collections.js?v=445';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -33,8 +33,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=444';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=444';
+} from './sync/id-map.js?v=445';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=445';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {

@@ -22,16 +22,16 @@ import {
   setRawMaterialAsPortion,
   getMaterialPortionProductIds,
   applyPackagingLinks,
-} from '../kitchen-db.js?v=444';
-import { getProducts, getCategories } from '../db.js?v=444';
+} from '../kitchen-db.js?v=445';
+import { getProducts, getCategories } from '../db.js?v=445';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=444';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=444';
-import { openModal, closeModal } from '../modal.js?v=444';
-import { requestAutoBackupNow } from '../backup-service.js?v=444';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=444';
+} from '../supplier-import.js?v=445';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=445';
+import { openModal, closeModal } from '../modal.js?v=445';
+import { requestAutoBackupNow } from '../backup-service.js?v=445';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=445';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2362,7 +2362,9 @@ async function renderShortagesTab(body, container) {
                     value="${item.orderQuantity ?? ''}" placeholder="כמות" aria-label="כמות הזמנה">
                   <input type="text" class="shortage-unit-input" data-id="${item.id}" value="${escapeHtml(item.unit || '')}" placeholder="יח'" aria-label="יחידה">
                 </label>
-                ${!item.done && item.rawMaterialId ? `<button type="button" class="btn btn-secondary btn-sm shortage-receive-btn" data-id="${item.id}" title="קבל למלאי">📦 קבל</button>` : ''}
+                ${!item.done && item.rawMaterialId ? `<button type="button" class="btn btn-secondary btn-sm shortage-receive-btn" data-id="${item.id}"
+                    data-raw-material-id="${item.rawMaterialId}" data-qty="${item.orderQuantity ?? ''}" data-unit="${escapeHtml(item.unit || '')}"
+                    data-name="${escapeHtml(item.displayName || '')}" title="קבל למלאי">📦 קבל</button>` : ''}
                 <button type="button" class="btn btn-danger btn-sm btn-icon shortage-del-btn" data-id="${item.id}" title="הסר">🗑</button>
               </li>`).join('')}
           </ul>
@@ -2446,22 +2448,47 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      try {
-        const { receiveShortageToInventory } = await import('../inventory-db.js?v=444');
-        const result = await receiveShortageToInventory(btn.dataset.id);
-        requestAutoBackupNow().catch(() => {});
-        showToast(`נקלט למלאי: ${result.qty}${result.unit ? ` ${result.unit}` : ''}`);
-        renderSuppliers(container);
-      } catch (err) {
-        showToast(err.message || 'שגיאה בקבלה');
-      }
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=445');
+      openModal({
+        title: `קבלה למלאי — ${btn.dataset.name || ''}`,
+        bodyHTML: `
+          <div class="form-group">
+            <label for="receive-lot-qty">כמות</label>
+            <input type="number" id="receive-lot-qty" min="0.001" step="0.001" inputmode="decimal" value="${escapeHtml(btn.dataset.qty || '')}">
+          </div>
+          <div class="form-group">
+            <label for="receive-lot-number">מספר מנה (אופציונלי)</label>
+            ${renderLotPickerFieldHTML({
+    inputHtml: '<input type="text" id="receive-lot-number" placeholder="מספר על האריזה">',
+  })}
+          </div>`,
+        footerHTML: `
+          <button class="btn btn-secondary modal-cancel">ביטול</button>
+          <button class="btn btn-primary" id="receive-lot-save">קבל למלאי</button>`,
+      });
+      document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+      bindLotPickerFields(document.getElementById('modal-body'));
+      document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
+        try {
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=445');
+          const qty = document.getElementById('receive-lot-qty')?.value;
+          const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
+          const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
+          requestAutoBackupNow().catch(() => {});
+          closeModal();
+          showToast(`נקלט למלאי: ${result.qty}${result.unit ? ` ${result.unit}` : ''}`);
+          renderSuppliers(container);
+        } catch (err) {
+          showToast(err.message || 'שגיאה בקבלה');
+        }
+      });
     });
   });
 
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=444');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=445');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

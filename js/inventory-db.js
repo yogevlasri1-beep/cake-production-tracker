@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=444';
+import { db, ValidationError } from './db.js?v=445';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -11,9 +11,9 @@ import {
   getPortionPresetIngredientsFormData,
   resolveRecipeIngredientMaterial,
   buildMaterialsByNameKey,
-} from './kitchen-db.js?v=444';
-import { localDateTimeISO, roundDecimal } from './utils.js?v=444';
-import { logAuditEvent } from './audit.js?v=444';
+} from './kitchen-db.js?v=445';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=445';
+import { logAuditEvent } from './audit.js?v=445';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -25,7 +25,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=444');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=445');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',
@@ -129,6 +129,28 @@ export async function getInventoryMovements({
   return rows;
 }
 
+/** מפחית ניפוק ממנות פעילות (FIFO — הישנה ביותר קודם), סוגר מנה שהגיעה ל-0. בלי מנות תואמות — לא קורה כלום. */
+async function consumeActiveLotsFifo(rawMaterialId, qtyToConsume) {
+  if (!(qtyToConsume > 0) || !db.activeLots) return;
+  let remaining = qtyToConsume;
+  const lots = (await db.activeLots.where('rawMaterialId').equals(rawMaterialId).toArray())
+    .filter((l) => l.status !== 'closed' && (Number(l.qtyOnHand) || 0) > 0)
+    .sort((a, b) => String(a.receivedAt || '').localeCompare(String(b.receivedAt || '')));
+  for (const lot of lots) {
+    if (remaining <= 0) break;
+    const onHand = Number(lot.qtyOnHand) || 0;
+    const take = Math.min(onHand, remaining);
+    const nextQty = Math.round((onHand - take) * 1000) / 1000;
+    const patch = { qtyOnHand: nextQty };
+    if (nextQty <= 0) {
+      patch.status = 'closed';
+      patch.closedAt = localDateTimeISO();
+    }
+    await db.activeLots.update(lot.id, patch);
+    remaining = Math.round((remaining - take) * 1000) / 1000;
+  }
+}
+
 export async function adjustInventoryStock({
   rawMaterialId,
   delta,
@@ -196,7 +218,7 @@ export async function adjustInventoryStock({
   let balance;
   let movementId = null;
   const wasCreate = !existing;
-  await db.transaction('rw', db.inventoryBalances, db.inventoryMovements, async () => {
+  await db.transaction('rw', db.inventoryBalances, db.inventoryMovements, db.activeLots, async () => {
     if (existing) {
       await db.inventoryBalances.update(existing.id, {
         qtyOnHand: nextQty,
@@ -237,6 +259,10 @@ export async function adjustInventoryStock({
         ...lotFields,
       });
     }
+
+    if (kind === 'issue') {
+      await consumeActiveLotsFifo(mid, Math.abs(appliedDelta));
+    }
   });
 
   if (appliedDelta !== 0) {
@@ -271,6 +297,57 @@ export async function adjustInventoryStock({
   }
 
   return balance;
+}
+
+/** קליטת חומר גלם עם מספר מנה — עוטף adjustInventoryStock ופותח שורת "מנה פעילה" אם ניתן מספר */
+export async function receiveInventoryLot({
+  rawMaterialId, qty, unit = '', packagingBatchNumber = '', supplierName = '', reason = '',
+}) {
+  const pkg = String(packagingBatchNumber || '').trim().slice(0, 80);
+  const balance = await adjustInventoryStock({
+    rawMaterialId,
+    delta: qty,
+    unit,
+    reason: reason || (pkg ? `קליטה · מנה ${pkg}` : 'קליטה'),
+    lotMeta: pkg ? { packagingBatchNumber: pkg } : null,
+  });
+  if (pkg) {
+    const qtyNum = sanitizeStockQty(qty, { allowNegative: false }) ?? 0;
+    await db.activeLots.add({
+      rawMaterialId: Number(rawMaterialId),
+      packagingBatchNumber: pkg,
+      qtyReceived: qtyNum,
+      qtyOnHand: qtyNum,
+      unit: String(unit || balance?.unit || '').trim().slice(0, 24),
+      receivedAt: localDateTimeISO(),
+      supplierName: String(supplierName || '').trim().slice(0, 80),
+      status: 'open',
+      notes: '',
+      closedAt: null,
+    });
+  }
+  return balance;
+}
+
+/** מנות פעילות (ברירת מחדל: פתוחות בלבד) — לבחירה בתזרים/תצוגה */
+export async function listActiveLots({ rawMaterialId = null, includeClosed = false } = {}) {
+  let rows = rawMaterialId
+    ? await db.activeLots.where('rawMaterialId').equals(Number(rawMaterialId)).toArray()
+    : await db.activeLots.toArray();
+  if (!includeClosed) rows = rows.filter((r) => r.status !== 'closed');
+  return rows.sort((a, b) => String(a.receivedAt || '').localeCompare(String(b.receivedAt || '')));
+}
+
+export async function closeActiveLot(id) {
+  const row = await db.activeLots.get(Number(id));
+  if (!row) throw new ValidationError('מנה לא נמצאה');
+  await db.activeLots.update(row.id, { status: 'closed', closedAt: localDateTimeISO() });
+}
+
+export async function reopenActiveLot(id) {
+  const row = await db.activeLots.get(Number(id));
+  if (!row) throw new ValidationError('מנה לא נמצאה');
+  await db.activeLots.update(row.id, { status: 'open', closedAt: null });
 }
 
 export async function setInventoryMinQty(rawMaterialId, minQty) {
@@ -392,7 +469,7 @@ export function formatWhatsAppGapOrderText({ weekStart, rows }) {
 /**
  * קבלת חוסר למלאי: מוסיף כמות ליתרה, רושם תנועת קבלה, ומסמן את החוסר כהושלם.
  */
-export async function receiveShortageToInventory(shortageId, { qty = null } = {}) {
+export async function receiveShortageToInventory(shortageId, { qty = null, packagingBatchNumber = '', supplierName = '' } = {}) {
   const id = Number(shortageId);
   if (!id) throw new ValidationError('פריט חוסר לא תקין');
   const row = await db.supplierShortages.get(id);
@@ -413,11 +490,13 @@ export async function receiveShortageToInventory(shortageId, { qty = null } = {}
   const unit = row.unit || mat?.unit || '';
   const label = mat?.name || row.name || 'חומר';
 
-  await adjustInventoryStock({
+  await receiveInventoryLot({
     rawMaterialId: row.rawMaterialId,
-    delta: receiveQty,
-    reason: `קבלה מחוסרים · ${label}`,
+    qty: receiveQty,
     unit,
+    packagingBatchNumber,
+    supplierName,
+    reason: `קבלה מחוסרים · ${label}`,
   });
   const stamp = localDateTimeISO().slice(0, 16).replace('T', ' ');
   const receiveNote = `נקלט ${receiveQty}${unit ? ` ${unit}` : ''} · ${stamp}`;

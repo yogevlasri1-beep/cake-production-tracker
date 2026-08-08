@@ -5237,6 +5237,36 @@ table.report-table tfoot td {
   to { transform: translateY(0); }
 }
 
+.barcode-scan-video-wrap {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.barcode-scan-video-wrap video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lot-picker-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.lot-picker-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.lot-picker-active-select-slot select {
+  width: 100%;
+  margin-top: 6px;
+}
+
 .modal-header {
   display: flex;
   justify-content: space-between;
@@ -11000,6 +11030,11 @@ body.supplier-drag-active {
 }
 
 .portion-packaging-number-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.portion-packaging-number-row .lot-picker-field {
   flex: 1;
   min-width: 0;
 }
