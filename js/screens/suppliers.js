@@ -23,17 +23,18 @@ import {
   getMaterialPortionProductIds,
   applyPackagingLinks,
   sanitizeBarcode,
-} from '../kitchen-db.js?v=447';
-import { getProducts, getCategories } from '../db.js?v=447';
+  shouldPreserveMaterialAsSupplierOffer,
+} from '../kitchen-db.js?v=448';
+import { getProducts, getCategories } from '../db.js?v=448';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=447';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=447';
-import { openModal, closeModal } from '../modal.js?v=447';
-import { requestAutoBackupNow } from '../backup-service.js?v=447';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=447';
-import { openBarcodeScanner } from '../barcode-scan.js?v=447';
+} from '../supplier-import.js?v=448';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=448';
+import { openModal, closeModal } from '../modal.js?v=448';
+import { requestAutoBackupNow } from '../backup-service.js?v=448';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=448';
+import { openBarcodeScanner } from '../barcode-scan.js?v=448';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -685,9 +686,10 @@ async function openMergeSelectedMaterialsModal(container) {
     modalClass: 'modal-merge-selected-mats',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0;line-height:1.5">
-        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» קובעת את שם המוצר.
-        אם לספקים שונים (למשל סוכר לוויאני + סוכר פוליבה) — נשמרות <strong>הצעות נפרדות</strong>
-        תחת אותו שם, כולל מחיר והיסטוריה של כל ספק. רשומות מאותו ספק מתמזגות ליעד.
+        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» קובעת את <strong>שם המוצר</strong>;
+        שמות אחרים הופכים ל<strong>מילים נרדפות</strong>.
+        ספק אחר עם מחיר נשמר כ<strong>הצעה ברשימת הספקים</strong> (כולל מחיר, כמות באריזה ופרטים נוספים).
+        בלי מחיר — נספג ליעד. המתכון לא משתנה (לא מוסיפים/מורידים חומרים); ברירת מחדל למתכונים נשמרת.
       </p>
       <div class="form-group" style="margin-bottom:8px">
         <input type="search" id="manual-mat-merge-search" placeholder="חיפוש לפי שם / מילה נרדפת / ספק..." autocomplete="off">
@@ -738,24 +740,26 @@ async function openMergeSelectedMaterialsModal(container) {
     const keepId = Number(document.querySelector('.manual-mat-keep-radio:checked')?.value);
     const keep = mats.find((m) => m.id === keepId) || mats[0];
     const others = mats.filter((m) => m.id !== keep.id);
-    const keepSup = Number(keep.supplierId) || 0;
-    const sameSup = others.filter((m) => (Number(m.supplierId) || 0) === keepSup);
-    const crossSup = others.filter((m) => (Number(m.supplierId) || 0) !== keepSup);
+    const preserve = others.filter((m) => shouldPreserveMaterialAsSupplierOffer(keep, m));
+    const absorb = others.filter((m) => !shouldPreserveMaterialAsSupplierOffer(keep, m));
     const syns = buildMergedMaterialSynonyms(keep, others);
     const synText = syns.length ? syns.join(' · ') : '—';
     const keepSupName = keep.supplierId ? (supMap.get(keep.supplierId) || 'ספק') : 'ללא ספק';
-    const crossNames = crossSup.map((m) => {
-      const s = m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ללא ספק';
-      return `${m.name} (${s})`;
+    const preserveNames = preserve.map((m) => {
+      const s = m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ספק';
+      const pkg = m.packageWeightGrams
+        ? ` · אריזה ${Number(m.packageWeightGrams) / 1000} ק"ג`
+        : '';
+      return `${m.name} (${s}${pkg})`;
     });
     previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong> · ${escapeHtml(keepSupName)}
       · מילים נרדפות: ${escapeHtml(synText)}
-      ${crossSup.length
-    ? `<br>הצעות ספקים שיישמרו תחת «${escapeHtml(keep.name)}»: ${escapeHtml(crossNames.join(' · '))} — כולל מחיר והיסטוריה`
+      ${preserve.length
+    ? `<br>יתווספו לרשימת הספקים תחת «${escapeHtml(keep.name)}»: ${escapeHtml(preserveNames.join(' · '))} — עם מחיר ופרטי אריזה`
     : ''}
-      ${sameSup.length
-    ? `<br>רשומות מאותו ספק שיתמזגו ליעד: ${sameSup.length}`
-    : (crossSup.length ? '' : '<br>הרשומות האחרות יתמזגו ליעד')}`;
+      ${absorb.length
+    ? `<br>יאוחדו ליעד (בלי הצעה נפרדת): ${absorb.length}`
+    : ''}`;
   }
 
   function bindList() {
@@ -2589,7 +2593,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=447');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=448');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2611,7 +2615,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=447');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=448');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2629,7 +2633,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=447');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=448');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

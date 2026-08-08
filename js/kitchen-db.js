@@ -1,10 +1,10 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=447';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=448';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=447';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=447';
-import { logAuditEvent } from './audit.js?v=447';
+} from './validators.js?v=448';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=448';
+import { logAuditEvent } from './audit.js?v=448';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4427,12 +4427,10 @@ export function buildMergedMaterialSynonyms(keep, others = []) {
 export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffers = false } = {}) {
   const patch = {};
   const keepSup = Number(keep.supplierId) || 0;
-  const fillOthers = preserveCrossSupplierOffers
-    ? (others || []).filter((o) => (Number(o.supplierId) || 0) === keepSup)
-    : (others || []);
-  const fieldSources = preserveCrossSupplierOffers
-    ? (others || [])
-    : fillOthers;
+  // כששומרים הצעות ספק נפרדות — ממלאים מחיר/אריזה/ספק רק מאותו ספק של היעד
+  const sameSupplierOthers = (others || []).filter((o) => (Number(o.supplierId) || 0) === keepSup);
+  const fillOthers = preserveCrossSupplierOffers ? sameSupplierOthers : (others || []);
+  const fieldSources = fillOthers;
 
   if (!keep.packageWeightGrams) {
     const from = fieldSources.find((o) => o.packageWeightGrams);
@@ -4452,16 +4450,26 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
     if (from) patch.unit = from.unit;
   }
   if (!keep.supplierCategoryId) {
-    const from = fieldSources.find((o) => o.supplierCategoryId);
+    const from = (others || []).find((o) => o.supplierCategoryId) || fieldSources.find((o) => o.supplierCategoryId);
     if (from) patch.supplierCategoryId = from.supplierCategoryId;
   }
-  if (!keep.isRecipeDefault && (others || []).some((o) => o.isRecipeDefault)) {
-    patch.isRecipeDefault = true;
+  if (!sanitizeBarcode(keep.barcode)) {
+    const from = fieldSources.find((o) => sanitizeBarcode(o.barcode));
+    if (from) patch.barcode = sanitizeBarcode(from.barcode);
+  }
+  {
+    const mergedAllergens = sanitizeProductAllergenIds([
+      ...(keep.allergens || []),
+      ...(others || []).flatMap((o) => o.allergens || []),
+    ]);
+    const keepAllergens = sanitizeProductAllergenIds(keep.allergens);
+    if (mergedAllergens.length && mergedAllergens.join(',') !== keepAllergens.join(',')) {
+      patch.allergens = mergedAllergens;
+    }
   }
   if ((Number(keep.unitPrice) || 0) <= 0) {
     // מחיר חי של יעד — רק מאותו ספק (או ממיזוג מלא), לא מהצעת ספק אחר
-    const pricePool = preserveCrossSupplierOffers ? fillOthers : (others || []);
-    const from = pricePool.find((o) => (Number(o.unitPrice) || 0) > 0);
+    const from = fillOthers.find((o) => (Number(o.unitPrice) || 0) > 0);
     if (from) patch.unitPrice = from.unitPrice;
   }
   if (!keep.packagingKind) {
@@ -4504,6 +4512,32 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
   return patch;
 }
 
+/**
+ * האם רשומה שאינה יעד צריכה להישאר כהצעת ספק נפרדת תחת שם היעד.
+ * רק כשיש ספק שונה מהיעד + מחיר — בלי מחיר אין טעם בהצעה נפרדת.
+ */
+export function shouldPreserveMaterialAsSupplierOffer(keep, other) {
+  if (!keep || !other || keep.id === other.id) return false;
+  const otherSup = Number(other.supplierId) || 0;
+  if (!otherSup) return false;
+  if ((Number(other.unitPrice) || 0) <= 0) return false;
+  const keepSup = Number(keep.supplierId) || 0;
+  if (keepSup && otherSup === keepSup) return false;
+  return true;
+}
+
+/** איזו רשומה תשמש ברירת מחדל למתכונים אחרי איחוד (מבין היעד + הצעות שנשמרו) */
+export function pickMergeRecipeDefaultId(keep, others, { preservedIds = [] } = {}) {
+  if (!keep) return null;
+  const preserved = new Set((preservedIds || []).map(Number));
+  if (keep.isRecipeDefault) return keep.id;
+  for (const m of others || []) {
+    if (m?.isRecipeDefault && preserved.has(Number(m.id))) return m.id;
+  }
+  if ((others || []).some((m) => m?.isRecipeDefault)) return keep.id;
+  return null;
+}
+
 async function retargetMaterialRefs(fromId, toId) {
   if (!fromId || !toId || fromId === toId) return;
   if (db.products) {
@@ -4540,6 +4574,35 @@ async function retargetMaterialRefs(fromId, toId) {
       }
     }
   }
+  if (db.inventoryBalances) {
+    const fromBal = await db.inventoryBalances.where('rawMaterialId').equals(fromId).first();
+    if (fromBal) {
+      const toBal = await db.inventoryBalances.where('rawMaterialId').equals(toId).first();
+      if (toBal) {
+        const qty = (Number(toBal.qtyOnHand) || 0) + (Number(fromBal.qtyOnHand) || 0);
+        const minQty = toBal.minQty != null ? toBal.minQty : fromBal.minQty;
+        await db.inventoryBalances.update(toBal.id, {
+          qtyOnHand: qty,
+          ...(minQty != null ? { minQty } : {}),
+        });
+        await db.inventoryBalances.delete(fromBal.id);
+      } else {
+        await db.inventoryBalances.update(fromBal.id, { rawMaterialId: toId });
+      }
+    }
+  }
+  if (db.inventoryMovements) {
+    const moves = await db.inventoryMovements.where('rawMaterialId').equals(fromId).toArray();
+    for (const row of moves) {
+      await db.inventoryMovements.update(row.id, { rawMaterialId: toId });
+    }
+  }
+  if (db.activeLots) {
+    const lots = await db.activeLots.where('rawMaterialId').equals(fromId).toArray();
+    for (const row of lots) {
+      await db.activeLots.update(row.id, { rawMaterialId: toId });
+    }
+  }
 }
 
 async function renameRecipeIngredientsMaterialName(fromName, toName) {
@@ -4561,6 +4624,9 @@ function materialMergeTxTables() {
   if (db.supplierShortages) tables.push(db.supplierShortages);
   if (db.groupPortionPresets) tables.push(db.groupPortionPresets);
   if (db.productPortionComponents) tables.push(db.productPortionComponents);
+  if (db.inventoryBalances) tables.push(db.inventoryBalances);
+  if (db.inventoryMovements) tables.push(db.inventoryMovements);
+  if (db.activeLots) tables.push(db.activeLots);
   return tables;
 }
 
@@ -4579,6 +4645,10 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
   await syncRawMaterialsActiveFromRecipes();
 }
 
+/**
+ * סופג רשומה ליעד: מעביר מרכיבי מתכון (רק החלפת מזהה — בלי מחיקת שורות),
+ * היסטוריית מחירים וקישורים, ואז מוחק את הרשומה המאוחדת.
+ */
 async function mergeMaterialIntoKeep(keep, mid) {
   if (!keep || !mid || keep === mid) return;
   const fromMat = await db.rawMaterials.get(mid);
@@ -4614,48 +4684,12 @@ async function mergeMaterialIntoKeep(keep, mid) {
 
   await retargetMaterialRefs(mid, keep);
   await db.rawMaterials.delete(mid);
-  await dedupeRecipeIngredientsForMaterial(keep);
 }
 
 /**
- * אחרי הסבת מרכיבי מתכון לחומר יעד — מכווץ שורות כפולות שנוצרו כשמתכון הכיל
- * גם את חומר היעד וגם את החומר שאוחד (אותה מנה בדיוק). שומר שורה אחת לכל
- * (מתכון + sortOrder) עם אותה כמות ויחידה, ומוחק את הכפילויות כדי שהכמות לא
- * תוכפל. שורות עם כמות/יחידה/סדר שונים נחשבות מרכיבים לגיטימיים ולא נוגעים בהן.
+ * ספקים שונים לאותו מוצר — משאירים הצעה נפרדת תחת שם היעד עם המחיר, כמות אריזה ושאר פרטי הספק.
  */
-async function dedupeRecipeIngredientsForMaterial(keep) {
-  if (!keep) return;
-  const rows = await db.recipeIngredients.where('rawMaterialId').equals(keep).toArray();
-  const groups = new Map();
-  for (const row of rows) {
-    const rid = sanitizeProductId(row.recipeId);
-    if (!rid) continue;
-    const key = `${rid}|${row.sortOrder ?? ''}|${row.quantity ?? ''}|${row.unit ?? ''}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(row);
-  }
-  for (const dupes of groups.values()) {
-    if (dupes.length < 2) continue;
-    dupes.sort((a, b) => {
-      const an = sanitizeName(a.name, 80) ? 1 : 0;
-      const bn = sanitizeName(b.name, 80) ? 1 : 0;
-      if (an !== bn) return bn - an;
-      return (Number(a.id) || 0) - (Number(b.id) || 0);
-    });
-    for (const extra of dupes.slice(1)) {
-      await db.recipeIngredients.delete(extra.id);
-    }
-  }
-}
-
-function materialSupplierKey(mat) {
-  return Number(mat?.supplierId) || 0;
-}
-
-/**
- * ספקים שונים לאותו מוצר — משאירים הצעה נפרדת תחת שם היעד עם המחיר וההיסטוריה שלה.
- */
-async function alignCrossSupplierMaterialOffer(keepMat, fromMat) {
+async function alignCrossSupplierMaterialOffer(keepMat, fromMat, { clearRecipeDefault = true } = {}) {
   if (!keepMat || !fromMat || keepMat.id === fromMat.id) return;
   const keepName = keepMat.name;
   const fromName = fromMat.name;
@@ -4663,7 +4697,7 @@ async function alignCrossSupplierMaterialOffer(keepMat, fromMat) {
   if (normalizeMaterialKey(fromName) !== normalizeMaterialKey(keepName)) {
     patch.name = keepName;
   }
-  if (fromMat.isRecipeDefault) {
+  if (clearRecipeDefault && fromMat.isRecipeDefault) {
     patch.isRecipeDefault = false;
   }
   if (!fromMat.supplierCategoryId && keepMat.supplierCategoryId) {
@@ -4679,8 +4713,10 @@ async function alignCrossSupplierMaterialOffer(keepMat, fromMat) {
 
 /**
  * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
- * - אותו ספק (או שניהם בלי ספק): מתמוגגים לרשומת היעד (היסטוריה + קישורים).
- * - ספקים שונים: נשארות הצעות נפרדות תחת שם היעד — כל ספק שומר מחיר והיסטוריה.
+ * - שם היעד נשאר; שמות שאינם יעד → מילים נרדפות.
+ * - ספק אחר עם מחיר → הצעה נפרדת תחת שם היעד (מחיר, כמות אריזה וכו').
+ * - בלי מחיר / אותו ספק → נספג ליעד (בלי למחוק/להוסיף מרכיבים במתכון).
+ * - ברירת מחדל למתכונים נשמרת על ההצעה המתאימה; מבנה המתכון לא משתנה.
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -4697,40 +4733,46 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   }
   if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
 
-  const keepSup = materialSupplierKey(keepMat);
-  const sameSupplierOthers = others.filter((m) => materialSupplierKey(m) === keepSup);
-  const crossSupplierOthers = others.filter((m) => materialSupplierKey(m) !== keepSup);
-  const hasCrossOffers = crossSupplierOthers.length > 0;
+  const preserveOthers = others.filter((m) => shouldPreserveMaterialAsSupplierOffer(keepMat, m));
+  const absorbOthers = others.filter((m) => !shouldPreserveMaterialAsSupplierOffer(keepMat, m));
 
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
-  const fillPatch = materialFieldFillPatch(keepMat, others, {
-    preserveCrossSupplierOffers: hasCrossOffers,
+  // ממלאים חסרים ביעד רק ממה שנספג (לא מהצעות ספק שנשמרות בנפרד)
+  const fillPatch = materialFieldFillPatch(keepMat, absorbOthers, {
+    preserveCrossSupplierOffers: false,
   });
-  const shouldSetDefault = !!fillPatch.isRecipeDefault;
+  // isRecipeDefault מטופל בנפרד לפי ההצעה ששרדה
+  delete fillPatch.isRecipeDefault;
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
     : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
 
   const preservedOfferIds = [];
+  const defaultId = pickMergeRecipeDefaultId(keepMat, others, {
+    preservedIds: preserveOthers.map((m) => m.id),
+  });
+
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    for (const mat of sameSupplierOthers) {
+    for (const mat of absorbOthers) {
       await renameRecipeIngredientsMaterialName(mat.name, keepMat.name);
       await mergeMaterialIntoKeep(keep, mat.id);
     }
-    for (const mat of crossSupplierOthers) {
-      await alignCrossSupplierMaterialOffer(keepMat, mat);
+    for (const mat of preserveOthers) {
+      const keepDefaultOnOffer = defaultId === mat.id;
+      await alignCrossSupplierMaterialOffer(keepMat, mat, {
+        clearRecipeDefault: !keepDefaultOnOffer,
+      });
       preservedOfferIds.push(mat.id);
     }
 
     const patch = { ...fillPatch, synonyms };
-    delete patch.isRecipeDefault;
     if (Object.keys(patch).length) {
       await db.rawMaterials.update(keep, patch);
     }
   });
 
-  if (shouldSetDefault) {
-    await setRawMaterialRecipeDefault(keep, true);
+  if (defaultId) {
+    await setRawMaterialRecipeDefault(defaultId, true);
   }
   await syncRawMaterialLatestPrice(keep);
   if (preferredUnitPrice != null) {
@@ -4764,15 +4806,28 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
     if (m.supplierId && !keepBySupplier.has(m.supplierId)) keepBySupplier.set(m.supplierId, m.id);
   }
 
+  const primaryMat = keepMats.find((m) => m.id === primary) || keepMats[0];
+  const absorbMats = [];
+  for (const mid of ids) {
+    const mat = await db.rawMaterials.get(mid);
+    if (mat) absorbMats.push(mat);
+  }
+  const synonymsByKeep = new Map();
+  if (primaryMat && absorbMats.length) {
+    synonymsByKeep.set(primary, buildMergedMaterialSynonyms(primaryMat, absorbMats));
+  }
+
   const touched = new Set();
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    for (const mid of ids) {
-      const mat = await db.rawMaterials.get(mid);
-      if (!mat) continue;
+    for (const mat of absorbMats) {
       let target = mat.supplierId ? keepBySupplier.get(mat.supplierId) : null;
       if (!target || !keeps.includes(target)) target = primary;
-      await mergeMaterialIntoKeep(target, mid);
+      await renameRecipeIngredientsMaterialName(mat.name, primaryMat?.name || mat.name);
+      await mergeMaterialIntoKeep(target, mat.id);
       touched.add(target);
+    }
+    for (const [kid, syns] of synonymsByKeep) {
+      if (syns?.length) await db.rawMaterials.update(kid, { synonyms: syns });
     }
   });
   for (const kid of touched) {
