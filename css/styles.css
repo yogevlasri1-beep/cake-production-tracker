@@ -5263,7 +5263,6 @@ table.report-table tfoot td {
   background: #000;
   border-radius: 12px;
   overflow: hidden;
-  isolation: isolate;
 }
 
 .barcode-scan-video-wrap video {
