@@ -49,8 +49,20 @@ To add a staff account:
 Per-user workspace permissions: column `profiles.workspace_access` (jsonb array of
 workspace ids). `NULL` = follow the role matrix in `js/permissions.js`.
 
-Mark the email as confirmed (or turn off "Confirm email" under Providers → Email if
-you'd rather staff not need to click a confirmation link).
+**Important:** Approving a profile (`profiles.status = active`) is not enough when
+Supabase Auth has **Confirm email** enabled. Login also requires
+`auth.users.email_confirmed_at`. The app’s «אשר כניסה» / «פתח כניסה» buttons call
+RPCs that set both.
+
+### Required SQL — approve + confirm email
+
+Run in Supabase → **SQL Editor**:
+
+`migrations/20260809120000_approve_account_confirms_email.sql`
+
+This:
+1. Confirms email for every user who is already `profiles.status = active`
+2. Adds `approve_account_user` / `confirm_account_email` RPCs for the Accounts UI
 
 ### Recommended: Edge Function `create-staff-user`
 
@@ -64,9 +76,9 @@ supabase functions deploy create-staff-user --project-ref ravhjceukjsjfigcqgob
 Set secrets: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 The app calls `POST /functions/v1/create-staff-user` from **חשבונות** and falls back to
-Auth signup if the function is not deployed.
+Auth signup + `confirm_account_email` RPC if the function is not deployed.
 
-### One-time SQL — confirm stuck users
+### One-time SQL — confirm all stuck Auth emails
 
 If users were created while Confirm email was on:
 
@@ -74,14 +86,6 @@ If users were created while Confirm email was on:
 UPDATE auth.users
 SET email_confirmed_at = COALESCE(email_confirmed_at, now())
 WHERE email_confirmed_at IS NULL;
-```
-
-Also activate profiles for manager-created staff if needed:
-
-```sql
-UPDATE public.profiles
-SET status = 'active', updated_at = now()
-WHERE email LIKE 'fake%' AND status = 'pending';
 ```
 
 Migration for workspace overrides:

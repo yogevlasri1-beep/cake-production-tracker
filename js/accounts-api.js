@@ -1,20 +1,20 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=450';
+} from './supabase-backup.js?v=451';
 import {
   getValidSession,
   registerAuthUser,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=450';
-import { ValidationError } from './validators.js?v=450';
-import { logAuditEvent } from './audit.js?v=450';
+} from './auth.js?v=451';
+import { ValidationError } from './validators.js?v=451';
+import { logAuditEvent } from './audit.js?v=451';
 import {
   canManageAccounts,
   sanitizeWorkspaceAccess,
   defaultWorkspacesForRole,
-} from './permissions.js?v=450';
+} from './permissions.js?v=451';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {
@@ -75,6 +75,122 @@ async function waitForProfileRow(cfg, accessToken, userId, { attempts = 8, delay
   return false;
 }
 
+async function callRpc(cfg, accessToken, fnName, args) {
+  const url = buildSupabaseRestUrl(cfg.supabaseUrl, `/rpc/${fnName}`);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: profileHeaders(cfg, accessToken),
+    body: JSON.stringify(args),
+  });
+  const raw = await res.text().catch(() => '');
+  let json = null;
+  try { json = raw ? JSON.parse(raw) : null; } catch { /* ignore */ }
+
+  // פונקציה עדיין לא רצה ב-SQL Editor
+  if (res.status === 404 || /Could not find the function|PGRST202/i.test(raw)) {
+    return { missing: true };
+  }
+  if (!res.ok) {
+    const detail = json?.message || json?.error_description || json?.hint || raw || 'קריאת RPC נכשלה';
+    throw new ValidationError(detail);
+  }
+  return { ok: true, data: json };
+}
+
+/** מאשר אימייל ב-Auth (דורש מיגרציית approve_account_confirms_email) */
+export async function confirmAccountEmail(userId) {
+  const cfg = await getSupabaseBackupConfig();
+  const session = await getValidSession();
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token) {
+    throw new ValidationError('נדרשת התחברות');
+  }
+  if (!canManageAccounts(session.role)) {
+    throw new ValidationError('אין הרשאה לנהל חשבונות');
+  }
+  if (!userId) throw new ValidationError('חסר מזהה משתמש');
+
+  const result = await callRpc(cfg, session.access_token, 'confirm_account_email', {
+    p_user_id: userId,
+  });
+  if (result.missing) {
+    throw new ValidationError(
+      'חסרה מיגרציה ב-Supabase — הרץ את 20260809120000_approve_account_confirms_email.sql ב-SQL Editor'
+    );
+  }
+  logAuditEvent({
+    entityTable: 'profiles',
+    entityId: userId,
+    action: 'update',
+    snapshot: { email_confirmed: true },
+  });
+  return true;
+}
+
+/**
+ * אישור חשבון ממתין: status=active + אישור אימייל ב-Auth
+ * (בלי זה Login נכשל ב-Email not confirmed גם אחרי «אשר כניסה»).
+ */
+export async function approveAccountUser(userId, { role, workspace_access } = {}) {
+  const cfg = await getSupabaseBackupConfig();
+  const session = await getValidSession();
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token) {
+    throw new ValidationError('נדרשת התחברות');
+  }
+  if (!canManageAccounts(session.role)) {
+    throw new ValidationError('אין הרשאה לנהל חשבונות');
+  }
+  if (!userId) throw new ValidationError('חסר מזהה משתמש');
+
+  const access = sanitizeWorkspaceAccess(workspace_access);
+  if (role != null && !USER_ROLES.includes(role)) {
+    throw new ValidationError('תפקיד לא חוקי');
+  }
+
+  const rpc = await callRpc(cfg, session.access_token, 'approve_account_user', {
+    p_user_id: userId,
+    p_role: role || null,
+    p_workspace_access: access,
+  });
+
+  if (rpc.ok) {
+    const updated = rpc.data && typeof rpc.data === 'object' ? rpc.data : null;
+    logAuditEvent({
+      entityTable: 'profiles',
+      entityId: userId,
+      action: 'update',
+      snapshot: {
+        email: updated?.email || null,
+        role: updated?.role ?? role ?? null,
+        status: updated?.status || 'active',
+        workspace_access: updated?.workspace_access ?? access,
+        via: 'approve_account_user_rpc',
+        email_confirmed: true,
+      },
+    });
+    return updated || { id: userId, status: 'active', role, workspace_access: access };
+  }
+
+  // Fallback אם המיגרציה עדיין לא רצה — מעדכן פרופיל ומנסה confirm נפרד
+  const updated = await updateAccountProfile(userId, {
+    status: 'active',
+    role,
+    workspace_access: access,
+  });
+  try {
+    await confirmAccountEmail(userId);
+  } catch (err) {
+    if (err instanceof ValidationError && /חסרה מיגרציה/i.test(err.message)) {
+      throw new ValidationError(
+        'הפרופיל סומן כפעיל, אבל האימייל ב-Auth עדיין לא אושר — '
+        + 'הרץ ב-Supabase SQL Editor את 20260809120000_approve_account_confirms_email.sql '
+        + 'ואז לחץ שוב «אשר כניסה» / «פתח כניסה»'
+      );
+    }
+    throw err;
+  }
+  return updated;
+}
+
 export async function updateAccountProfile(userId, patch) {
   const cfg = await getSupabaseBackupConfig();
   const session = await getValidSession();
@@ -120,6 +236,10 @@ export async function updateAccountProfile(userId, patch) {
   }
   const rows = await res.json().catch(() => []);
   const updated = Array.isArray(rows) ? rows[0] : null;
+  // PostgREST יכול להחזיר 200 [] כש-RLS חוסם — בלי זה מוצג «אושר» בטעות
+  if (!updated) {
+    throw new ValidationError('העדכון לא נשמר (אין הרשאה או שהמשתמש לא נמצא). רענן ובדוק שאתה מחובר כמנהל.');
+  }
   logAuditEvent({
     entityTable: 'profiles',
     entityId: userId,
@@ -207,6 +327,21 @@ export async function createAccountUser({
     workspace_access: access,
   });
 
+  // signup רגיל לא מאשר אימייל — בלי זה המשתמש «פעיל» אבל לא יכול להתחבר
+  if (status === 'active') {
+    try {
+      await confirmAccountEmail(userId);
+    } catch (err) {
+      if (err instanceof ValidationError && /חסרה מיגרציה/i.test(err.message)) {
+        throw new ValidationError(
+          'החשבון נוצר כפעיל, אבל Confirm email ב-Supabase חוסם כניסה. '
+          + 'הרץ 20260809120000_approve_account_confirms_email.sql או כבה Confirm email / פרוס create-staff-user'
+        );
+      }
+      throw err;
+    }
+  }
+
   logAuditEvent({
     entityTable: 'profiles',
     entityId: userId,
@@ -219,6 +354,7 @@ export async function createAccountUser({
       workspace_access: access,
       created_by: session.user?.email || null,
       via: 'signup_fallback',
+      email_confirmed: status === 'active',
     },
   });
 

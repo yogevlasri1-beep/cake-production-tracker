@@ -1,38 +1,40 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=450';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=451';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=450';
+} from '../auth.js?v=451';
 import {
   listAccountProfiles,
   updateAccountProfile,
   createAccountUser,
+  approveAccountUser,
+  confirmAccountEmail,
   roleOptionsHtml,
   effectiveWorkspaceAccess,
-} from '../accounts-api.js?v=450';
+} from '../accounts-api.js?v=451';
 import {
   MANAGEABLE_WORKSPACES,
   workspaceLabel,
   defaultWorkspacesForRole,
   sanitizeWorkspaceAccess,
-} from '../permissions.js?v=450';
+} from '../permissions.js?v=451';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=450';
-import { openModal, closeModal } from '../modal.js?v=450';
+} from '../audit.js?v=451';
+import { openModal, closeModal } from '../modal.js?v=451';
 import {
   getAppShareUrl,
   createAppQrDataUrl,
   downloadAppQrImage,
   copyTextToClipboard,
-} from '../app-qr.js?v=450';
-import { describeDownloadMethod } from '../download.js?v=450';
+} from '../app-qr.js?v=451';
+import { describeDownloadMethod } from '../download.js?v=451';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {
@@ -126,6 +128,7 @@ function profileCard(p, selfId) {
       </div>
       <div class="accounts-actions">
         ${p.status !== 'active' ? `<button type="button" class="btn btn-primary accounts-approve">אשר כניסה</button>` : ''}
+        ${p.status === 'active' && !isSelf ? `<button type="button" class="btn btn-secondary accounts-unlock-login" title="אם המשתמש פעיל אבל לא מצליח להתחבר — מאשר את האימייל ב-Auth">פתח כניסה</button>` : ''}
         ${p.status !== 'rejected' && !isSelf ? `<button type="button" class="btn btn-secondary accounts-reject">דחה</button>` : ''}
         ${!isSelf ? `<button type="button" class="btn btn-secondary accounts-save-perms">שמור הרשאות</button>` : ''}
         ${!isSelf && custom ? `<button type="button" class="btn btn-secondary accounts-reset-perms">אפס לתפקיד</button>` : ''}
@@ -139,7 +142,8 @@ function createAccountCardHtml() {
     <div class="card accounts-create-card" id="accounts-create-card">
       <div class="card-title">צור חשבון חדש</div>
       <p class="form-hint">המנהל יוצר אימייל + סיסמה, בוחר תפקיד והרשאות עמדות — המשתמש יכול להיכנס מיד (סטטוס פעיל).
-        השתמש באימייל רגיל בלי + · אם ההתחברות נכשלת ב«אימייל לא אושר» — כבה Confirm email ב-Supabase או פרוס את הפונקציה create-staff-user.</p>
+        השתמש באימייל רגיל בלי + · אם עדיין מופיע «אימייל לא אושר» — הרץ ב-Supabase את המיגרציה
+        <code>20260809120000_approve_account_confirms_email.sql</code> ואז לחץ «פתח כניסה» על המשתמש.</p>
       <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px">
         <div class="form-group" style="flex:1;min-width:180px">
           <label for="accounts-create-email">אימייל</label>
@@ -417,15 +421,23 @@ function wireUsersHandlers(container) {
       try {
         const workspace_access = readWorkspaceChecks(card, '.accounts-ws');
         if (!workspace_access.length) return showToast('יש לבחור לפחות עמדה אחת');
-        await updateAccountProfile(userId, {
-          status: 'active',
+        await approveAccountUser(userId, {
           role: roleSelect.value,
           workspace_access,
         });
-        showToast('החשבון אושר');
+        showToast('החשבון אושר — אפשר להתחבר');
         await renderAccounts(container);
       } catch (err) {
         showToast(err.message || 'שגיאה באישור');
+      }
+    });
+
+    card.querySelector('.accounts-unlock-login')?.addEventListener('click', async () => {
+      try {
+        await confirmAccountEmail(userId);
+        showToast('האימייל אושר ב-Auth — המשתמש יכול להתחבר עכשיו');
+      } catch (err) {
+        showToast(err.message || 'לא ניתן לפתוח כניסה');
       }
     });
 

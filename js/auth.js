@@ -1,5 +1,5 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=450';
-import { ValidationError } from './validators.js?v=450';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=451';
+import { ValidationError } from './validators.js?v=451';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
@@ -120,7 +120,7 @@ async function authFetch(cfg, path, body) {
       : detail === 'User already registered'
         ? 'האימייל כבר רשום במערכת'
         : /email not confirmed/i.test(String(detail || ''))
-          ? 'האימייל עדיין לא אושר ב-Supabase. אשר ב-Authentication → Users, או כבה Confirm email.'
+          ? 'האימייל עדיין לא אושר ב-Auth. מנהל: בעמדת חשבונות לחץ «פתח כניסה» (אחרי הרצת מיגרציית האישור), או אשר ב-Authentication → Users.'
           : detail || 'שגיאת התחברות';
     throw new ValidationError(mapped);
   }
