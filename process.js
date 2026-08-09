@@ -1726,12 +1726,17 @@ function bindRunProductionPanels(container, run, productionCtx) {
       if (!entry) return;
       const p = productMap.get(entry.productId);
       const isKg = productRecordUsesKg(p);
+      const entryDate = String(entry.date || '').slice(0, 10);
       openModal({
         title: 'עריכת רישום ייצור',
         bodyHTML: `
           <div class="form-group">
             <label>מוצר</label>
             <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
+          </div>
+          <div class="form-group">
+            <label for="flow-edit-date">תאריך יצור</label>
+            <input type="date" id="flow-edit-date" value="${escapeHtml(entryDate)}" required>
           </div>
           <div class="form-group">
             <label for="flow-edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
@@ -1744,7 +1749,11 @@ function bindRunProductionPanels(container, run, productionCtx) {
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
       document.getElementById('flow-edit-save')?.addEventListener('click', async () => {
         try {
-          await updateProductionEntry(entryId, { quantity: document.getElementById('flow-edit-qty').value });
+          const date = document.getElementById('flow-edit-date')?.value;
+          await updateProductionEntry(entryId, {
+            date,
+            quantity: document.getElementById('flow-edit-qty').value,
+          });
           closeModal();
           showToast('עודכן ✓');
           container.dataset.runId = String(run.id);

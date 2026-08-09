@@ -1,11 +1,11 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=450';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=450';
-import { openModal, closeModal } from '../modal.js?v=450';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=450';
-import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=450';
+} from '../db.js?v=451';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=451';
+import { openModal, closeModal } from '../modal.js?v=451';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=451';
+import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=451';
 
 async function offerInventoryIssueForRecord({ productId, quantity, productName }) {
   try {
@@ -16,7 +16,7 @@ async function offerInventoryIssueForRecord({ productId, quantity, productName }
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=450');
+    } = await import('../inventory-db.js?v=451');
 
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) return;
@@ -249,12 +249,17 @@ function editEntry(id, entries, productMap, container) {
   const entry = entries.find((e) => e.id === Number(id));
   const p = productMap.get(entry.productId);
   const isKg = productRecordUsesKg(p);
+  const entryDate = String(entry.date || '').slice(0, 10);
   openModal({
     title: 'עריכת רישום',
     bodyHTML: `
       <div class="form-group">
         <label>מוצר</label>
         <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
+      </div>
+      <div class="form-group">
+        <label for="edit-date">תאריך יצור</label>
+        <input type="date" id="edit-date" value="${escapeHtml(entryDate)}" required>
       </div>
       <div class="form-group">
         <label for="edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
@@ -268,7 +273,11 @@ function editEntry(id, entries, productMap, container) {
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('edit-save').addEventListener('click', async () => {
     try {
-      await updateProductionEntry(entry.id, { quantity: document.getElementById('edit-qty').value });
+      const date = document.getElementById('edit-date')?.value;
+      await updateProductionEntry(entry.id, {
+        date,
+        quantity: document.getElementById('edit-qty').value,
+      });
       closeModal();
       showToast('עודכן ✓');
       renderRecord(container);
