@@ -5237,18 +5237,42 @@ table.report-table tfoot td {
   to { transform: translateY(0); }
 }
 
+/* WebKit/iOS: backdrop-filter + transform על אבות המודאל גורמים לתצוגת מצלמה שחורה */
+.modal-overlay:has(.barcode-scan-modal) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.modal.barcode-scan-modal {
+  animation: none;
+  transform: none;
+  /* overflow:hidden + שכבות קומפוזיציה שוברים לעיתים את שכבת ה-video ב-Safari */
+  overflow: visible;
+  max-height: min(92dvh, 720px);
+}
+
+.modal.barcode-scan-modal .modal-body {
+  overflow: auto;
+}
+
 .barcode-scan-video-wrap {
+  position: relative;
   width: 100%;
   aspect-ratio: 4 / 3;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
+  isolation: isolate;
 }
 
 .barcode-scan-video-wrap video {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
+  background: #111;
+  /* בלי filter/transform על ה-video — שומר על שכבת המצלמה */
 }
 
 .lot-picker-input-row {
