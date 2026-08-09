@@ -1,26 +1,26 @@
-import { initDB } from './db.js?v=450';
-import { renderHome, homeMeta } from './screens/home.js?v=450';
-import { renderProducts, productsMeta } from './screens/products.js?v=450';
-import { renderManager, managerMeta } from './screens/manager.js?v=450';
-import { renderProcess, processMeta } from './screens/process.js?v=450';
-import { renderReports, reportsMeta } from './screens/reports.js?v=450';
-import { renderBackup, backupMeta } from './screens/backup.js?v=450';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=450';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=450';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=450';
-import { renderAccounts, accountsMeta } from './screens/accounts.js?v=450';
-import { renderLots, lotsMeta } from './screens/lots.js?v=450';
-import { renderInventory, inventoryMeta } from './screens/inventory.js?v=450';
-import { renderProductCatalog, productCatalogMeta } from './screens/product-catalog.js?v=450';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=450';
-import { initIOSInstallPrompt } from './ios-install.js?v=450';
-import { initNetworkCheck } from './network.js?v=450';
-import { registerServiceWorker } from './sw-register.js?v=450';
-import { APP_VERSION } from './version.js?v=450';
-import { showToast } from './utils.js?v=450';
-import { getCurrentUserRole, getCurrentWorkspaceAccess } from './auth.js?v=450';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=450';
-import './modal.js?v=450';
+import { initDB } from './db.js?v=451';
+import { renderHome, homeMeta } from './screens/home.js?v=451';
+import { renderProducts, productsMeta } from './screens/products.js?v=451';
+import { renderManager, managerMeta } from './screens/manager.js?v=451';
+import { renderProcess, processMeta } from './screens/process.js?v=451';
+import { renderReports, reportsMeta } from './screens/reports.js?v=451';
+import { renderBackup, backupMeta } from './screens/backup.js?v=451';
+import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=451';
+import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=451';
+import { renderHaccp, haccpMeta } from './screens/haccp.js?v=451';
+import { renderAccounts, accountsMeta } from './screens/accounts.js?v=451';
+import { renderLots, lotsMeta } from './screens/lots.js?v=451';
+import { renderInventory, inventoryMeta } from './screens/inventory.js?v=451';
+import { renderProductCatalog, productCatalogMeta } from './screens/product-catalog.js?v=451';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=451';
+import { initIOSInstallPrompt } from './ios-install.js?v=451';
+import { initNetworkCheck } from './network.js?v=451';
+import { registerServiceWorker } from './sw-register.js?v=451';
+import { APP_VERSION } from './version.js?v=451';
+import { showToast } from './utils.js?v=451';
+import { getCurrentUserRole, getCurrentWorkspaceAccess } from './auth.js?v=451';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=451';
+import './modal.js?v=451';
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
@@ -261,10 +261,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=450');
+  const { getValidSession } = await import('./auth.js?v=451');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=450');
+    const { renderLoginGate } = await import('./screens/login.js?v=451');
     renderLoginGate(() => startApp());
     return;
   }
@@ -279,11 +279,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=450');
+        const { forceAppUpdate } = await import('./sw-register.js?v=451');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=450').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=451').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -307,14 +307,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=450');
+    } = await import('./supabase-sync.js?v=451');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=450');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=451');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 

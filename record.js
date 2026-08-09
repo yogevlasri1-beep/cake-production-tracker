@@ -209,12 +209,17 @@ function editEntry(id, entries, productMap, container) {
   const entry = entries.find((e) => e.id === Number(id));
   const p = productMap.get(entry.productId);
   const isKg = productRecordUsesKg(p);
+  const entryDate = String(entry.date || '').slice(0, 10);
   openModal({
     title: 'עריכת רישום',
     bodyHTML: `
       <div class="form-group">
         <label>מוצר</label>
         <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
+      </div>
+      <div class="form-group">
+        <label for="edit-date">תאריך יצור</label>
+        <input type="date" id="edit-date" value="${escapeHtml(entryDate)}" required>
       </div>
       <div class="form-group">
         <label for="edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
@@ -228,7 +233,11 @@ function editEntry(id, entries, productMap, container) {
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('edit-save').addEventListener('click', async () => {
     try {
-      await updateProductionEntry(entry.id, { quantity: document.getElementById('edit-qty').value });
+      const date = document.getElementById('edit-date')?.value;
+      await updateProductionEntry(entry.id, {
+        date,
+        quantity: document.getElementById('edit-qty').value,
+      });
       closeModal();
       showToast('עודכן ✓');
       renderRecord(container);

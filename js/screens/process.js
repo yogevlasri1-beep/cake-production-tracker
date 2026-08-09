@@ -28,10 +28,10 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=450';
+} from '../db.js?v=451';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=450').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=451').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -74,7 +74,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=450');
+    } = await import('../inventory-db.js?v=451');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -115,7 +115,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=450');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=451');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -141,7 +141,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=450');
+    } = await import('../inventory-db.js?v=451');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -170,14 +170,14 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=450';
-import { openModal, closeModal } from '../modal.js?v=450';
-import { requestAutoBackupNow } from '../backup-service.js?v=450';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=450';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=450';
-import { materialMatchesSearch } from '../kitchen-db.js?v=450';
-import { getCurrentUserRole } from '../auth.js?v=450';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=450';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=451';
+import { openModal, closeModal } from '../modal.js?v=451';
+import { requestAutoBackupNow } from '../backup-service.js?v=451';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=451';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=451';
+import { materialMatchesSearch } from '../kitchen-db.js?v=451';
+import { getCurrentUserRole } from '../auth.js?v=451';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=451';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -2009,8 +2009,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=450');
-    const { db } = await import('../db.js?v=450');
+    const { getRecipe } = await import('../kitchen-db.js?v=451');
+    const { db } = await import('../db.js?v=451');
     const blocks = [];
 
     for (const row of rows) {
@@ -2835,7 +2835,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=450');
+    const kitchen = await import('../kitchen-db.js?v=451');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3855,12 +3855,17 @@ function bindRunProductionPanels(container, run, productionCtx) {
       if (!entry) return;
       const p = productMap.get(entry.productId);
       const isKg = productRecordUsesKg(p);
+      const entryDate = String(entry.date || '').slice(0, 10);
       openModal({
         title: 'עריכת רישום ייצור',
         bodyHTML: `
           <div class="form-group">
             <label>מוצר</label>
             <input type="text" value="${escapeHtml(p?.name || '')}" disabled>
+          </div>
+          <div class="form-group">
+            <label for="flow-edit-date">תאריך יצור</label>
+            <input type="date" id="flow-edit-date" value="${escapeHtml(entryDate)}" required>
           </div>
           <div class="form-group">
             <label for="flow-edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
@@ -3873,7 +3878,11 @@ function bindRunProductionPanels(container, run, productionCtx) {
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
       document.getElementById('flow-edit-save')?.addEventListener('click', async () => {
         try {
-          await updateProductionEntry(entryId, { quantity: document.getElementById('flow-edit-qty').value });
+          const date = document.getElementById('flow-edit-date')?.value;
+          await updateProductionEntry(entryId, {
+            date,
+            quantity: document.getElementById('flow-edit-qty').value,
+          });
           closeModal();
           showToast('עודכן ✓');
           container.dataset.runId = String(run.id);
