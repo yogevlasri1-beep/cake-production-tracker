@@ -4477,6 +4477,68 @@ button.product-composition-recipe-link:hover {
   border-top: 1px dashed var(--border);
 }
 
+.product-comp-pick-list {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2, #f8fafc);
+}
+
+.product-comp-pick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.product-comp-pick-row:last-of-type {
+  border-bottom: 0;
+}
+
+.product-comp-pick-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1 1 180px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.product-comp-pick-name {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.product-comp-pick-qty-wrap input {
+  width: 84px;
+}
+
+.product-comp-qty-unit,
+.product-comp-weight-unit,
+.product-comp-pick-unit,
+.product-add-recipe-unit,
+.product-add-portion-unit {
+  min-width: 72px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: #fff;
+}
+
+.product-composition-other-add {
+  margin-top: 12px;
+}
+
+.product-composition-other-add > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
 .product-add-portion-weight input {
   width: 72px;
 }

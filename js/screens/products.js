@@ -7,7 +7,7 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
   getPortionPresetsForProduct,
-} from '../db.js?v=455';
+} from '../db.js?v=456';
 import {
   getProductDetail,
   buildProductProfileCompleteness,
@@ -32,12 +32,13 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=455';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=455';
-import { openModal, closeModal } from '../modal.js?v=455';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=455';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=455';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=455';
+  portionMaterialDefaultWeightGrams,
+} from '../kitchen-db.js?v=456';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=456';
+import { openModal, closeModal } from '../modal.js?v=456';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=456';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=456';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=456';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -593,7 +594,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=455');
+    const { navigate } = await import('../app.js?v=456');
     navigate('backup');
   });
 
@@ -788,17 +789,128 @@ function formatCompositionKg(grams) {
   return `${formatDecimal(grams / 1000)} ק"ג`;
 }
 
-function gramsToKgInput(grams) {
+function formatCompositionWeightLabel(grams) {
+  if (!grams || grams <= 0) return '—';
+  const g = Math.round(Number(grams));
+  if (g >= 1000 && g % 1000 === 0) return `${formatDecimal(g / 1000)} ק"ג`;
+  if (g >= 1000) return `${g} גרם (${formatDecimal(g / 1000)} ק"ג)`;
+  return `${g} גרם`;
+}
+
+function gramsToQtyInput(grams, unit = 'g') {
   if (grams == null || grams === '' || Number(grams) <= 0) return '';
-  return formatDecimal(Number(grams) / 1000);
+  const g = Number(grams);
+  if (unit === 'kg') return formatDecimal(g / 1000);
+  return String(Math.round(g));
+}
+
+function parseCompositionQtyInput(val, unit = 'g') {
+  const trimmed = String(val ?? '').trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (unit === 'kg') return Math.round(n * 1000);
+  return Math.round(n);
+}
+
+/** תאימות לאחור — קלט ישן בק"ג */
+function gramsToKgInput(grams) {
+  return gramsToQtyInput(grams, 'kg');
 }
 
 function parseCompositionKgInput(val) {
-  const trimmed = String(val ?? '').trim();
-  if (!trimmed) return null;
-  const kg = Number(trimmed);
-  if (!Number.isFinite(kg) || kg <= 0) return null;
-  return Math.round(kg * 1000);
+  return parseCompositionQtyInput(val, 'kg');
+}
+
+function compositionUnitSelectHTML(selected = 'g', className = 'product-comp-qty-unit') {
+  const u = selected === 'kg' ? 'kg' : 'g';
+  return `<select class="${className}" aria-label="יחידת משקל">
+    <option value="g"${u === 'g' ? ' selected' : ''}>גרם</option>
+    <option value="kg"${u === 'kg' ? ' selected' : ''}>ק"ג</option>
+  </select>`;
+}
+
+/**
+ * מועמדים להוספה להרכב: מתכונים ומנות שמשויכות למוצר ועדיין לא בהרכב.
+ */
+function buildLinkedCompositionCandidates({
+  linkedRecipes = [],
+  portionPresets = [],
+  portionMaterials = [],
+  allRecipes = [],
+  usedRecipeIds,
+  usedPortionIds,
+}) {
+  const items = [];
+  const seenRecipe = new Set();
+  const seenPortion = new Set();
+  const recipeById = new Map((allRecipes || []).map((r) => [Number(r.id), r]));
+  const matById = new Map((portionMaterials || []).map((m) => [Number(m.id), m]));
+
+  for (const r of linkedRecipes || []) {
+    const rid = Number(r.id);
+    if (!rid || usedRecipeIds.has(rid) || seenRecipe.has(rid)) continue;
+    seenRecipe.add(rid);
+    const full = recipeById.get(rid) || r;
+    const g = recipeTotalWeightGrams(full.ingredients || r.ingredients);
+    items.push({
+      key: `recipe:${rid}`,
+      kind: 'recipe',
+      recipeId: rid,
+      name: r.name || full.name || 'מתכון',
+      defaultGrams: g > 0 ? g : null,
+      badge: 'מתכון',
+    });
+  }
+
+  for (const p of portionPresets || []) {
+    const mid = Number(p.sourceRawMaterialId) || 0;
+    const rid = Number(p.sourceRecipeId) || 0;
+    if (mid) {
+      if (usedPortionIds.has(mid) || seenPortion.has(mid)) continue;
+      const mat = matById.get(mid);
+      if (!mat?.isPortion) continue;
+      seenPortion.add(mid);
+      let defaultGrams = portionMaterialDefaultWeightGrams(mat);
+      const w = Number(p.weight);
+      if (Number.isFinite(w) && w > 0) {
+        const unit = String(p.weightUnit || 'ק"ג').toLocaleLowerCase('he');
+        defaultGrams = (unit.includes('גרם') || unit === 'g' || unit === 'gr')
+          ? Math.round(w)
+          : Math.round(w * 1000);
+      }
+      items.push({
+        key: `portion:${mid}`,
+        kind: 'portion',
+        rawMaterialId: mid,
+        name: p.name || mat.name || 'מנה',
+        defaultGrams: defaultGrams > 0 ? defaultGrams : null,
+        badge: 'מנה',
+      });
+      continue;
+    }
+    if (rid) {
+      if (usedRecipeIds.has(rid) || seenRecipe.has(rid)) continue;
+      seenRecipe.add(rid);
+      const full = recipeById.get(rid);
+      const g = recipeTotalWeightGrams(full?.ingredients);
+      items.push({
+        key: `recipe:${rid}`,
+        kind: 'recipe',
+        recipeId: rid,
+        name: p.name || full?.name || p.recipeName || 'מתכון',
+        defaultGrams: g > 0 ? g : null,
+        badge: 'מנה·מתכון',
+      });
+    }
+  }
+
+  items.sort((a, b) => {
+    const kindCmp = (a.kind === 'recipe' ? 0 : 1) - (b.kind === 'recipe' ? 0 : 1);
+    if (kindCmp !== 0) return kindCmp;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'he');
+  });
+  return items;
 }
 
 function bindProductDetailOpen(container) {
@@ -827,7 +939,6 @@ function buildProductDetailHTML(detail, {
   const usedPortionIds = new Set(components.filter((c) => c.kind === 'portion').map((c) => c.rawMaterialId));
   const availableRecipes = allRecipes.filter((r) => !usedRecipeIds.has(r.id));
   const availablePortions = (portionMaterials || []).filter((m) => !usedPortionIds.has(m.id));
-  const quickAddRecipes = linkedRecipes.filter((r) => !usedRecipeIds.has(r.id));
   const allergenIds = sanitizeProductAllergenIds(detail.allergenIds ?? product.allergens);
   const allergensMode = sanitizeProductAllergensMode(detail.allergensMode ?? product.allergensMode);
   const computedAllergenIds = sanitizeProductAllergenIds(detail.computedAllergens?.allergenIds);
@@ -859,28 +970,28 @@ function buildProductDetailHTML(detail, {
     ? components.map((comp) => {
       if (comp.kind === 'portion') {
         const defaultG = comp.portionDefaultGrams || 0;
-        const weightKg = gramsToKgInput(comp.weightGrams);
-        const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
+        const weightVal = gramsToQtyInput(comp.weightGrams, 'g');
+        const placeholderG = defaultG > 0 ? String(Math.round(defaultG)) : '';
         return `
         <div class="product-composition-row product-composition-row--portion" data-component-id="${comp.id}" data-kind="portion">
           <div class="product-composition-main">
             <span class="product-composition-name">${escapeHtml(comp.material?.name || 'מנה')}
               <span class="product-composition-kind-badge">מנה</span>
             </span>
-            <span class="product-composition-meta">ברירת מחדל: ${formatCompositionKg(defaultG)} · חומר גלם</span>
+            <span class="product-composition-meta">ברירת מחדל: ${formatCompositionWeightLabel(defaultG)} · חומר גלם</span>
           </div>
           <label class="product-composition-weight">
-            <span>ק"ג</span>
-            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="portion" min="0.001" step="0.001"
-              value="${weightKg}" placeholder="${placeholderKg}">
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="portion" min="0.001" step="any"
+              value="${weightVal}" placeholder="${placeholderG}">
+            ${compositionUnitSelectHTML('g', 'product-comp-weight-unit')}
           </label>
           <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
           <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" data-kind="portion" title="הסר">🗑</button>
         </div>`;
       }
       const defaultG = comp.recipeTotalGrams || 0;
-      const weightKg = gramsToKgInput(comp.weightGrams);
-      const placeholderKg = defaultG > 0 ? formatDecimal(defaultG / 1000) : '';
+      const weightVal = gramsToQtyInput(comp.weightGrams, 'g');
+      const placeholderG = defaultG > 0 ? String(Math.round(defaultG)) : '';
       const recipeId = Number(comp.recipeId || comp.recipe?.id) || '';
       return `
         <div class="product-composition-row" data-component-id="${comp.id}" data-kind="recipe">
@@ -891,30 +1002,57 @@ function buildProductDetailHTML(detail, {
     : escapeHtml(comp.recipe?.name || 'מתכון')}
               <span class="product-composition-kind-badge product-composition-kind-badge--recipe">מתכון</span>
             </span>
-            <span class="product-composition-meta">בסיס: ${formatCompositionKg(defaultG)}</span>
+            <span class="product-composition-meta">בסיס: ${formatCompositionWeightLabel(defaultG)}</span>
           </div>
           <label class="product-composition-weight">
-            <span>ק"ג</span>
-            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="recipe" min="0.001" step="0.001"
-              value="${weightKg}" placeholder="${placeholderKg}">
+            <input type="number" class="product-comp-weight-input" data-id="${comp.id}" data-kind="recipe" min="0.001" step="any"
+              value="${weightVal}" placeholder="${placeholderG}">
+            ${compositionUnitSelectHTML('g', 'product-comp-weight-unit')}
           </label>
           <span class="product-composition-cost" title="עלות ספק">${formatMoney(comp.supplierCost)}</span>
           <button type="button" class="btn btn-danger btn-sm product-comp-remove" data-id="${comp.id}" data-kind="recipe" title="הסר">🗑</button>
         </div>`;
     }).join('')
-    : '<p class="recipe-sheet-empty">אין רכיבים — הוסף מתכון או מנה מהרשימה</p>';
+    : '<p class="recipe-sheet-empty">אין רכיבים — סמן מתכונים/מנות משויכות והוסף להרכב</p>';
 
-  const quickAddBanner = !components.length && quickAddRecipes.length
-    ? `<div class="product-detail-quick-add">
-        <p>מתכונים מקושרים למוצר:</p>
-        <div class="product-detail-quick-add-btns">
-          ${quickAddRecipes.map((r) => {
-            const g = recipeTotalWeightGrams(r.ingredients);
-            return `<button type="button" class="btn btn-secondary btn-sm product-quick-add-recipe" data-recipe-id="${r.id}" data-weight="${g || ''}">+ ${escapeHtml(r.name)}${g ? ` (${formatCompositionKg(g)})` : ''}</button>`;
-          }).join('')}
-        </div>
+  const linkedCandidates = buildLinkedCompositionCandidates({
+    linkedRecipes,
+    portionPresets,
+    portionMaterials,
+    allRecipes,
+    usedRecipeIds,
+    usedPortionIds,
+  });
+
+  const linkedPickList = linkedCandidates.length
+    ? `<div class="product-comp-pick-list" id="product-comp-pick-list">
+        <p class="form-hint" style="margin:0 0 8px">משויך למוצר — סמן, הזן כמות (ברירת מחדל: גרם) והוסף:</p>
+        ${linkedCandidates.map((item) => {
+    const defG = item.defaultGrams > 0 ? item.defaultGrams : null;
+    const qtyVal = defG ? gramsToQtyInput(defG, 'g') : '';
+    return `
+          <div class="product-comp-pick-row" data-pick-key="${escapeHtml(item.key)}" data-kind="${item.kind}"
+            data-recipe-id="${item.recipeId || ''}" data-material-id="${item.rawMaterialId || ''}"
+            data-default-grams="${defG || ''}">
+            <label class="product-comp-pick-check">
+              <input type="checkbox" class="product-comp-pick-cb" value="${escapeHtml(item.key)}">
+              <span class="product-comp-pick-name">${escapeHtml(item.name)}
+                <span class="product-composition-kind-badge${item.kind === 'recipe' ? ' product-composition-kind-badge--recipe' : ''}">${escapeHtml(item.badge)}</span>
+              </span>
+            </label>
+            <label class="product-composition-weight product-comp-pick-qty-wrap">
+              <input type="number" class="product-comp-pick-qty" min="0.001" step="any"
+                value="${qtyVal}" placeholder="${defG ? String(Math.round(defG)) : 'כמות'}"
+                aria-label="כמות ל${escapeHtml(item.name)}">
+              ${compositionUnitSelectHTML('g', 'product-comp-pick-unit')}
+            </label>
+          </div>`;
+  }).join('')}
+        <button type="button" class="btn btn-primary btn-sm" id="product-comp-pick-add" style="margin-top:8px">+ הוסף מסומנים להרכב</button>
       </div>`
-    : '';
+    : `<p class="form-hint">אין מתכונים/מנות משויכות פנויים להוספה — שייך מתכון למוצר או הגדר מנה במתכונים.</p>`;
+
+  const quickAddBanner = '';
 
   const linkedRecipesChips = linkedRecipes.length
     ? `<div class="product-detail-linked-recipes">
@@ -1064,8 +1202,9 @@ function buildProductDetailHTML(detail, {
 
   const portionOptions = availablePortions.length
     ? availablePortions.map((m) => {
-      const defaultKg = Number(m.portionWeightKg) > 0 ? formatDecimal(m.portionWeightKg) : '';
-      return `<option value="${m.id}" data-weight-kg="${defaultKg}">${escapeHtml(m.name)}${defaultKg ? ` (${defaultKg} ק"ג)` : ''}</option>`;
+      const defaultG = portionMaterialDefaultWeightGrams(m);
+      const labelG = defaultG > 0 ? `${Math.round(defaultG)} גרם` : '';
+      return `<option value="${m.id}" data-weight-grams="${defaultG || ''}">${escapeHtml(m.name)}${labelG ? ` (${labelG})` : ''}</option>`;
     }).join('')
     : '<option value="" disabled>— אין מנות מחומרי גלם —</option>';
 
@@ -1146,27 +1285,34 @@ function buildProductDetailHTML(detail, {
       <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="הרכב מוצר">
         <summary class="recipe-sheet-section-title product-detail-collapse-summary">הרכב מוצר · מתכונים ומנות</summary>
         ${linkedRecipesChips}
-        ${quickAddBanner}
         <div class="product-composition-list">${compositionRows}</div>
-        <div class="product-composition-add">
-          <select id="product-add-recipe-select" class="product-add-recipe-select">
-            <option value="">— בחר מתכון —</option>
-            ${recipeOptions}
-          </select>
-          <button type="button" class="btn btn-secondary btn-sm" id="product-add-recipe-btn">+ הוסף</button>
-        </div>
-        <div class="product-composition-add product-composition-add--portion">
-          <select id="product-add-portion-select" class="product-add-recipe-select">
-            <option value="">— בחר מנה —</option>
-            ${portionOptions}
-          </select>
-          <label class="product-composition-weight product-add-portion-weight">
-            <span>ק"ג</span>
-            <input type="number" id="product-add-portion-weight" min="0.001" step="0.001" placeholder="משקל">
-          </label>
-          <button type="button" class="btn btn-secondary btn-sm" id="product-add-portion-btn">+ הוסף מנה</button>
-        </div>
-        <p class="form-hint" style="margin-top:8px">מנות מחומרי גלם — רק חומרים שסומנו כמנה בספקים · לחץ על שם מתכון לפתיחה</p>
+        ${linkedPickList}
+        <details class="product-composition-other-add">
+          <summary>הוסף מתכון/מנה אחרים (לא מהרשימה המשויכת)</summary>
+          <div class="product-composition-add" style="margin-top:8px">
+            <select id="product-add-recipe-select" class="product-add-recipe-select">
+              <option value="">— בחר מתכון —</option>
+              ${recipeOptions}
+            </select>
+            <label class="product-composition-weight">
+              <input type="number" id="product-add-recipe-qty" min="0.001" step="any" placeholder="כמות">
+              ${compositionUnitSelectHTML('g', 'product-add-recipe-unit')}
+            </label>
+            <button type="button" class="btn btn-secondary btn-sm" id="product-add-recipe-btn">+ הוסף מתכון</button>
+          </div>
+          <div class="product-composition-add product-composition-add--portion">
+            <select id="product-add-portion-select" class="product-add-recipe-select">
+              <option value="">— בחר מנה —</option>
+              ${portionOptions}
+            </select>
+            <label class="product-composition-weight product-add-portion-weight">
+              <input type="number" id="product-add-portion-weight" min="0.001" step="any" placeholder="כמות">
+              ${compositionUnitSelectHTML('g', 'product-add-portion-unit')}
+            </label>
+            <button type="button" class="btn btn-secondary btn-sm" id="product-add-portion-btn">+ הוסף מנה</button>
+          </div>
+        </details>
+        <p class="form-hint" style="margin-top:8px">כמות נשמרת בגרמים · ברירת מחדל להזנה: גרם · לחץ על שם מתכון לפתיחה</p>
       </details>
 
       ${allergensSection}
@@ -1351,10 +1497,12 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   }
 
   document.querySelectorAll('.product-comp-weight-input').forEach((input) => {
-    input.addEventListener('change', async () => {
+    const saveWeight = async () => {
       const id = Number(input.dataset.id);
       const kind = input.dataset.kind || 'recipe';
-      const grams = parseCompositionKgInput(input.value);
+      const unit = input.closest('.product-composition-weight')
+        ?.querySelector('.product-comp-weight-unit')?.value || 'g';
+      const grams = parseCompositionQtyInput(input.value, unit);
       try {
         if (kind === 'portion') {
           await updateProductPortionComponent(id, { weightGrams: grams });
@@ -1365,7 +1513,21 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
       } catch (err) {
         showToast(err.message || 'שגיאה');
       }
+    };
+    input.addEventListener('change', saveWeight);
+  });
+
+  document.querySelectorAll('.product-comp-weight-unit').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const wrap = sel.closest('.product-composition-weight');
+      const input = wrap?.querySelector('.product-comp-weight-input');
+      if (!input) return;
+      const prevUnit = sel.dataset.prevUnit || 'g';
+      const grams = parseCompositionQtyInput(input.value, prevUnit);
+      sel.dataset.prevUnit = sel.value;
+      if (grams != null) input.value = gramsToQtyInput(grams, sel.value);
     });
+    sel.dataset.prevUnit = sel.value || 'g';
   });
 
   document.querySelectorAll('.product-comp-remove').forEach((btn) => {
@@ -1385,28 +1547,81 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     });
   });
 
-  document.querySelectorAll('.product-quick-add-recipe').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      try {
-        await addProductRecipeComponent({
-          productId,
-          recipeId: Number(btn.dataset.recipeId),
-          weightGrams: btn.dataset.weight || null,
-        });
-        showToast('נוסף');
-        await afterCompositionChange();
-      } catch (err) {
-        showToast(err.message || 'שגיאה');
-      }
+  document.querySelectorAll('.product-comp-pick-unit').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const row = sel.closest('.product-comp-pick-row');
+      const input = row?.querySelector('.product-comp-pick-qty');
+      if (!input) return;
+      const prevUnit = sel.dataset.prevUnit || 'g';
+      const grams = parseCompositionQtyInput(input.value, prevUnit)
+        ?? (Number(row?.dataset.defaultGrams) > 0 ? Number(row.dataset.defaultGrams) : null);
+      sel.dataset.prevUnit = sel.value;
+      if (grams != null) input.value = gramsToQtyInput(grams, sel.value);
     });
+    sel.dataset.prevUnit = sel.value || 'g';
+  });
+
+  document.getElementById('product-comp-pick-add')?.addEventListener('click', async () => {
+    const rows = [...document.querySelectorAll('.product-comp-pick-row')].filter((row) => (
+      row.querySelector('.product-comp-pick-cb')?.checked
+    ));
+    if (!rows.length) {
+      showToast('סמן לפחות מתכון או מנה');
+      return;
+    }
+    const btn = document.getElementById('product-comp-pick-add');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'מוסיף...';
+    }
+    let added = 0;
+    try {
+      for (const row of rows) {
+        const kind = row.dataset.kind;
+        const unit = row.querySelector('.product-comp-pick-unit')?.value || 'g';
+        let grams = parseCompositionQtyInput(row.querySelector('.product-comp-pick-qty')?.value, unit);
+        if (grams == null && Number(row.dataset.defaultGrams) > 0) {
+          grams = Number(row.dataset.defaultGrams);
+        }
+        if (kind === 'portion') {
+          const rawMaterialId = Number(row.dataset.materialId);
+          if (!rawMaterialId) continue;
+          await addProductPortionComponent({
+            productId,
+            rawMaterialId,
+            weightGrams: grams,
+          });
+          added += 1;
+        } else {
+          const recipeId = Number(row.dataset.recipeId);
+          if (!recipeId) continue;
+          await addProductRecipeComponent({
+            productId,
+            recipeId,
+            weightGrams: grams,
+          });
+          added += 1;
+        }
+      }
+      showToast(added ? `נוספו ${added} להרכב ✓` : 'לא נוסף כלום');
+      await afterCompositionChange();
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '+ הוסף מסומנים להרכב';
+      }
+    }
   });
 
   document.getElementById('product-add-recipe-btn')?.addEventListener('click', async () => {
     const sel = document.getElementById('product-add-recipe-select');
     const recipeId = Number(sel?.value);
     if (!recipeId) return showToast('בחר מתכון');
+    const unit = document.querySelector('.product-add-recipe-unit')?.value || 'g';
+    const grams = parseCompositionQtyInput(document.getElementById('product-add-recipe-qty')?.value, unit);
     try {
-      await addProductRecipeComponent({ productId, recipeId });
+      await addProductRecipeComponent({ productId, recipeId, weightGrams: grams });
       showToast('נוסף');
       await afterCompositionChange();
     } catch (err) {
@@ -1416,23 +1631,39 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   const portionSelect = document.getElementById('product-add-portion-select');
   const portionWeightInput = document.getElementById('product-add-portion-weight');
+  const portionUnitSel = document.querySelector('.product-add-portion-unit');
   const syncPortionWeightPlaceholder = () => {
     if (!portionSelect || !portionWeightInput) return;
     const opt = portionSelect.selectedOptions?.[0];
-    const kg = opt?.dataset?.weightKg || '';
-    if (!portionWeightInput.value) portionWeightInput.placeholder = kg || 'משקל';
-    if (kg && !portionWeightInput.value) portionWeightInput.value = kg;
+    const grams = Number(opt?.dataset?.weightGrams) || 0;
+    const unit = portionUnitSel?.value || 'g';
+    if (!portionWeightInput.value && grams > 0) {
+      portionWeightInput.value = gramsToQtyInput(grams, unit);
+    }
+    portionWeightInput.placeholder = grams > 0 ? gramsToQtyInput(grams, unit) : 'כמות';
   };
   portionSelect?.addEventListener('change', () => {
     if (portionWeightInput) portionWeightInput.value = '';
     syncPortionWeightPlaceholder();
   });
+  portionUnitSel?.addEventListener('change', () => {
+    const prev = portionUnitSel.dataset.prevUnit || 'g';
+    const grams = parseCompositionQtyInput(portionWeightInput?.value, prev);
+    portionUnitSel.dataset.prevUnit = portionUnitSel.value;
+    if (grams != null && portionWeightInput) {
+      portionWeightInput.value = gramsToQtyInput(grams, portionUnitSel.value);
+    } else {
+      syncPortionWeightPlaceholder();
+    }
+  });
+  if (portionUnitSel) portionUnitSel.dataset.prevUnit = portionUnitSel.value || 'g';
   syncPortionWeightPlaceholder();
 
   document.getElementById('product-add-portion-btn')?.addEventListener('click', async () => {
     const materialId = Number(portionSelect?.value);
     if (!materialId) return showToast('בחר מנה');
-    const grams = parseCompositionKgInput(portionWeightInput?.value);
+    const unit = portionUnitSel?.value || 'g';
+    const grams = parseCompositionQtyInput(portionWeightInput?.value, unit);
     try {
       await addProductPortionComponent({
         productId,
@@ -1526,8 +1757,8 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     const id = Number(recipeId);
     if (!id) return;
     try {
-      const { requestOpenRecipe } = await import('./recipes.js?v=455');
-      const { navigateToWorkspace } = await import('../app.js?v=455');
+      const { requestOpenRecipe } = await import('./recipes.js?v=456');
+      const { navigateToWorkspace } = await import('../app.js?v=456');
       requestOpenRecipe(id);
       closeModal();
       await navigateToWorkspace('recipes', 'recipes');
@@ -1546,7 +1777,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-share-baking')?.addEventListener('click', async () => {
     try {
-      const { shareBakingForProduct } = await import('./recipes.js?v=455');
+      const { shareBakingForProduct } = await import('./recipes.js?v=456');
       const method = await shareBakingForProduct(productId);
       if (method === 'cancelled') return;
       if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
@@ -1568,7 +1799,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-allergens-recompute')?.addEventListener('click', async () => {
     try {
-      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=455');
+      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=456');
       const computed = await computeProductAllergensFromComposition(productId);
       const ids = new Set(sanitizeProductAllergenIds(computed.allergenIds));
       document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
@@ -1588,7 +1819,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     let allergens = [...document.querySelectorAll('.product-allergen-cb:checked')].map((cb) => cb.value);
     try {
       if (mode === 'auto') {
-        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=455');
+        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=456');
         const computed = await computeProductAllergensFromComposition(productId);
         allergens = sanitizeProductAllergenIds(computed.allergenIds);
       } else {

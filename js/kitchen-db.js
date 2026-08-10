@@ -3002,7 +3002,7 @@ export async function addProductPortionComponent({ productId, rawMaterialId, wei
   const wg = weightGrams != null && weightGrams !== ''
     ? sanitizeQuantity(weightGrams, { allowZero: false })
     : defaultG;
-  if (wg == null || wg <= 0) throw new ValidationError('הגדר משקל מנה (ק"ג)');
+  if (wg == null || wg <= 0) throw new ValidationError('הגדר משקל מנה (גרם או ק"ג)');
   const sortOrder = await nextProductCompositionSortOrder(pid);
   return db.productPortionComponents.add({
     productId: pid,
