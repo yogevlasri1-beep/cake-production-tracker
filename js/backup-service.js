@@ -1,14 +1,14 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=452';
+} from './db.js?v=453';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload,
-} from './backup.js?v=452';
-import { downloadBlob } from './download.js?v=452';
-import { ValidationError } from './validators.js?v=452';
-import { openModal, closeModal } from './modal.js?v=452';
-import { escapeHtml, showToast } from './utils.js?v=452';
+} from './backup.js?v=453';
+import { downloadBlob } from './download.js?v=453';
+import { ValidationError } from './validators.js?v=453';
+import { openModal, closeModal } from './modal.js?v=453';
+import { escapeHtml, showToast } from './utils.js?v=453';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +18,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=452';
+} from './backup-folder-bridge.js?v=453';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -33,7 +33,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=452';
+} from './supabase-backup.js?v=453';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -430,7 +430,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=452');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=453');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);

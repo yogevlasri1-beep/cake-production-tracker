@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=451';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=453';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=451';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=451';
-import { logAuditEvent } from './audit.js?v=451';
-import { markMetaDeleted } from './sync/id-map.js?v=451';
+} from './validators.js?v=453';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=453';
+import { logAuditEvent } from './audit.js?v=453';
+import { markMetaDeleted } from './sync/id-map.js?v=453';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4686,7 +4686,7 @@ export function shouldPreserveMaterialAsSupplierOffer(keep, other) {
  * ממיין חומרים לאיחוד: ספיגה ליעד / הצעת ספק אחת לכל ספק אחר / ספיגה להצעה קיימת.
  * אם ליעד אין ספק — סופגים קודם את ההצעה הראשונה עם מחיר (היעד מקבל ספק+מחיר), והשאר לפי הכלל הרגיל.
  */
-export function classifyMaterialsForMerge(keep, others = []) {
+export function classifyMaterialsForMerge(keep, others = [], { existingOffers = [] } = {}) {
   const absorbIntoKeep = [];
   const preserve = [];
   const absorbIntoOffer = []; // { target, mat }
@@ -4712,6 +4712,12 @@ export function classifyMaterialsForMerge(keep, others = []) {
   const offerBySupplier = new Map();
   const keepSup = Number(workingKeep.supplierId) || 0;
   if (keepSup) offerBySupplier.set(keepSup, workingKeep);
+  // הצעות שכבר תחת אותו שם במחסן (ספקים אחרים) — כדי לא ליצור כפילות ספק אחרי איחוד
+  for (const offer of existingOffers || []) {
+    if (!offer || offer.id === workingKeep.id) continue;
+    const sup = Number(offer.supplierId) || 0;
+    if (sup && !offerBySupplier.has(sup)) offerBySupplier.set(sup, offer);
+  }
 
   for (const mat of queue) {
     if (!shouldPreserveMaterialAsSupplierOffer(workingKeep, mat)) {
@@ -4956,11 +4962,19 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   }
   if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
 
+  const keepNameKey = normalizeMaterialKey(keepMat.name);
+  const otherIds = new Set(others.map((m) => m.id));
+  const existingOffers = (await db.rawMaterials.toArray()).filter((m) => (
+    m.id !== keep
+    && !otherIds.has(m.id)
+    && normalizeMaterialKey(m.name) === keepNameKey
+  ));
+
   const {
     absorbIntoKeep,
     preserve,
     absorbIntoOffer,
-  } = classifyMaterialsForMerge(keepMat, others);
+  } = classifyMaterialsForMerge(keepMat, others, { existingOffers });
 
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
   const fillPatch = materialFieldFillPatch(keepMat, absorbIntoKeep, {
