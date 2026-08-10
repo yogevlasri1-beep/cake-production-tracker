@@ -25,17 +25,17 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=451';
-import { getProducts, getCategories } from '../db.js?v=451';
+} from '../kitchen-db.js?v=452';
+import { getProducts, getCategories } from '../db.js?v=452';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=451';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=451';
-import { openModal, closeModal } from '../modal.js?v=451';
-import { requestAutoBackupNow } from '../backup-service.js?v=451';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=451';
-import { openBarcodeScanner } from '../barcode-scan.js?v=451';
+} from '../supplier-import.js?v=452';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=452';
+import { openModal, closeModal } from '../modal.js?v=452';
+import { requestAutoBackupNow } from '../backup-service.js?v=452';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=452';
+import { openBarcodeScanner } from '../barcode-scan.js?v=452';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -653,49 +653,74 @@ async function mergeDupGroupFromUI(gi, container) {
 
 const MANUAL_MERGE_RENDER_LIMIT = 60;
 
+/**
+ * איחוד נבחרים — אותה רשימה כמו מחסן (כרטיס אחד לשם חומר), לא כל שורת ספק בנפרד.
+ * אחרי איחוד: שמות שנבלעו נעלמים מהמחסן; הצעות ספק נשארות תחת שם היעד בלבד.
+ */
 async function openMergeSelectedMaterialsModal(container) {
-  const [materials, suppliers] = await Promise.all([getRawMaterials(), getSuppliers()]);
-  if (materials.length < 2) {
-    showToast('צריך לפחות 2 חומרי גלם לאיחוד');
+  const catId = container.dataset.matCat ? Number(container.dataset.matCat) : null;
+  const [catalog, categories] = await Promise.all([
+    getMasterMaterialsList(catId || undefined),
+    getSupplierCategories(),
+  ]);
+  if (catalog.length < 2) {
+    showToast(catId
+      ? 'בקטגוריה הזו יש פחות מ־2 חומרים לאיחוד — נסה «הכל» או קטגוריה אחרת'
+      : 'צריך לפחות 2 חומרי גלם לאיחוד');
     return;
   }
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
-  const sorted = [...materials].sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
-  const matById = new Map(sorted.map((m) => [m.id, m]));
+  const catName = catId
+    ? (categories.find((c) => c.id === catId)?.name || '')
+    : '';
+  const catalogByKey = new Map(catalog.map((item) => [item.key, item]));
+  const sorted = [...catalog];
 
-  // נשמר עצמאית מה-DOM: בחירה לא הולכת לאיבוד כשמסננים עם חיפוש (הבחור נעלם מהרשימה
-  // המסוננת אך נשאר "מסומן" — לפני התיקון הזה חיפוש שני היה מוחק בחירה קודמת בשקט).
-  const selectedIds = new Set();
-  let keepId = null;
+  const selectedKeys = new Set();
+  let keepKey = null;
 
-  function renderOptionRow(m) {
-    const checked = selectedIds.has(m.id);
+  function catalogItemMeta(item) {
+    const best = pickBestOffer(item.offers);
+    const parts = [];
+    parts.push(item.supplierCount ? `${item.supplierCount} ספקים` : 'ללא ספק');
+    const price = formatMaterialPriceMeta(best);
+    if (price && price !== '—') parts.push(price);
+    if (item.recipeDefaultId) parts.push('★ ברירת מחדל');
+    return parts.join(' · ');
+  }
+
+  function keepIdForItem(item) {
+    if (!item) return null;
+    return item.recipeDefaultId || item.primaryId;
+  }
+
+  function renderOptionRow(item) {
+    const checked = selectedKeys.has(item.key);
     return `
-      <div class="merge-product-option manual-merge-option manual-mat-merge-option">
+      <div class="merge-product-option manual-merge-option manual-mat-merge-option" data-catalog-key="${escapeHtml(item.key)}">
         <label class="manual-mat-merge-select">
-          <input type="checkbox" class="manual-mat-merge-check" value="${m.id}"${checked ? ' checked' : ''}>
+          <input type="checkbox" class="manual-mat-merge-check" value="${escapeHtml(item.key)}"${checked ? ' checked' : ''}>
           <span class="manual-mat-merge-option-body">
-            <strong>${escapeHtml(m.name)}</strong>
-            <span class="merge-product-meta">
-              ${escapeHtml(m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ללא ספק')}
-              · ${formatMaterialPriceMeta(m)}
-              ${m.isRecipeDefault ? ' · ★ ברירת מחדל' : ''}
-            </span>
+            <strong>${escapeHtml(item.name)}</strong>
+            <span class="merge-product-meta">${escapeHtml(catalogItemMeta(item))}</span>
           </span>
         </label>
-        <label class="manual-mat-merge-keep" title="רשומה שתישאר">
-          <input type="radio" name="manual-mat-keep" class="manual-mat-keep-radio" value="${m.id}"${checked ? '' : ' disabled'}${keepId === m.id ? ' checked' : ''}>
+        <label class="manual-mat-merge-keep" title="שם החומר שיישאר במחסן">
+          <input type="radio" name="manual-mat-keep" class="manual-mat-keep-radio" value="${escapeHtml(item.key)}"${checked ? '' : ' disabled'}${keepKey === item.key ? ' checked' : ''}>
           <span>יעד</span>
         </label>
       </div>`;
   }
 
+  function filterCatalogForMerge(search) {
+    const q = String(search || '').trim().toLocaleLowerCase('he');
+    if (!q) return sorted;
+    return filterCatalogItems(sorted, q);
+  }
+
   function renderOptions(search = '') {
-    const q = search.trim().toLocaleLowerCase('he');
-    const selected = sorted.filter((m) => selectedIds.has(m.id));
-    const matches = sorted.filter((m) => !selectedIds.has(m.id) && materialMatchesSearch(m, q, {
-      supplierName: m.supplierId ? (supMap.get(m.supplierId) || '') : '',
-    }));
+    const matchesAll = filterCatalogForMerge(search);
+    const selected = sorted.filter((item) => selectedKeys.has(item.key));
+    const matches = matchesAll.filter((item) => !selectedKeys.has(item.key));
     const shown = matches.slice(0, MANUAL_MERGE_RENDER_LIMIT);
     const hiddenCount = matches.length - shown.length;
     if (!selected.length && !shown.length) return '<p class="form-hint">אין תוצאות</p>';
@@ -706,7 +731,7 @@ async function openMergeSelectedMaterialsModal(container) {
           ${selected.map(renderOptionRow).join('')}
         </div>` : ''}
       ${shown.length ? `
-        ${selected.length ? '<p class="form-hint manual-mat-merge-group-label">תוצאות</p>' : ''}
+        ${selected.length ? '<p class="form-hint manual-mat-merge-group-label">תוצאות (כמו במחסן)</p>' : ''}
         ${shown.map(renderOptionRow).join('')}` : ''}
       ${hiddenCount > 0
     ? `<p class="form-hint manual-mat-merge-more-hint">+${hiddenCount} נוספים · דייקו את החיפוש כדי להציג</p>`
@@ -718,13 +743,13 @@ async function openMergeSelectedMaterialsModal(container) {
     modalClass: 'modal-merge-selected-mats',
     bodyHTML: `
       <p class="form-hint" style="margin-top:0;line-height:1.5">
-        בחר 2 חומרים או יותר — גם עם שמות שונים. הרשומה המסומנת כ«יעד» קובעת את <strong>שם המוצר</strong>;
-        שמות אחרים הופכים ל<strong>מילים נרדפות</strong>.
-        ספק אחר עם מחיר נשמר כ<strong>הצעה ברשימת הספקים</strong> (כולל מחיר, כמות באריזה ופרטים נוספים).
-        בלי מחיר — נספג ליעד. המתכון לא משתנה (לא מוסיפים/מורידים חומרים); ברירת מחדל למתכונים נשמרת.
+        הרשימה זהה ל<strong>מחסן</strong> — חומר אחד לשם (לא כל ספק בנפרד).
+        ${catName ? `מוצג לפי קטגוריה: <strong>${escapeHtml(catName)}</strong>.` : 'מוצג: כל הקטגוריות.'}
+        «יעד» = השם שישאר במחסן; שמות אחרים יהפכו למילים נרדפות וייעלמו מהרשימה.
+        ספק אחר עם מחיר נשמר כהצעה <em>בתוך</em> חומר היעד (לא כרטיס נפרד במחסן).
       </p>
       <div class="form-group" style="margin-bottom:8px">
-        <input type="search" id="manual-mat-merge-search" placeholder="חיפוש לפי שם / מילה נרדפת / ספק..." autocomplete="off">
+        <input type="search" id="manual-mat-merge-search" placeholder="חיפוש כמו במחסן..." autocomplete="off">
       </div>
       <div class="manual-merge-list" id="manual-mat-merge-list">
         ${renderOptions()}
@@ -739,38 +764,29 @@ async function openMergeSelectedMaterialsModal(container) {
   const previewEl = document.getElementById('manual-mat-merge-preview');
   const searchEl = document.getElementById('manual-mat-merge-search');
 
-  function selectedMats() {
-    return [...selectedIds].map((id) => matById.get(id)).filter(Boolean);
+  function selectedItems() {
+    return [...selectedKeys].map((key) => catalogByKey.get(key)).filter(Boolean);
   }
 
   function updatePreview() {
     if (!previewEl) return;
-    const mats = selectedMats();
-    if (mats.length < 2) {
-      previewEl.textContent = 'יש לבחור לפחות 2 חומרים';
+    const items = selectedItems();
+    if (items.length < 2) {
+      previewEl.textContent = 'יש לבחור לפחות 2 חומרים מהמחסן';
       return;
     }
-    const keep = mats.find((m) => m.id === keepId) || mats[0];
-    const others = mats.filter((m) => m.id !== keep.id);
-    const { absorbIntoKeep, preserve, absorbIntoOffer } = classifyMaterialsForMerge(keep, others);
-    const syns = buildMergedMaterialSynonyms(keep, others);
-    const synText = syns.length ? syns.join(' · ') : '—';
-    const keepSupName = keep.supplierId ? (supMap.get(keep.supplierId) || 'ספק') : 'ללא ספק';
-    const preserveNames = preserve.map((m) => {
-      const s = m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ספק';
-      const pkg = m.packageWeightGrams
-        ? ` · אריזה ${Number(m.packageWeightGrams) / 1000} ק"ג`
-        : '';
-      return `${m.name} (${s}${pkg})`;
-    });
-    const absorbCount = absorbIntoKeep.length + absorbIntoOffer.length;
-    previewEl.innerHTML = `יעד: <strong>${escapeHtml(keep.name)}</strong> · ${escapeHtml(keepSupName)}
-      · מילים נרדפות: ${escapeHtml(synText)}
+    const keepItem = items.find((i) => i.key === keepKey) || items[0];
+    const others = items.filter((i) => i.key !== keepItem.key);
+    const keepMat = keepItem.offers.find((o) => o.id === keepIdForItem(keepItem)) || keepItem.offers[0];
+    const otherMats = others.flatMap((i) => i.offers);
+    const syns = buildMergedMaterialSynonyms(keepMat, otherMats);
+    const synText = syns.length ? syns.join(' · ') : others.map((i) => i.name).join(' · ');
+    const { preserve } = classifyMaterialsForMerge(keepMat, otherMats);
+    previewEl.innerHTML = `יעד במחסן: <strong>${escapeHtml(keepItem.name)}</strong>
+      · ייעלמו מהמחסן: <strong>${escapeHtml(others.map((i) => i.name).join(' · '))}</strong>
+      · מילים נרדפות: ${escapeHtml(synText || '—')}
       ${preserve.length
-    ? `<br>הצעות ספק שיישארו תחת «${escapeHtml(keep.name)}» (זה תקין — אותו חומר, ספקים שונים): ${escapeHtml(preserveNames.join(' · '))}`
-    : ''}
-      ${absorbCount
-    ? `<br>יאוחדו ליעד / להצעה קיימת (יימחקו מהרשימה): ${absorbCount}`
+    ? `<br>הצעות ספק (${preserve.length}) יישארו <em>בתוך</em> «${escapeHtml(keepItem.name)}» — לא כרטיסים נפרדים`
     : ''}`;
   }
 
@@ -782,13 +798,13 @@ async function openMergeSelectedMaterialsModal(container) {
   function bindList() {
     listEl.querySelectorAll('.manual-mat-merge-check').forEach((cb) => {
       cb.addEventListener('change', () => {
-        const id = Number(cb.value);
+        const key = cb.value;
         if (cb.checked) {
-          selectedIds.add(id);
-          if (!keepId) keepId = id;
+          selectedKeys.add(key);
+          if (!keepKey) keepKey = key;
         } else {
-          selectedIds.delete(id);
-          if (keepId === id) keepId = selectedIds.size ? [...selectedIds][0] : null;
+          selectedKeys.delete(key);
+          if (keepKey === key) keepKey = selectedKeys.size ? [...selectedKeys][0] : null;
         }
         rerenderList();
         updatePreview();
@@ -796,7 +812,7 @@ async function openMergeSelectedMaterialsModal(container) {
     });
     listEl.querySelectorAll('.manual-mat-keep-radio').forEach((radio) => {
       radio.addEventListener('change', () => {
-        keepId = Number(radio.value);
+        keepKey = radio.value;
         updatePreview();
       });
     });
@@ -813,16 +829,26 @@ async function openMergeSelectedMaterialsModal(container) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 
   document.getElementById('confirm-manual-mat-merge')?.addEventListener('click', async () => {
-    const mats = selectedMats();
-    if (mats.length < 2) {
+    const items = selectedItems();
+    if (items.length < 2) {
       showToast('יש לבחור לפחות 2 חומרים');
       return;
     }
-    if (!keepId || !mats.some((m) => m.id === keepId)) {
-      showToast('בחר רשומת יעד');
+    if (!keepKey || !items.some((i) => i.key === keepKey)) {
+      showToast('בחר חומר יעד');
       return;
     }
-    const mergeIds = mats.map((m) => m.id).filter((id) => id !== keepId);
+    const keepItem = items.find((i) => i.key === keepKey);
+    const keepId = keepIdForItem(keepItem);
+    const mergeIds = [];
+    for (const item of items) {
+      if (item.key === keepKey) continue;
+      for (const offer of item.offers) mergeIds.push(offer.id);
+    }
+    if (!keepId || !mergeIds.length) {
+      showToast('אין מה לאחד');
+      return;
+    }
     const btn = document.getElementById('confirm-manual-mat-merge');
     if (btn) {
       btn.disabled = true;
@@ -832,14 +858,12 @@ async function openMergeSelectedMaterialsModal(container) {
       const result = await mergeSelectedRawMaterials(keepId, mergeIds);
       closeModal();
       const preserved = result?.preservedOfferIds?.length || 0;
-      const removed = mergeIds.length - preserved;
-      const keepName = mats.find((m) => m.id === keepId)?.name || '';
-      const parts = [];
-      if (removed > 0) parts.push(`נמחקו ${removed}`);
-      if (preserved > 0) parts.push(`נשמרו ${preserved} הצעות ספק תחת «${keepName}»`);
-      showToast(parts.length ? `אוחד ✓ · ${parts.join(' · ')}` : 'חומרים אוחדו ✓');
+      const removedNames = items.filter((i) => i.key !== keepKey).map((i) => i.name);
+      showToast(preserved
+        ? `אוחד ✓ · «${keepItem.name}» במחסן · נעלמו: ${removedNames.join(' · ')} · ${preserved} הצעות ספק בפנים`
+        : `אוחד ✓ · «${keepItem.name}» במחסן · נעלמו: ${removedNames.join(' · ')}`);
       requestAutoBackupNow().catch(() => {});
-      renderSuppliers(container);
+      await renderSuppliers(container);
     } catch (err) {
       console.error('mergeSelectedRawMaterials failed', err);
       if (btn) {
@@ -2750,7 +2774,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=451');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=452');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2772,7 +2796,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=451');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=452');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2790,7 +2814,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=451');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=452');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

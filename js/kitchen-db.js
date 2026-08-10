@@ -4923,7 +4923,9 @@ async function alignCrossSupplierMaterialOffer(keepMat, fromMat, { clearRecipeDe
   if (clearRecipeDefault && fromMat.isRecipeDefault) {
     patch.isRecipeDefault = false;
   }
-  if (!fromMat.supplierCategoryId && keepMat.supplierCategoryId) {
+  // אותה קטגוריה כמו היעד — כדי שלא יופיע כרטיס נפרד במחסן לפי קטגוריה
+  if (keepMat.supplierCategoryId
+    && Number(fromMat.supplierCategoryId) !== Number(keepMat.supplierCategoryId)) {
     patch.supplierCategoryId = keepMat.supplierCategoryId;
   }
   if (Object.keys(patch).length) {
