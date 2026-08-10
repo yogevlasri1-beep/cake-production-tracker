@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=454';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=455';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=454';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=454';
-import { logAuditEvent } from './audit.js?v=454';
-import { markMetaDeleted } from './sync/id-map.js?v=454';
+} from './validators.js?v=455';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=455';
+import { logAuditEvent } from './audit.js?v=455';
+import { markMetaDeleted } from './sync/id-map.js?v=455';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3110,6 +3110,101 @@ export const PRODUCT_ALLERGENS = [
   { id: 'sulphites', label: 'סולפיטים' },
 ];
 
+/** תנאי אחסון למוצר — בחירה מרשימה בפרופיל */
+export const PRODUCT_STORAGE_CONDITIONS = [
+  { id: 'room', label: 'טמפרטורת חדר' },
+  { id: 'cool', label: 'קירור' },
+  { id: 'frozen', label: 'הקפאה' },
+  { id: 'dry', label: 'מקום יבש' },
+  { id: 'cool_dry', label: 'קירור ומקום יבש' },
+  { id: 'room_dry', label: 'טמפרטורת חדר · יבש' },
+];
+
+/** יחידות חיי מדף */
+export const PRODUCT_SHELF_LIFE_UNITS = [
+  { id: 'day', label: 'ימים' },
+  { id: 'month', label: 'חודשים' },
+  { id: 'year', label: 'שנים' },
+];
+
+export function productStorageConditionLabel(id) {
+  return PRODUCT_STORAGE_CONDITIONS.find((c) => c.id === id)?.label || '';
+}
+
+export function sanitizeProductStorageConditionId(raw) {
+  const id = String(raw || '').trim();
+  if (!id) return '';
+  return PRODUCT_STORAGE_CONDITIONS.some((c) => c.id === id) ? id : '';
+}
+
+export function sanitizeProductShelfLifeUnit(raw) {
+  const id = String(raw || '').trim();
+  return PRODUCT_SHELF_LIFE_UNITS.some((u) => u.id === id) ? id : '';
+}
+
+export function sanitizeProductShelfLifeValue(raw) {
+  if (raw == null || raw === '') return null;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 9999);
+}
+
+export function shelfLifeUnitWord(unit, value) {
+  const n = Number(value) || 0;
+  if (unit === 'day') return n === 1 ? 'יום' : 'ימים';
+  if (unit === 'month') return n === 1 ? 'חודש' : 'חודשים';
+  if (unit === 'year') return n === 1 ? 'שנה' : 'שנים';
+  return '';
+}
+
+/** מחרוזת תצוגה לחיי מדף (לקטלוג / ייצוא / השלמת פרופיל) */
+export function formatProductShelfLife(value, unit) {
+  const n = sanitizeProductShelfLifeValue(value);
+  const u = sanitizeProductShelfLifeUnit(unit);
+  if (!n || !u) return '';
+  return `${n} ${shelfLifeUnitWord(u, n)}`;
+}
+
+/**
+ * מחלץ ערך+יחידה ממוצר — מעדיף שדות מובנים, ואם חסר מנסה לפרסר shelfLife ישן.
+ */
+export function resolveProductShelfLifeFields(product) {
+  const structuredValue = sanitizeProductShelfLifeValue(product?.shelfLifeValue);
+  const structuredUnit = sanitizeProductShelfLifeUnit(product?.shelfLifeUnit);
+  if (structuredValue && structuredUnit) {
+    return { value: structuredValue, unit: structuredUnit };
+  }
+  const text = String(product?.shelfLife || '').trim();
+  const m = text.match(/(\d+)\s*(ימים|יום|חודשים|חודש|שנים|שנה)/);
+  if (!m) return { value: null, unit: '' };
+  const value = sanitizeProductShelfLifeValue(m[1]);
+  const word = m[2];
+  let unit = '';
+  if (word === 'יום' || word === 'ימים') unit = 'day';
+  else if (word === 'חודש' || word === 'חודשים') unit = 'month';
+  else if (word === 'שנה' || word === 'שנים') unit = 'year';
+  return { value, unit };
+}
+
+/**
+ * מזהה תנאי אחסון — מעדיף storageConditionId, אחרת התאמה לתווית/טקסט קיים.
+ */
+export function resolveProductStorageConditionId(product) {
+  const byId = sanitizeProductStorageConditionId(product?.storageConditionId);
+  if (byId) return byId;
+  const text = String(product?.storageConditions || '').trim().toLocaleLowerCase('he');
+  if (!text) return '';
+  const exact = PRODUCT_STORAGE_CONDITIONS.find((c) => c.label.toLocaleLowerCase('he') === text);
+  if (exact) return exact.id;
+  // התאמות נפוצות מטקסט חופשי ישן
+  if (text.includes('הקפא')) return 'frozen';
+  if (text.includes('קירור') && text.includes('יבש')) return 'cool_dry';
+  if (text.includes('קירור') || text.includes('מקרר')) return 'cool';
+  if (text.includes('יבש')) return 'dry';
+  if (text.includes('חדר') || text.includes('סביבה')) return 'room';
+  return '';
+}
+
 /** רמזי שם בעברית לזיהוי אלרגן מחומר/רכיב */
 export const ALLERGEN_NAME_HINTS = {
   gluten: ['קמח', 'גלוטן', 'חיטה', 'שיפון', 'שעורה', 'כוסמין', 'סולת', 'פירורי', 'בצק'],
@@ -3309,10 +3404,12 @@ export function buildProductProfileCompleteness({
     {
       id: 'shelf_life',
       label: 'חיי מדף / אחסון',
-      done: !!(String(product?.shelfLife || '').trim() || String(product?.storageConditions || '').trim()),
-      detail: String(product?.shelfLife || '').trim()
-        || String(product?.storageConditions || '').trim()
-        || 'אופציונלי',
+      done: !!(String(product?.shelfLife || '').trim() || String(product?.storageConditions || '').trim()
+        || product?.shelfLifeValue || product?.storageConditionId),
+      detail: [
+        formatProductShelfLife(product?.shelfLifeValue, product?.shelfLifeUnit) || String(product?.shelfLife || '').trim(),
+        productStorageConditionLabel(product?.storageConditionId) || String(product?.storageConditions || '').trim(),
+      ].filter(Boolean).join(' · ') || 'אופציונלי',
       required: false,
     },
     {

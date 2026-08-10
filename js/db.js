@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=454';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=454';
-import { defaultColorForIndex } from './chart.js?v=454';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=454';
-import { logAuditEvent } from './audit.js?v=454';
+} from './validators.js?v=455';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=455';
+import { defaultColorForIndex } from './chart.js?v=455';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=455';
+import { logAuditEvent } from './audit.js?v=455';
 
 export { ValidationError };
 
@@ -4618,6 +4618,24 @@ function sanitizeProductAllergensModeField(raw) {
   return String(raw || '').trim() === 'manual' ? 'manual' : 'auto';
 }
 
+function sanitizeProductShelfLifeValueField(raw) {
+  if (raw == null || raw === '') return null;
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return null;
+  return Math.min(n, 9999);
+}
+
+function sanitizeProductShelfLifeUnitField(raw) {
+  const id = String(raw || '').trim();
+  return id === 'day' || id === 'month' || id === 'year' ? id : '';
+}
+
+function sanitizeProductStorageConditionIdField(raw) {
+  const id = String(raw || '').trim();
+  const allowed = new Set(['room', 'cool', 'frozen', 'dry', 'cool_dry', 'room_dry']);
+  return allowed.has(id) ? id : '';
+}
+
 /** תמונת מוצר לקטלוג — data URL דחוס בלבד */
 function sanitizeProductImageDataUrl(raw) {
   if (raw == null || raw === '') return null;
@@ -4662,7 +4680,10 @@ function productDefaults(fields) {
     allergens: sanitizeProductAllergensField(fields.allergens),
     allergensMode: sanitizeProductAllergensModeField(fields.allergensMode),
     shelfLife: String(fields.shelfLife || '').trim(),
+    shelfLifeValue: sanitizeProductShelfLifeValueField(fields.shelfLifeValue),
+    shelfLifeUnit: sanitizeProductShelfLifeUnitField(fields.shelfLifeUnit),
     storageConditions: String(fields.storageConditions || '').trim(),
+    storageConditionId: sanitizeProductStorageConditionIdField(fields.storageConditionId),
     active: fields.active !== false,
     inCatalog: sanitizeInCatalogFlag(fields.inCatalog, { defaultTrue: true }),
     imageDataUrl: sanitizeProductImageDataUrl(fields.imageDataUrl),
@@ -4732,8 +4753,17 @@ export async function updateProduct(id, data) {
   if ('shelfLife' in patch) {
     patch.shelfLife = String(patch.shelfLife || '').trim();
   }
+  if ('shelfLifeValue' in patch) {
+    patch.shelfLifeValue = sanitizeProductShelfLifeValueField(patch.shelfLifeValue);
+  }
+  if ('shelfLifeUnit' in patch) {
+    patch.shelfLifeUnit = sanitizeProductShelfLifeUnitField(patch.shelfLifeUnit);
+  }
   if ('storageConditions' in patch) {
     patch.storageConditions = String(patch.storageConditions || '').trim();
+  }
+  if ('storageConditionId' in patch) {
+    patch.storageConditionId = sanitizeProductStorageConditionIdField(patch.storageConditionId);
   }
   if ('inCatalog' in patch) {
     patch.inCatalog = sanitizeInCatalogFlag(patch.inCatalog, { defaultTrue: true });

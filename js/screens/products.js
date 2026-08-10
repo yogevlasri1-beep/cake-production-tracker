@@ -7,14 +7,20 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
   getPortionPresetsForProduct,
-} from '../db.js?v=454';
+} from '../db.js?v=455';
 import {
   getProductDetail,
   buildProductProfileCompleteness,
   PRODUCT_ALLERGENS,
+  PRODUCT_STORAGE_CONDITIONS,
+  PRODUCT_SHELF_LIFE_UNITS,
   productAllergenLabel,
+  productStorageConditionLabel,
   sanitizeProductAllergenIds,
   sanitizeProductAllergensMode,
+  resolveProductShelfLifeFields,
+  resolveProductStorageConditionId,
+  formatProductShelfLife,
   addProductRecipeComponent,
   updateProductRecipeComponent, deleteProductRecipeComponent,
   addProductPortionComponent,
@@ -26,12 +32,12 @@ import {
   recipeTotalWeightGrams, getRawMaterials,
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
-} from '../kitchen-db.js?v=454';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=454';
-import { openModal, closeModal } from '../modal.js?v=454';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=454';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=454';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=454';
+} from '../kitchen-db.js?v=455';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=455';
+import { openModal, closeModal } from '../modal.js?v=455';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=455';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=455';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=455';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -587,7 +593,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=454');
+    const { navigate } = await import('../app.js?v=455');
     navigate('backup');
   });
 
@@ -841,7 +847,13 @@ function buildProductDetailHTML(detail, {
   const allergenSummary = allergenIds.length
     ? allergenIds.map((id) => productAllergenLabel(id)).join(' · ')
     : '';
-  const shelfSummary = [product.shelfLife, product.storageConditions].map((s) => String(s || '').trim()).filter(Boolean).join(' · ');
+  const shelfResolved = resolveProductShelfLifeFields(product);
+  const storageResolvedId = resolveProductStorageConditionId(product);
+  const shelfDisplay = formatProductShelfLife(shelfResolved.value, shelfResolved.unit)
+    || String(product.shelfLife || '').trim();
+  const storageDisplay = productStorageConditionLabel(storageResolvedId)
+    || String(product.storageConditions || '').trim();
+  const shelfSummary = [shelfDisplay, storageDisplay].filter(Boolean).join(' · ');
 
   const compositionRows = components.length
     ? components.map((comp) => {
@@ -954,18 +966,31 @@ function buildProductDetailHTML(detail, {
   const shelfSection = `
     <details class="recipe-sheet-section product-detail-section product-detail-collapse" open aria-label="חיי מדף ואחסון">
       <summary class="recipe-sheet-section-title product-detail-collapse-summary">חיי מדף · תנאי אחסון</summary>
-      <div class="haccp-form-row" style="display:flex;flex-wrap:wrap;gap:12px">
-        <div class="form-group" style="flex:1;min-width:160px">
-          <label for="product-detail-shelf-life">חיי מדף</label>
-          <input type="text" id="product-detail-shelf-life" maxlength="120"
-            value="${escapeHtml(product.shelfLife || '')}" placeholder='לדוגמה: 5 ימים בטמפ׳ חדר'>
+      <div class="haccp-form-row product-shelf-storage-row" style="display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+        <div class="form-group" style="flex:0 0 auto;min-width:110px">
+          <label for="product-detail-shelf-value">חיי מדף</label>
+          <input type="number" id="product-detail-shelf-value" min="1" max="9999" step="1"
+            inputmode="numeric" placeholder="מספר"
+            value="${shelfResolved.value != null ? escapeHtml(String(shelfResolved.value)) : ''}">
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px">
+          <label for="product-detail-shelf-unit">יחידה</label>
+          <select id="product-detail-shelf-unit">
+            <option value="">בחר יחידה…</option>
+            ${PRODUCT_SHELF_LIFE_UNITS.map((u) => `
+              <option value="${u.id}"${shelfResolved.unit === u.id ? ' selected' : ''}>${escapeHtml(u.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="form-group" style="flex:1;min-width:180px">
+          <label for="product-detail-storage">תנאי אחסון</label>
+          <select id="product-detail-storage">
+            <option value="">בחר תנאי אחסון…</option>
+            ${PRODUCT_STORAGE_CONDITIONS.map((c) => `
+              <option value="${c.id}"${storageResolvedId === c.id ? ' selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}
+          </select>
         </div>
       </div>
-      <div class="form-group">
-        <label for="product-detail-storage">תנאי אחסון</label>
-        <textarea id="product-detail-storage" rows="2" maxlength="400"
-          placeholder="קירור / הקפאה / יבש…">${escapeHtml(product.storageConditions || '')}</textarea>
-      </div>
+      <p class="form-hint" style="margin-top:6px">בחירה מרשימה — לדוגמה 5 ימים + קירור</p>
       <button type="button" class="btn btn-primary btn-sm" id="product-detail-save-shelf" style="margin-top:8px">שמור חיי מדף</button>
     </details>`;
 
@@ -1501,8 +1526,8 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     const id = Number(recipeId);
     if (!id) return;
     try {
-      const { requestOpenRecipe } = await import('./recipes.js?v=454');
-      const { navigateToWorkspace } = await import('../app.js?v=454');
+      const { requestOpenRecipe } = await import('./recipes.js?v=455');
+      const { navigateToWorkspace } = await import('../app.js?v=455');
       requestOpenRecipe(id);
       closeModal();
       await navigateToWorkspace('recipes', 'recipes');
@@ -1521,7 +1546,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-share-baking')?.addEventListener('click', async () => {
     try {
-      const { shareBakingForProduct } = await import('./recipes.js?v=454');
+      const { shareBakingForProduct } = await import('./recipes.js?v=455');
       const method = await shareBakingForProduct(productId);
       if (method === 'cancelled') return;
       if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
@@ -1543,7 +1568,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-allergens-recompute')?.addEventListener('click', async () => {
     try {
-      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=454');
+      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=455');
       const computed = await computeProductAllergensFromComposition(productId);
       const ids = new Set(sanitizeProductAllergenIds(computed.allergenIds));
       document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
@@ -1563,7 +1588,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     let allergens = [...document.querySelectorAll('.product-allergen-cb:checked')].map((cb) => cb.value);
     try {
       if (mode === 'auto') {
-        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=454');
+        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=455');
         const computed = await computeProductAllergensFromComposition(productId);
         allergens = sanitizeProductAllergenIds(computed.allergenIds);
       } else {
@@ -1582,11 +1607,24 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
   });
 
   document.getElementById('product-detail-save-shelf')?.addEventListener('click', async () => {
-    const shelfLife = document.getElementById('product-detail-shelf-life')?.value || '';
-    const storageConditions = document.getElementById('product-detail-storage')?.value || '';
+    const shelfLifeValue = document.getElementById('product-detail-shelf-value')?.value || '';
+    const shelfLifeUnit = document.getElementById('product-detail-shelf-unit')?.value || '';
+    const storageConditionId = document.getElementById('product-detail-storage')?.value || '';
+    const shelfLife = formatProductShelfLife(shelfLifeValue, shelfLifeUnit);
+    const storageConditions = productStorageConditionLabel(storageConditionId);
+    if ((shelfLifeValue || shelfLifeUnit) && !shelfLife) {
+      showToast('יש למלא מספר יחידה לחיי מדף (יום / חודש / שנה)');
+      return;
+    }
     try {
-      await updateProduct(productId, { shelfLife, storageConditions });
-      showToast('חיי מדף נשמרו ✓');
+      await updateProduct(productId, {
+        shelfLife,
+        shelfLifeValue: shelfLife ? Number(shelfLifeValue) : null,
+        shelfLifeUnit: shelfLife ? shelfLifeUnit : '',
+        storageConditions,
+        storageConditionId: storageConditionId || '',
+      });
+      showToast('חיי מדף ואחסון נשמרו ✓');
       await refreshModal();
       renderProducts(container);
     } catch (err) {
