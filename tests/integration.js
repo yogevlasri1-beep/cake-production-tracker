@@ -5,19 +5,19 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=464';
-import { db, initDB } from '../js/db.js?v=464';
+} from './runner.js?v=465';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=465';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   setRawMaterialRecipeDefault, mergeSelectedRawMaterials,
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
-  findRawMaterialsByName,
-} from '../js/kitchen-db.js?v=464';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=464';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=464';
-import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=464';
+  findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
+} from '../js/kitchen-db.js?v=465';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=465';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=465';
+import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=465';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -221,6 +221,67 @@ export async function runIntegrationTests() {
     assertEqual(excluded.length, 1, 'excludeId מסנן את עצמו — לשימוש בזמן עריכה');
     assertEqual(excluded[0].id, first);
   });
+
+  await testAsync('findLocalByFingerprint — משתמש שני יוצר קטגוריה זהה: לא כפילות (מחוץ לספקים)', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    // מכשיר A כבר יצר "עוגות" ומסונכרן (יש syncMeta עם syncId משלו).
+    const catId = await addCategory('עוגות');
+    await upsertMeta({
+      collection: 'categories',
+      localKey: String(catId),
+      syncId: 'sync-id-device-a',
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    await wait(50);
+
+    // מכשיר B יצר את אותה קטגוריה באופן עצמאי (לפני שסונכרן) — לענן מגיעה שורה עם syncId אחר.
+    const incoming = { name: 'עוגות', groupId: null };
+    const match = await findLocalByFingerprint('categories', incoming, { syncId: 'sync-id-device-b' });
+
+    assertOk(match, 'נמצאה התאמה מקומית לפי fingerprint גם כשהיא כבר משויכת ל-syncId אחר');
+    assertEqual(match.id, catId, 'ההתאמה היא הקטגוריה הקיימת, לא שורה חדשה');
+    assertOk(match.__cloudDuplicateOf, 'מסומן ככפילות ענן — הקורא צריך לעשות tombstone ולא ליצור שורה חדשה');
+
+    const allCats = await db.categories.where('name').equals('עוגות').toArray();
+    assertEqual(allCats.length, 1, 'עדיין קטגוריה אחת בלבד מקומית — לא נוצרה כפילות');
+  });
+
+  await testAsync(
+    'computeWeeklyMaterialNeeds — מקפיץ לפי יחס יחידות/מנה, לא לפי כמות המנות ישירות',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      // מתכון: 1000 גרם קמח לעוגה אחת (משקל יחידת חלוקה 100 גרם) → 10 יחידות מוצר לאצווה.
+      const prodCatId = await addCategory('עוגות בדיקה');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגת שוקולד בדיקה' });
+      const recCatId = await addRecipeCategory('מתכוני בדיקה שבועי');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגת שוקולד בדיקה',
+        linkedProductId: productId,
+        portionWeightGrams: 100,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח בדיקה', quantity: 1000, unitKind: 'g' });
+
+      // תוכנית שבועית: 40 יחידות מוצר מתוכננות (= 4 אצוות, לא 40 אצוות).
+      const weekStart = '2026-08-09';
+      const plan = await getWeeklyPlan(weekStart);
+      await setWeeklyPlanItem(plan.id, productId, 40);
+
+      const { allNeeds } = await computeWeeklyMaterialNeeds(weekStart);
+      const flourNeed = allNeeds.find((n) => n.name === 'קמח בדיקה');
+      assertOk(flourNeed, 'נמצא צורך בקמח');
+      // 40 יחידות / 10 יחידות-לאצווה = 4 אצוות; 4 * 1000 גרם = 4000 גרם קמח, לא 40000.
+      assertEqual(flourNeed.totalQty, 4000, 'כמות קמח נכונה: 4 אצוות * 1000 גרם, לא 40 * 1000');
+    },
+  );
 
   await flushTests();
 }

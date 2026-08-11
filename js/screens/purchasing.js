@@ -2,10 +2,10 @@ import {
   getPurchaseCategoryByKey, getPurchaseItems,
   addPurchaseItem, updatePurchaseItem, deletePurchaseItem,
   PURCHASE_CATEGORY_KEYS, PURCHASE_STATUS, PURCHASE_STATUS_LABELS, isPurchaseDone,
-} from '../purchasing-db.js?v=464';
-import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=464';
-import { openModal, closeModal } from '../modal.js?v=464';
-import { requestAutoBackupNow } from '../backup-service.js?v=464';
+} from '../purchasing-db.js?v=465';
+import { escapeHtml, showToast, formatMoney, formatDecimal } from '../utils.js?v=465';
+import { openModal, closeModal } from '../modal.js?v=465';
+import { requestAutoBackupNow } from '../backup-service.js?v=465';
 
 const PURCHASING_TAB_KEY = 'yitzurPurchasingTab';
 

@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=464';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=465';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=464';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=464';
-import { logAuditEvent } from './audit.js?v=464';
-import { markMetaDeleted } from './sync/id-map.js?v=464';
+} from './validators.js?v=465';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=465';
+import { logAuditEvent } from './audit.js?v=465';
+import { markMetaDeleted } from './sync/id-map.js?v=465';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2899,11 +2899,18 @@ export async function computeRecipeMaterialsCostFiltered(ingredients, materials,
   const byNameKey = buildMaterialsByNameKey(mats);
   let total = 0;
   for (const ing of ingredientsWithScaledQuantity(ingredients)) {
-    const source = getIngredientPriceSource(ing);
-    if (supplierOnly && source !== 'supplier') continue;
-    const { mat, priceSource } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
-    if (supplierOnly && priceSource !== 'supplier') continue;
-    if (supplierOnly && (!mat || !(Number(mat.unitPrice) > 0))) continue;
+    const { mat } = resolveRecipeIngredientMaterial(ing, { matById, byNameKey });
+    // supplierOnly used to skip any line whose ingredient wasn't explicitly pinned to a
+    // specific supplier offer (priceSource==='supplier') — but ingredients are added
+    // without pinning a supplier by default (js/screens/recipes.js add-ingredient flow
+    // always saves priceSource:'max', rawMaterialId:null), so this silently zeroed or
+    // partially-omitted the "recommended cost" for nearly every recipe. That total is
+    // written straight into product.rawMaterialsCost by the "apply recommended cost"
+    // button, so it understated real material cost / overstated margin. Use the same
+    // auto-selected material price as the full cost for any unpinned line instead of
+    // dropping it — recommended cost now only differs from full cost when a line's
+    // manually pinned supplier price differs from the auto-selected one.
+    if (!mat) continue;
     total += computeIngredientLineCost(ing, mat);
   }
   return roundQty(total);
@@ -5572,11 +5579,18 @@ export async function computeWeeklyMaterialNeeds(weekStart) {
     if (!item.plannedPortions || item.plannedPortions <= 0) continue;
     const recipe = await getRecipeForProduct(item.productId);
     if (!recipe?.ingredients?.length) continue;
-    const scale = Number(item.plannedPortions);
+    // recipe.ingredients quantities are per recipe BATCH, not per product unit —
+    // plannedPortions is a count of product units. Scaling by plannedPortions directly
+    // (old code) overstated every ingredient by a factor of "units per batch"
+    // (e.g. a batch yielding 20 cakes made the order text ask for 20× too much flour).
+    // recipeScaleRatioForProductCount converts unit-count → batch ratio, same as the
+    // production-record inventory deduction (js/screens/record.js) already does.
+    const ratio = recipeScaleRatioForProductCount(recipe, recipe.ingredients, item.plannedPortions);
+    if (ratio == null) continue; // אין משקל יחידת חלוקה במתכון — לא ניתן לחשב יחס הקפצה
 
     for (const ing of recipe.ingredients) {
       const key = ing.rawMaterialId || `name:${ing.name}`;
-      const qty = roundQty(Number(ing.quantity) * scale);
+      const qty = roundQty(Number(ing.quantity) * ratio);
       if (qty <= 0) continue;
 
       let mat = ing.rawMaterialId ? await db.rawMaterials.get(ing.rawMaterialId) : null;

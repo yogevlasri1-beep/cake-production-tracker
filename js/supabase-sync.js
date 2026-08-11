@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=464';
+import { db, getSetting, setSetting } from './db.js?v=465';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=464';
+} from './supabase-backup.js?v=465';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=464';
+} from './sync/collections.js?v=465';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=464';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=464';
+} from './sync/id-map.js?v=465';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=465';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -110,8 +110,12 @@ export function formatLiveSyncErrorForUi(live) {
   return classified.message || String(live.lastError || '');
 }
 
-/** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 14;
+/**
+ * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
+ * v15: claimed-fingerprint tombstone for master-data collections (products/categories/recipes/…)
+ * beyond supplierCategories/rawMaterials — re-run once to sweep multi-device races.
+ */
+const DEDUPE_VERSION = 15;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -342,6 +346,36 @@ export async function flushSyncQueue() {
 const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'rawMaterials']);
 
 /**
+ * Master-data collections where a fingerprint already claimed by another syncId
+ * is treated as a cloud duplicate (tombstone incoming) instead of creating a
+ * second local row. Intentionally excludes transactional rows (productionEntries,
+ * inventoryMovements, processLogs, manager tasks, …) whose fingerprints can
+ * legitimately collide for distinct events.
+ */
+const TOMBSTONE_CLAIMED_COLLECTIONS = new Set([
+  'supplierCategories',
+  'suppliers',
+  'rawMaterials',
+  'categories',
+  'categoryGroups',
+  'products',
+  'recipes',
+  'recipeCategories',
+  'recipeGroups',
+  'checklistTasks',
+  'bakingProfiles',
+  'productionMachines',
+  'flows',
+  'activityPresets',
+  'purchaseCategories',
+  'managerResponsibilityAreas',
+  'managerDepartments',
+  'departmentCleaningLists',
+  'haccpTeamMembers',
+  'haccpPlans',
+]);
+
+/**
  * Soft-delete a cloud sync row that is a logical duplicate of a local survivor.
  * Used when pull would otherwise create a second local row for the same category/material.
  */
@@ -369,7 +403,7 @@ async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
   }
 }
 
-async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
+export async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
   if (!row || !db[collection]) return null;
   const strictFp = rowFingerprint(collection, row);
   const looseFp = LOOSE_MATCH_COLLECTIONS.has(collection) ? rowDedupeFingerprint(collection, row) : '';
@@ -385,10 +419,11 @@ async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
     const meta = await getMetaByLocal(collection, candidate.id);
     if (!meta?.syncId || meta.syncId === syncId) return candidate;
   }
-  // For supplier categories / materials: same logical entity already mapped to
-  // another cloud UUID — return it anyway so the caller can tombstone the
-  // incoming duplicate instead of creating a second local chip.
-  if (LOOSE_MATCH_COLLECTIONS.has(collection)) {
+  // Master-data race: two devices created the same logical entity before either
+  // synced. Return the local survivor so the caller can tombstone the incoming
+  // cloud UUID instead of creating a second local row. Transactional collections
+  // stay on the old behaviour (return null → create) to avoid deleting real events.
+  if (TOMBSTONE_CLAIMED_COLLECTIONS.has(collection)) {
     const claimed = [...strictMatches, ...looseMatches][0];
     if (claimed) return { ...claimed, __cloudDuplicateOf: true };
   }

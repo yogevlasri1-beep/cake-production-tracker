@@ -10,31 +10,32 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=464';
+} from '../db.js?v=465';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=464';
+} from '../utils.js?v=465';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=464';
-import { openModal, closeModal } from '../modal.js?v=464';
+} from '../export.js?v=465';
+import { openModal, closeModal } from '../modal.js?v=465';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=464';
-import { isSheetsConfigured } from '../google-sheets.js?v=464';
+} from '../sheets-flow.js?v=465';
+import { isSheetsConfigured } from '../google-sheets.js?v=465';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
-} from '../calc.js?v=464';
-import { defaultColorForIndex } from '../chart.js?v=464';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=464';
+  productUnitCost, productLineValue, entryQuantityForProduct,
+} from '../calc.js?v=465';
+import { defaultColorForIndex } from '../chart.js?v=465';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=465';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=464';
+} from '../purchasing-db.js?v=465';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -1909,17 +1910,7 @@ function renderPnlTableHTML(rows, totals) {
     </div>`;
 }
 
-function unitProductCost(product) {
-  return (Number(product?.rawMaterialsCost) || 0)
-    + (Number(product?.packagingCost) || 0)
-    + (Number(product?.additionalCosts) || 0);
-}
-
-function unitProductValue(product) {
-  return Number(product?.unitPrice) || 0;
-}
-
-function buildPnlDailyRows(entries, productMap) {
+export function buildPnlDailyRows(entries, productMap) {
   const byDate = new Map();
   for (const e of entries || []) {
     if (!byDate.has(e.date)) byDate.set(e.date, []);
@@ -1933,10 +1924,16 @@ function buildPnlDailyRows(entries, productMap) {
     for (const e of byDate.get(date)) {
       const p = mapGetById(productMap, e.productId);
       if (!p) continue;
-      const q = Number(e.quantity) || 0;
+      // productLineValue/entryQuantityForProduct (calc.js) — same functions the main
+      // report/production totals use. The old local unitProductValue ignored
+      // unitWeightKg for kg_units products, understating revenue for every entry
+      // priced that way (e.g. unitPrice=45 ₪/kg, unitWeightKg=1.2, qty=8 units:
+      // old code → 45*8=360, correct → 8*1.2*45=432).
+      const q = entryQuantityForProduct(e.quantity, p);
+      if (q == null) continue;
       qty += q;
-      cost += unitProductCost(p) * q;
-      value += unitProductValue(p) * q;
+      cost += productUnitCost(p) * q;
+      value += productLineValue(p, q);
     }
     return { date, qty, cost, value, margin: value - cost };
   });
@@ -1958,10 +1955,11 @@ function buildPnlMonthlyRows(entries, productMap) {
     for (const e of byMonth.get(month)) {
       const p = mapGetById(productMap, e.productId);
       if (!p) continue;
-      const q = Number(e.quantity) || 0;
+      const q = entryQuantityForProduct(e.quantity, p);
+      if (q == null) continue;
       qty += q;
-      cost += unitProductCost(p) * q;
-      value += unitProductValue(p) * q;
+      cost += productUnitCost(p) * q;
+      value += productLineValue(p, q);
     }
     return { month, qty, cost, value, margin: value - cost };
   });
@@ -2461,6 +2459,16 @@ function bindReportPageToolbar(container, { fullTitle, ctx, safeLabel, previewHt
   });
 }
 
+/**
+ * Total quantity across process-log activities, matching the per-activity breakdown table
+ * exactly (computeProcessSummary rounds each activity's qty and zeroes non-positive values).
+ * A raw sum over processLogs (the old code) disagreed with that same-screen breakdown table
+ * whenever a log had a non-positive or fractional quantity.
+ */
+export function sumProcessSummaryQty(processSummary) {
+  return (processSummary || []).reduce((s, row) => s + (Number(row.qty) || 0), 0);
+}
+
 function reportCategoryChipStyle(color, id) {
   const c = color || defaultColorForIndex((Number(id) || 1) - 1);
   return `background:color-mix(in srgb, ${c} 14%, white);color:${c};border:1px solid color-mix(in srgb, ${c} 28%, transparent)`;
@@ -2470,7 +2478,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
   const subtitle = reportSubtitle(ctx);
   const totals = await getProductionTotals(entries, productMap);
   const weekDates = ctx.weekDates || [];
-  const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+  const processTotalQty = sumProcessSummaryQty(processSummary);
 
   const daySections = [];
   for (const dateIso of weekDates) {
@@ -2592,7 +2600,7 @@ async function buildWeeklyPreviewHTML(ctx, entries, products, categories, produc
 async function buildPreviewHTML(ctx, totals, rows, catSummary, processLogs, processSummary, catMap, productionRuns, productMap, groupMap) {
   const subtitle = reportSubtitle(ctx);
 
-  const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+  const processTotalQty = sumProcessSummaryQty(processSummary);
   const productionRunsHtml = await renderProductionRunsHTML(productionRuns, ctx, catMap, productMap, groupMap);
 
   return `
@@ -3229,7 +3237,7 @@ export async function renderReports(container) {
 
   const totals = await getProductionTotals(entries, productMap);
   const processSummary = summarizeProcessLogs(processLogs, catMap);
-  const processTotalQty = processLogs.reduce((s, l) => s + (l.quantity || 0), 0);
+  const processTotalQty = sumProcessSummaryQty(processSummary);
 
   let relevantProducts = products;
   if ((ctx.reportType === 'category' || ctx.reportType === 'products-category') && ctx.selectedCategoryId) {
