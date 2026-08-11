@@ -25,17 +25,17 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=456';
-import { getProducts, getCategories } from '../db.js?v=456';
+} from '../kitchen-db.js?v=457';
+import { getProducts, getCategories } from '../db.js?v=457';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=456';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=456';
-import { openModal, closeModal } from '../modal.js?v=456';
-import { requestAutoBackupNow } from '../backup-service.js?v=456';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=456';
-import { openBarcodeScanner } from '../barcode-scan.js?v=456';
+} from '../supplier-import.js?v=457';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=457';
+import { openModal, closeModal } from '../modal.js?v=457';
+import { requestAutoBackupNow } from '../backup-service.js?v=457';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=457';
+import { openBarcodeScanner } from '../barcode-scan.js?v=457';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1210,6 +1210,26 @@ function bindBrowseResultsHandlers(body, container) {
       }
     });
   });
+
+  body.querySelectorAll('#browse-results .browse-add-material').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const supId = Number(btn.dataset.supplierId);
+      const catId = Number(btn.dataset.categoryId);
+      if (!supId || !catId) return;
+      const layout = container._browseLayout;
+      const category = layout?.categories?.find((c) => c.id === catId);
+      const suppliers = await getSuppliers();
+      const block = btn.closest('.supplier-browse-block');
+      if (block) {
+        block.classList.remove('is-collapsed');
+        expandedIds.add(supId);
+        container.dataset.browseExpanded = JSON.stringify([...expandedIds]);
+      }
+      openAddMaterialModal(container, catId, suppliers, category, supId);
+    });
+  });
 }
 
 function updateBrowseResults(body, container) {
@@ -1240,7 +1260,7 @@ async function renderBrowseTab(body, container) {
   body.innerHTML = `
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
+      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · <span class="browse-add-legend">+ ירוק = הוספת חומר גלם לספק</span> · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
       ${hasData ? `
       <div class="form-group" style="margin:0">
         <input type="search" id="browse-search" class="catalog-search-input"
@@ -1269,7 +1289,7 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
         <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} ${supplierCategoryItemsLabel(cat)}</span>
       </button>
       <div class="supplier-browse-cat-body">
-        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds, isPackaging, isCleaning })).join('')}
+        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds, isPackaging, isCleaning, categoryId: cat.id })).join('')}
       </div>
     </div>`;
 }
@@ -1406,7 +1426,7 @@ function renderBrowseSupplierMaterialsHTML(materials, { isPackaging = false, isC
   return sections.join('');
 }
 
-function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging = false, isCleaning = false } = {}) {
+function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging = false, isCleaning = false, categoryId } = {}) {
   const expanded = supplier.autoExpand || expandedIds.has(supplier.id);
   const collapsedClass = expanded ? '' : ' is-collapsed';
   const activeCount = supplier.materials.filter((m) => m.active === true).length;
@@ -1419,12 +1439,18 @@ function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging 
     if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
   }
   const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
+  const addTitle = isCleaning ? 'הוסף חומר ניקיון' : (isPackaging ? 'הוסף אריזה' : 'הוסף חומר גלם');
   return `
     <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}">
-      <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
-        <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
-        <span class="supplier-browse-sup-meta">${metaText}</span>
-      </button>
+      <div class="supplier-browse-sup-header-row">
+        <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
+          <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
+          <span class="supplier-browse-sup-meta">${metaText}</span>
+        </button>
+        <button type="button" class="btn btn-primary btn-sm browse-add-material"
+          data-supplier-id="${supplier.id}" data-category-id="${categoryId}"
+          title="${addTitle}" aria-label="${addTitle}">+</button>
+      </div>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
         ${renderBrowseSupplierMaterialsHTML(supplier.materials, { isPackaging, isCleaning })}
@@ -2044,13 +2070,13 @@ function bindPackagingFormFields() {
   syncLinkMode();
 }
 
-async function openAddMaterialModal(container, categoryId, suppliers, category) {
+async function openAddMaterialModal(container, categoryId, suppliers, category, preselectedSupplierId = null) {
   const isPackaging = isPackagingSupplierCategory(category);
   const isCleaning = isCleaningSupplierCategory(category);
   const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
   openModal({
     title: isCleaning ? 'חומר ניקיון חדש 🧹' : (isPackaging ? 'אריזה חדשה' : 'חומר גלם חדש'),
-    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, isCleaning, products, categories }),
+    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, isCleaning, products, categories, preselectedSupplierId }),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
   });
   bindMaterialForm(container, categoryId, null, { isPackaging, isCleaning });
@@ -2105,7 +2131,7 @@ async function loadMaterialHistory(materialId) {
     : '';
 }
 
-function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = false, products = [], categories = [] } = {}) {
+function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = false, products = [], categories = [], preselectedSupplierId = null } = {}) {
   const defaultUnit = isPackaging ? 'חבילה' : (isCleaning ? 'יח\'' : 'ק&quot;ג');
   const packKind = mat?.packagingKind || PACKAGING_KIND_CARTON;
   const pricePerKg = mat ? (getMaterialPurchasePricePerKg(mat) ?? '') : '';
@@ -2220,7 +2246,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
     <div class="form-group"><label>יחידת רכישה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>`)}
     <div class="form-group"><label>ספק</label>
       <select id="mat-supplier"><option value="">—</option>
-        ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+        ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id || (!mat && Number(preselectedSupplierId) === s.id) ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
       </select>
     </div>
     ${(isPackaging || isCleaning) ? '' : `
@@ -2812,7 +2838,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=456');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=457');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2834,7 +2860,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=456');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=457');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2852,7 +2878,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=456');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=457');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
