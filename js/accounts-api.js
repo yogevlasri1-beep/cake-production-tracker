@@ -1,20 +1,20 @@
 import {
   getSupabaseBackupConfig,
   buildSupabaseRestUrl,
-} from './supabase-backup.js?v=456';
+} from './supabase-backup.js?v=457';
 import {
   getValidSession,
   registerAuthUser,
   userRoleLabel,
   USER_ROLES,
-} from './auth.js?v=456';
-import { ValidationError } from './validators.js?v=456';
-import { logAuditEvent } from './audit.js?v=456';
+} from './auth.js?v=457';
+import { ValidationError } from './validators.js?v=457';
+import { logAuditEvent } from './audit.js?v=457';
 import {
   canManageAccounts,
   sanitizeWorkspaceAccess,
   defaultWorkspacesForRole,
-} from './permissions.js?v=456';
+} from './permissions.js?v=457';
 
 function profileHeaders(cfg, accessToken, extra = {}) {
   return {

@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=455';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=457';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=455';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=455';
-import { logAuditEvent } from './audit.js?v=455';
-import { markMetaDeleted } from './sync/id-map.js?v=455';
+} from './validators.js?v=457';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=457';
+import { logAuditEvent } from './audit.js?v=457';
+import { markMetaDeleted } from './sync/id-map.js?v=457';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4503,6 +4503,145 @@ export async function getDuplicateMaterialGroups() {
       materials: materials.sort((a, b) => a.id - b.id),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+function exactDuplicateMaterialKey(m) {
+  const nameKey = normalizeMaterialKey(m?.name);
+  if (!nameKey) return '';
+  return `${nameKey}|${m.supplierId ?? 'none'}|${m.supplierCategoryId ?? 'none'}`;
+}
+
+/** כפילויות מדויקות: אותו שם + אותו ספק + אותה קטגוריה (מה שמופיע פעמיים בטאב ספקים) */
+export async function getExactDuplicateMaterialGroups() {
+  const all = await db.rawMaterials.toArray();
+  const byKey = new Map();
+  for (const m of all) {
+    const key = exactDuplicateMaterialKey(m);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(m);
+  }
+  return Array.from(byKey.entries())
+    .filter(([, mats]) => mats.length > 1)
+    .map(([key, materials]) => ({
+      key,
+      name: materials[0].name,
+      supplierId: materials[0].supplierId ?? null,
+      supplierCategoryId: materials[0].supplierCategoryId ?? null,
+      materials: sortMaterialSurvivorsFirst(materials),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+function sortMaterialSurvivorsFirst(materials) {
+  return [...materials].sort((a, b) => {
+    const aActive = a.active === true ? 1 : 0;
+    const bActive = b.active === true ? 1 : 0;
+    if (bActive !== aActive) return bActive - aActive;
+    const aPrice = (Number(a.unitPrice) || 0) > 0 ? 1 : 0;
+    const bPrice = (Number(b.unitPrice) || 0) > 0 ? 1 : 0;
+    if (bPrice !== aPrice) return bPrice - aPrice;
+    const aDef = a.isRecipeDefault ? 1 : 0;
+    const bDef = b.isRecipeDefault ? 1 : 0;
+    if (bDef !== aDef) return bDef - aDef;
+    return a.id - b.id;
+  });
+}
+
+/** איחוד אוטומטי של כל הכפילויות המדויקות (שומר רשומה אחת לכל קבוצה) */
+export async function mergeAllExactDuplicateMaterials() {
+  const groups = await getExactDuplicateMaterialGroups();
+  let merged = 0;
+  for (const g of groups) {
+    const keepId = g.materials[0].id;
+    const mergeIds = g.materials.slice(1).map((m) => m.id);
+    if (!mergeIds.length) continue;
+    await mergeDuplicateMaterials(keepId, mergeIds);
+    merged += mergeIds.length;
+  }
+  return { groups: groups.length, merged };
+}
+
+function duplicateSupplierKey(s) {
+  const nameKey = normalizeMaterialKey(s?.name);
+  if (!nameKey) return '';
+  return `${nameKey}|${s.categoryId ?? ''}`;
+}
+
+/** ספקים עם אותו שם באותה קטגוריה */
+export async function getDuplicateSupplierGroups() {
+  const all = await db.suppliers.toArray();
+  const byKey = new Map();
+  for (const s of all) {
+    const key = duplicateSupplierKey(s);
+    if (!key) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(s);
+  }
+  return Array.from(byKey.entries())
+    .filter(([, suppliers]) => suppliers.length > 1)
+    .map(([key, suppliers]) => ({
+      key,
+      name: suppliers[0].name,
+      categoryId: suppliers[0].categoryId ?? null,
+      suppliers: [...suppliers].sort((a, b) => a.id - b.id),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'he'));
+}
+
+/** מאחד ספקים כפולים — מעביר חומרי גלם וחוסרים לספק שנשמר */
+export async function mergeDuplicateSuppliers(keepId, mergeIds) {
+  const keep = sanitizeProductId(keepId);
+  if (!keep) throw new ValidationError('ספק לא תקין');
+  const dropIds = [...new Set((mergeIds || []).map(sanitizeProductId).filter((id) => id && id !== keep))];
+  if (!dropIds.length) return { keepId: keep, mergedSuppliers: 0, mergedMaterials: 0 };
+
+  const keepSup = await db.suppliers.get(keep);
+  if (!keepSup) throw new ValidationError('ספק היעד לא נמצא');
+
+  let mergedMaterials = 0;
+  for (const dropId of dropIds) {
+    const mats = await db.rawMaterials.where('supplierId').equals(dropId).toArray();
+    for (const mat of mats) {
+      const nameKey = normalizeMaterialKey(mat.name);
+      const siblings = await db.rawMaterials.where('supplierId').equals(keep).toArray();
+      const existing = siblings.find((m) => normalizeMaterialKey(m.name) === nameKey);
+      if (existing) {
+        await mergeDuplicateMaterials(existing.id, [mat.id]);
+        mergedMaterials++;
+      } else {
+        await db.rawMaterials.update(mat.id, { supplierId: keep });
+      }
+    }
+
+    const shortages = await db.supplierShortages.where('supplierId').equals(dropId).toArray();
+    for (const sh of shortages) {
+      await db.supplierShortages.update(sh.id, { supplierId: keep });
+    }
+
+    await db.suppliers.delete(dropId);
+    try {
+      await markMetaDeleted('suppliers', dropId, new Date().toISOString());
+    } catch { /* syncMeta optional */ }
+  }
+
+  await syncRawMaterialsActiveFromRecipes();
+  return { keepId: keep, mergedSuppliers: dropIds.length, mergedMaterials };
+}
+
+/** איחוד אוטומטי של כל הספקים הכפולים (שומר את הספק עם המזהה הנמוך ביותר) */
+export async function mergeAllDuplicateSuppliers() {
+  const groups = await getDuplicateSupplierGroups();
+  let mergedSuppliers = 0;
+  let mergedMaterials = 0;
+  for (const g of groups) {
+    const keepId = g.suppliers[0].id;
+    const dropIds = g.suppliers.slice(1).map((s) => s.id);
+    const result = await mergeDuplicateSuppliers(keepId, dropIds);
+    mergedSuppliers += result.mergedSuppliers;
+    mergedMaterials += result.mergedMaterials;
+  }
+  return { groups: groups.length, mergedSuppliers, mergedMaterials };
 }
 
 function stripHebrewNiqqud(s) {

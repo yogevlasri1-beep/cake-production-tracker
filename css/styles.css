@@ -10493,6 +10493,28 @@ body.supplier-drag-active {
   margin-bottom: 12px;
 }
 
+.supplier-dedupe-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+}
+
+.supplier-dedupe-banner-text {
+  font-size: 0.9rem;
+  color: #92400e;
+}
+
+.supplier-dedupe-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .supplier-browse-cat {
   margin-bottom: 10px;
 }
