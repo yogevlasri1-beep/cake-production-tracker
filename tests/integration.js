@@ -5,18 +5,20 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=456';
-import { db, initDB } from '../js/db.js?v=456';
+} from './runner.js?v=457';
+import { db, initDB } from '../js/db.js?v=457';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   setRawMaterialRecipeDefault, mergeSelectedRawMaterials,
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
-  resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
-} from '../js/kitchen-db.js?v=456';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=456';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=456';
-import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=456';
+  resolveRecipeIngredientMaterial,   getSimilarMaterialNameGroups,
+  getExactDuplicateMaterialGroups, mergeAllExactDuplicateMaterials,
+  getDuplicateSupplierGroups, mergeAllDuplicateSuppliers,
+} from '../js/kitchen-db.js?v=457';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=457';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=457';
+import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=457';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -185,6 +187,68 @@ export async function runIntegrationTests() {
     const elapsed = Date.now() - start;
     assertOk(groups.length >= bases.length, `קובץ לפי בסיס משותף: ${groups.length} קבוצות`);
     assertOk(elapsed < 5000, `זמן ריצה סביר על 300 פריטים: ${elapsed}ms`);
+  });
+
+  await testAsync('mergeAllExactDuplicateMaterials — אותו שם אצל אותו ספק → רשומה אחת', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם כפילות');
+    const supId = await addSupplier({ categoryId: catId, name: 'ספק כפילות' });
+    await addRawMaterial({
+      supplierCategoryId: catId, name: 'סוכר', unit: 'ק"ג', unitPrice: 5, supplierId: supId,
+    });
+    await addRawMaterial({
+      supplierCategoryId: catId, name: 'סוכר', unit: 'ק"ג', unitPrice: 7, supplierId: supId,
+    });
+    await addRawMaterial({
+      supplierCategoryId: catId, name: 'סוכר', unit: 'ק"ג', unitPrice: 0, supplierId: supId,
+    });
+
+    const before = await getExactDuplicateMaterialGroups();
+    assertEqual(before.length, 1);
+    assertEqual(before[0].materials.length, 3);
+
+    const result = await mergeAllExactDuplicateMaterials();
+    assertEqual(result.merged, 2);
+
+    const after = await getRawMaterials();
+    const sugarAtSup = after.filter((m) => m.supplierId === supId && normalizeMaterialKey(m.name) === 'סוכר');
+    assertEqual(sugarAtSup.length, 1);
+    assertOk((Number(sugarAtSup[0].unitPrice) || 0) > 0, 'נשמרה רשומה עם מחיר');
+  });
+
+  await testAsync('mergeAllDuplicateSuppliers — אותו שם ספק בקטגוריה → ספק אחד', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('ספקים כפילות');
+    const supA = await addSupplier({ categoryId: catId, name: 'מחלבת ירושלים' });
+    const supB = await addSupplier({ categoryId: catId, name: 'מחלבת ירושלים' });
+    await addRawMaterial({
+      supplierCategoryId: catId, name: 'חלב', unit: 'ק"ג', unitPrice: 6, supplierId: supA,
+    });
+    await addRawMaterial({
+      supplierCategoryId: catId, name: 'שמנת', unit: 'ק"ג', unitPrice: 12, supplierId: supB,
+    });
+
+    const groups = await getDuplicateSupplierGroups();
+    assertEqual(groups.length, 1);
+
+    const result = await mergeAllDuplicateSuppliers();
+    assertEqual(result.mergedSuppliers, 1);
+
+    const suppliers = await db.suppliers.toArray();
+    const dupName = suppliers.filter((s) => normalizeMaterialKey(s.name) === normalizeMaterialKey('מחלבת ירושלים'));
+    assertEqual(dupName.length, 1);
+
+    const mats = await getRawMaterials();
+    assertEqual(mats.length, 2);
+    assertOk(mats.every((m) => m.supplierId === dupName[0].id), 'כל החומרים אצל הספק שנשמר');
   });
 
   await flushTests();

@@ -9,6 +9,8 @@ import {
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
   getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, mergeSelectedRawMaterials,
+  getExactDuplicateMaterialGroups, mergeAllExactDuplicateMaterials,
+  getDuplicateSupplierGroups, mergeAllDuplicateSuppliers,
   getSimilarMaterialNameGroups,
   buildMergedMaterialSynonyms, computePricePerKg,
   computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg,
@@ -25,17 +27,17 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=456';
-import { getProducts, getCategories } from '../db.js?v=456';
+} from '../kitchen-db.js?v=457';
+import { getProducts, getCategories } from '../db.js?v=457';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=456';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=456';
-import { openModal, closeModal } from '../modal.js?v=456';
-import { requestAutoBackupNow } from '../backup-service.js?v=456';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=456';
-import { openBarcodeScanner } from '../barcode-scan.js?v=456';
+} from '../supplier-import.js?v=457';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=457';
+import { openModal, closeModal } from '../modal.js?v=457';
+import { requestAutoBackupNow } from '../backup-service.js?v=457';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=457';
+import { openBarcodeScanner } from '../barcode-scan.js?v=457';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1228,7 +1230,11 @@ function updateBrowseResults(body, container) {
 }
 
 async function renderBrowseTab(body, container) {
-  const layout = await getSuppliersBrowseLayout();
+  const [layout, matDupes, supDupes] = await Promise.all([
+    getSuppliersBrowseLayout(),
+    getExactDuplicateMaterialGroups(),
+    getDuplicateSupplierGroups(),
+  ]);
   container._browseLayout = layout;
   const search = (container.dataset.browseSearch || '').trim().toLocaleLowerCase('he');
   const filtered = filterBrowseLayout(layout, search);
@@ -1236,8 +1242,23 @@ async function renderBrowseTab(body, container) {
     JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
   );
   const hasData = layout.categories.some((c) => c.suppliers.length);
+  const extraMatDupes = matDupes.reduce((n, g) => n + g.materials.length - 1, 0);
+  const extraSupDupes = supDupes.reduce((n, g) => n + g.suppliers.length - 1, 0);
 
   body.innerHTML = `
+    ${extraMatDupes || extraSupDupes ? `
+    <div class="card supplier-dedupe-banner" id="browse-dedupe-banner">
+      <div class="supplier-dedupe-banner-text">
+        <strong>נמצאו כפילויות</strong>
+        ${extraMatDupes ? `<span> · ${extraMatDupes} חומרי גלם כפולים</span>` : ''}
+        ${extraSupDupes ? `<span> · ${extraSupDupes} ספקים כפולים</span>` : ''}
+      </div>
+      <div class="supplier-dedupe-banner-actions">
+        ${extraMatDupes ? `<button type="button" class="btn btn-primary btn-sm" id="browse-dedupe-mats">אחד חומרים כפולים</button>` : ''}
+        ${extraSupDupes ? `<button type="button" class="btn btn-secondary btn-sm" id="browse-dedupe-sups">אחד ספקים כפולים</button>` : ''}
+        <button type="button" class="btn btn-secondary btn-sm" id="browse-dedupe-advanced" title="איחוד לפי שם / שמות דומים">איחוד מתקדם…</button>
+      </div>
+    </div>` : ''}
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
       <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
@@ -1252,6 +1273,50 @@ async function renderBrowseTab(body, container) {
   document.getElementById('browse-search')?.addEventListener('input', (e) => {
     container.dataset.browseSearch = e.target.value;
     updateBrowseResults(body, container);
+  });
+
+  document.getElementById('browse-dedupe-mats')?.addEventListener('click', async () => {
+    const btn = document.getElementById('browse-dedupe-mats');
+    const extra = matDupes.reduce((n, g) => n + g.materials.length - 1, 0);
+    if (!confirm(`לאחד ${extra} חומרי גלם כפולים?\n(אותו שם אצל אותו ספק — נשמרת הרשומה עם מחיר/פעילות)`)) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'מאחד...'; }
+    try {
+      const result = await mergeAllExactDuplicateMaterials();
+      showToast(result.merged ? `אוחדו ${result.merged} כפילויות חומרים ✓` : 'לא נמצאו כפילויות');
+      requestAutoBackupNow().catch(() => {});
+      const { flushSyncQueue } = await import('../supabase-sync.js?v=457');
+      await flushSyncQueue().catch(() => {});
+      await renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה באיחוד');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'אחד חומרים כפולים'; }
+    }
+  });
+
+  document.getElementById('browse-dedupe-sups')?.addEventListener('click', async () => {
+    const btn = document.getElementById('browse-dedupe-sups');
+    const extra = supDupes.reduce((n, g) => n + g.suppliers.length - 1, 0);
+    if (!confirm(`לאחד ${extra} ספקים כפולים?\n(אותו שם באותה קטגוריה — חומרי הגלם יועברו לספק שנשמר)`)) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'מאחד...'; }
+    try {
+      const result = await mergeAllDuplicateSuppliers();
+      showToast(result.mergedSuppliers
+        ? `אוחדו ${result.mergedSuppliers} ספקים${result.mergedMaterials ? ` · ${result.mergedMaterials} חומרים` : ''} ✓`
+        : 'לא נמצאו כפילויות');
+      requestAutoBackupNow().catch(() => {});
+      const { flushSyncQueue } = await import('../supabase-sync.js?v=457');
+      await flushSyncQueue().catch(() => {});
+      await renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאה באיחוד');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'אחד ספקים כפולים'; }
+    }
+  });
+
+  document.getElementById('browse-dedupe-advanced')?.addEventListener('click', () => {
+    openMergeDuplicatesModal(container);
   });
 
   bindBrowseResultsHandlers(body, container);
@@ -2812,7 +2877,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=456');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=457');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2834,7 +2899,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=456');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=457');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2852,7 +2917,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=456');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=457');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
