@@ -582,6 +582,12 @@ export function rowDedupeFingerprint(collection, row) {
     const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
     return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}` : '';
   }
+  // חומרי גלם: אותו שם+ספק = כפילות גם תחת קטגוריות שונות
+  // (seed «חומרי גלם יבשים» מול «חומרי גלם» אמיתי — מחיר על הכפילות לא נראה בראשי)
+  if (collection === 'rawMaterials') {
+    const n = normName(row.name);
+    return n ? `${collection}|${n}|${row.supplierId ?? ''}` : '';
+  }
   // ספריית משימות: אותו שם באותה קבוצה (+קטגוריה) = כפילות, גם אם נוצרו ממכשירים שונים
   if (collection === 'checklistTasks') {
     const n = normName(row.name);

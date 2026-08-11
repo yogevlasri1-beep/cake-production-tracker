@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=457';
-import { openModal, closeModal } from '../modal.js?v=457';
-import { requestAutoBackupNow } from '../backup-service.js?v=457';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=458';
+import { openModal, closeModal } from '../modal.js?v=458';
+import { requestAutoBackupNow } from '../backup-service.js?v=458';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,10 +10,10 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=457';
-import { getSupplierCategories } from '../kitchen-db.js?v=457';
-import { getCurrentUserRole } from '../auth.js?v=457';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=457';
+} from '../inventory-db.js?v=458';
+import { getSupplierCategories } from '../kitchen-db.js?v=458';
+import { getCurrentUserRole } from '../auth.js?v=458';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=458';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -201,7 +201,7 @@ function movementCard(m) {
 
 async function openAdjustModal(row, onDone) {
   const m = row.material;
-  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=457');
+  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=458');
   openModal({
     title: `התאמת מלאי — ${m.name}`,
     bodyHTML: `
@@ -253,7 +253,7 @@ async function openAdjustModal(row, onDone) {
       }
       const unit = row.unit || m.unit || '';
       if (!hasSet && packagingBatchNumber && Number(deltaVal) > 0) {
-        const { receiveInventoryLot } = await import('../inventory-db.js?v=457');
+        const { receiveInventoryLot } = await import('../inventory-db.js?v=458');
         await receiveInventoryLot({
           rawMaterialId: m.id, qty: deltaVal, unit, packagingBatchNumber, reason,
         });

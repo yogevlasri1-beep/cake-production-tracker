@@ -33,21 +33,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=457';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=457';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=457';
-import { renderRecipesMachines } from '../recipes-machines.js?v=457';
-import { renderRecipesPortions } from '../recipes-portions.js?v=457';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=457';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=457';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=457';
-import { openModal, closeModal } from '../modal.js?v=457';
-import { getCurrentUserRole } from '../auth.js?v=457';
-import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=457';
+} from '../kitchen-db.js?v=458';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=458';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=458';
+import { renderRecipesMachines } from '../recipes-machines.js?v=458';
+import { renderRecipesPortions } from '../recipes-portions.js?v=458';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=458';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=458';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=458';
+import { openModal, closeModal } from '../modal.js?v=458';
+import { getCurrentUserRole } from '../auth.js?v=458';
+import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=458';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=457';
-import { defaultColorForIndex } from '../chart.js?v=457';
+} from '../product-drag.js?v=458';
+import { defaultColorForIndex } from '../chart.js?v=458';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2614,9 +2614,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=457');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=458');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=457');
+    const { navigateToWorkspace } = await import('../app.js?v=458');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');

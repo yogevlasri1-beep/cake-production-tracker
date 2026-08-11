@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=457';
+import { db, getSetting, setSetting } from './db.js?v=458';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=457';
+} from './supabase-backup.js?v=458';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,7 +23,7 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=457';
+} from './sync/collections.js?v=458';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -33,8 +33,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=457';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=457';
+} from './sync/id-map.js?v=458';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=458';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -50,15 +50,16 @@ const DEFAULT_LIVE = {
 };
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 10;
+const DEDUPE_VERSION = 11;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
  * foreign keys locally: the cloud rows are correct, so a full pull repairs them.
  * v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
  * v7: new devices seeded empty supplier-category defaults that diverged from cloud names.
+ * v8: after cloud SQL cleanup of seed categories — full re-pull + material cross-category dedupe.
  */
-const REPAIR_VERSION = 7;
+const REPAIR_VERSION = 8;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -308,40 +309,67 @@ async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId
   }
 }
 
+/** Dedupe one collection by rowDedupeFingerprint; returns number removed. */
+async function dedupeCollectionByFingerprint(collection) {
+  if (collection === 'settings' || !db[collection]) return 0;
+  let removed = 0;
+  const rows = await db[collection].toArray();
+  const groups = new Map();
+  for (const row of rows) {
+    const fp = rowDedupeFingerprint(collection, row);
+    if (!fp) continue;
+    if (!groups.has(fp)) groups.set(fp, []);
+    groups.get(fp).push(row);
+  }
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => compareDedupeSurvivors(collection, a, b));
+    const keep = list[0];
+    for (const drop of list.slice(1)) {
+      if (collection === 'checklistTasks') {
+        await mergeChecklistTaskInto(keep.id, drop.id);
+      } else {
+        if (collection === 'rawMaterials') {
+          await mergeRawMaterialPriceInto(keep, drop);
+        }
+        await retargetLocalForeignKeys(collection, drop.id, keep.id);
+      }
+      await deleteLocalDuplicateRow(collection, drop);
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** מעתיק מחיר מכפילות ל-survivor אם חסר — לפני מחיקת הכפילות */
+async function mergeRawMaterialPriceInto(keep, drop) {
+  if (!keep || !drop) return;
+  const patch = {};
+  if (!(Number(keep.unitPrice) > 0) && Number(drop.unitPrice) > 0) {
+    patch.unitPrice = drop.unitPrice;
+    if (drop.unit) patch.unit = drop.unit;
+    if (drop.priceUpdatedAt) patch.priceUpdatedAt = drop.priceUpdatedAt;
+  }
+  if (!Object.keys(patch).length) return;
+  await db.rawMaterials.update(keep.id, patch);
+  await enqueueUpsert('rawMaterials', keep.id);
+}
+
 /**
  * One-time local dedupe: same dedupe-fingerprint → keep preferred row, delete rest, retarget FKs.
  */
 export async function dedupeLocalSyncCollections() {
   let removed = 0;
   for (const collection of orderedCollections()) {
-    if (collection === 'settings' || !db[collection]) continue;
-    const rows = await db[collection].toArray();
-    const groups = new Map();
-    for (const row of rows) {
-      const fp = rowDedupeFingerprint(collection, row);
-      if (!fp) continue;
-      if (!groups.has(fp)) groups.set(fp, []);
-      groups.get(fp).push(row);
-    }
-    for (const list of groups.values()) {
-      if (list.length < 2) continue;
-      list.sort((a, b) => compareDedupeSurvivors(collection, a, b));
-      const keep = list[0];
-      for (const drop of list.slice(1)) {
-        if (collection === 'checklistTasks') {
-          await mergeChecklistTaskInto(keep.id, drop.id);
-        } else {
-          await retargetLocalForeignKeys(collection, drop.id, keep.id);
-        }
-        await deleteLocalDuplicateRow(collection, drop);
-        removed++;
-      }
-    }
+    removed += await dedupeCollectionByFingerprint(collection);
   }
   // מעבר נוסף: קישורי תזרים עם שמות משימה זהים (אחרי מיזוג ids)
   removed += await dedupeFlowChecklistLinksByName();
   // קטגוריות ספקים לפי תפקיד (אריזות / ניקיון) — גם כשהשמות שונים («אריזה» מול «אריזות»)
   removed += await dedupeSupplierCategoriesByRole();
+  // אחרי מיזוג קטגוריות — ספקים/חומרים יכולים לחלוק fingerprint רק עכשיו
+  removed += await dedupeCollectionByFingerprint('suppliers');
+  removed += await dedupeCollectionByFingerprint('rawMaterials');
   return { removed };
 }
 
@@ -367,8 +395,9 @@ export function supplierCategoryRoleKey(cat) {
 }
 
 /**
- * מוחק קטגוריות ברירת-מחדל ריקות שעדיין לא סונכרנו לענן —
- * מונע דחיפת «אריזה»/«חומרי גלם יבשים» ככפילות מול הקטגוריות האמיתיות בענן.
+ * מוחק קטגוריות ברירת-מחדל ריקות (גם אם כבר סונכרנו לענן) —
+ * מונע דחיפת/שמירת «אריזה»/«חומרי גלם יבשים» ככפילות מול הקטגוריות האמיתיות.
+ * עם syncId — soft-delete לענן דרך deleteLocalDuplicateRow.
  */
 export async function pruneUnsyncedEmptySeedSupplierCategories() {
   if (!db.supplierCategories) return 0;
@@ -380,9 +409,7 @@ export async function pruneUnsyncedEmptySeedSupplierCategories() {
     const mats = await db.rawMaterials.where('supplierCategoryId').equals(cat.id).count();
     const sups = await db.suppliers.where('categoryId').equals(cat.id).count();
     if (mats > 0 || sups > 0) continue;
-    const meta = await getMetaByLocal('supplierCategories', cat.id);
-    if (meta?.syncId) continue;
-    await db.supplierCategories.delete(cat.id);
+    await deleteLocalDuplicateRow('supplierCategories', cat);
     removed += 1;
   }
   return removed;
@@ -1053,6 +1080,8 @@ export async function startLiveSync() {
   // first; otherwise this device could tombstone the copy the cloud kept.
   if (pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
     try {
+      const pruned = await pruneUnsyncedEmptySeedSupplierCategories();
+      if (pruned) console.info('live sync pruned empty seed supplier categories', pruned);
       const result = await dedupeLocalSyncCollections();
       const bridge = await repairRecipeProductLinksFromComposition();
       await flushSyncQueue();
