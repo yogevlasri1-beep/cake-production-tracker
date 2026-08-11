@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=462';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=462';
-import { defaultColorForIndex } from './chart.js?v=462';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=462';
-import { logAuditEvent } from './audit.js?v=462';
+} from './validators.js?v=463';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=463';
+import { defaultColorForIndex } from './chart.js?v=463';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=463';
+import { logAuditEvent } from './audit.js?v=463';
 
 export { ValidationError };
 
@@ -667,9 +667,14 @@ db.version(25).stores({
   }
   const supplierCats = await tx.table('supplierCategories').count();
   if (supplierCats === 0) {
-    const defaults = ['חומרי גלם יבשים', 'חלב ומוצריו', 'ירקות ופירות', 'אריזה', 'אחר'];
+    const defaults = ['חומרי גלם', 'חלב ומוצריו', 'ירקות ופירות', 'אריזות', 'אחר'];
     await tx.table('supplierCategories').bulkAdd(
-      defaults.map((name, i) => ({ name, sortOrder: i + 1 })),
+      defaults.map((name, i) => ({
+        name,
+        sortOrder: i + 1,
+        isPackaging: name === 'אריזות',
+        isCleaning: false,
+      })),
     );
   }
 });
@@ -3928,8 +3933,19 @@ export async function resetAllData() {
       const groupId = await db.recipeGroups.add({ name: recipeDefaults[i], sortOrder: i + 1, linkedCategoryGroupId: null });
       await db.recipeCategories.add({ groupId, name: 'ראשי', sortOrder: 1, linkedCategoryId: null });
     }
-    const supplierDefaults = ['חומרי גלם יבשים', 'חלב ומוצריו', 'ירקות ופירות', 'אריזה', 'אחר'];
-    await db.supplierCategories.bulkAdd(supplierDefaults.map((name, i) => ({ name, sortOrder: i + 1 })));
+    const supplierDefaults = [
+      { name: 'חומרי גלם', isPackaging: false },
+      { name: 'חלב ומוצריו', isPackaging: false },
+      { name: 'ירקות ופירות', isPackaging: false },
+      { name: 'אריזות', isPackaging: true },
+      { name: 'אחר', isPackaging: false },
+    ];
+    await db.supplierCategories.bulkAdd(supplierDefaults.map((d, i) => ({
+      name: d.name,
+      sortOrder: i + 1,
+      isPackaging: !!d.isPackaging,
+      isCleaning: false,
+    })));
   });
 }
 

@@ -1,14 +1,14 @@
 /** ייצוא קטלוג מוצרים — HTML + Excel */
 
-import { escapeHtml, formatMoney, productPriceUnitLabel } from './utils.js?v=462';
-import { buildStandaloneReportHtml, saveReportPageAsHtml } from './report-page-export.js?v=462';
-import { loadXLSX } from './xlsx-loader.js?v=462';
+import { escapeHtml, formatMoney, productPriceUnitLabel } from './utils.js?v=463';
+import { buildStandaloneReportHtml, saveReportPageAsHtml } from './report-page-export.js?v=463';
+import { loadXLSX } from './xlsx-loader.js?v=463';
 import {
   formatCatalogAllergens,
   formatCatalogPrice,
   formatCatalogWeight,
   isProductInCatalog,
-} from './product-catalog.js?v=462';
+} from './product-catalog.js?v=463';
 
 async function shareOrDownloadBlob(blob, filename, shareText) {
   const file = new File([blob], filename, { type: blob.type });

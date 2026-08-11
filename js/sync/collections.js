@@ -347,15 +347,25 @@ function normName(s) {
 }
 
 /**
- * תפקיד קטגוריית ספק למיזוג כפילויות בין מכשירים (אריזות/ניקיון) —
- * גם כשהשם לא זהה בין מכשירים ("אריזה" מול "אריזות").
- * null = קטגוריית חומ"ג רגילה (מתמזגת רק לפי שם מדויק).
+ * תפקיד קטגוריית ספק למיזוג כפילויות בין מכשירים —
+ * גם כשהשם לא זהה בין מכשירים ("אריזה" מול "אריזות", "חומרי גלם" מול "חומרי גלם יבשים").
+ * null = קטגוריה ייעודית (חלב/ירקות/אחר) — מתמזגת רק לפי שם מדויק.
  */
 export function supplierCategoryRoleKey(cat) {
   if (!cat) return null;
   const name = String(cat.name || '').trim();
   if (cat.isCleaning || /ניקיון/.test(name)) return 'cleaning';
   if (cat.isPackaging || /^אריז/.test(name)) return 'packaging';
+  // seed «חומרי גלם יבשים» מול הקטגוריה האמיתית «חומרי גלם»
+  if (/^חומרי\s*גלם/.test(name)) return 'raw';
+  return null;
+}
+
+/** שם קנוני לתצוגה אחרי מיזוג תפקיד */
+export function supplierCategoryCanonicalName(role) {
+  if (role === 'cleaning') return 'חומרי ניקיון';
+  if (role === 'packaging') return 'אריזות';
+  if (role === 'raw') return 'חומרי גלם';
   return null;
 }
 

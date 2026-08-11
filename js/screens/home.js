@@ -3,23 +3,23 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=462';
+} from '../db.js?v=463';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=462';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=462';
+} from '../utils.js?v=463';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=463';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=462';
-import { requestAutoBackupNow } from '../backup-service.js?v=462';
+} from '../calc.js?v=463';
+import { requestAutoBackupNow } from '../backup-service.js?v=463';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=462';
+} from '../order-reminder.js?v=463';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -642,7 +642,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigate } = await import('../app.js?v=462');
+    const { navigate } = await import('../app.js?v=463');
     navigate('suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -669,7 +669,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=462');
+    const { navigate } = await import('../app.js?v=463');
     navigate('process');
   };
 
@@ -694,7 +694,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=462');
+    const { navigate } = await import('../app.js?v=463');
     navigate('backup');
   });
 

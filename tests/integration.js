@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=462';
-import { db, initDB } from '../js/db.js?v=462';
+} from './runner.js?v=463';
+import { db, initDB } from '../js/db.js?v=463';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,10 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName,
-} from '../js/kitchen-db.js?v=462';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=462';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=462';
-import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=462';
+} from '../js/kitchen-db.js?v=463';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=463';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=463';
+import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=463';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });

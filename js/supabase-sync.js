@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=462';
+import { db, getSetting, setSetting } from './db.js?v=463';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=462';
+} from './supabase-backup.js?v=463';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -24,7 +24,8 @@ import {
   rowFingerprint,
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
-} from './sync/collections.js?v=462';
+  supplierCategoryCanonicalName,
+} from './sync/collections.js?v=463';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -34,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=462';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=462';
+} from './sync/id-map.js?v=463';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=463';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -110,7 +111,7 @@ export function formatLiveSyncErrorForUi(live) {
 }
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 12;
+const DEDUPE_VERSION = 13;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -118,8 +119,9 @@ const DEDUPE_VERSION = 12;
  * v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
  * v7: new devices seeded empty supplier-category defaults that diverged from cloud names.
  * v8: after cloud SQL cleanup of seed categories — full re-pull + material cross-category dedupe.
+ * v9: merge «חומרי גלם»/«חומרי גלם יבשים» + re-pull after unique packaging/cleaning indexes.
  */
-const REPAIR_VERSION = 8;
+const REPAIR_VERSION = 9;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -430,7 +432,7 @@ async function dedupeCollectionByFingerprint(collection) {
   return removed;
 }
 
-/** מעתיק מחיר מכפילות ל-survivor אם חסר — לפני מחיקת הכפילות */
+/** מעתיק מחיר/שדות חסרים מכפילות ל-survivor לפני מחיקה */
 async function mergeRawMaterialPriceInto(keep, drop) {
   if (!keep || !drop) return;
   const patch = {};
@@ -439,9 +441,25 @@ async function mergeRawMaterialPriceInto(keep, drop) {
     if (drop.unit) patch.unit = drop.unit;
     if (drop.priceUpdatedAt) patch.priceUpdatedAt = drop.priceUpdatedAt;
   }
+  if (!(Number(keep.packageWeightGrams) > 0) && Number(drop.packageWeightGrams) > 0) {
+    patch.packageWeightGrams = drop.packageWeightGrams;
+  }
+  if (!(Number(keep.processedPricePerKg) > 0) && Number(drop.processedPricePerKg) > 0) {
+    patch.processedPricePerKg = drop.processedPricePerKg;
+  }
+  if (!sanitizeBarcodeLike(keep.barcode) && sanitizeBarcodeLike(drop.barcode)) {
+    patch.barcode = drop.barcode;
+  }
+  if (!keep.supplierId && drop.supplierId) {
+    patch.supplierId = drop.supplierId;
+  }
   if (!Object.keys(patch).length) return;
   await db.rawMaterials.update(keep.id, patch);
   await enqueueUpsert('rawMaterials', keep.id);
+}
+
+function sanitizeBarcodeLike(v) {
+  return String(v || '').trim();
 }
 
 /**
@@ -462,7 +480,7 @@ export async function dedupeLocalSyncCollections() {
   return { removed };
 }
 
-/** שמות ברירת-מחדל שנוצרים ב-IndexedDB ריק — לא אמורים להישאר אחרי pull מענן עם נתונים אמיתיים */
+/** שמות ברירת-מחדל / seed ישנים — ריקים נמחקים אחרי pull */
 const FRESH_SEED_SUPPLIER_CATEGORY_NAMES = new Set([
   'חומרי גלם יבשים',
   'חלב ומוצריו',
@@ -473,7 +491,7 @@ const FRESH_SEED_SUPPLIER_CATEGORY_NAMES = new Set([
 
 // supplierCategoryRoleKey moved to ./sync/collections.js (also used by rowDedupeFingerprint
 // there); re-exported below so existing imports from this module keep working.
-export { supplierCategoryRoleKey };
+export { supplierCategoryRoleKey, supplierCategoryCanonicalName };
 
 /**
  * מוחק קטגוריות ברירת-מחדל ריקות (גם אם כבר סונכרנו לענן) —
@@ -496,7 +514,24 @@ export async function pruneUnsyncedEmptySeedSupplierCategories() {
   return removed;
 }
 
-/** מאחד כפילויות אריזות/ניקיון גם כשהשם לא זהה בדיוק */
+/** ציון העדפה ל-survivor של קטגוריה — יותר נתונים / שם קנוני / דגלים */
+async function scoreSupplierCategorySurvivor(cat, role) {
+  const mats = await db.rawMaterials.where('supplierCategoryId').equals(cat.id).count();
+  const sups = await db.suppliers.where('categoryId').equals(cat.id).count();
+  const canonical = supplierCategoryCanonicalName(role);
+  const name = String(cat.name || '').trim();
+  let score = mats * 100 + sups * 10;
+  if (canonical && name === canonical) score += 50;
+  if (role === 'raw' && name === 'חומרי גלם יבשים') score -= 20; // seed ישן
+  if (role === 'packaging' && name === 'אריזה') score -= 10;
+  if (role === 'packaging' && cat.isPackaging) score += 5;
+  if (role === 'cleaning' && cat.isCleaning) score += 5;
+  // id נמוך יותר = ישן יותר (טיי-ברייקר שלילי קטן)
+  score -= Math.min(cat.id || 0, 1000) * 0.001;
+  return score;
+}
+
+/** מאחד כפילויות אריזות/ניקיון/חומ״ג גם כשהשם לא זהה בדיוק */
 async function dedupeSupplierCategoriesByRole() {
   if (!db.supplierCategories) return 0;
   const rows = await db.supplierCategories.toArray();
@@ -508,28 +543,64 @@ async function dedupeSupplierCategoriesByRole() {
     byRole.get(role).push(row);
   }
   let removed = 0;
-  for (const list of byRole.values()) {
-    if (list.length < 2) continue;
-    list.sort((a, b) => {
-      const aFlag = (a.isPackaging || a.isCleaning) ? 1 : 0;
-      const bFlag = (b.isPackaging || b.isCleaning) ? 1 : 0;
-      if (bFlag !== aFlag) return bFlag - aFlag;
-      return (a.id - b.id);
-    });
-    const keep = list[0];
+  for (const [role, list] of byRole.entries()) {
+    if (list.length < 2) {
+      // גם בודד — נרמל שם/דגלים אם צריך
+      if (list.length === 1) {
+        const keep = list[0];
+        const patch = {};
+        const canonical = supplierCategoryCanonicalName(role);
+        if (role === 'cleaning' && !keep.isCleaning) {
+          patch.isCleaning = true;
+          patch.isPackaging = false;
+        }
+        if (role === 'packaging' && !keep.isPackaging) {
+          patch.isPackaging = true;
+          patch.isCleaning = false;
+        }
+        if (canonical && String(keep.name || '').trim() !== canonical
+            && (FRESH_SEED_SUPPLIER_CATEGORY_NAMES.has(String(keep.name || '').trim())
+              || (role === 'raw' && /יבשים/.test(String(keep.name || ''))))) {
+          patch.name = canonical;
+        }
+        if (Object.keys(patch).length) {
+          await db.supplierCategories.update(keep.id, patch);
+          await enqueueUpsert('supplierCategories', keep.id);
+        }
+      }
+      continue;
+    }
+    const scored = [];
+    for (const row of list) {
+      scored.push({ row, score: await scoreSupplierCategorySurvivor(row, role) });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    const keep = scored[0].row;
     const patch = {};
-    if (supplierCategoryRoleKey(keep) === 'cleaning' && !keep.isCleaning) {
+    const canonical = supplierCategoryCanonicalName(role);
+    if (role === 'cleaning' && !keep.isCleaning) {
       patch.isCleaning = true;
       patch.isPackaging = false;
     }
-    if (supplierCategoryRoleKey(keep) === 'packaging' && !keep.isPackaging) {
+    if (role === 'packaging' && !keep.isPackaging) {
       patch.isPackaging = true;
       patch.isCleaning = false;
     }
+    if (canonical && String(keep.name || '').trim() !== canonical) {
+      // רק אם השם הוא seed/וריאציה של אותו תפקיד — לא לדרוס שם מותאם אישית
+      const keepName = String(keep.name || '').trim();
+      if (FRESH_SEED_SUPPLIER_CATEGORY_NAMES.has(keepName)
+          || /^אריז/.test(keepName)
+          || /^חומרי\s*גלם/.test(keepName)
+          || /ניקיון/.test(keepName)) {
+        patch.name = canonical;
+      }
+    }
     if (Object.keys(patch).length) {
       await db.supplierCategories.update(keep.id, patch);
+      await enqueueUpsert('supplierCategories', keep.id);
     }
-    for (const drop of list.slice(1)) {
+    for (const { row: drop } of scored.slice(1)) {
       await retargetLocalForeignKeys('supplierCategories', drop.id, keep.id);
       await deleteLocalDuplicateRow('supplierCategories', drop);
       removed += 1;
