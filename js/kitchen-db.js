@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=455';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=457';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=455';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=455';
-import { logAuditEvent } from './audit.js?v=455';
-import { markMetaDeleted } from './sync/id-map.js?v=455';
+} from './validators.js?v=457';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=457';
+import { logAuditEvent } from './audit.js?v=457';
+import { markMetaDeleted } from './sync/id-map.js?v=457';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3859,12 +3859,16 @@ export async function updateSupplierCategory(id, patch) {
 
 /**
  * מוודא שקיימת קטגוריית חומרי ניקיון 🧹 — יוצר אחת אם אין,
- * או מסמן קטגוריה קיימת בשם "חומרי ניקיון" בדגל isCleaning.
+ * או מסמן קטגוריה קיימת בשם/דגל ניקיון.
+ * לא יוצר כפילות אם כבר יש isCleaning או שם עם «ניקיון».
  */
 export async function ensureCleaningSupplierCategory() {
   const cats = await getSupplierCategories();
   if (cats.some((c) => isCleaningSupplierCategory(c))) return;
-  const byName = cats.find((c) => String(c.name || '').trim() === 'חומרי ניקיון');
+  const byName = cats.find((c) => {
+    const n = String(c.name || '').trim();
+    return n === 'חומרי ניקיון' || /ניקיון/.test(n);
+  });
   if (byName) {
     await db.supplierCategories.update(byName.id, { isCleaning: true, isPackaging: false });
     return;
