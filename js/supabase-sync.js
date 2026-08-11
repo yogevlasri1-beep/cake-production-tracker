@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=459';
+import { db, getSetting, setSetting } from './db.js?v=460';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=459';
+} from './supabase-backup.js?v=460';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -24,7 +24,7 @@ import {
   rowFingerprint,
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
-} from './sync/collections.js?v=459';
+} from './sync/collections.js?v=460';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -34,8 +34,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=459';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=459';
+} from './sync/id-map.js?v=460';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=460';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -51,7 +51,7 @@ const DEFAULT_LIVE = {
 };
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 11;
+const DEDUPE_VERSION = 12;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad

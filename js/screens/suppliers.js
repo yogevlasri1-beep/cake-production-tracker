@@ -25,18 +25,18 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=459';
-import { getProducts, getCategories } from '../db.js?v=459';
+} from '../kitchen-db.js?v=460';
+import { getProducts, getCategories } from '../db.js?v=460';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=459';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=459';
-import { openModal, closeModal } from '../modal.js?v=459';
-import { requestAutoBackupNow } from '../backup-service.js?v=459';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=459';
-import { openBarcodeScanner } from '../barcode-scan.js?v=459';
-import { getLiveSyncSettings } from '../supabase-sync.js?v=459';
+} from '../supplier-import.js?v=460';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=460';
+import { openModal, closeModal } from '../modal.js?v=460';
+import { requestAutoBackupNow } from '../backup-service.js?v=460';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=460';
+import { openBarcodeScanner } from '../barcode-scan.js?v=460';
+import { getLiveSyncSettings } from '../supabase-sync.js?v=460';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -185,6 +185,38 @@ function renderPackagingMetaLine(material) {
   return parts.length ? ` · ${parts.join(' · ')}` : '';
 }
 
+/** ימים מאז עדכון מחיר אחרון (היסטוריה / שדה מקומי) — null אם אין תאריך */
+function materialPriceAgeDays(m, latestHistoryDate = null) {
+  const raw = latestHistoryDate || m?.priceUpdatedAt || m?.updatedAt || null;
+  if (!raw) return null;
+  const t = Date.parse(String(raw).slice(0, 10));
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function materialPriceHintBadgesHTML(m, { latestHistoryDate = null, prevPrice = null } = {}) {
+  const badges = [];
+  const hasPkg = Number(m?.packageWeightGrams) > 0;
+  const hasUnit = Number(m?.unitPrice) > 0;
+  if (hasUnit && !hasPkg && !m?.packagingKind && !sanitizeProcessedPricePerKg(m?.processedPricePerKg)) {
+    badges.push('<span class="mat-price-badge mat-price-badge-est" title="אין משקל אריזה — המחיר לק״ג עלול להיות משוער">משוער</span>');
+  }
+  const age = materialPriceAgeDays(m, latestHistoryDate);
+  if (age != null && age >= 60 && hasUnit) {
+    badges.push(`<span class="mat-price-badge mat-price-badge-stale" title="לא עודכן ${age} ימים">לא עודכן ${age}י׳</span>`);
+  }
+  if (prevPrice != null && Number(m?.unitPrice) > 0) {
+    const cur = Number(m.unitPrice);
+    const prev = Number(prevPrice);
+    if (prev > 0 && Math.abs(cur - prev) / prev >= 0.01) {
+      const up = cur > prev;
+      const pct = Math.round(Math.abs(cur - prev) / prev * 100);
+      badges.push(`<span class="mat-price-badge ${up ? 'mat-price-badge-up' : 'mat-price-badge-down'}">${up ? '↑' : '↓'}${pct}%</span>`);
+    }
+  }
+  return badges.join(' ');
+}
+
 /** מטא־דאטה לתצוגה ברשימות — באריזות בלי מחיר/ק״ג מטעה */
 function formatMaterialPriceMeta(m) {
   if (m?.packagingKind) {
@@ -221,9 +253,10 @@ function renderCatalogResultsHTML(items) {
     const defaultMeta = item.recipeDefaultId
       ? ' <span class="recipe-default-badge" title="ברירת מחדל למתכונים">★ ברירת מחדל</span>'
       : '';
+    const priceBadges = materialPriceHintBadgesHTML(best);
     return `
       <button type="button" class="catalog-material-row" data-primary-id="${item.primaryId}">
-        <span class="catalog-mat-name">${escapeHtml(item.name)}${defaultMeta}</span>
+        <span class="catalog-mat-name">${escapeHtml(item.name)}${defaultMeta}${priceBadges ? ` ${priceBadges}` : ''}</span>
         <span class="catalog-mat-meta">
           ${item.supplierCount ? `${item.supplierCount} ספקים` : 'ללא ספק'}
           ${best.packagingKind
@@ -1453,11 +1486,19 @@ async function openMaterialDetailModal(container, materialId) {
   const matCategory = supplierCategories.find((c) => c.id === mat.supplierCategoryId);
   const isCleaningMat = isCleaningSupplierCategory(matCategory);
 
+  const prevHistPrice = history.length > 1 ? history[1].price : null;
+  const latestHistDate = history[0]?.effectiveDate || null;
+  const priceBadges = materialPriceHintBadgesHTML(mat, {
+    latestHistoryDate: latestHistDate,
+    prevPrice: prevHistPrice,
+  });
+
   openModal({
     title: escapeHtml(mat.name),
     modalClass: 'modal-material-detail',
     bodyHTML: `
       ${renderMaterialPricingDetailsHTML(mat, { simple: isCleaningMat })}
+      ${priceBadges ? `<div class="material-detail-badges" style="margin:8px 0">${priceBadges}</div>` : ''}
       <div class="material-detail-meta">
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
         ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
@@ -1505,13 +1546,27 @@ async function openMaterialDetailModal(container, materialId) {
         <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
         ${history.length
     ? `<table class="price-history-table">
-          <thead><tr><th>תאריך</th><th>מחיר</th></tr></thead>
+          <thead><tr><th>תאריך</th><th>מחיר</th><th>שינוי</th></tr></thead>
           <tbody>
-            ${history.map((h, i) => `
+            ${history.map((h, i) => {
+    const prev = history[i + 1];
+    let delta = '—';
+    if (prev && Number(prev.price) > 0 && Number(h.price) > 0) {
+      const diff = Number(h.price) - Number(prev.price);
+      const pct = Math.round(Math.abs(diff) / Number(prev.price) * 100);
+      if (Math.abs(diff) / Number(prev.price) >= 0.005) {
+        delta = `<span class="${diff > 0 ? 'mat-price-badge-up' : 'mat-price-badge-down'}">${diff > 0 ? '↑' : '↓'}${pct}%</span>`;
+      } else {
+        delta = '=';
+      }
+    }
+    return `
             <tr class="${i === 0 ? 'is-current' : ''}">
               <td>${formatDate(h.effectiveDate)}</td>
               <td><strong>${formatMoney(h.price)}</strong></td>
-            </tr>`).join('')}
+              <td>${delta}</td>
+            </tr>`;
+  }).join('')}
           </tbody>
         </table>`
     : '<p class="form-hint">אין היסטוריה — עדכן מחיר בעריכה</p>'}
@@ -2121,6 +2176,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
   const packProductId = mat?.packLinkedProductId ? Number(mat.packLinkedProductId) : '';
   const packCategoryId = mat?.packLinkedCategoryId ? Number(mat.packLinkedCategoryId) : '';
   const packLinkMode = packProductId ? 'product' : (packCategoryId ? 'category' : 'none');
+  const isNew = !mat;
   const portionProductChecks = (products || [])
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
@@ -2140,8 +2196,8 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
     .map((c) => `<option value="${c.id}"${packCategoryId === Number(c.id) ? ' selected' : ''}>${escapeHtml(c.name)}</option>`)
     .join('');
-  return `
-    <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+
+  const barcodeBlock = `
     <div class="form-group mat-barcode-group">
       <label for="mat-barcode">ברקוד</label>
       <div class="mat-barcode-row">
@@ -2152,7 +2208,9 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
         <button type="button" class="btn btn-secondary btn-sm btn-icon" id="mat-barcode-clear" title="נקה ברקוד">✕</button>
       </div>
       <p class="form-hint">שיוך ברקוד מהאריזה — לסריקה מהירה בקבלה ובמלאי</p>
-    </div>
+    </div>`;
+
+  const synonymsBlock = `
     <div class="form-group mat-synonyms-group">
       <label>מילים נרדפות</label>
       <div class="mat-synonyms-add-row">
@@ -2161,11 +2219,60 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
       </div>
       <ul class="mat-synonyms-list" id="mat-synonyms-list"></ul>
       <p class="form-hint">חיפוש לפי מילה נרדפת ימצא את החומר גלם</p>
+    </div>`;
+
+  const essentialsIntro = isNew
+    ? `<p class="form-hint mat-quick-add-hint" style="margin:0 0 10px">הוספה מהירה: מלא שם, מחיר וספק — שאר הפרטים אפשר להשלים אחר כך</p>`
+    : '';
+
+  const rawPricingBlock = `
+    <div class="form-group"><label>יחידת רכישה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
+    <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}" placeholder="למשל: 4.5"></div>
+    <div class="form-group"><label>כמות באריזה (ק&quot;ג)</label><input type="number" id="mat-package-qty" min="0" step="0.001" value="${packageWeightKg !== '' ? packageWeightKg : ''}" placeholder="למשל: 1 — חובה לחישוב מדויק"></div>
+    <p class="form-hint" id="mat-package-price-preview"></p>
+    <p class="form-hint">מחיר האריזה מחושב אוטומטית מ·מחיר לקילו × כמות באריזה</p>`;
+
+  const advancedRawBlock = `
+    <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
+      <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
     </div>
-    ${isCleaning ? `
-    <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
-    <div class="form-group"><label>מחיר ליחידה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>` : ''}
-    ${isPackaging ? `
+    <div class="form-group">
+      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="mat-is-free"${mat?.isFree ? ' checked' : ''}>
+        <span>חומר ללא עלות</span>
+      </label>
+      <p class="form-hint">למשל מים או קרח — לא ייחשב כחומר שחסר לו מחיר</p>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="mat-as-portion"${isPortion ? ' checked' : ''}>
+        <span>סמן כמנה</span>
+      </label>
+      <p class="form-hint">החומר יופיע כמנה בתזרים של המוצרים המשויכים</p>
+    </div>
+    <div id="mat-portion-fields" style="${isPortion ? '' : 'display:none'}">
+      <div class="form-group">
+        <label>שיוך למוצרים</label>
+        <div class="mat-portion-products-list" id="mat-portion-products">
+          ${portionProductChecks || '<p class="form-hint" style="margin:0">אין מוצרים להצגה</p>'}
+        </div>
+        <p class="form-hint">אפשר לסמן כמה מוצרים — המנה תופיע בתזרים של כל מוצר מסומן</p>
+      </div>
+      <div class="form-group">
+        <label for="mat-portion-weight">משקל מנה (ק&quot;ג)</label>
+        <input type="number" id="mat-portion-weight" min="0.001" step="0.001" inputmode="decimal"
+          value="${portionWeightKg !== '' ? portionWeightKg : ''}" placeholder="למשל: 0.12">
+      </div>
+    </div>`;
+
+  const supplierBlock = `
+    <div class="form-group"><label>ספק</label>
+      <select id="mat-supplier"><option value="">—</option>
+        ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+      </select>
+    </div>`;
+
+  const packagingBlock = `
     <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
     <div class="form-group"><label>מחיר לחבילה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>
     <div class="form-group">
@@ -2208,56 +2315,50 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
       </select>
       <p class="form-hint">סימון שהאריזה מיועדת לקטגוריה זו</p>
     </div>
-    <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>` : (isCleaning ? '' : `
-    <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}"></div>
-    <div class="form-group"><label>כמות באריזה (ק&quot;ג)</label><input type="number" id="mat-package-qty" min="0" step="0.001" value="${packageWeightKg !== '' ? packageWeightKg : ''}" placeholder="למשל: 1"></div>
-    <p class="form-hint" id="mat-package-price-preview"></p>
-    <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
-      <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
-    </div>
-    <div class="form-group">
-      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="mat-is-free"${mat?.isFree ? ' checked' : ''}>
-        <span>חומר ללא עלות</span>
-      </label>
-      <p class="form-hint">למשל מים או קרח — לא ייחשב כחומר שחסר לו מחיר</p>
-    </div>
-    <div class="form-group"><label>יחידת רכישה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>`)}
-    <div class="form-group"><label>ספק</label>
-      <select id="mat-supplier"><option value="">—</option>
-        ${suppliers.map((s) => `<option value="${s.id}"${mat?.supplierId === s.id ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
-      </select>
-    </div>
-    ${(isPackaging || isCleaning) ? '' : `
-    <div class="form-group">
-      <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="mat-as-portion"${isPortion ? ' checked' : ''}>
-        <span>סמן כמנה</span>
-      </label>
-      <p class="form-hint">החומר יופיע כמנה בתזרים של המוצרים המשויכים</p>
-    </div>
-    <div id="mat-portion-fields" style="${isPortion ? '' : 'display:none'}">
-      <div class="form-group">
-        <label>שיוך למוצרים</label>
-        <div class="mat-portion-products-list" id="mat-portion-products">
-          ${portionProductChecks || '<p class="form-hint" style="margin:0">אין מוצרים להצגה</p>'}
-        </div>
-        <p class="form-hint">אפשר לסמן כמה מוצרים — המנה תופיע בתזרים של כל מוצר מסומן</p>
-      </div>
-      <div class="form-group">
-        <label for="mat-portion-weight">משקל מנה (ק&quot;ג)</label>
-        <input type="number" id="mat-portion-weight" min="0.001" step="0.001" inputmode="decimal"
-          value="${portionWeightKg !== '' ? portionWeightKg : ''}" placeholder="למשל: 0.12">
-      </div>
-    </div>`}
-    ${mat && !isCleaning ? `
+    <p class="form-hint mat-pack-cost-preview" id="mat-pack-cost-preview"></p>`;
+
+  const cleaningBlock = `
+    <div class="form-group"><label>יחידה</label><input type="text" id="mat-unit" value="${mat ? escapeHtml(mat.unit) : defaultUnit}"></div>
+    <div class="form-group"><label>מחיר ליחידה (₪)</label><input type="number" id="mat-price" min="0" step="0.01" value="${mat?.unitPrice ?? ''}"></div>`;
+
+  const recipeDefaultBlock = mat && !isCleaning ? `
     <div class="form-group">
       <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="mat-recipe-default"${mat.isRecipeDefault ? ' checked' : ''}>
         <span>ברירת מחדל למתכונים</span>
       </label>
       <p class="form-hint">כשמסומן — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה (רק הצעה אחת לשם חומר)</p>
-    </div>` : ''}`;
+    </div>` : '';
+
+  const advancedWrap = (inner) => (isNew
+    ? `<details class="mat-advanced-details"><summary>פרטים נוספים (ברקוד, מילים נרדפות${isPackaging || isCleaning ? '' : ', עיבוד/מנה'}…)</summary>${inner}</details>`
+    : inner);
+
+  if (isCleaning) {
+    return `
+      ${essentialsIntro}
+      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+      ${cleaningBlock}
+      ${supplierBlock}
+      ${advancedWrap(`${barcodeBlock}${synonymsBlock}`)}
+      ${recipeDefaultBlock}`;
+  }
+  if (isPackaging) {
+    return `
+      ${essentialsIntro}
+      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+      ${packagingBlock}
+      ${supplierBlock}
+      ${advancedWrap(`${barcodeBlock}${synonymsBlock}`)}
+      ${recipeDefaultBlock}`;
+  }
+  return `
+    ${essentialsIntro}
+    <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+    ${rawPricingBlock}
+    ${supplierBlock}
+    ${advancedWrap(`${barcodeBlock}${synonymsBlock}${advancedRawBlock}`)}
+    ${recipeDefaultBlock}`;
 }
 
 function readMaterialSynonymsFromForm() {
@@ -2826,7 +2927,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=459');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=460');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2848,7 +2949,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=459');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=460');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2866,7 +2967,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=459');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=460');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
