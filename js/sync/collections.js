@@ -347,6 +347,19 @@ function normName(s) {
 }
 
 /**
+ * תפקיד קטגוריית ספק למיזוג כפילויות בין מכשירים (אריזות/ניקיון) —
+ * גם כשהשם לא זהה בין מכשירים ("אריזה" מול "אריזות").
+ * null = קטגוריית חומ"ג רגילה (מתמזגת רק לפי שם מדויק).
+ */
+export function supplierCategoryRoleKey(cat) {
+  if (!cat) return null;
+  const name = String(cat.name || '').trim();
+  if (cat.isCleaning || /ניקיון/.test(name)) return 'cleaning';
+  if (cat.isPackaging || /^אריז/.test(name)) return 'packaging';
+  return null;
+}
+
+/**
  * Fingerprint for dedupe / match. Uses name + FK ids as stored on the row
  * (local numeric or sync UUID — compare only within the same id-space).
  */
@@ -587,6 +600,12 @@ export function rowDedupeFingerprint(collection, row) {
   if (collection === 'rawMaterials') {
     const n = normName(row.name);
     return n ? `${collection}|${n}|${row.supplierId ?? ''}` : '';
+  }
+  // קטגוריות אריזה/ניקיון: תפקיד זהה = כפילות גם כששם הקטגוריה שונה בין מכשירים
+  // ("אריזה" מול "אריזות") — קטגוריית חומ"ג רגילה עדיין דורשת שם מדויק.
+  if (collection === 'supplierCategories') {
+    const role = supplierCategoryRoleKey(row);
+    if (role) return `${collection}|role|${role}`;
   }
   // ספריית משימות: אותו שם באותה קבוצה (+קטגוריה) = כפילות, גם אם נוצרו ממכשירים שונים
   if (collection === 'checklistTasks') {

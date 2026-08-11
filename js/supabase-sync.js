@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=458';
+import { db, getSetting, setSetting } from './db.js?v=459';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=458';
+} from './supabase-backup.js?v=459';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,7 +23,8 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
-} from './sync/collections.js?v=458';
+  supplierCategoryRoleKey,
+} from './sync/collections.js?v=459';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -33,8 +34,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=458';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=458';
+} from './sync/id-map.js?v=459';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=459';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -123,14 +124,18 @@ function tableOf(collection) {
   return COLLECTION_TABLE[collection];
 }
 
+/** 'error' items are retried on every flush (see flushSyncQueue), so they still count as backlog. */
+async function countQueueBacklog() {
+  return db.syncQueue.where('status').anyOf('pending', 'error').count();
+}
+
 async function enqueue(op) {
   await db.syncQueue.add({
     ...op,
     createdAt: new Date().toISOString(),
     status: 'pending',
   });
-  const pending = await db.syncQueue.where('status').equals('pending').count();
-  await saveLiveSyncSettings({ pendingCount: pending });
+  await saveLiveSyncSettings({ pendingCount: await countQueueBacklog() });
   scheduleFlush();
 }
 
@@ -230,8 +235,13 @@ export async function flushSyncQueue() {
   if (!cfg.supabaseUrl || !cfg.anonKey) return { flushed: 0 };
 
   const deviceId = await getOrCreateDeviceId();
-  const pending = await db.syncQueue.where('status').equals('pending').sortBy('createdAt');
+  // 'error' items are retried too: a transient failure (network blip, a not-yet-
+  // approved account rejected by RLS) must not permanently strand that one write —
+  // it used to be marked 'error' and never picked up again, silently dropping it
+  // while the rest of the queue kept flushing normally.
+  const pending = await db.syncQueue.where('status').anyOf('pending', 'error').sortBy('createdAt');
   let flushed = 0;
+  let lastErr = null;
   for (const item of pending) {
     try {
       if (item.type === 'delete') {
@@ -242,32 +252,50 @@ export async function flushSyncQueue() {
       await db.syncQueue.update(item.id, { status: 'done' });
       flushed++;
     } catch (err) {
-      await db.syncQueue.update(item.id, { status: 'error', error: String(err.message || err) });
-      await saveLiveSyncSettings({ lastError: String(err.message || err) });
-      emitStatus({ lastError: String(err.message || err) });
-      break;
+      lastErr = String(err.message || err);
+      await db.syncQueue.update(item.id, { status: 'error', error: lastErr });
+      // Keep trying the remaining queued rows — one bad/rejected row (e.g. an
+      // unapproved account hitting RLS) should not block unrelated writes behind it.
     }
   }
   await db.syncQueue.where('status').equals('done').delete();
-  const pendingCount = await db.syncQueue.where('status').equals('pending').count();
+  const pendingCount = await countQueueBacklog();
   await saveLiveSyncSettings({
     pendingCount,
     lastPushAt: flushed ? new Date().toISOString() : live.lastPushAt,
-    lastError: flushed ? null : live.lastError,
+    lastError: lastErr,
   });
+  if (lastErr) emitStatus({ lastError: lastErr });
   return { flushed };
 }
 
-async function findLocalByFingerprint(collection, fingerprint, { syncId = null } = {}) {
-  if (!fingerprint || !db[collection]) return null;
+/**
+ * Collections where a same-named/-role row created independently on two devices
+ * (before either had synced) must converge into one row in real time, not just at
+ * the next periodic dedupe pass — otherwise every such race leaves a permanent
+ * duplicate (e.g. two "supplierCategories" cleaning categories, or the same raw
+ * material added under two different categories on two devices).
+ */
+const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'rawMaterials']);
+
+async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
+  if (!row || !db[collection]) return null;
+  const strictFp = rowFingerprint(collection, row);
+  const looseFp = LOOSE_MATCH_COLLECTIONS.has(collection) ? rowDedupeFingerprint(collection, row) : '';
+  if (!strictFp && !looseFp) return null;
   const rows = await db[collection].toArray();
-  const matches = rows.filter((r) => rowFingerprint(collection, r) === fingerprint);
-  for (const row of matches) {
-    const meta = await getMetaByLocal(collection, row.id);
+  const strictMatches = [];
+  const looseMatches = [];
+  for (const r of rows) {
+    if (strictFp && rowFingerprint(collection, r) === strictFp) strictMatches.push(r);
+    else if (looseFp && looseFp !== strictFp && rowDedupeFingerprint(collection, r) === looseFp) looseMatches.push(r);
+  }
+  for (const candidate of [...strictMatches, ...looseMatches]) {
+    const meta = await getMetaByLocal(collection, candidate.id);
     // A local row already claimed by another cloud row must not be reused: two cloud
     // rows can share a fingerprint (same product and date, no run), and only one
     // mapping fits per local row, so the second one would vanish without a trace.
-    if (!meta?.syncId || meta.syncId === syncId) return row;
+    if (!meta?.syncId || meta.syncId === syncId) return candidate;
   }
   return null;
 }
@@ -382,17 +410,9 @@ const FRESH_SEED_SUPPLIER_CATEGORY_NAMES = new Set([
   'אחר',
 ]);
 
-/**
- * תפקיד קטגוריית ספק למיזוג כפילויות בין מכשירים.
- * null = קטגוריית חומ״ג רגילה (מתמזגת רק לפי שם מדויק ב-fingerprint).
- */
-export function supplierCategoryRoleKey(cat) {
-  if (!cat) return null;
-  const name = String(cat.name || '').trim();
-  if (cat.isCleaning || /ניקיון/.test(name)) return 'cleaning';
-  if (cat.isPackaging || /^אריז/.test(name)) return 'packaging';
-  return null;
-}
+// supplierCategoryRoleKey moved to ./sync/collections.js (also used by rowDedupeFingerprint
+// there); re-exported below so existing imports from this module keep working.
+export { supplierCategoryRoleKey };
 
 /**
  * מוחק קטגוריות ברירת-מחדל ריקות (גם אם כבר סונכרנו לענן) —
@@ -696,8 +716,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
 
   // Match existing local row by fingerprint to avoid duplicates from multi-device seed
   if (!existingMeta) {
-    const fp = rowFingerprint(collection, payload);
-    const match = await findLocalByFingerprint(collection, fp, { syncId });
+    const match = await findLocalByFingerprint(collection, payload, { syncId });
     if (match) {
       existingMeta = {
         collection,
@@ -1170,7 +1189,7 @@ export async function getLiveSyncStatus() {
     getLiveSyncSettings(),
     getSupabaseBackupConfig(),
     getOrCreateDeviceId(),
-    db.syncQueue?.where?.('status')?.equals?.('pending')?.count?.() ?? 0,
+    db.syncQueue ? countQueueBacklog() : 0,
   ]);
   return {
     ...live,

@@ -5,18 +5,19 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=458';
-import { db, initDB } from '../js/db.js?v=458';
+} from './runner.js?v=459';
+import { db, initDB } from '../js/db.js?v=459';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   setRawMaterialRecipeDefault, mergeSelectedRawMaterials,
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
-} from '../js/kitchen-db.js?v=458';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=458';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=458';
-import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=458';
+  findRawMaterialsByName,
+} from '../js/kitchen-db.js?v=459';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=459';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=459';
+import { installLiveSyncMiddleware } from '../js/supabase-sync.js?v=459';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -185,6 +186,40 @@ export async function runIntegrationTests() {
     const elapsed = Date.now() - start;
     assertOk(groups.length >= bases.length, `קובץ לפי בסיס משותף: ${groups.length} קבוצות`);
     assertOk(elapsed < 5000, `זמן ריצה סביר על 300 פריטים: ${elapsed}ms`);
+  });
+
+  await testAsync('findRawMaterialsByName — מוצא כפילות שם חוצה קטגוריה/ספק (לאזהרה בהוספה)', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catA = await addSupplierCategory('חומרי גלם בדיקה 4');
+    const catB = await addSupplierCategory('חומרי גלם בדיקה 5');
+    const supA = await addSupplier({ categoryId: catA, name: 'ספק A בדיקה 2' });
+
+    const first = await addRawMaterial({
+      supplierCategoryId: catA, name: 'קמח לבן', unit: 'ק"ג', unitPrice: 4, supplierId: supA,
+    });
+
+    const noneYet = await findRawMaterialsByName('שמרים טריים');
+    assertEqual(noneYet.length, 0, 'שם חדש לגמרי — אין כפילות');
+
+    const exactMatch = await findRawMaterialsByName('קמח לבן');
+    assertEqual(exactMatch.length, 1, 'נמצאה שורה קיימת באותו שם');
+    assertEqual(exactMatch[0].id, first, 'זו אותה שורה שנוצרה');
+
+    // אותו שם, קטגוריה אחרת (בדיוק התרחיש שיוצר כפילויות בין ספק/מכשירים) — עדיין נמצא
+    const second = await addRawMaterial({
+      supplierCategoryId: catB, name: 'קמח לבן', unit: 'ק"ג', unitPrice: 0,
+    });
+    const bothMatches = await findRawMaterialsByName('  קמח לבן  ');
+    assertEqual(bothMatches.length, 2, 'התאמה גם עם רווחים מיותרים, גם מכל הקטגוריות');
+    assertOk(bothMatches.some((m) => m.id === second), 'החומר השני מהקטגוריה השנייה מופיע');
+
+    const excluded = await findRawMaterialsByName('קמח לבן', { excludeId: second });
+    assertEqual(excluded.length, 1, 'excludeId מסנן את עצמו — לשימוש בזמן עריכה');
+    assertEqual(excluded[0].id, first);
   });
 
   await flushTests();

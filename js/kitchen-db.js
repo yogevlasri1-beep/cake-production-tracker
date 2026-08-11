@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=458';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=459';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=458';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=458';
-import { logAuditEvent } from './audit.js?v=458';
-import { markMetaDeleted } from './sync/id-map.js?v=458';
+} from './validators.js?v=459';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=459';
+import { logAuditEvent } from './audit.js?v=459';
+import { markMetaDeleted } from './sync/id-map.js?v=459';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4034,6 +4034,20 @@ export async function findRawMaterialsByBarcode(barcode, { excludeId = null } = 
     rows = (await db.rawMaterials.toArray()).filter((m) => sanitizeBarcode(m.barcode) === code);
   }
   if (exclude) rows = rows.filter((m) => Number(m.id) !== exclude);
+  return rows;
+}
+
+/**
+ * חומרים קיימים באותו שם (מכל קטגוריה/ספק) — לאזהרת כפילות לפני יצירת חומר חדש.
+ * לא חוסם יצירה (ראה openDuplicateMaterialModal), רק מציע להשתמש בקיים.
+ */
+export async function findRawMaterialsByName(name, { excludeId = null } = {}) {
+  const key = normalizeMaterialKey(name);
+  if (!key) return [];
+  const exclude = excludeId ? Number(excludeId) : null;
+  const rows = (await db.rawMaterials.toArray())
+    .filter((m) => normalizeMaterialKey(m.name) === key && (!exclude || Number(m.id) !== exclude));
+  rows.sort((a, b) => a.id - b.id);
   return rows;
 }
 
