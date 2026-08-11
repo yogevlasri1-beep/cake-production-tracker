@@ -1,5 +1,5 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=456';
-import { ValidationError } from './validators.js?v=456';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=457';
+import { ValidationError } from './validators.js?v=457';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;

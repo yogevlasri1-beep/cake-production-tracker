@@ -10623,22 +10623,55 @@ body.supplier-drag-active {
   margin-top: 0;
 }
 
+.supplier-browse-sup-header-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  background: #f0fdfa;
+}
+
+.supplier-browse-sup-header-row .browse-add-material {
+  flex-shrink: 0;
+  align-self: center;
+  margin-left: 8px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 10px;
+  background: #16a34a;
+  border-color: #16a34a;
+}
+
+.supplier-browse-sup-header-row .browse-add-material:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.browse-add-legend {
+  color: #16a34a;
+  font-weight: 600;
+}
+
 .supplier-browse-sup-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 10px 12px;
   border: none;
-  background: #f0fdfa;
+  background: transparent;
   cursor: pointer;
   font: inherit;
   text-align: right;
   touch-action: manipulation;
 }
 
-.supplier-browse-sup-header:hover {
+.supplier-browse-sup-header-row:hover {
   background: #ccfbf1;
 }
 
