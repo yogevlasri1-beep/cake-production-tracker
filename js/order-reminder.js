@@ -1,17 +1,17 @@
 /**
  * תזכורת הזמנה שבועית — באנר במסך הבית / טאב הזמנה.
- * יום ברירת מחדל: חמישי (4). ניתן לשינוי ב-localStorage.
+ * יום ברירת מחדל: ראשון (0). ניתן לשינוי ב-localStorage.
  */
-import { weekStartISO, todayISO } from './utils.js?v=461';
-import { computeWeeklyMaterialNeeds } from './kitchen-db.js?v=461';
+import { weekStartISO, todayISO } from './utils.js?v=462';
+import { computeWeeklyMaterialNeeds } from './kitchen-db.js?v=462';
 
 const REMINDER_DAY_KEY = 'yitzurOrderReminderWeekday'; // 0=ראשון … 6=שבת
 const DISMISS_KEY = 'yitzurOrderReminderDismissWeek';
 
-/** @returns {number} 0–6, ברירת מחדל חמישי */
+/** @returns {number} 0–6, ברירת מחדל ראשון */
 export function getOrderReminderWeekday() {
   const raw = Number(localStorage.getItem(REMINDER_DAY_KEY));
-  return Number.isFinite(raw) && raw >= 0 && raw <= 6 ? raw : 4;
+  return Number.isFinite(raw) && raw >= 0 && raw <= 6 ? raw : 0;
 }
 
 export function setOrderReminderWeekday(day) {
