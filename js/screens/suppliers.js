@@ -25,19 +25,19 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=463';
-import { getProducts, getCategories } from '../db.js?v=463';
+} from '../kitchen-db.js?v=464';
+import { getProducts, getCategories } from '../db.js?v=464';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=463';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=463';
-import { openModal, closeModal } from '../modal.js?v=463';
-import { requestAutoBackupNow } from '../backup-service.js?v=463';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=463';
-import { openBarcodeScanner } from '../barcode-scan.js?v=463';
-import { getLiveSyncSettings } from '../supabase-sync.js?v=463';
+} from '../supplier-import.js?v=464';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=464';
+import { openModal, closeModal } from '../modal.js?v=464';
+import { requestAutoBackupNow } from '../backup-service.js?v=464';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=464';
+import { openBarcodeScanner } from '../barcode-scan.js?v=464';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=464';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -45,7 +45,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=463';
+} from '../order-reminder.js?v=464';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -129,6 +129,12 @@ export async function renderSuppliers(container) {
   const weekStart = container.dataset.planWeek || weekStartISO();
   const selectedMatCat = container.dataset.matCat || '';
   const selectedSupCat = container.dataset.supCat || '';
+
+  // ניקוי כפילויות צ'יפים (חומ״ג / אריזות / ניקיון / ייבוא) לפני רינדור —
+  // גם אם הסנכרון כבר סימן dedupeDone, pull יכול להחזיר כפילויות.
+  try {
+    await dedupeSupplierWorkspaceLight();
+  } catch { /* ignore */ }
 
   // יצירה חד-פעמית של קטגוריית חומרי ניקיון — רק אחרי סנכרון ראשוני,
   // כדי לא ליצור כפילות מול קטגוריית ניקיון שכבר קיימת בענן בשם אחר.
@@ -3006,7 +3012,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=463');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=464');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3028,7 +3034,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=463');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=464');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3046,7 +3052,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=463');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=464');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

@@ -358,6 +358,9 @@ export function supplierCategoryRoleKey(cat) {
   if (cat.isPackaging || /^אריז/.test(name)) return 'packaging';
   // seed «חומרי גלם יבשים» מול הקטגוריה האמיתית «חומרי גלם»
   if (/^חומרי\s*גלם/.test(name)) return 'raw';
+  // ייבוא ממתכונים / יבוא ממתכון — אותה קטגוריה לוגיקה
+  // «מתכון» (ן סופית) ו«מתכונים» (נ רגילה) — מספיק הקידומת מתכו
+  if (/יי?בוא/.test(name) && /מתכו/.test(name)) return 'import';
   return null;
 }
 
@@ -366,6 +369,7 @@ export function supplierCategoryCanonicalName(role) {
   if (role === 'cleaning') return 'חומרי ניקיון';
   if (role === 'packaging') return 'אריזות';
   if (role === 'raw') return 'חומרי גלם';
+  if (role === 'import') return 'ייבוא ממתכונים';
   return null;
 }
 

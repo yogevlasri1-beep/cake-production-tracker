@@ -133,4 +133,66 @@ BEGIN
         OR COALESCE(payload->>'name', '') ~ 'ניקיון'
       );
   END LOOP;
+
+  -- ייבוא ממתכונים (כולל וריאציות כתיב)
+  FOR rec IN
+    SELECT kitchen_id
+    FROM public.sync_supplier_categories
+    WHERE deleted_at IS NULL
+      AND COALESCE(payload->>'name', '') ~ 'יי?בוא'
+      AND COALESCE(payload->>'name', '') ~ 'מתכו'
+    GROUP BY kitchen_id
+    HAVING COUNT(*) > 1
+  LOOP
+    SELECT id INTO keep_id
+    FROM public.sync_supplier_categories
+    WHERE kitchen_id = rec.kitchen_id
+      AND deleted_at IS NULL
+      AND COALESCE(payload->>'name', '') ~ 'יי?בוא'
+      AND COALESCE(payload->>'name', '') ~ 'מתכו'
+    ORDER BY
+      CASE WHEN COALESCE(payload->>'name', '') = 'ייבוא ממתכונים' THEN 0 ELSE 1 END,
+      updated_at ASC,
+      id ASC
+    LIMIT 1;
+
+    UPDATE public.sync_supplier_categories
+    SET
+      payload = jsonb_set(COALESCE(payload, '{}'::jsonb), '{name}', '"ייבוא ממתכונים"'::jsonb),
+      updated_at = now()
+    WHERE id = keep_id;
+
+    UPDATE public.sync_supplier_categories
+    SET deleted_at = now(), updated_at = now()
+    WHERE kitchen_id = rec.kitchen_id
+      AND deleted_at IS NULL
+      AND id <> keep_id
+      AND COALESCE(payload->>'name', '') ~ 'יי?בוא'
+      AND COALESCE(payload->>'name', '') ~ 'מתכו';
+  END LOOP;
+
+  -- כפילויות שם מדויק (גם אחרי מיזוג תפקידים)
+  FOR rec IN
+    SELECT kitchen_id, lower(trim(COALESCE(payload->>'name', ''))) AS nkey
+    FROM public.sync_supplier_categories
+    WHERE deleted_at IS NULL
+      AND trim(COALESCE(payload->>'name', '')) <> ''
+    GROUP BY kitchen_id, lower(trim(COALESCE(payload->>'name', '')))
+    HAVING COUNT(*) > 1
+  LOOP
+    SELECT id INTO keep_id
+    FROM public.sync_supplier_categories
+    WHERE kitchen_id = rec.kitchen_id
+      AND deleted_at IS NULL
+      AND lower(trim(COALESCE(payload->>'name', ''))) = rec.nkey
+    ORDER BY updated_at ASC, id ASC
+    LIMIT 1;
+
+    UPDATE public.sync_supplier_categories
+    SET deleted_at = now(), updated_at = now()
+    WHERE kitchen_id = rec.kitchen_id
+      AND deleted_at IS NULL
+      AND id <> keep_id
+      AND lower(trim(COALESCE(payload->>'name', ''))) = rec.nkey;
+  END LOOP;
 END $$;

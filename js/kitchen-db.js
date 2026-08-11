@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=463';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=464';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=463';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=463';
-import { logAuditEvent } from './audit.js?v=463';
-import { markMetaDeleted } from './sync/id-map.js?v=463';
+} from './validators.js?v=464';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=464';
+import { logAuditEvent } from './audit.js?v=464';
+import { markMetaDeleted } from './sync/id-map.js?v=464';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1926,8 +1926,19 @@ export async function findOrCreateWordImportCategory() {
 
 export async function findOrCreateImportMaterialsCategory() {
   const cats = await getSupplierCategories();
-  const found = cats.find((c) => c.name === IMPORT_MATERIALS_CAT);
-  if (found) return found.id;
+  const exact = cats.find((c) => String(c.name || '').trim() === IMPORT_MATERIALS_CAT);
+  if (exact) return exact.id;
+  // כפילות בשם דומה («יבוא ממתכון») — לא ליצור שורה חדשה
+  const loose = cats.find((c) => {
+    const n = String(c.name || '').trim();
+    return /יי?בוא/.test(n) && /מתכו/.test(n);
+  });
+  if (loose) {
+    if (String(loose.name || '').trim() !== IMPORT_MATERIALS_CAT) {
+      await db.supplierCategories.update(loose.id, { name: IMPORT_MATERIALS_CAT });
+    }
+    return loose.id;
+  }
   return addSupplierCategory(IMPORT_MATERIALS_CAT);
 }
 

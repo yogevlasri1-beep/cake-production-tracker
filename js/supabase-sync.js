@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=463';
+import { db, getSetting, setSetting } from './db.js?v=464';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=463';
+} from './supabase-backup.js?v=464';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=463';
+} from './sync/collections.js?v=464';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=463';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=463';
+} from './sync/id-map.js?v=464';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=464';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -111,7 +111,7 @@ export function formatLiveSyncErrorForUi(live) {
 }
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
-const DEDUPE_VERSION = 13;
+const DEDUPE_VERSION = 14;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -341,6 +341,34 @@ export async function flushSyncQueue() {
  */
 const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'rawMaterials']);
 
+/**
+ * Soft-delete a cloud sync row that is a logical duplicate of a local survivor.
+ * Used when pull would otherwise create a second local row for the same category/material.
+ */
+async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
+  if (!syncId) return;
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) return;
+  const updatedAt = new Date().toISOString();
+  const table = tableOf(collection);
+  try {
+    await supabaseFetch(cfg, `/${table}?on_conflict=id`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: {
+        id: syncId,
+        kitchen_id: KITCHEN_ID || BACKUP_SCOPE_ID,
+        payload: {},
+        updated_at: updatedAt,
+        deleted_at: updatedAt,
+        device_id: deviceId,
+      },
+    });
+  } catch (err) {
+    console.warn('live sync tombstone duplicate', collection, syncId, err);
+  }
+}
+
 async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
   if (!row || !db[collection]) return null;
   const strictFp = rowFingerprint(collection, row);
@@ -355,10 +383,14 @@ async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
   }
   for (const candidate of [...strictMatches, ...looseMatches]) {
     const meta = await getMetaByLocal(collection, candidate.id);
-    // A local row already claimed by another cloud row must not be reused: two cloud
-    // rows can share a fingerprint (same product and date, no run), and only one
-    // mapping fits per local row, so the second one would vanish without a trace.
     if (!meta?.syncId || meta.syncId === syncId) return candidate;
+  }
+  // For supplier categories / materials: same logical entity already mapped to
+  // another cloud UUID — return it anyway so the caller can tombstone the
+  // incoming duplicate instead of creating a second local chip.
+  if (LOOSE_MATCH_COLLECTIONS.has(collection)) {
+    const claimed = [...strictMatches, ...looseMatches][0];
+    if (claimed) return { ...claimed, __cloudDuplicateOf: true };
   }
   return null;
 }
@@ -560,7 +592,8 @@ async function dedupeSupplierCategoriesByRole() {
         }
         if (canonical && String(keep.name || '').trim() !== canonical
             && (FRESH_SEED_SUPPLIER_CATEGORY_NAMES.has(String(keep.name || '').trim())
-              || (role === 'raw' && /יבשים/.test(String(keep.name || ''))))) {
+              || (role === 'raw' && /יבשים/.test(String(keep.name || '')))
+              || (role === 'import' && /יי?בוא/.test(String(keep.name || ''))))) {
           patch.name = canonical;
         }
         if (Object.keys(patch).length) {
@@ -592,7 +625,8 @@ async function dedupeSupplierCategoriesByRole() {
       if (FRESH_SEED_SUPPLIER_CATEGORY_NAMES.has(keepName)
           || /^אריז/.test(keepName)
           || /^חומרי\s*גלם/.test(keepName)
-          || /ניקיון/.test(keepName)) {
+          || /ניקיון/.test(keepName)
+          || (/יי?בוא/.test(keepName) && /מתכו/.test(keepName))) {
         patch.name = canonical;
       }
     }
@@ -850,6 +884,15 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
   if (!existingMeta) {
     const match = await findLocalByFingerprint(collection, payload, { syncId });
     if (match) {
+      if (match.__cloudDuplicateOf) {
+        // Same logical category/material already linked to another cloud UUID.
+        // Soft-delete the incoming cloud row so pull stops recreating local chips.
+        await tombstoneCloudDuplicate(collection, syncId, deviceId);
+        if (collection === 'rawMaterials') {
+          await mergeRawMaterialPriceInto(match, payload);
+        }
+        return true;
+      }
       existingMeta = {
         collection,
         localKey: String(match.id),
@@ -1194,6 +1237,25 @@ async function repushPolymorphicCollections() {
   }
 }
 
+/**
+ * ניקוי קל אחרי כל pull — מונע חזרת כפילויות קטגוריות/חומרים מהענן
+ * גם אחרי ש-dedupeVersion כבר סומן כבוצע.
+ */
+export async function dedupeSupplierWorkspaceLight() {
+  let removed = 0;
+  removed += await pruneUnsyncedEmptySeedSupplierCategories();
+  removed += await dedupeSupplierCategoriesByRole();
+  // אותו שם מדויק (למשל «ייבוא ממתכונים» כפול) — fingerprint רגיל
+  removed += await dedupeCollectionByFingerprint('supplierCategories');
+  removed += await dedupeCollectionByFingerprint('suppliers');
+  removed += await dedupeCollectionByFingerprint('rawMaterials');
+  if (removed) {
+    console.info('live sync light supplier dedupe removed', removed);
+    try { await flushSyncQueue(); } catch { /* ignore */ }
+  }
+  return { removed };
+}
+
 export async function startLiveSync() {
   if (started) return;
   started = true;
@@ -1208,6 +1270,7 @@ export async function startLiveSync() {
       await flushSyncQueue();
       await pullAllCollections({ full: false });
       pulledOk = true;
+      await dedupeSupplierWorkspaceLight();
     } catch (err) {
       console.warn('live sync tick', err);
     }
@@ -1221,6 +1284,7 @@ export async function startLiveSync() {
       await flushSyncQueue();
       await pullAllCollections({ full: true });
       await repushPolymorphicCollections();
+      await dedupeSupplierWorkspaceLight();
       await saveLiveSyncSettings({ repairVersion: REPAIR_VERSION });
       pulledOk = true;
     } catch (err) {
