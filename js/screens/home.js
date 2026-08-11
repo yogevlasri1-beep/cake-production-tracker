@@ -3,18 +3,23 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=460';
+} from '../db.js?v=461';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=460';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=460';
+} from '../utils.js?v=461';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=461';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=460';
-import { requestAutoBackupNow } from '../backup-service.js?v=460';
+} from '../calc.js?v=461';
+import { requestAutoBackupNow } from '../backup-service.js?v=461';
+import {
+  getOrderReminderInfo,
+  renderOrderReminderBannerHTML,
+  dismissOrderReminderForCurrentWeek,
+} from '../order-reminder.js?v=461';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -542,6 +547,7 @@ export async function renderHome(container) {
 
   const processSection = buildProcessSection(processLogs, catMap, viewMode, periodLabel);
   const activeFlowsSection = buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap);
+  const orderReminder = await getOrderReminderInfo();
 
   document.getElementById('page-title').textContent = 'מעקב יצור';
   document.getElementById('page-subtitle').textContent = periodLabel;
@@ -557,6 +563,8 @@ export async function renderHome(container) {
         <input type="${isDay ? 'date' : 'month'}" id="home-date" value="${dateInputValue}">
       </div>
     </div>
+
+    ${renderOrderReminderBannerHTML(orderReminder)}
 
     <h2 class="home-section-title">${isDay ? 'ייצור יומי' : 'ייצור חודשי'}</h2>
     <p class="home-section-subtitle">${periodLabel}</p>
@@ -632,6 +640,16 @@ export async function renderHome(container) {
 
   bindCategoryCardClicks(container);
 
+  container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
+    sessionStorage.setItem('yitzurSupplierTab', 'order');
+    const { navigate } = await import('../app.js?v=461');
+    navigate('suppliers');
+  });
+  container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
+    dismissOrderReminderForCurrentWeek();
+    document.getElementById('order-reminder-banner')?.remove();
+  });
+
   const openProdList = () => {
     container.dataset.homeProductionList = '1';
     renderHome(container);
@@ -651,7 +669,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=460');
+    const { navigate } = await import('../app.js?v=461');
     navigate('process');
   };
 
@@ -676,7 +694,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=460');
+    const { navigate } = await import('../app.js?v=461');
     navigate('backup');
   });
 

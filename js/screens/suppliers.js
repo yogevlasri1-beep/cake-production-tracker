@@ -1,7 +1,7 @@
 import {
   getSupplierCategories, getSuppliers, addSupplierCategory, updateSupplierCategory, deleteSupplierCategory,
   addSupplier, updateSupplier, deleteSupplier,
-  getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial, findRawMaterialsByName,
+  getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial, findRawMaterialsByName, findRawMaterialsByBarcode,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
@@ -25,18 +25,27 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=460';
-import { getProducts, getCategories } from '../db.js?v=460';
+} from '../kitchen-db.js?v=461';
+import { getProducts, getCategories } from '../db.js?v=461';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
+  analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=460';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=460';
-import { openModal, closeModal } from '../modal.js?v=460';
-import { requestAutoBackupNow } from '../backup-service.js?v=460';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=460';
-import { openBarcodeScanner } from '../barcode-scan.js?v=460';
-import { getLiveSyncSettings } from '../supabase-sync.js?v=460';
+} from '../supplier-import.js?v=461';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=461';
+import { openModal, closeModal } from '../modal.js?v=461';
+import { requestAutoBackupNow } from '../backup-service.js?v=461';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=461';
+import { openBarcodeScanner } from '../barcode-scan.js?v=461';
+import { getLiveSyncSettings } from '../supabase-sync.js?v=461';
+import {
+  getOrderReminderInfo,
+  renderOrderReminderBannerHTML,
+  dismissOrderReminderForCurrentWeek,
+  getOrderReminderWeekday,
+  setOrderReminderWeekday,
+  orderReminderWeekdayLabel,
+} from '../order-reminder.js?v=461';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2702,10 +2711,37 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
   const preview = entries.slice(0, 12);
   const uniqueMaterials = new Set(entries.map((e) => e.materialName)).size;
   const uniqueSuppliers = new Set(entries.map((e) => e.supplierName)).size;
-  const detectedBasis = detectImportPriceBasis(entries);
+  const analysis = analyzeImportPriceBasis(entries);
+  const detectedBasis = analysis.basis;
+  const confidenceLabel = analysis.confidence === 'high'
+    ? 'ביטחון גבוה בניחוש'
+    : analysis.confidence === 'medium'
+      ? 'ניחוש גבולי — בדוק את המחיר לק״ג'
+      : 'מעט דגימות — בחר ידנית אם צריך';
   const sheetsBlock = format === 'supplier_sheets' && sheets?.length
     ? `<p class="form-hint" style="margin-top:8px">גיליונות (${sheets.length}): ${sheets.map((s) => `${escapeHtml(s.name)} (${s.entries})`).join(' · ')}</p>`
     : '';
+
+  const renderReviewList = (basis) => {
+    const flagged = flagImportEntriesForReview(entries, basis).slice(0, 20);
+    if (!flagged.length) {
+      return '<p class="form-hint" style="margin-top:8px">✓ אין שורות חשודות לבדיקה לפי הכללים הנוכחיים</p>';
+    }
+    return `
+      <div class="import-review-list" style="margin-top:10px">
+        <p class="form-hint" style="margin:0 0 6px"><strong>לבדיקה (${flagged.length}${flagImportEntriesForReview(entries, basis).length > 20 ? '+' : ''})</strong> — שורות חריגות או בלי משקל אריזה:</p>
+        <ul class="import-supplier-preview">
+          ${flagged.map((f) => `
+            <li>
+              <strong>${escapeHtml(f.materialName)}</strong>
+              ${f.supplierName ? ` · ${escapeHtml(f.supplierName)}` : ''}
+              · ${formatMoney(f.price)}
+              ${f.packageWeightGrams ? ` · ${formatWeightGrams(f.packageWeightGrams)}` : ''}
+              <br><span class="form-hint">${escapeHtml(f.reasons.join(' · '))}</span>
+            </li>`).join('')}
+        </ul>
+      </div>`;
+  };
 
   openModal({
     title: `ייבוא ${entries.length} רשומות · ${importFormatLabel(format)}`,
@@ -2718,9 +2754,10 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
           <option value="${PRICE_BASIS_PACKAGE}"${detectedBasis === PRICE_BASIS_PACKAGE ? ' selected' : ''}>מחיר לאריזה שלמה</option>
           <option value="${PRICE_BASIS_PER_KG}"${detectedBasis === PRICE_BASIS_PER_KG ? ' selected' : ''}>מחיר לק"ג</option>
         </select>
-        <p class="form-hint">בדוק שהמחיר לק"ג למטה נראה הגיוני — בחירה שגויה מכפילה או מחלקת את עלות המתכונים במשקל האריזה.</p>
+        <p class="form-hint">${escapeHtml(confidenceLabel)}. בדוק שהמחיר לק"ג למטה נראה הגיוני — בחירה שגויה מכפילה או מחלקת את עלות המתכונים במשקל האריזה.</p>
       </div>
       <div id="import-price-basis-samples">${renderPriceBasisSamplesHTML(entries, detectedBasis)}</div>
+      <div id="import-review-host">${renderReviewList(detectedBasis)}</div>
       <div class="form-group">
         <label>קטגוריית ברירת מחדל לספקים חדשים</label>
         <select id="import-sup-cat">
@@ -2737,8 +2774,11 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('import-price-basis')?.addEventListener('change', (e) => {
+    const basis = e.target.value;
     const host = document.getElementById('import-price-basis-samples');
-    if (host) host.innerHTML = renderPriceBasisSamplesHTML(entries, e.target.value);
+    if (host) host.innerHTML = renderPriceBasisSamplesHTML(entries, basis);
+    const review = document.getElementById('import-review-host');
+    if (review) review.innerHTML = renderReviewList(basis);
   });
   document.getElementById('confirm-sup-import')?.addEventListener('click', async () => {
     try {
@@ -2784,6 +2824,9 @@ async function renderShortagesTab(body, container) {
   body.innerHTML = `
     <div class="card">
       <div class="card-title">הוסף חוסר</div>
+      <button type="button" class="btn btn-secondary btn-sm" id="shortage-scan-barcode" style="width:100%;margin-bottom:12px">
+        📷 סרוק ברקוד — בחירת חומר / קבלה
+      </button>
       <div class="form-group">
         <label for="shortage-supplier">ספק</label>
         <select id="shortage-supplier">
@@ -2863,6 +2906,42 @@ async function renderShortagesTab(body, container) {
     if (opt?.value) document.getElementById('shortage-name').value = '';
   });
 
+  document.getElementById('shortage-scan-barcode')?.addEventListener('click', () => {
+    openBarcodeScanner({
+      onDecode: async (code) => {
+        try {
+          const matches = await findRawMaterialsByBarcode(code);
+          if (!matches.length) {
+            showToast('לא נמצא חומר עם הברקוד הזה');
+            return;
+          }
+          const mat = matches[0];
+          const openFlat = grouped.flatMap((g) => g.items.filter((i) => !i.done));
+          const matchShortage = openFlat.find((i) => Number(i.rawMaterialId) === Number(mat.id));
+          if (matchShortage) {
+            const receiveBtn = body.querySelector(`.shortage-receive-btn[data-id="${matchShortage.id}"]`);
+            if (receiveBtn) {
+              showToast(`נמצא בחוסרים: ${mat.name}`);
+              receiveBtn.click();
+              return;
+            }
+          }
+          const matSelect = document.getElementById('shortage-material');
+          if (matSelect) matSelect.value = String(mat.id);
+          if (mat.supplierId) {
+            const supSel = document.getElementById('shortage-supplier');
+            if (supSel) supSel.value = String(mat.supplierId);
+          }
+          if (mat.unit) document.getElementById('shortage-unit').value = mat.unit;
+          document.getElementById('shortage-name').value = '';
+          showToast(`נבחר: ${mat.name} — אפשר להוסיף לחוסרים`);
+        } catch (err) {
+          showToast(err.message || 'שגיאה בסריקה');
+        }
+      },
+    });
+  });
+
   document.getElementById('shortage-add-btn')?.addEventListener('click', async () => {
     const supplierId = document.getElementById('shortage-supplier')?.value;
     const rawMaterialId = document.getElementById('shortage-material')?.value || null;
@@ -2927,7 +3006,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=460');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=461');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -2949,7 +3028,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=460');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=461');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -2967,7 +3046,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=460');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=461');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -3008,14 +3087,25 @@ async function renderOrderTab(body, container, products, weekStart) {
   const planMap = new Map(plan.items.map((i) => [i.productId, i.plannedPortions]));
   const { categories } = await computeWeeklyMaterialNeeds(weekStart);
   const text = formatWhatsAppOrderText({ weekStart, categories });
+  const reminder = await getOrderReminderInfo();
+  const reminderDay = getOrderReminderWeekday();
+  const weekdayOptions = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
+    .map((label, i) => `<option value="${i}"${i === reminderDay ? ' selected' : ''}>${label}</option>`)
+    .join('');
 
   body.innerHTML = `
+    ${renderOrderReminderBannerHTML(reminder)}
     <div class="card">
       <div class="card-title">תחזית רכש שבועית</div>
       <p class="form-hint" style="margin-bottom:10px">שבוע שמתחיל ב-${formatDate(weekStart)}</p>
       <div class="form-group">
         <label>תחילת שבוע</label>
         <input type="date" id="plan-week" value="${weekStart}">
+      </div>
+      <div class="form-group">
+        <label for="order-reminder-day">יום תזכורת להזמנה (במסך הבית)</label>
+        <select id="order-reminder-day">${weekdayOptions}</select>
+        <p class="form-hint">כרגע: ${orderReminderWeekdayLabel(reminderDay)}. התזכורת מופיעה ביום שנבחר וביום שאחריו אם יש פריטים בתוכנית.</p>
       </div>
       ${products.length === 0
     ? '<p class="form-hint">אין מוצרים — הוסף במסך מוצרים</p>'
@@ -3047,6 +3137,19 @@ async function renderOrderTab(body, container, products, weekStart) {
   document.getElementById('plan-week')?.addEventListener('change', (e) => {
     container.dataset.planWeek = e.target.value;
     renderSuppliers(container);
+  });
+
+  document.getElementById('order-reminder-day')?.addEventListener('change', (e) => {
+    setOrderReminderWeekday(e.target.value);
+    showToast(`יום תזכורת: ${orderReminderWeekdayLabel(Number(e.target.value))}`);
+  });
+
+  body.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
+    dismissOrderReminderForCurrentWeek();
+    document.getElementById('order-reminder-banner')?.remove();
+  });
+  body.querySelector('[data-order-reminder-go]')?.addEventListener('click', () => {
+    document.getElementById('wa-order-text')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   for (const el of body.querySelectorAll('.plan-recipe-hint')) {

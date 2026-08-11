@@ -11391,6 +11391,75 @@ body.supplier-drag-active {
   word-break: break-word;
 }
 
+.mat-price-badge {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.mat-price-badge-est {
+  background: #fef3c7;
+  color: #92400e;
+}
+.mat-price-badge-stale {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.mat-price-badge-up {
+  color: #b91c1c;
+  font-weight: 700;
+}
+.mat-price-badge-down {
+  color: #047857;
+  font-weight: 700;
+}
+
+.mat-advanced-details {
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  background: #fafafa;
+}
+.mat-advanced-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding: 4px 0;
+  list-style-position: outside;
+}
+.mat-advanced-details[open] > summary {
+  margin-bottom: 10px;
+  color: var(--text);
+}
+.mat-quick-add-hint {
+  color: var(--text-muted);
+}
+
+.order-reminder-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+}
+.order-reminder-banner-body {
+  flex: 1;
+  min-width: 180px;
+}
+.order-reminder-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .catalog-mat-pack,
 .list-item-pack-meta {
   font-size: 0.78rem;

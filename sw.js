@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '460';
+const VERSION = '461';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -36,6 +36,7 @@ const PRECACHE = [
   v('./js/backup-service.js'),
   v('./js/supabase-backup.js'),
   v('./js/supabase-sync.js'),
+  v('./js/order-reminder.js'),
   v('./js/auth.js'),
   v('./js/audit.js'),
   v('./js/permissions.js'),

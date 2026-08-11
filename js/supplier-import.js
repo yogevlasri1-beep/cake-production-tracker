@@ -1,5 +1,5 @@
-import { loadXLSX } from './xlsx-loader.js?v=460';
-import { todayISO } from './utils.js?v=460';
+import { loadXLSX } from './xlsx-loader.js?v=461';
+import { todayISO } from './utils.js?v=461';
 
 const MATERIAL_ALIASES = ['חומר גלם', 'חומר', 'מוצר', 'material', 'שם', 'פריט', 'תיאור'];
 const SUPPLIER_ALIASES = ['ספק', 'supplier', 'שם ספק'];
@@ -473,11 +473,70 @@ function median(values) {
  * מחיר אריזה של שק גדול הוא מאות שקלים, ולכן המחיר לק"ג שנגזר ממנו סביר; מחיר לק"ג
  * שנשמר בטעות כמחיר אריזה מתחלק שוב במשקל ויוצא אגורות. החציון מפריד בין השניים.
  */
-export function detectImportPriceBasis(entries) {
+export function analyzeImportPriceBasis(entries) {
   const samples = priceBasisSamples(entries);
-  if (samples.length < 3) return PRICE_BASIS_PACKAGE;
+  if (samples.length < 3) {
+    return { basis: PRICE_BASIS_PACKAGE, confidence: 'low', medianPerKg: null, sampleCount: samples.length };
+  }
   const mid = median(samples.map((s) => s.perKgIfPackage));
-  return mid != null && mid < 3 ? PRICE_BASIS_PER_KG : PRICE_BASIS_PACKAGE;
+  const basis = mid != null && mid < 3 ? PRICE_BASIS_PER_KG : PRICE_BASIS_PACKAGE;
+  let confidence = 'high';
+  if (mid == null) confidence = 'low';
+  else if (mid >= 1.5 && mid <= 5) confidence = 'medium';
+  return { basis, confidence, medianPerKg: mid, sampleCount: samples.length };
+}
+
+/** @returns {'package'|'perKg'} */
+export function detectImportPriceBasis(entries) {
+  return analyzeImportPriceBasis(entries).basis;
+}
+
+/**
+ * שורות שכדאי לבדוק ידנית אחרי ייבוא — מחיר לק"ג חריג או בלי משקל אריזה.
+ */
+export function flagImportEntriesForReview(entries, basis) {
+  const list = entries || [];
+  const perKgVals = [];
+  for (const e of list) {
+    const grams = Number(e?.packageWeightGrams);
+    const price = Number(e?.price);
+    if (!(price > 0)) continue;
+    if (!(grams > 0)) continue;
+    const perKg = basis === PRICE_BASIS_PER_KG
+      ? price
+      : Math.round((price / (grams / 1000)) * 100) / 100;
+    if (perKg > 0) perKgVals.push(perKg);
+  }
+  const mid = median(perKgVals);
+  const flagged = [];
+  for (const e of list) {
+    const grams = Number(e?.packageWeightGrams);
+    const price = Number(e?.price);
+    const reasons = [];
+    if (!(price > 0)) continue;
+    if (!(grams > 0)) {
+      reasons.push('אין משקל אריזה — המחיר יישמר כיחידה/לק״ג גולמי');
+    } else {
+      const perKg = basis === PRICE_BASIS_PER_KG
+        ? price
+        : Math.round((price / (grams / 1000)) * 100) / 100;
+      if (perKg < 0.5) reasons.push(`מחיר לק״ג נמוך מאוד (${perKg})`);
+      if (perKg > 200) reasons.push(`מחיר לק״ג גבוה מאוד (${perKg})`);
+      if (mid != null && perKg > 0 && (perKg > mid * 4 || perKg < mid / 4)) {
+        reasons.push('חריג ביחס לחציון הקובץ');
+      }
+    }
+    if (reasons.length) {
+      flagged.push({
+        materialName: e.materialName,
+        supplierName: e.supplierName,
+        price,
+        packageWeightGrams: grams || null,
+        reasons,
+      });
+    }
+  }
+  return flagged;
 }
 
 /** שורות לדוגמה להצגה במסך האישור, עם המחיר לק"ג שייצא בפועל */

@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=460';
-import { openModal, closeModal } from '../modal.js?v=460';
-import { requestAutoBackupNow } from '../backup-service.js?v=460';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=461';
+import { openModal, closeModal } from '../modal.js?v=461';
+import { requestAutoBackupNow } from '../backup-service.js?v=461';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,10 +10,11 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=460';
-import { getSupplierCategories } from '../kitchen-db.js?v=460';
-import { getCurrentUserRole } from '../auth.js?v=460';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=460';
+} from '../inventory-db.js?v=461';
+import { getSupplierCategories, findRawMaterialsByBarcode } from '../kitchen-db.js?v=461';
+import { getCurrentUserRole } from '../auth.js?v=461';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=461';
+import { openBarcodeScanner } from '../barcode-scan.js?v=461';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -199,16 +200,52 @@ function movementCard(m) {
     </div>`;
 }
 
-async function openAdjustModal(row, onDone) {
+async function openReceiveByBarcodeModal(onDone) {
+  if (!canAdjustInventory(getCurrentUserRole())) {
+    showToast(PERMISSION_DENIED_MESSAGE);
+    return;
+  }
+  openBarcodeScanner({
+    onDecode: async (text) => {
+      try {
+        const matches = await findRawMaterialsByBarcode(text);
+        if (!matches.length) {
+          showToast('לא נמצא חומר עם הברקוד הזה');
+          return;
+        }
+        const mat = matches[0];
+        const rows = await getInventoryStockRows({ search: mat.name });
+        const row = rows.find((r) => Number(r.material?.id) === Number(mat.id))
+          || {
+            material: mat,
+            qtyOnHand: 0,
+            unit: mat.unit || '',
+            minQty: null,
+            balance: null,
+            isLow: false,
+          };
+        // פותח התאמה עם רמז לקבלה
+        await openAdjustModal(row, onDone, { receiveHint: true, scannedBarcode: text });
+      } catch (err) {
+        showToast(err.message || 'שגיאה בסריקה');
+      }
+    },
+  });
+}
+
+async function openAdjustModal(row, onDone, { receiveHint = false, scannedBarcode = '' } = {}) {
   const m = row.material;
-  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=460');
+  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=461');
   openModal({
-    title: `התאמת מלאי — ${m.name}`,
+    title: receiveHint ? `קבלה בסריקה — ${m.name}` : `התאמת מלאי — ${m.name}`,
     bodyHTML: `
-      <p class="form-hint">נוכחי: <strong>${formatQty(row.qtyOnHand, row.unit)}</strong></p>
+      <p class="form-hint">נוכחי: <strong>${formatQty(row.qtyOnHand, row.unit)}</strong>
+        ${scannedBarcode ? ` · ברקוד <span dir="ltr">${escapeHtml(scannedBarcode)}</span>` : ''}
+      </p>
+      ${receiveHint ? '<p class="form-hint">הזן כמות חיובית לקבלה (או השתמש ב«הגדר כמות סופית»).</p>' : ''}
       <div class="form-group">
         <label for="inv-delta">שינוי (+/−)</label>
-        <input type="number" id="inv-delta" step="any" placeholder="לדוגמה 5 או -2" dir="ltr">
+        <input type="number" id="inv-delta" step="any" placeholder="לדוגמה 5 או -2" dir="ltr" value="${receiveHint ? '' : ''}">
       </div>
       <div class="form-group">
         <label for="inv-set">או הגדר כמות סופית</label>
@@ -226,13 +263,13 @@ async function openAdjustModal(row, onDone) {
       </div>
       <div class="form-group">
         <label for="inv-reason">סיבה</label>
-        <input type="text" id="inv-reason" maxlength="200" placeholder="ספירה / קבלה / תיקון">
+        <input type="text" id="inv-reason" maxlength="200" placeholder="ספירה / קבלה / תיקון" value="${receiveHint ? 'קבלה בסריקת ברקוד' : ''}">
       </div>
       <p class="form-hint inv-adjust-error" style="display:none;color:var(--danger)"></p>
     `,
     footerHTML: `
       <button type="button" class="btn btn-secondary" id="inv-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="inv-save">שמור</button>
+      <button type="button" class="btn btn-primary" id="inv-save">${receiveHint ? 'קבל למלאי' : 'שמור'}</button>
     `,
   });
 
@@ -253,7 +290,7 @@ async function openAdjustModal(row, onDone) {
       }
       const unit = row.unit || m.unit || '';
       if (!hasSet && packagingBatchNumber && Number(deltaVal) > 0) {
-        const { receiveInventoryLot } = await import('../inventory-db.js?v=460');
+        const { receiveInventoryLot } = await import('../inventory-db.js?v=461');
         await receiveInventoryLot({
           rawMaterialId: m.id, qty: deltaVal, unit, packagingBatchNumber, reason,
         });
@@ -324,6 +361,10 @@ async function renderStockTab(container) {
         <div class="card-title">יתרות לפי ספקים</div>
         <p class="form-hint">מקובץ לפי ספק · בכל ספק: חומרי גלם ואז אריזות. אפשר למזער ספק בלחיצה על הכותרת.</p>
         <p class="form-hint" style="margin:0">מוצגים: <strong>${rows.length}</strong> · ספקים: <strong>${groups.length}</strong>${lowCount ? ` · מתחת למינימום: <strong style="color:var(--danger)">${lowCount}</strong>` : ''}</p>
+        ${allowAdjust ? `
+        <button type="button" class="btn btn-secondary btn-sm" id="inv-scan-receive" style="margin-top:10px;width:100%">
+          📷 סרוק ברקוד לקבלה למלאי
+        </button>` : ''}
         <form id="inv-filter-form" class="lots-search-form" style="margin-top:12px">
           <div class="form-group">
             <label for="inv-search">חיפוש</label>
@@ -595,6 +636,10 @@ export async function renderInventory(container) {
         showToast(err.message || 'שגיאה');
       }
     });
+  });
+
+  container.querySelector('#inv-scan-receive')?.addEventListener('click', () => {
+    openReceiveByBarcodeModal(() => renderInventory(container));
   });
 
   container.querySelectorAll('.inventory-adjust').forEach((btn) => {

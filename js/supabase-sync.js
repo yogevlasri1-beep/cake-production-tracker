@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=460';
+import { db, getSetting, setSetting } from './db.js?v=461';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=460';
+} from './supabase-backup.js?v=461';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -24,7 +24,7 @@ import {
   rowFingerprint,
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
-} from './sync/collections.js?v=460';
+} from './sync/collections.js?v=461';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -34,8 +34,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=460';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=460';
+} from './sync/id-map.js?v=461';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=461';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -43,12 +43,71 @@ const DEFAULT_LIVE = {
   lastPullAt: null,
   lastPushAt: null,
   lastError: null,
+  lastErrorKind: null,
   seedDone: false,
   dedupeDone: false,
   dedupeVersion: 0,
   repairVersion: 0,
   pendingCount: 0,
 };
+
+/**
+ * ממיין הודעת שגיאת סנכרון להודעה ידידותית בעברית.
+ * kind: pending | rejected | rls | auth | network | other
+ */
+export function classifyLiveSyncError(err) {
+  const raw = String(err?.message || err || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return { kind: null, message: null, technical: null };
+
+  if (/pending|ממתין לאישור/.test(lower) || /status['":\s]*pending/.test(lower)) {
+    return {
+      kind: 'pending',
+      message: 'החשבון ממתין לאישור מנהל — עד אז הסנכרון לענן חסום. בקש ממנהל לאשר בעמדת חשבונות.',
+      technical: raw,
+    };
+  }
+  if (/rejected|נדחה/.test(lower)) {
+    return {
+      kind: 'rejected',
+      message: 'החשבון נדחה — אין הרשאת סנכרון. פנה למנהל המערכת.',
+      technical: raw,
+    };
+  }
+  if (
+    /row-level security|rls|permission denied|not authorized|42501|jwt expired|invalid jwt|pgrst301/i.test(raw)
+    || (/403|401/.test(raw) && /supabase/i.test(raw))
+  ) {
+    return {
+      kind: 'rls',
+      message: 'אין הרשאת כתיבה לענן (משתמש לא מאושר או הרשאה חסרה). אם החשבון חדש — המתן לאישור מנהל בעמדת חשבונות.',
+      technical: raw,
+    };
+  }
+  if (/failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed/i.test(raw)
+      || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    return {
+      kind: 'network',
+      message: 'בעיית רשת — לא ניתן להתחבר לענן כרגע. הבדוק חיבור ונסה «סנכרן עכשיו».',
+      technical: raw,
+    };
+  }
+  return {
+    kind: 'other',
+    message: raw.replace(/^Supabase:\s*/i, '') || 'שגיאת סנכרון',
+    technical: raw,
+  };
+}
+
+export function formatLiveSyncErrorForUi(live) {
+  if (!live?.lastError && !live?.lastErrorKind) return '';
+  const classified = classifyLiveSyncError(live.lastError || live.lastErrorKind);
+  if (classified.kind && classified.kind !== 'other') return classified.message;
+  if (live.lastErrorKind === 'pending') {
+    return classifyLiveSyncError('pending').message;
+  }
+  return classified.message || String(live.lastError || '');
+}
 
 /** Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe. */
 const DEDUPE_VERSION = 12;
@@ -260,12 +319,14 @@ export async function flushSyncQueue() {
   }
   await db.syncQueue.where('status').equals('done').delete();
   const pendingCount = await countQueueBacklog();
+  const classified = lastErr ? classifyLiveSyncError(lastErr) : { kind: null, message: null };
   await saveLiveSyncSettings({
     pendingCount,
     lastPushAt: flushed ? new Date().toISOString() : live.lastPushAt,
-    lastError: lastErr,
+    lastError: classified.message || lastErr,
+    lastErrorKind: classified.kind,
   });
-  if (lastErr) emitStatus({ lastError: lastErr });
+  if (lastErr) emitStatus({ lastError: classified.message || lastErr, lastErrorKind: classified.kind });
   return { flushed };
 }
 
@@ -813,9 +874,13 @@ export async function pullAllCollections({ full = false } = {}) {
         if (ok && ok !== 'defer') applied++;
       }
     }
-    await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null });
+    await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null, lastErrorKind: null });
   } catch (err) {
-    await saveLiveSyncSettings({ lastError: String(err.message || err) });
+    const classified = classifyLiveSyncError(err);
+    await saveLiveSyncSettings({
+      lastError: classified.message || String(err.message || err),
+      lastErrorKind: classified.kind,
+    });
     throw err;
   }
   return { applied };
@@ -889,6 +954,7 @@ async function runSeed({ force = false } = {}) {
   await saveLiveSyncSettings({
     lastPushAt: new Date().toISOString(),
     lastError: null,
+    lastErrorKind: null,
   });
   return { seeded };
 }
@@ -1135,7 +1201,11 @@ export async function startLiveSync() {
       await saveLiveSyncSettings({ seedDone: true });
     } catch (err) {
       console.warn('live sync seed', err);
-      await saveLiveSyncSettings({ lastError: String(err.message || err) });
+      const classified = classifyLiveSyncError(err);
+      await saveLiveSyncSettings({
+        lastError: classified.message || String(err.message || err),
+        lastErrorKind: classified.kind,
+      });
     }
   }
 

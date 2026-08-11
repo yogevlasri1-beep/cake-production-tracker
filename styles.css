@@ -6587,6 +6587,26 @@ body.supplier-drag-active {
   color: var(--text-muted);
 }
 
+.order-reminder-banner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+}
+.order-reminder-banner-body {
+  flex: 1;
+  min-width: 180px;
+}
+.order-reminder-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .material-pricing-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
