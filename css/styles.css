@@ -10493,6 +10493,31 @@ body.supplier-drag-active {
   margin-bottom: 12px;
 }
 
+.supplier-sync-hint-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #93c5fd;
+  background: #eff6ff;
+}
+
+.supplier-sync-hint-text {
+  font-size: 0.9rem;
+  color: #1e40af;
+}
+
+.supplier-browse-unassigned {
+  border-style: dashed;
+}
+
+.supplier-browse-unassigned-header {
+  cursor: default;
+  background: #f8fafc;
+}
+
 .supplier-browse-cat {
   margin-bottom: 10px;
 }
