@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=465';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=465';
+} from './runner.js?v=466';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=466';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,10 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-} from '../js/kitchen-db.js?v=465';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=465';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=465';
-import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=465';
+} from '../js/kitchen-db.js?v=466';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=466';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=466';
+import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=466';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -248,6 +248,52 @@ export async function runIntegrationTests() {
 
     const allCats = await db.categories.where('name').equals('עוגות').toArray();
     assertEqual(allCats.length, 1, 'עדיין קטגוריה אחת בלבד מקומית — לא נוצרה כפילות');
+  });
+
+  await testAsync('findLocalByFingerprint — מחיר ממשתמש משני על חומר כפול מתמזג ל-survivor', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      name: 'סוכר בדיקת סנכרון',
+      unit: 'ק"ג',
+      unitPrice: 0,
+      packageWeightGrams: 1000,
+    });
+    await upsertMeta({
+      collection: 'rawMaterials',
+      localKey: String(matId),
+      syncId: 'mat-sync-main',
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+
+    // משתמש משני יצר כפילות עם אותו שם והזין מחיר — מגיע עם syncId אחר.
+    const incoming = {
+      name: 'סוכר בדיקת סנכרון',
+      supplierCategoryId: catId,
+      supplierId: null,
+      unitPrice: 12.5,
+      packageWeightGrams: 1000,
+      unit: 'ק"ג',
+    };
+    const match = await findLocalByFingerprint('rawMaterials', incoming, { syncId: 'mat-sync-secondary' });
+    assertOk(match?.__cloudDuplicateOf, 'כפילות ענן מסומנת — לא יוצרים שורה שנייה');
+    assertEqual(match.id, matId);
+
+    // כמו applyRemoteRow: ממזגים מחיר ל-survivor
+    const before = await db.rawMaterials.get(matId);
+    assertEqual(Number(before.unitPrice) || 0, 0);
+    if (!(Number(before.unitPrice) > 0) && Number(incoming.unitPrice) > 0) {
+      await db.rawMaterials.update(matId, { unitPrice: incoming.unitPrice });
+    }
+    const after = await db.rawMaterials.get(matId);
+    assertEqual(Number(after.unitPrice), 12.5, 'המחיר מהמשתמש המשני מופיע על החומר של הראשי');
+    const all = await db.rawMaterials.where('name').equals('סוכר בדיקת סנכרון').toArray();
+    assertEqual(all.length, 1, 'אין כפילות מקומית של החומר');
   });
 
   await testAsync(

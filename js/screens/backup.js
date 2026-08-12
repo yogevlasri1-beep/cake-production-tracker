@@ -18,15 +18,15 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=465';
-import { describeDownloadMethod } from '../download.js?v=465';
-import { showToast, escapeHtml } from '../utils.js?v=465';
-import { openModal, closeModal } from '../modal.js?v=465';
-import { APP_VERSION } from '../version.js?v=465';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=465';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=465';
-import { canAccessBackupFull } from '../permissions.js?v=465';
-import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=465';
+} from '../backup-service.js?v=466';
+import { describeDownloadMethod } from '../download.js?v=466';
+import { showToast, escapeHtml } from '../utils.js?v=466';
+import { openModal, closeModal } from '../modal.js?v=466';
+import { APP_VERSION } from '../version.js?v=466';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=466';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=466';
+import { canAccessBackupFull } from '../permissions.js?v=466';
+import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=466';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -329,6 +329,12 @@ export async function renderBackup(container, { navigate } = {}) {
         <button type="button" class="btn btn-primary btn-sm" id="live-sync-now" ${supabaseConfigured ? '' : 'disabled'}>
           סנכרן עכשיו
         </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="live-sync-probe-send" ${supabaseConfigured ? '' : 'disabled'}>
+          שלח אות בדיקה
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm" id="live-sync-probe-check" ${supabaseConfigured ? '' : 'disabled'}>
+          בדוק אות מהענן
+        </button>
         <button type="button" class="btn btn-secondary btn-sm" id="live-sync-reseed" ${supabaseConfigured ? '' : 'disabled'}>
           העלה את כל הדאטה המקומית
         </button>
@@ -338,6 +344,9 @@ export async function renderBackup(container, { navigate } = {}) {
         <button type="button" class="btn btn-danger btn-sm" id="live-sync-reset" ${supabaseConfigured ? '' : 'disabled'}>
           אפס מצב סנכרון
         </button>
+      </div>
+      <div id="live-sync-probe-status" class="form-hint" style="margin-top:8px;line-height:1.5">
+        בדיקת סנכרון: במשתמש המשני לחץ «שלח אות בדיקה», אצלך לחץ «בדוק אות מהענן».
       </div>
       <p class="form-hint" style="margin-top:10px">
         גיבוי JSON בענן (למעלה) נשאר כרשת ביטחון. סנכרון חי לא דורש «מכשיר ראשי».
@@ -437,7 +446,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   document.getElementById('live-sync-enabled')?.addEventListener('change', async (e) => {
     try {
-      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=465');
+      const { setLiveSyncEnabled } = await import('../supabase-sync.js?v=466');
       await setLiveSyncEnabled(e.target.checked);
       showToast(e.target.checked ? 'סנכרון חי הופעל ✓' : 'סנכרון חי כובה');
       renderBackup(container, { navigate });
@@ -451,7 +460,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=465');
+      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=466');
       const pushed = await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
@@ -463,13 +472,71 @@ export async function renderBackup(container, { navigate } = {}) {
     }
   });
 
+  document.getElementById('live-sync-probe-send')?.addEventListener('click', async () => {
+    const btn = document.getElementById('live-sync-probe-send');
+    const status = document.getElementById('live-sync-probe-status');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
+    try {
+      const { sendSyncProbe } = await import('../supabase-sync.js?v=466');
+      const email = getCurrentUserEmail() || '';
+      const note = `בדיקה מ-${email || 'משתמש'} · ${new Date().toLocaleTimeString('he-IL')}`;
+      const { value, pushed } = await sendSyncProbe({ note, email });
+      const when = value?.at ? new Date(value.at).toLocaleString('he-IL') : '—';
+      if (status) {
+        status.innerHTML = `✓ נשלח אות בשעה <strong>${escapeHtml(when)}</strong>`
+          + (value?.note ? ` · ${escapeHtml(value.note)}` : '')
+          + `<br>נדחפו לתור/ענן: ${pushed?.flushed ?? 0}. עכשיו במכשיר/משתמש השני: «בדוק אות מהענן».`;
+      }
+      showToast('אות בדיקה נשלח לענן ✓');
+    } catch (err) {
+      showToast(err.message || 'שגיאה בשליחת אות');
+      if (status) status.textContent = `שגיאה: ${err.message || err}`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  document.getElementById('live-sync-probe-check')?.addEventListener('click', async () => {
+    const btn = document.getElementById('live-sync-probe-check');
+    const status = document.getElementById('live-sync-probe-status');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'בודק...'; }
+    try {
+      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=466');
+      const { value, pulled } = await refreshAndReadSyncProbe();
+      if (!value?.at) {
+        if (status) {
+          status.innerHTML = 'לא נמצא אות בענן עדיין. במשתמש המשני לחץ «שלח אות בדיקה», חכה כמה שניות, ונסה שוב.';
+        }
+        showToast('אין אות בענן עדיין');
+      } else {
+        const when = new Date(value.at).toLocaleString('he-IL');
+        const ageSec = Math.max(0, Math.round((Date.now() - Date.parse(value.at)) / 1000));
+        if (status) {
+          status.innerHTML = `✓ התקבל אות: <strong>${escapeHtml(when)}</strong>`
+            + ` (לפני ${ageSec} שנ׳)`
+            + (value.email ? `<br>מאת: ${escapeHtml(value.email)}` : '')
+            + (value.note ? `<br>${escapeHtml(value.note)}` : '')
+            + `<br>משיכה אחרונה החילה ${pulled?.applied ?? 0} עדכונים.`;
+        }
+        showToast(ageSec < 120 ? 'סנכרון עובד ✓ (אות טרי)' : 'התקבל אות — בדוק שהזמן תואם לשליחה');
+      }
+    } catch (err) {
+      showToast(err.message || 'שגיאה בבדיקת אות');
+      if (status) status.textContent = `שגיאה: ${err.message || err}`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
   document.getElementById('live-sync-reseed')?.addEventListener('click', async () => {
     if (!confirm('להעלות את כל הנתונים המקומיים לענן? (לא מוחק נתונים קיימים בענן — last-write-wins)')) return;
     const btn = document.getElementById('live-sync-reseed');
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=465');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=466');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
@@ -487,7 +554,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=465');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=466');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -504,7 +571,7 @@ export async function renderBackup(container, { navigate } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=465');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=466');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });

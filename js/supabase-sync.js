@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=465';
+import { db, getSetting, setSetting } from './db.js?v=466';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=465';
+} from './supabase-backup.js?v=466';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=465';
+} from './sync/collections.js?v=466';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=465';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=465';
+} from './sync/id-map.js?v=466';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=466';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -208,6 +208,33 @@ const LOCAL_ONLY_SETTINGS = new Set([
   'liveSync', 'supabaseBackup', 'deviceId', 'backupSettings',
   'recipePortionPresetsSynced',
 ]);
+
+/** מפתח הגדרה מסונכרן — אות בדיקה בין מכשירים/משתמשים */
+export const SYNC_PROBE_KEY = 'syncProbe';
+
+/**
+ * שולח אות בדיקה לענן דרך settings (מסונכרן לכל המכשירים באותו kitchen).
+ * אחרי שליחה: במכשיר השני לחץ «סנכרן עכשיו» / «בדוק אות» ווודא שהזמן/הערה מופיעים.
+ */
+export async function sendSyncProbe({ note = '', email = '' } = {}) {
+  const deviceId = await getOrCreateDeviceId();
+  const value = {
+    at: new Date().toISOString(),
+    note: String(note || 'בדיקת סנכרון').trim().slice(0, 80) || 'בדיקת סנכרון',
+    deviceId: String(deviceId || '').slice(0, 64),
+    email: String(email || '').trim().slice(0, 120),
+  };
+  await setSetting(SYNC_PROBE_KEY, value);
+  const pushed = await flushSyncQueue();
+  return { value, pushed };
+}
+
+/** מושך מהענן ומחזיר את אות הבדיקה האחרון (אם יש) */
+export async function refreshAndReadSyncProbe() {
+  const pulled = await pullAllCollections({ full: false });
+  const value = await getSetting(SYNC_PROBE_KEY);
+  return { value, pulled };
+}
 
 function isSyncableOp(collection, localKey) {
   if (!isSyncCollection(collection)) return false;
