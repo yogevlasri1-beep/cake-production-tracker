@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=466';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=467';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=466';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=466';
-import { logAuditEvent } from './audit.js?v=466';
-import { markMetaDeleted } from './sync/id-map.js?v=466';
+} from './validators.js?v=467';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=467';
+import { logAuditEvent } from './audit.js?v=467';
+import { markMetaDeleted } from './sync/id-map.js?v=467';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3915,7 +3915,10 @@ export async function deleteSupplierCategory(id) {
 
 export async function getSuppliers(categoryId) {
   let rows = await db.suppliers.toArray();
-  if (categoryId) rows = rows.filter((s) => s.categoryId === Number(categoryId));
+  if (categoryId) {
+    const cid = Number(categoryId);
+    rows = rows.filter((s) => Number(s.categoryId) === cid);
+  }
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
 }
@@ -3985,7 +3988,8 @@ export async function setRawMaterialOrder(categoryId, orderedIds) {
 export async function getRawMaterials(supplierCategoryId) {
   let rows = await db.rawMaterials.toArray();
   if (supplierCategoryId) {
-    rows = rows.filter((m) => m.supplierCategoryId === Number(supplierCategoryId));
+    const cid = Number(supplierCategoryId);
+    rows = rows.filter((m) => Number(m.supplierCategoryId) === cid);
   }
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
@@ -5311,11 +5315,20 @@ export async function getSuppliersBrowseLayout() {
     getSuppliers(),
     db.rawMaterials.toArray(),
   ]);
+  const supplierIdSet = new Set(suppliers.map((s) => Number(s.id)).filter(Boolean));
   const matsBySupplier = new Map();
+  const unassignedByCategory = new Map();
   for (const m of materials) {
-    if (!m.supplierId) continue;
-    if (!matsBySupplier.has(m.supplierId)) matsBySupplier.set(m.supplierId, []);
-    matsBySupplier.get(m.supplierId).push(m);
+    const sid = Number(m.supplierId);
+    if (sid && supplierIdSet.has(sid)) {
+      if (!matsBySupplier.has(sid)) matsBySupplier.set(sid, []);
+      matsBySupplier.get(sid).push(m);
+      continue;
+    }
+    const cid = Number(m.supplierCategoryId);
+    if (!cid) continue;
+    if (!unassignedByCategory.has(cid)) unassignedByCategory.set(cid, []);
+    unassignedByCategory.get(cid).push(m);
   }
   for (const list of matsBySupplier.values()) {
     list.sort((a, b) => {
@@ -5325,16 +5338,59 @@ export async function getSuppliersBrowseLayout() {
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
     });
   }
-  const grouped = categories.map((cat) => ({
-    ...cat,
-    suppliers: suppliers
-      .filter((s) => s.categoryId === cat.id)
-      .map((s) => ({
-        ...s,
-        materials: matsBySupplier.get(s.id) || [],
-      })),
-  }));
+  for (const list of unassignedByCategory.values()) {
+    list.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  }
+  const grouped = categories.map((cat) => {
+    const catId = Number(cat.id);
+    return {
+      ...cat,
+      suppliers: suppliers
+        .filter((s) => Number(s.categoryId) === catId)
+        .map((s) => ({
+          ...s,
+          materials: matsBySupplier.get(Number(s.id)) || [],
+        })),
+      unassignedMaterials: unassignedByCategory.get(catId) || [],
+    };
+  });
   return { categories: grouped, allMaterials: materials };
+}
+
+/** רמז ל-UI: נראה שחלק מהנתונים לא נמשכו מהענן (חומרים בלי ספק / קטגוריות ריקות) */
+export function getSupplierBrowseSyncHint(layout) {
+  if (!layout?.categories?.length) return { show: false };
+  const totalMaterials = layout.allMaterials?.length || 0;
+  if (totalMaterials < 3) return { show: false };
+
+  let unassigned = 0;
+  let emptyNonCleaning = 0;
+  let nonCleaningWithData = 0;
+  for (const cat of layout.categories) {
+    const isCleaning = isCleaningSupplierCategory(cat);
+    const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0)
+      + (cat.unassignedMaterials?.length || 0);
+    unassigned += cat.unassignedMaterials?.length || 0;
+    if (!isCleaning && matCount > 0) nonCleaningWithData++;
+    if (!isCleaning && !cat.suppliers.length && !cat.unassignedMaterials?.length) {
+      emptyNonCleaning++;
+    }
+  }
+
+  const nonCleaningCats = layout.categories.filter((c) => !isCleaningSupplierCategory(c)).length;
+  const onlyCleaningVisible = nonCleaningWithData === 0
+    && layout.categories.some((c) => isCleaningSupplierCategory(c)
+      && (c.suppliers.length || c.unassignedMaterials?.length));
+  const show = onlyCleaningVisible
+    || unassigned >= 5
+    || (emptyNonCleaning >= 2 && nonCleaningCats > emptyNonCleaning);
+
+  return {
+    show,
+    unassigned,
+    onlyCleaningVisible,
+    totalMaterials,
+  };
 }
 
 export async function importSupplierExcelEntries(entries, { defaultCategoryId, fileHint } = {}) {

@@ -1,5 +1,5 @@
-import { openModal, closeModal } from './modal.js?v=466';
-import { showToast } from './utils.js?v=466';
+import { openModal, closeModal } from './modal.js?v=467';
+import { showToast } from './utils.js?v=467';
 
 let zxingLoadPromise = null;
 
@@ -8,7 +8,7 @@ function loadZXing() {
   if (!zxingLoadPromise) {
     zxingLoadPromise = new Promise((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = './js/vendor/zxing.min.js?v=466';
+      script.src = './js/vendor/zxing.min.js?v=467';
       script.onload = () => (window.ZXing ? resolve(window.ZXing) : reject(new Error('ZXing לא נטען')));
       script.onerror = () => reject(new Error('טעינת ספריית הסריקה נכשלה'));
       document.head.appendChild(script);
