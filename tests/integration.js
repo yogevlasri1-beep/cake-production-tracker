@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=466';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=466';
+} from './runner.js?v=467';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=467';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,11 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-} from '../js/kitchen-db.js?v=466';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=466';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=466';
-import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=466';
+  getSuppliersBrowseLayout,
+} from '../js/kitchen-db.js?v=467';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=467';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=467';
+import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=467';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -326,6 +327,69 @@ export async function runIntegrationTests() {
       assertOk(flourNeed, 'נמצא צורך בקמח');
       // 40 יחידות / 10 יחידות-לאצווה = 4 אצוות; 4 * 1000 גרם = 4000 גרם קמח, לא 40000.
       assertEqual(flourNeed.totalQty, 4000, 'כמות קמח נכונה: 4 אצוות * 1000 גרם, לא 40 * 1000');
+    },
+  );
+
+  await testAsync(
+    'getSuppliersBrowseLayout — מציג חומרי גלם/אריזות גם עם מזהי מחרוזת וחומרים בלי ספק',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const rawCatId = await addSupplierCategory('חומרי גלם');
+      const packCatId = await addSupplierCategory('אריזות', { isPackaging: true });
+      const cleanCatId = await addSupplierCategory('חומרי ניקיון', { isCleaning: true });
+
+      const rawSupId = await addSupplier({ categoryId: rawCatId, name: 'ספק קמח' });
+      const packSupId = await addSupplier({ categoryId: packCatId, name: 'ספק אריזות' });
+      const cleanSupId = await addSupplier({ categoryId: cleanCatId, name: 'ספק ניקיון' });
+
+      await addRawMaterial({
+        supplierCategoryId: rawCatId, name: 'קמח', unit: 'ק"ג', unitPrice: 4, supplierId: rawSupId,
+      });
+      await addRawMaterial({
+        supplierCategoryId: packCatId, name: 'קרטון', unit: 'חבילה', unitPrice: 2, supplierId: packSupId,
+        packagingKind: 'carton',
+      });
+      await addRawMaterial({
+        supplierCategoryId: cleanCatId, name: 'סבון', unit: 'יח׳', unitPrice: 8, supplierId: cleanSupId,
+      });
+      const orphanId = await addRawMaterial({
+        supplierCategoryId: rawCatId, name: 'סוכר יתום', unit: 'ק"ג', unitPrice: 3,
+      });
+
+      // מדמה סנכרון ששמר FKs כמחרוזות — עדכון ישיר ל-IndexedDB
+      await db.suppliers.update(rawSupId, { categoryId: String(rawCatId) });
+      await db.suppliers.update(packSupId, { categoryId: String(packCatId) });
+      const rawMats = await db.rawMaterials.toArray();
+      for (const m of rawMats) {
+        const patch = { supplierCategoryId: String(m.supplierCategoryId) };
+        if (m.supplierId) patch.supplierId = String(m.supplierId);
+        await db.rawMaterials.update(m.id, patch);
+      }
+
+      const layout = await getSuppliersBrowseLayout();
+      const byName = new Map(layout.categories.map((c) => [c.name, c]));
+
+      const rawCat = byName.get('חומרי גלם');
+      const packCat = byName.get('אריזות');
+      const cleanCat = byName.get('חומרי ניקיון');
+      assertOk(rawCat, 'קטגוריית חומרי גלם מופיעה');
+      assertOk(packCat, 'קטגוריית אריזות מופיעה');
+      assertOk(cleanCat, 'קטגוריית ניקיון מופיעה');
+
+      assertEqual(rawCat.suppliers.length, 1, 'ספק חומרי גלם מוצג למרות categoryId מחרוזת');
+      assertEqual(rawCat.suppliers[0].materials.length, 1, 'קמח משויך לספק');
+      assertEqual(rawCat.unassignedMaterials.length, 1, 'סוכר יתום תחת ללא ספק');
+      assertEqual(rawCat.unassignedMaterials[0].id, orphanId);
+
+      assertEqual(packCat.suppliers.length, 1, 'ספק אריזות מוצג');
+      assertEqual(packCat.suppliers[0].materials.length, 1, 'קרטון משויך לספק אריזות');
+
+      assertEqual(cleanCat.suppliers.length, 1, 'ספק ניקיון מוצג');
+      assertEqual(cleanCat.suppliers[0].materials.length, 1, 'סבון משויך');
     },
   );
 

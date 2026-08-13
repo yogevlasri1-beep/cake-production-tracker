@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=466';
+import { db, getSetting, setSetting } from './db.js?v=467';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=466';
+} from './supabase-backup.js?v=467';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=466';
+} from './sync/collections.js?v=467';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,10 +35,11 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=466';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=466';
+} from './sync/id-map.js?v=467';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=467';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
+const LIVE_SYNC_LAST_USER_KEY = 'liveSyncLastUserId';
 const DEFAULT_LIVE = {
   enabled: true,
   lastPullAt: null,
@@ -1318,6 +1319,42 @@ export async function dedupeSupplierWorkspaceLight() {
   return { removed };
 }
 
+/**
+ * משיכה מלאה כשמשתמש מתחבר (החלפת חשבון / מכשיר חדש) —
+ * מונע מצב שבו רואים רק נתונים מקומיים (למשל חומרי ניקיון) בלי שאר המחסן.
+ */
+export async function ensureSyncForCurrentUser() {
+  const { getValidSession } = await import('./auth.js?v=467');
+  const session = await getValidSession();
+  const userId = session?.user?.id;
+  if (!userId) return { pulled: false };
+
+  const lastUserId = await getSetting(LIVE_SYNC_LAST_USER_KEY);
+  if (lastUserId === userId) return { pulled: false };
+
+  const live = await getLiveSyncSettings();
+  if (!live.enabled) {
+    await setSetting(LIVE_SYNC_LAST_USER_KEY, userId);
+    return { pulled: false };
+  }
+
+  try {
+    await flushSyncQueue();
+    await pullAllCollections({ full: true });
+    await dedupeSupplierWorkspaceLight();
+    await setSetting(LIVE_SYNC_LAST_USER_KEY, userId);
+    await saveLiveSyncSettings({ lastError: null, lastErrorKind: null });
+    return { pulled: true };
+  } catch (err) {
+    const classified = classifyLiveSyncError(err);
+    await saveLiveSyncSettings({
+      lastError: classified.message || String(err.message || err),
+      lastErrorKind: classified.kind,
+    });
+    throw err;
+  }
+}
+
 export async function startLiveSync() {
   if (started) return;
   started = true;
@@ -1325,6 +1362,12 @@ export async function startLiveSync() {
 
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
+
+  try {
+    await ensureSyncForCurrentUser();
+  } catch (err) {
+    console.warn('live sync user pull', err);
+  }
 
   let pulledOk = false;
   const tick = async () => {

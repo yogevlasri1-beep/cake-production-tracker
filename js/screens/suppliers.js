@@ -4,7 +4,7 @@ import {
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial, findRawMaterialsByName, findRawMaterialsByBarcode,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
-  getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
+  getSuppliersBrowseLayout, getSupplierBrowseSyncHint, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
   importSupplierExcelEntries,
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
@@ -25,19 +25,19 @@ import {
   applyPackagingLinks,
   sanitizeBarcode,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=466';
-import { getProducts, getCategories } from '../db.js?v=466';
+} from '../kitchen-db.js?v=467';
+import { getProducts, getCategories } from '../db.js?v=467';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=466';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=466';
-import { openModal, closeModal } from '../modal.js?v=466';
-import { requestAutoBackupNow } from '../backup-service.js?v=466';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=466';
-import { openBarcodeScanner } from '../barcode-scan.js?v=466';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=466';
+} from '../supplier-import.js?v=467';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=467';
+import { openModal, closeModal } from '../modal.js?v=467';
+import { requestAutoBackupNow } from '../backup-service.js?v=467';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=467';
+import { openBarcodeScanner } from '../barcode-scan.js?v=467';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=467';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -45,7 +45,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=466';
+} from '../order-reminder.js?v=467';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1194,6 +1194,7 @@ function filterBrowseLayout(layout, search) {
   if (!search) return layout;
   const categories = layout.categories
     .map((cat) => {
+      const catMatch = browseSearchMatch(cat.name, search);
       const suppliers = cat.suppliers
         .map((sup) => {
           const supMatch = browseSearchMatch(sup.name, search);
@@ -1204,11 +1205,18 @@ function filterBrowseLayout(layout, search) {
           return { ...sup, materials, autoExpand: true };
         })
         .filter(Boolean);
-      if (!suppliers.length) return null;
-      return { ...cat, suppliers };
+      const unassigned = catMatch
+        ? (cat.unassignedMaterials || [])
+        : (cat.unassignedMaterials || []).filter((m) => materialMatchesSearch(m, search));
+      if (!suppliers.length && !unassigned.length) return null;
+      return { ...cat, suppliers, unassignedMaterials: unassigned };
     })
     .filter(Boolean);
   return { ...layout, categories };
+}
+
+function browseCategoryHasContent(cat) {
+  return cat.suppliers.length > 0 || (cat.unassignedMaterials?.length > 0);
 }
 
 function renderBrowseResultsHTML(filtered, search, expandedIds, hasData) {
@@ -1273,7 +1281,7 @@ function updateBrowseResults(body, container) {
   const expandedIds = new Set(
     JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
   );
-  const hasData = layout.categories.some((c) => c.suppliers.length);
+  const hasData = layout.categories.some(browseCategoryHasContent);
   const resultsEl = body.querySelector('#browse-results');
   if (!resultsEl) return;
   resultsEl.innerHTML = renderBrowseResultsHTML(filtered, search, expandedIds, hasData);
@@ -1283,14 +1291,26 @@ function updateBrowseResults(body, container) {
 async function renderBrowseTab(body, container) {
   const layout = await getSuppliersBrowseLayout();
   container._browseLayout = layout;
+  const syncHint = getSupplierBrowseSyncHint(layout);
   const search = (container.dataset.browseSearch || '').trim().toLocaleLowerCase('he');
   const filtered = filterBrowseLayout(layout, search);
   const expandedIds = new Set(
     JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
   );
-  const hasData = layout.categories.some((c) => c.suppliers.length);
+  const hasData = layout.categories.some(browseCategoryHasContent);
 
   body.innerHTML = `
+    ${syncHint.show ? `
+    <div class="card supplier-sync-hint-banner" id="browse-sync-hint">
+      <div class="supplier-sync-hint-text">
+        <strong>נראה שחלק מהנתונים לא נטען מהענן</strong>
+        ${syncHint.onlyCleaningVisible
+    ? '<span> · מוצגים רק חומרי ניקיון — חומרי גלם ואריזות חסרים</span>'
+    : ''}
+        ${syncHint.unassigned ? `<span> · ${syncHint.unassigned} חומרים בלי ספק משויך</span>` : ''}
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" id="browse-sync-pull">משוך מהענן</button>
+    </div>` : ''}
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
       <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
@@ -1307,12 +1327,30 @@ async function renderBrowseTab(body, container) {
     updateBrowseResults(body, container);
   });
 
+  document.getElementById('browse-sync-pull')?.addEventListener('click', async () => {
+    const btn = document.getElementById('browse-sync-pull');
+    if (btn) { btn.disabled = true; btn.textContent = 'מושך...'; }
+    try {
+      const { flushSyncQueue, pullAllCollections, dedupeSupplierWorkspaceLight } = await import('../supabase-sync.js?v=467');
+      await flushSyncQueue();
+      const pulled = await pullAllCollections({ full: true });
+      await dedupeSupplierWorkspaceLight();
+      showToast(`נמשך מהענן ✓ · ${pulled.applied || 0} רשומות`);
+      await renderSuppliers(container);
+    } catch (err) {
+      showToast(err.message || 'שגיאת סנכרון — בדוק בגיבוי שהחשבון פעיל');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'משוך מהענן'; }
+    }
+  });
+
   bindBrowseResultsHandlers(body, container);
 }
 
 function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
-  if (!cat.suppliers.length) return '';
-  const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0);
+  if (!browseCategoryHasContent(cat)) return '';
+  const matCount = cat.suppliers.reduce((n, s) => n + s.materials.length, 0)
+    + (cat.unassignedMaterials?.length || 0);
   const isPackaging = isPackagingSupplierCategory(cat);
   const isCleaning = isCleaningSupplierCategory(cat);
   return `
@@ -1323,8 +1361,25 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
       </button>
       <div class="supplier-browse-cat-body">
         ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds, isPackaging, isCleaning })).join('')}
+        ${renderBrowseUnassignedMaterialsHTML(cat.unassignedMaterials, { isPackaging, isCleaning })}
       </div>
     </div>`;
+}
+
+function renderBrowseUnassignedMaterialsHTML(materials, { isPackaging = false, isCleaning = false } = {}) {
+  if (!materials?.length) return '';
+  return `
+    <section class="supplier-browse-block supplier-browse-unassigned">
+      <div class="supplier-browse-sup-header-row">
+        <div class="supplier-browse-sup-header supplier-browse-unassigned-header">
+          <span class="supplier-browse-sup-name">ללא ספק משויך</span>
+          <span class="supplier-browse-sup-meta">${materials.length} ${isCleaning ? 'חומרי ניקיון' : (isPackaging ? 'אריזות' : 'חומרים')}</span>
+        </div>
+      </div>
+      <div class="supplier-browse-mats">
+        ${renderBrowseSupplierMaterialsHTML(materials, { isPackaging, isCleaning })}
+      </div>
+    </section>`;
 }
 
 function renderMaterialBarcodeMeta(m) {
@@ -3012,7 +3067,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=466');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=467');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3034,7 +3089,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=466');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=467');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3052,7 +3107,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=466');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=467');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
