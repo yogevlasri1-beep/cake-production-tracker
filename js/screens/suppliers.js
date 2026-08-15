@@ -28,19 +28,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=470';
-import { getProducts, getCategories } from '../db.js?v=470';
+} from '../kitchen-db.js?v=471';
+import { getProducts, getCategories } from '../db.js?v=471';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=470';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=470';
-import { openModal, closeModal } from '../modal.js?v=470';
-import { requestAutoBackupNow } from '../backup-service.js?v=470';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=470';
-import { openBarcodeScanner } from '../barcode-scan.js?v=470';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=470';
+} from '../supplier-import.js?v=471';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=471';
+import { openModal, closeModal } from '../modal.js?v=471';
+import { requestAutoBackupNow } from '../backup-service.js?v=471';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=471';
+import { openBarcodeScanner } from '../barcode-scan.js?v=471';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=471';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -48,7 +48,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=470';
+} from '../order-reminder.js?v=471';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -324,7 +324,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
     getSuppliers(),
     getSupplierImportUndo(),
   ]);
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
   container._catalogState = { catalog, categories, supMap };
 
   const items = filterCatalogItems(catalog, search);
@@ -505,7 +505,7 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
     const isDefault = !!o.isRecipeDefault;
     return `
             <tr data-offer-id="${o.id}" class="${isDefault ? 'is-recipe-default' : ''}">
-              <td>${escapeHtml(o.supplierId ? supMap.get(o.supplierId) || '—' : 'ללא ספק')}${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}</td>
+              <td>${escapeHtml(o.supplierId ? supMap.get(Number(o.supplierId)) || '—' : 'ללא ספק')}${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}</td>
               <td>${ppk != null ? formatMoney(ppk) : '—'}</td>
               <td>${formatWeightGrams(o.packageWeightGrams)}</td>
               <td>${formatMoney(o.unitPrice)}</td>
@@ -663,7 +663,7 @@ function renderMergeDupGroupsHTML(groups, supMap) {
       ${g.materials.map((m) => `
         <label class="merge-dup-option">
           <input type="checkbox" class="merge-keep-cb" data-group="${gi}" value="${m.id}" checked>
-          <span>${escapeHtml(m.supplierId ? supMap.get(m.supplierId) || 'ללא ספק' : 'ללא ספק')}
+          <span>${escapeHtml(m.supplierId ? supMap.get(Number(m.supplierId)) || 'ללא ספק' : 'ללא ספק')}
             · ${formatMaterialPriceMeta(m)}</span>
         </label>`).join('')}
       <button type="button" class="btn btn-primary btn-sm merge-group-btn" data-group="${gi}">אחד קבוצה זו</button>
@@ -681,7 +681,7 @@ async function refreshMergeDuplicatesModal(container) {
     return;
   }
   const suppliers = await getSuppliers();
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
   host.innerHTML = renderMergeDupGroupsHTML(groups, supMap);
   host.dataset.groupsJson = JSON.stringify(groups.map((g) => ({
     materials: g.materials.map((m) => m.id),
@@ -986,7 +986,7 @@ async function openMergeDuplicatesModal(container) {
     return;
   }
   const suppliers = await getSuppliers();
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
 
   openModal({
     title: 'איחוד כפילויות חומרי גלם',
@@ -1070,7 +1070,7 @@ function renderSimilarGroupRowHTML(m, gi, supMap, targetId) {
         <span class="manual-mat-merge-option-body">
           <strong>${escapeHtml(m.name)}</strong>
           <span class="merge-product-meta">
-            ${escapeHtml(m.supplierId ? (supMap.get(m.supplierId) || 'ספק') : 'ללא ספק')}
+            ${escapeHtml(m.supplierId ? (supMap.get(Number(m.supplierId)) || 'ספק') : 'ללא ספק')}
             · ${formatMaterialPriceMeta(m)}
           </span>
         </span>
@@ -1108,7 +1108,7 @@ async function refreshSimilarNamesModal(container) {
     return;
   }
   const suppliers = await getSuppliers();
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
   host.innerHTML = groups.map((g, gi) => renderSimilarGroupHTML(g, gi, supMap)).join('');
   bindSimilarNamesGroupInteractions(host, container);
 }
@@ -1168,7 +1168,7 @@ async function openSimilarNamesModal(container) {
     return;
   }
   const suppliers = await getSuppliers();
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
 
   openModal({
     title: 'איחוד שמות דומים',
@@ -1510,6 +1510,10 @@ function renderBrowseSupplierBlock(supplier, {
   }
   const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
   const addLabel = isCleaning ? '+ חומר ניקיון' : (isPackaging ? '+ אריזה' : '+ חומר');
+  const addBtn = supplier.isUnassigned ? '' : `
+        <button type="button" class="btn btn-secondary btn-sm browse-add-mat"
+          data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}"
+          title="הוסף חומר תחת ספק זה">${addLabel}</button>`;
   return `
     <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}">
       <div class="supplier-browse-sup-top">
@@ -1517,20 +1521,18 @@ function renderBrowseSupplierBlock(supplier, {
           <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
           <span class="supplier-browse-sup-meta">${metaText}</span>
         </button>
-        <button type="button" class="btn btn-secondary btn-sm browse-add-mat"
-          data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}"
-          title="הוסף חומר תחת ספק זה">${addLabel}</button>
+        ${addBtn}
       </div>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
         ${renderBrowseSupplierMaterialsHTML(supplier.materials, { isPackaging, isCleaning })}
       </div>`
-    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')} — לחץ «${addLabel}» להוספה</p>`}
+    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')}${supplier.isUnassigned ? '' : ` — לחץ «${addLabel}» להוספה`}</p>`}
     </section>`;
 }
 
 async function openMaterialDetailModal(container, materialId) {
-  const mat = (await getRawMaterials()).find((m) => m.id === materialId);
+  const mat = (await getRawMaterials()).find((m) => Number(m.id) === Number(materialId));
   if (!mat) return showToast('חומר לא נמצא');
 
   const [history, sameName, suppliers, supplierCategories] = await Promise.all([
@@ -1539,9 +1541,9 @@ async function openMaterialDetailModal(container, materialId) {
     getSuppliers(),
     getSupplierCategories(),
   ]);
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
   const others = sameName.filter((m) => m.id !== materialId);
-  const matCategory = supplierCategories.find((c) => c.id === mat.supplierCategoryId);
+  const matCategory = supplierCategories.find((c) => Number(c.id) === Number(mat.supplierCategoryId));
   const isCleaningMat = isCleaningSupplierCategory(matCategory);
 
   const prevHistPrice = history.length > 1 ? history[1].price : null;
@@ -1558,7 +1560,7 @@ async function openMaterialDetailModal(container, materialId) {
       ${renderMaterialPricingDetailsHTML(mat, { simple: isCleaningMat })}
       ${priceBadges ? `<div class="material-detail-badges" style="margin:8px 0">${priceBadges}</div>` : ''}
       <div class="material-detail-meta">
-        ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
+        ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(Number(mat.supplierId)) || '')}</span>` : ''}
         ${sanitizeSku(mat.sku) ? `<span class="form-hint">מק״ט: <strong>${escapeHtml(sanitizeSku(mat.sku))}</strong></span>` : ''}
         ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
         ${sanitizeMinOrderQty(mat.minOrderQty) != null ? `<span class="form-hint">הזמנה מינימלית: ${sanitizeMinOrderQty(mat.minOrderQty)} ${escapeHtml(mat.unit || '')}</span>` : ''}
@@ -1602,7 +1604,7 @@ async function openMaterialDetailModal(container, materialId) {
           ${others.map((m) => `
           <li>
             <button type="button" class="link-btn browse-other-sup" data-id="${m.id}">
-              ${escapeHtml(supMap.get(m.supplierId) || 'ללא ספק')} — ${formatMaterialPriceMeta(m)}
+              ${escapeHtml(supMap.get(Number(m.supplierId)) || 'ללא ספק')} — ${formatMaterialPriceMeta(m)}
             </button>
           </li>`).join('')}
         </ul>
@@ -1749,9 +1751,9 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
     getRawMaterials(Number(selectedMatCat)),
     getSuppliers(),
   ]);
-  const catMap = new Map(categories.map((c) => [c.id, c.name]));
-  const supMap = new Map(allSuppliers.map((s) => [s.id, s.name]));
-  const suppliersByCat = new Map(categories.map((c) => [c.id, []]));
+  const catMap = new Map(categories.map((c) => [Number(c.id), c.name]));
+  const supMap = new Map(allSuppliers.map((s) => [Number(s.id), s.name]));
+  const suppliersByCat = new Map(categories.map((c) => [Number(c.id), []]));
   const uncategorized = [];
   for (const s of allSuppliers) {
     const cid = Number(s.categoryId);
@@ -1928,7 +1930,7 @@ function filterEditMaterials(materials, search, supMap) {
   const q = String(search || '').trim();
   if (!q) return materials;
   return materials.filter((m) => materialMatchesSearch(m, q, {
-    supplierName: m.supplierId ? (supMap.get(m.supplierId) || '') : '',
+    supplierName: m.supplierId ? (supMap.get(Number(m.supplierId)) || '') : '',
   }));
 }
 
@@ -1951,7 +1953,7 @@ function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMat
           <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
           <div class="list-item-meta">
             ${formatMaterialPriceMeta(m)}
-            ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
+            ${m.supplierId ? ` · ${escapeHtml(supMap.get(Number(m.supplierId)) || '')}` : ''}
             ${sanitizeSku(m.sku) ? ` · מק״ט ${escapeHtml(sanitizeSku(m.sku))}` : ''}
             ${sanitizeBarcode(m.barcode) ? ` · ברקוד ${escapeHtml(sanitizeBarcode(m.barcode))}` : ''}
           </div>
@@ -2193,7 +2195,7 @@ async function openAddMaterialModal(container, categoryId, suppliers, category, 
 
 function openEditMaterialModal(container, mat) {
   Promise.all([getSuppliers(), getSupplierCategories(), getProducts(true), getCategories()]).then(([suppliers, categories, products, productCategories]) => {
-    const category = categories.find((c) => c.id === mat.supplierCategoryId);
+    const category = categories.find((c) => Number(c.id) === Number(mat.supplierCategoryId));
     const isPackaging = isPackagingSupplierCategory(category);
     const isCleaning = isCleaningSupplierCategory(category);
     const simplePrice = isPackaging || isCleaning;
@@ -2900,7 +2902,7 @@ async function renderShortagesTab(body, container) {
     getSuppliers(),
     getRawMaterials(),
   ]);
-  const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
+  const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
   const totalItems = grouped.reduce((n, g) => n + g.items.length, 0);
   const openItems = grouped.reduce((n, g) => n + g.items.filter((i) => !i.done).length, 0);
   const waText = formatSupplierShortagesText(grouped);
@@ -2909,7 +2911,7 @@ async function renderShortagesTab(body, container) {
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name, 'he'))
     .map((m) => {
-      const supName = m.supplierId ? supMap.get(m.supplierId) : '';
+      const supName = m.supplierId ? supMap.get(Number(m.supplierId)) : '';
       const suffix = supName ? ` · ${supName}` : '';
       return `<option value="${m.id}" data-unit="${escapeHtml(m.unit || '')}">${escapeHtml(m.name)}${escapeHtml(suffix)}</option>`;
     })
@@ -3100,7 +3102,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=470');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=471');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3122,7 +3124,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=470');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=471');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3140,7 +3142,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=470');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=471');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

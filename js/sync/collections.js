@@ -399,9 +399,9 @@ export function rowFingerprint(collection, row) {
     case 'products':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
     case 'suppliers':
-      return n ? `${collection}|${n}|${row.categoryId ?? ''}` : '';
+      return n ? `${collection}|${n}|${row.categoryId != null && row.categoryId !== '' ? Number(row.categoryId) : ''}` : '';
     case 'rawMaterials':
-      return n ? `${collection}|${n}|${row.supplierId ?? ''}|${row.supplierCategoryId ?? ''}` : '';
+      return n ? `${collection}|${n}|${row.supplierId != null && row.supplierId !== '' ? Number(row.supplierId) : ''}|${row.supplierCategoryId != null && row.supplierCategoryId !== '' ? Number(row.supplierCategoryId) : ''}` : '';
     case 'recipes':
       return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.parentRecipeId ?? ''}` : '';
     case 'recipeVersions':
@@ -611,9 +611,24 @@ export function rowDedupeFingerprint(collection, row) {
   }
   // חומרי גלם: אותו שם+ספק = כפילות גם תחת קטגוריות שונות
   // (seed «חומרי גלם יבשים» מול «חומרי גלם» אמיתי — מחיר על הכפילות לא נראה בראשי)
+  // בלי ספק — כוללים קטגוריה כדי לא למזג שני פריטים שונים באותו שם.
   if (collection === 'rawMaterials') {
     const n = normName(row.name);
-    return n ? `${collection}|${n}|${row.supplierId ?? ''}` : '';
+    if (!n) return '';
+    const sid = row.supplierId != null && row.supplierId !== '' ? Number(row.supplierId) : '';
+    if (sid === '') {
+      const cid = row.supplierCategoryId != null && row.supplierCategoryId !== ''
+        ? Number(row.supplierCategoryId)
+        : '';
+      return `${collection}|${n}||${cid}`;
+    }
+    return `${collection}|${n}|${sid}`;
+  }
+  if (collection === 'suppliers') {
+    const n = normName(row.name);
+    if (!n) return '';
+    const cid = row.categoryId != null && row.categoryId !== '' ? Number(row.categoryId) : '';
+    return `${collection}|${n}|${cid}`;
   }
   // קטגוריות אריזה/ניקיון: תפקיד זהה = כפילות גם כששם הקטגוריה שונה בין מכשירים
   // ("אריזה" מול "אריזות") — קטגוריית חומ"ג רגילה עדיין דורשת שם מדויק.

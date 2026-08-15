@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=470';
+import { db, getSetting, setSetting } from './db.js?v=471';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=470';
+} from './supabase-backup.js?v=471';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=470';
+} from './sync/collections.js?v=471';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=470';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole } from './kitchen-db.js?v=470';
+} from './sync/id-map.js?v=471';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=471';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -113,8 +113,9 @@ export function formatLiveSyncErrorForUi(live) {
 /**
  * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
  * v17: rebalance materials/suppliers wrongly dumped into אריזות back to חומ״ג/ניקיון.
+ * v18: coerce string FKs + unassigned-material fingerprint includes category.
  */
-const DEDUPE_VERSION = 17;
+const DEDUPE_VERSION = 18;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -123,8 +124,9 @@ const DEDUPE_VERSION = 17;
  * v7: new devices seeded empty supplier-category defaults that diverged from cloud names.
  * v8: after cloud SQL cleanup of seed categories — full re-pull + material cross-category dedupe.
  * v9: merge «חומרי גלם»/«חומרי גלם יבשים» + re-pull after unique packaging/cleaning indexes.
+ * v10: coerce string FKs + reconcile unitPrice from price history after pull.
  */
-const REPAIR_VERSION = 9;
+const REPAIR_VERSION = 10;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -369,7 +371,7 @@ export async function flushSyncQueue() {
  * duplicate (e.g. two "supplierCategories" cleaning categories, or the same raw
  * material added under two different categories on two devices).
  */
-const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'rawMaterials']);
+const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'suppliers', 'rawMaterials']);
 
 /**
  * Master-data collections where a fingerprint already claimed by another syncId
@@ -545,6 +547,15 @@ async function mergeRawMaterialPriceInto(keep, drop) {
   }
   if (!keep.supplierId && drop.supplierId) {
     patch.supplierId = drop.supplierId;
+  }
+  if (!String(keep.sku || '').trim() && String(drop.sku || '').trim()) {
+    patch.sku = String(drop.sku).trim();
+  }
+  if (!String(keep.notes || '').trim() && String(drop.notes || '').trim()) {
+    patch.notes = String(drop.notes).trim();
+  }
+  if (!(Number(keep.minOrderQty) > 0) && Number(drop.minOrderQty) > 0) {
+    patch.minOrderQty = drop.minOrderQty;
   }
   if (!Object.keys(patch).length) return;
   await db.rawMaterials.update(keep.id, patch);
@@ -1193,6 +1204,10 @@ export async function pullAllCollections({ full = false } = {}) {
       }
     }
     await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null, lastErrorKind: null });
+    if (applied > 0) {
+      try { await coerceSupplierNumericFks(); } catch { /* ignore */ }
+      try { await reconcileRawMaterialPricesFromHistory(); } catch { /* ignore */ }
+    }
   } catch (err) {
     const classified = classifyLiveSyncError(err);
     await saveLiveSyncSettings({
@@ -1461,13 +1476,15 @@ export async function dedupeSupplierWorkspaceLight({ force = false } = {}) {
       let removed = 0;
       removed += await pruneUnsyncedEmptySeedSupplierCategories();
       removed += await dedupeSupplierCategoriesByRole();
-      // fingerprint רק ב-force / פעם ראשונה אחרי אתחול — יקר על אלפי חומרים
+      removed += await coerceSupplierNumericFks();
+      // ספקים מעטים — תמיד; חומרים רק ב-force / פעם ראשונה (יקר)
+      removed += await dedupeCollectionByFingerprint('suppliers');
       if (force || !lastLightDedupeAt) {
         removed += await dedupeCollectionByFingerprint('supplierCategories');
-        removed += await dedupeCollectionByFingerprint('suppliers');
         removed += await dedupeCollectionByFingerprint('rawMaterials');
       }
-      const repaired = await repairOrphanSupplierCategoryLinks();
+      const priceFixed = await reconcileRawMaterialPricesFromHistory();
+      const repaired = (await repairOrphanSupplierCategoryLinks()) + (priceFixed || 0);
       lastLightDedupeAt = Date.now();
       if (removed || repaired) {
         console.info('live sync light supplier dedupe', { removed, repaired });

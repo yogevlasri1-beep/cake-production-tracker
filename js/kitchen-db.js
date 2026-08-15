@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=470';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=471';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=470';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=470';
-import { logAuditEvent } from './audit.js?v=470';
-import { markMetaDeleted } from './sync/id-map.js?v=470';
+} from './validators.js?v=471';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=471';
+import { logAuditEvent } from './audit.js?v=471';
+import { markMetaDeleted } from './sync/id-map.js?v=471';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2267,11 +2267,11 @@ export async function syncRawMaterialsActiveFromRecipes() {
     getSupplierCategories(),
   ]);
   const alwaysActiveCatIds = new Set(
-    categories.filter((c) => isNonRecipeSupplierCategory(c)).map((c) => c.id),
+    categories.filter((c) => isNonRecipeSupplierCategory(c)).map((c) => Number(c.id)),
   );
   const updates = [];
   for (const m of materials) {
-    const alwaysActive = alwaysActiveCatIds.has(m.supplierCategoryId) || !!m.packagingKind;
+    const alwaysActive = alwaysActiveCatIds.has(Number(m.supplierCategoryId)) || !!m.packagingKind;
     const shouldBeActive = alwaysActive || linkedIds.has(m.id);
     if (m.active !== shouldBeActive) {
       updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
@@ -3749,10 +3749,10 @@ function normalizePackagingFields(raw, { categoryIsPackaging = false } = {}) {
 export async function getPackagingMaterials() {
   const [mats, cats] = await Promise.all([getRawMaterials(), getSupplierCategories()]);
   const packCatIds = new Set(
-    (cats || []).filter((c) => isPackagingSupplierCategory(c)).map((c) => c.id),
+    (cats || []).filter((c) => isPackagingSupplierCategory(c)).map((c) => Number(c.id)),
   );
   return (mats || [])
-    .filter((m) => m.packagingKind || packCatIds.has(m.supplierCategoryId))
+    .filter((m) => m.packagingKind || packCatIds.has(Number(m.supplierCategoryId)))
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
 }
 
@@ -3987,9 +3987,102 @@ export async function deleteSupplierCategory(id) {
 
 /* ── ספקים ── */
 
+/** השוואת מזהים אחרי סנכרון — Dexie יכול לשמור FK כמחרוזת ("12" מול 12) */
+export function sameNumericId(a, b) {
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na > 0 && na === nb;
+}
+
+function numericFkPatch(val) {
+  if (val == null || val === '') return { changed: false, value: val == null ? null : val };
+  if (typeof val === 'number' && Number.isFinite(val)) return { changed: false, value: val };
+  if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+    return { changed: true, value: Number(val.trim()) };
+  }
+  return { changed: false, value: val };
+}
+
+/**
+ * מתקן FKs שנשמרו כמחרוזות אחרי גיבוי/סנכרון ישן —
+ * אחרת סינון Dexie ו-Map של צפייה מפספסים ספקים/חומרים.
+ */
+export async function coerceSupplierNumericFks() {
+  if (!db.suppliers || !db.rawMaterials) return 0;
+  let fixed = 0;
+  const suppliers = await db.suppliers.toArray();
+  for (const s of suppliers) {
+    const cat = numericFkPatch(s.categoryId);
+    if (!cat.changed) continue;
+    await db.suppliers.update(s.id, { categoryId: cat.value });
+    fixed += 1;
+  }
+  const materials = await db.rawMaterials.toArray();
+  for (const m of materials) {
+    const patch = {};
+    const cat = numericFkPatch(m.supplierCategoryId);
+    if (cat.changed) patch.supplierCategoryId = cat.value;
+    if (m.supplierId != null && m.supplierId !== '') {
+      const sid = numericFkPatch(m.supplierId);
+      if (sid.changed) patch.supplierId = sid.value;
+    }
+    if (!Object.keys(patch).length) continue;
+    await db.rawMaterials.update(m.id, patch);
+    fixed += 1;
+  }
+  if (db.rawMaterialPriceHistory) {
+    const hist = await db.rawMaterialPriceHistory.toArray();
+    for (const h of hist) {
+      const mid = numericFkPatch(h.rawMaterialId);
+      if (!mid.changed) continue;
+      await db.rawMaterialPriceHistory.update(h.id, { rawMaterialId: mid.value });
+      fixed += 1;
+    }
+  }
+  return fixed;
+}
+
+/**
+ * מיישר unitPrice לפי שורת ההיסטוריה האחרונה — אחרי pull המחיר בטבלת החומר
+ * יכול להישאר ישן בזמן שההיסטוריה כבר עודכנה (או להפך).
+ */
+export async function reconcileRawMaterialPricesFromHistory() {
+  if (!db.rawMaterials || !db.rawMaterialPriceHistory) return 0;
+  const [mats, hist] = await Promise.all([
+    db.rawMaterials.toArray(),
+    db.rawMaterialPriceHistory.toArray(),
+  ]);
+  if (!hist.length) return 0;
+  const latestByMat = new Map();
+  for (const h of hist) {
+    const mid = Number(h.rawMaterialId);
+    if (!mid) continue;
+    const cur = latestByMat.get(mid);
+    if (!cur) {
+      latestByMat.set(mid, h);
+      continue;
+    }
+    const d = String(h.effectiveDate || '').localeCompare(String(cur.effectiveDate || ''));
+    if (d > 0 || (d === 0 && String(h.createdAt || '') > String(cur.createdAt || ''))) {
+      latestByMat.set(mid, h);
+    }
+  }
+  let fixed = 0;
+  for (const m of mats) {
+    const latest = latestByMat.get(Number(m.id));
+    if (!latest) continue;
+    const hp = sanitizeMoney(latest.price);
+    const up = sanitizeMoney(m.unitPrice);
+    if (hp === up) continue;
+    await db.rawMaterials.update(m.id, { unitPrice: hp });
+    fixed += 1;
+  }
+  return fixed;
+}
+
 export async function getSuppliers(categoryId) {
   let rows = await db.suppliers.toArray();
-  if (categoryId) rows = rows.filter((s) => s.categoryId === Number(categoryId));
+  if (categoryId) rows = rows.filter((s) => sameNumericId(s.categoryId, categoryId));
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
 }
@@ -4023,9 +4116,26 @@ export async function updateSupplier(id, patch) {
   const prev = await db.suppliers.get(sid);
   await db.suppliers.update(sid, data);
   if (prev && 'categoryId' in data && data.categoryId && data.categoryId !== prev.categoryId) {
-    const mats = await db.rawMaterials.where('supplierId').equals(sid).toArray();
+    const newCat = await db.supplierCategories.get(data.categoryId);
+    const isPack = isPackagingSupplierCategory(newCat);
+    const isClean = isCleaningSupplierCategory(newCat);
+    const mats = (await db.rawMaterials.toArray())
+      .filter((m) => sameNumericId(m.supplierId, sid));
     for (const m of mats) {
-      await db.rawMaterials.update(m.id, { supplierCategoryId: data.categoryId });
+      const patch = { supplierCategoryId: data.categoryId };
+      if (!isPack) {
+        patch.packagingKind = null;
+        patch.packUnitsCount = null;
+        patch.packProductsPerUnit = null;
+        patch.packLinkedProductId = null;
+        patch.packLinkedCategoryId = null;
+      } else {
+        Object.assign(patch, normalizePackagingFields(m, { categoryIsPackaging: true }));
+      }
+      if (isClean && m.packagingKind) {
+        patch.packagingKind = null;
+      }
+      await db.rawMaterials.update(m.id, patch);
     }
   }
 }
@@ -4059,7 +4169,7 @@ export async function setRawMaterialOrder(categoryId, orderedIds) {
 export async function getRawMaterials(supplierCategoryId) {
   let rows = await db.rawMaterials.toArray();
   if (supplierCategoryId) {
-    rows = rows.filter((m) => m.supplierCategoryId === Number(supplierCategoryId));
+    rows = rows.filter((m) => sameNumericId(m.supplierCategoryId, supplierCategoryId));
   }
   rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   return rows;
@@ -4532,7 +4642,7 @@ async function priceHistoryEntryExists(rawMaterialId, effectiveDate, price) {
 export async function getMasterMaterialsList(supplierCategoryId) {
   let rows = await db.rawMaterials.toArray();
   const cid = supplierCategoryId ? sanitizeProductId(supplierCategoryId) : null;
-  if (cid) rows = rows.filter((m) => m.supplierCategoryId === cid);
+  if (cid) rows = rows.filter((m) => sameNumericId(m.supplierCategoryId, cid));
 
   const byKey = new Map();
   for (const m of rows) {
@@ -5353,7 +5463,16 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
 export async function getPriceHistory(rawMaterialId) {
   const mid = sanitizeProductId(rawMaterialId);
   if (!mid) return [];
-  const rows = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
+  let rows = [];
+  try {
+    rows = await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).toArray();
+  } catch {
+    rows = [];
+  }
+  if (!rows.length) {
+    const all = await db.rawMaterialPriceHistory.toArray();
+    rows = all.filter((r) => sameNumericId(r.rawMaterialId, mid));
+  }
   rows.sort((a, b) => {
     const d = b.effectiveDate.localeCompare(a.effectiveDate);
     if (d !== 0) return d;
@@ -5395,8 +5514,8 @@ export async function findRawMaterialBySupplierAndName(supplierId, name) {
   const sid = sanitizeProductId(supplierId);
   const key = normalizeMaterialKey(name);
   if (!sid || !key) return null;
-  const mats = await db.rawMaterials.where('supplierId').equals(sid).toArray();
-  return mats.find((m) => normalizeMaterialKey(m.name) === key) || null;
+  const mats = await db.rawMaterials.toArray();
+  return mats.find((m) => sameNumericId(m.supplierId, sid) && normalizeMaterialKey(m.name) === key) || null;
 }
 
 export async function getMaterialsWithSameName(materialId) {
@@ -5434,30 +5553,48 @@ export async function getSuppliersBrowseLayout() {
   ]);
   const catIds = new Set(categories.map((c) => Number(c.id)));
   const matsBySupplier = new Map();
+  const unassignedByCat = new Map();
   for (const m of materials) {
-    if (!m.supplierId) continue;
-    if (!matsBySupplier.has(m.supplierId)) matsBySupplier.set(m.supplierId, []);
-    matsBySupplier.get(m.supplierId).push(m);
+    const sid = Number(m.supplierId);
+    if (sid) {
+      if (!matsBySupplier.has(sid)) matsBySupplier.set(sid, []);
+      matsBySupplier.get(sid).push(m);
+      continue;
+    }
+    const cid = Number(m.supplierCategoryId) || 0;
+    if (!unassignedByCat.has(cid)) unassignedByCat.set(cid, []);
+    unassignedByCat.get(cid).push(m);
   }
-  for (const list of matsBySupplier.values()) {
+  const sortMats = (list) => {
     list.sort((a, b) => {
       const aActive = a.active === true;
       const bActive = b.active === true;
       if (aActive !== bActive) return aActive ? -1 : 1;
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
     });
-  }
+  };
+  for (const list of matsBySupplier.values()) sortMats(list);
+  for (const list of unassignedByCat.values()) sortMats(list);
   const attach = (s) => ({
     ...s,
-    materials: matsBySupplier.get(s.id) || [],
+    materials: matsBySupplier.get(Number(s.id)) || [],
   });
   // Number() — מונע חוסר התאמה string/number אחרי סנכרון
-  const grouped = categories.map((cat) => ({
-    ...cat,
-    suppliers: suppliers
+  const grouped = categories.map((cat) => {
+    const suppliersForCat = suppliers
       .filter((s) => Number(s.categoryId) === Number(cat.id))
-      .map(attach),
-  }));
+      .map(attach);
+    const orphansMats = unassignedByCat.get(Number(cat.id)) || [];
+    if (orphansMats.length) {
+      suppliersForCat.push({
+        id: `none-${cat.id}`,
+        name: 'ללא ספק',
+        isUnassigned: true,
+        materials: orphansMats,
+      });
+    }
+    return { ...cat, suppliers: suppliersForCat };
+  });
   // ספקים שקטגוריה שלהם נמחקה/לא קיימת — אחרת נעלמים מטאב «ספקים»
   const orphans = suppliers
     .filter((s) => {
@@ -5465,6 +5602,18 @@ export async function getSuppliersBrowseLayout() {
       return !cid || !catIds.has(cid);
     })
     .map(attach);
+  const leftoverUnassigned = [];
+  for (const [cid, list] of unassignedByCat) {
+    if (!cid || !catIds.has(cid)) leftoverUnassigned.push(...list);
+  }
+  if (leftoverUnassigned.length) {
+    orphans.push({
+      id: 'none-orphan',
+      name: 'ללא ספק',
+      isUnassigned: true,
+      materials: leftoverUnassigned,
+    });
+  }
   if (orphans.length) {
     grouped.push({
       id: 'orphan',
