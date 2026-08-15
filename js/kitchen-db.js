@@ -3917,12 +3917,13 @@ export async function ensureRoleSupplierCategories() {
   let raw = cats.find((c) => /^חומרי\s*גלם/.test(String(c.name || '').trim()));
   if (!raw) {
     await addSupplierCategory('חומרי גלם');
-  } else if (raw.isPackaging || raw.isCleaning || String(raw.name || '').trim() !== 'חומרי גלם') {
+  } else if (raw.isPackaging || raw.isCleaning) {
     await db.supplierCategories.update(raw.id, {
-      name: 'חומרי גלם',
       isPackaging: false,
       isCleaning: false,
     });
+  } else if (String(raw.name || '').trim() === 'חומרי גלם יבשים') {
+    await db.supplierCategories.update(raw.id, { name: 'חומרי גלם' });
   }
 
   cats = await getSupplierCategories();
