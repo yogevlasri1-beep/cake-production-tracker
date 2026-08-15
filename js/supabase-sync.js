@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=467';
+import { db, getSetting, setSetting } from './db.js?v=468';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=467';
+} from './supabase-backup.js?v=468';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=467';
+} from './sync/collections.js?v=468';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=467';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=467';
+} from './sync/id-map.js?v=468';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole } from './kitchen-db.js?v=468';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -112,9 +112,9 @@ export function formatLiveSyncErrorForUi(live) {
 
 /**
  * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
- * v16: repair orphan supplier/material category FKs after role-dedupe tombstones.
+ * v17: rebalance materials/suppliers wrongly dumped into אריזות back to חומ״ג/ניקיון.
  */
-const DEDUPE_VERSION = 16;
+const DEDUPE_VERSION = 17;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -706,60 +706,95 @@ async function dedupeSupplierCategoriesByRole() {
 }
 
 /**
- * מתקן ספקים/חומרים ש-categoryId שלהם מצביע על קטגוריה שנמחקה (אחרי dedupe/tombstone).
- * בלי זה טאב «ספקים» מסתיר אותם כי הסינון הוא לפי categoryId קיים.
+ * מתקן שיוך קטגוריות:
+ * 1) ספקים/חומרים יתומים (categoryId חסר/נמחק)
+ * 2) חומרים ששויכו בטעות ל«אריזות» בלי packagingKind → חוזרים לחומ״ג
+ * 3) ספקים לפי רוב תפקיד החומרים שלהם
+ * ברירת מחדל תמיד חומ״ג — לעולם לא אריזות.
  */
 export async function repairOrphanSupplierCategoryLinks() {
   if (!db.supplierCategories || !db.suppliers || !db.rawMaterials) return 0;
+
+  const byRole = await ensureRoleSupplierCategories();
+  const rawCat = byRole.get('raw');
+  const packCat = byRole.get('packaging');
+  const cleanCat = byRole.get('cleaning');
+  if (!rawCat) return 0;
+
   const cats = await db.supplierCategories.toArray();
-  if (!cats.length) return 0;
   const byId = new Map(cats.map((c) => [Number(c.id), c]));
-  const byRole = new Map();
-  for (const c of cats) {
-    const role = supplierCategoryRoleKey(c);
-    if (role && !byRole.has(role)) byRole.set(role, c);
-  }
-  const fallback = byRole.get('raw')
-    || cats.find((c) => !c.isPackaging && !c.isCleaning)
-    || cats[0];
+  const roleCat = (role) => {
+    if (role === 'packaging') return packCat || rawCat;
+    if (role === 'cleaning') return cleanCat || rawCat;
+    if (role === 'import') {
+      const imp = cats.find((c) => supplierCategoryRoleKey(c) === 'import');
+      return imp || rawCat;
+    }
+    return rawCat;
+  };
 
   let fixed = 0;
+  const materials = await db.rawMaterials.toArray();
+  const matRoleById = new Map();
+
+  for (const m of materials) {
+    const role = inferRawMaterialSupplierRole(m, byId);
+    matRoleById.set(m.id, role);
+    const target = roleCat(role);
+    if (!target) continue;
+    const cid = Number(m.supplierCategoryId);
+    const alreadyOk = cid === Number(target.id) && byId.has(cid);
+    const clearFakePackaging = role !== 'packaging' && !!m.packagingKind
+      && !/קרטון|קופס|מגש|שקית|ניילון|מדבק|סרט|לוגו|מכסה|אלומינ|כפפ|מנשא|מיכל|תבנית|אריז|פלסטיק|פואל|פויל|רדיד/
+        .test(String(m.name || ''));
+    if (alreadyOk && !clearFakePackaging) continue;
+    const patch = { supplierCategoryId: target.id };
+    if (clearFakePackaging || (role !== 'packaging' && m.packagingKind && role === 'cleaning')) {
+      patch.packagingKind = null;
+      patch.packUnitsCount = null;
+      patch.packProductsPerUnit = null;
+      patch.packLinkedProductId = null;
+      patch.packLinkedCategoryId = null;
+    }
+    await db.rawMaterials.update(m.id, patch);
+    await enqueueUpsert('rawMaterials', m.id);
+    fixed += 1;
+  }
+
   const suppliers = await db.suppliers.toArray();
   for (const s of suppliers) {
-    const cid = Number(s.categoryId);
-    if (cid && byId.has(cid)) continue;
-    let target = null;
-    const mats = await db.rawMaterials.where('supplierId').equals(s.id).toArray();
+    const mats = materials.filter((m) => Number(m.supplierId) === Number(s.id));
+    const counts = { raw: 0, packaging: 0, cleaning: 0, import: 0 };
     for (const m of mats) {
-      const mcid = Number(m.supplierCategoryId);
-      if (mcid && byId.has(mcid)) {
-        target = byId.get(mcid);
-        break;
+      const role = matRoleById.get(m.id) || 'raw';
+      counts[role] = (counts[role] || 0) + 1;
+    }
+    let bestRole = 'raw';
+    let bestCount = -1;
+    for (const role of ['raw', 'cleaning', 'packaging', 'import']) {
+      const n = counts[role] || 0;
+      // tie-break: raw > cleaning > packaging (אל תדחוף הכל לאריזות)
+      if (n > bestCount) {
+        bestCount = n;
+        bestRole = role;
       }
     }
-    if (!target) target = fallback;
-    if (!target || Number(s.categoryId) === Number(target.id)) continue;
+    // ספק בלי חומרים: אם כבר בקטגוריה חיה עם תפקיד — השאר; אחרת חומ״ג
+    let target;
+    if (!mats.length) {
+      const cur = byId.get(Number(s.categoryId));
+      const curRole = supplierCategoryRoleKey(cur);
+      target = curRole ? roleCat(curRole) : rawCat;
+    } else {
+      target = roleCat(bestRole);
+    }
+    if (!target) continue;
+    if (Number(s.categoryId) === Number(target.id) && byId.has(Number(s.categoryId))) continue;
     await db.suppliers.update(s.id, { categoryId: target.id });
     await enqueueUpsert('suppliers', s.id);
     fixed += 1;
   }
 
-  const materials = await db.rawMaterials.toArray();
-  for (const m of materials) {
-    const cid = Number(m.supplierCategoryId);
-    if (cid && byId.has(cid)) continue;
-    let target = null;
-    if (m.supplierId) {
-      const sup = await db.suppliers.get(Number(m.supplierId));
-      const scid = Number(sup?.categoryId);
-      if (scid && byId.has(scid)) target = byId.get(scid);
-    }
-    if (!target) target = fallback;
-    if (!target || Number(m.supplierCategoryId) === Number(target.id)) continue;
-    await db.rawMaterials.update(m.id, { supplierCategoryId: target.id });
-    await enqueueUpsert('rawMaterials', m.id);
-    fixed += 1;
-  }
   return fixed;
 }
 
@@ -939,8 +974,11 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
           if (role) {
             survivor = cats.find((c) => Number(c.id) !== dropId && supplierCategoryRoleKey(c) === role);
           }
+          // אל תבחר אריזות כברירת מחדל לכל מחיקה — העדף חומ״ג
           if (!survivor) {
-            survivor = cats.find((c) => Number(c.id) !== dropId);
+            survivor = cats.find((c) => Number(c.id) !== dropId && supplierCategoryRoleKey(c) === 'raw')
+              || cats.find((c) => Number(c.id) !== dropId && !c.isPackaging && !c.isCleaning)
+              || cats.find((c) => Number(c.id) !== dropId);
           }
           if (survivor) {
             await retargetLocalForeignKeys('supplierCategories', dropId, survivor.id);

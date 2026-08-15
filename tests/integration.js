@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=467';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=467';
+} from './runner.js?v=468';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=468';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,10 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-} from '../js/kitchen-db.js?v=467';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=467';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=467';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=467';
+} from '../js/kitchen-db.js?v=468';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=468';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=468';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=468';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -349,6 +349,43 @@ export async function runIntegrationTests() {
     assertOk(fixed >= 1, 'תוקן לפחות ספק אחד');
     const after = await db.suppliers.get(supId);
     assertEqual(Number(after.categoryId), Number(rawId), 'הספק שויך חזרה לחומרי גלם');
+  });
+
+  await testAsync('repairOrphanSupplierCategoryLinks — מוציא חומ״ג ששויכו בטעות לאריזות', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const rawId = await addSupplierCategory('חומרי גלם');
+    const packId = await addSupplierCategory('אריזות', { isPackaging: true });
+    const cleanId = await addSupplierCategory('חומרי ניקיון', { isCleaning: true });
+
+    const flourSup = await addSupplier({ categoryId: packId, name: 'ספק קמח שגוי' });
+    const boxSup = await addSupplier({ categoryId: packId, name: 'ספק אריזות' });
+    const soapSup = await addSupplier({ categoryId: packId, name: 'ספק ניקיון שגוי' });
+
+    const flourId = await addRawMaterial({
+      supplierCategoryId: packId, supplierId: flourSup, name: 'קמח תופח', unit: 'ק"ג', unitPrice: 5,
+    });
+    const boxId = await addRawMaterial({
+      supplierCategoryId: packId, supplierId: boxSup, name: 'קופסת קרטון', unit: 'יח׳', unitPrice: 2,
+      packagingKind: 'carton', packUnitsCount: 1,
+    });
+    const soapId = await addRawMaterial({
+      supplierCategoryId: packId, supplierId: soapSup, name: 'סבון כלים', unit: 'יח׳', unitPrice: 8,
+    });
+
+    const fixed = await repairOrphanSupplierCategoryLinks();
+    assertOk(fixed >= 1, 'תוקנו שיוכים שגויים');
+
+    assertEqual(Number((await db.rawMaterials.get(flourId)).supplierCategoryId), Number(rawId), 'קמח → חומ״ג');
+    assertEqual(Number((await db.rawMaterials.get(boxId)).supplierCategoryId), Number(packId), 'קרטון נשאר באריזות');
+    assertEqual(Number((await db.rawMaterials.get(soapId)).supplierCategoryId), Number(cleanId), 'סבון → ניקיון');
+
+    assertEqual(Number((await db.suppliers.get(flourSup)).categoryId), Number(rawId), 'ספק קמח → חומ״ג');
+    assertEqual(Number((await db.suppliers.get(boxSup)).categoryId), Number(packId), 'ספק אריזות נשאר');
+    assertEqual(Number((await db.suppliers.get(soapSup)).categoryId), Number(cleanId), 'ספק ניקיון → ניקיון');
   });
 
 await flushTests();

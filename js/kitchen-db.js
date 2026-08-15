@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=467';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=468';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=467';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=467';
-import { logAuditEvent } from './audit.js?v=467';
-import { markMetaDeleted } from './sync/id-map.js?v=467';
+} from './validators.js?v=468';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=468';
+import { logAuditEvent } from './audit.js?v=468';
+import { markMetaDeleted } from './sync/id-map.js?v=468';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3892,6 +3892,79 @@ export async function ensureCleaningSupplierCategory() {
     return;
   }
   await addSupplierCategory('חומרי ניקיון', { isCleaning: true });
+}
+
+/**
+ * מוודא שקיימות קטגוריות התפקיד: חומרי גלם / אריזות / חומרי ניקיון.
+ * מחזיר Map role → category row.
+ */
+export async function ensureRoleSupplierCategories() {
+  await ensureCleaningSupplierCategory();
+  let cats = await getSupplierCategories();
+
+  let packaging = cats.find((c) => isPackagingSupplierCategory(c) || /^אריז/.test(String(c.name || '').trim()));
+  if (!packaging) {
+    await addSupplierCategory('אריזות', { isPackaging: true });
+  } else if (!packaging.isPackaging || packaging.isCleaning) {
+    await db.supplierCategories.update(packaging.id, {
+      isPackaging: true,
+      isCleaning: false,
+      name: String(packaging.name || '').trim() === 'אריזה' ? 'אריזות' : (packaging.name || 'אריזות'),
+    });
+  }
+
+  cats = await getSupplierCategories();
+  let raw = cats.find((c) => /^חומרי\s*גלם/.test(String(c.name || '').trim()));
+  if (!raw) {
+    await addSupplierCategory('חומרי גלם');
+  } else if (raw.isPackaging || raw.isCleaning || String(raw.name || '').trim() !== 'חומרי גלם') {
+    await db.supplierCategories.update(raw.id, {
+      name: 'חומרי גלם',
+      isPackaging: false,
+      isCleaning: false,
+    });
+  }
+
+  cats = await getSupplierCategories();
+  const cleaning = cats.find((c) => isCleaningSupplierCategory(c) || /ניקיון/.test(String(c.name || '')));
+  packaging = cats.find((c) => isPackagingSupplierCategory(c) || /^אריז/.test(String(c.name || '').trim()));
+  raw = cats.find((c) => /^חומרי\s*גלם/.test(String(c.name || '').trim()))
+    || cats.find((c) => !c.isPackaging && !c.isCleaning
+      && !/^אריז/.test(String(c.name || ''))
+      && !/ניקיון/.test(String(c.name || '')));
+
+  const byRole = new Map();
+  if (raw) byRole.set('raw', raw);
+  if (packaging) byRole.set('packaging', packaging);
+  if (cleaning) byRole.set('cleaning', cleaning);
+  return byRole;
+}
+
+/**
+ * מסיק תפקיד לחומר.
+ * חשוב: הוספה לקטגוריית אריזות ממלאת packagingKind=carton אוטומטית —
+ * לכן לא סומכים על packagingKind לבד; דורשים גם שם שנראה כמו אריזה,
+ * אחרת מחזירים לחומ״ג (או ניקיון לפי שם).
+ */
+export function inferRawMaterialSupplierRole(material, catById = null) {
+  if (!material) return 'raw';
+  const name = String(material.name || '');
+  if (/ניקיון|אקונומיק|סבון|דטרגנט|מחטא|כלור|אקונומיה|ממחטות|מגבונ/.test(name)) {
+    return 'cleaning';
+  }
+  const packagingName = /קרטון|קופס|מגש|שקית|ניילון|מדבק|סרט הדב|לוגו|מכסה|אלומינ|כפפ|מנשא|מיכל|תבנית|אריז|פלסטיק|פואל|פויל|רדיד/
+    .test(name);
+  if (material.packagingKind && packagingName) return 'packaging';
+  if (material.packagingKind && !packagingName) {
+    // packagingKind אוטומטי מקטגוריה — לא אריזה אמיתית
+    return 'raw';
+  }
+  const cat = catById?.get?.(Number(material.supplierCategoryId));
+  if (cat?.isCleaning || /ניקיון/.test(String(cat?.name || ''))) return 'cleaning';
+  if (cat?.isPackaging || /^אריז/.test(String(cat?.name || '').trim())) return 'raw';
+  if (/^חומרי\s*גלם/.test(String(cat?.name || ''))) return 'raw';
+  if (/יי?בוא/.test(String(cat?.name || '')) && /מתכו/.test(String(cat?.name || ''))) return 'import';
+  return 'raw';
 }
 
 export async function setSupplierCategoryOrder(orderedIds) {
