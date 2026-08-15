@@ -10638,6 +10638,41 @@ body.supplier-drag-active {
   touch-action: manipulation;
 }
 
+.supplier-browse-sup-top {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  background: #f0fdfa;
+}
+
+.supplier-browse-sup-top .supplier-browse-sup-header {
+  flex: 1;
+  min-width: 0;
+}
+
+.supplier-browse-sup-top .browse-add-mat {
+  flex-shrink: 0;
+  align-self: center;
+  margin-inline-end: 8px;
+  white-space: nowrap;
+}
+
+.browse-mat-sku {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.material-detail-notes {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface-2, #f8fafc);
+  border-radius: 8px;
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
 .supplier-browse-sup-header:hover {
   background: #ccfbf1;
 }

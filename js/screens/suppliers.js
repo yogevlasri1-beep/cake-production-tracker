@@ -24,20 +24,23 @@ import {
   getMaterialPortionProductIds,
   applyPackagingLinks,
   sanitizeBarcode,
+  sanitizeSku,
+  sanitizeMaterialNotes,
+  sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=469';
-import { getProducts, getCategories } from '../db.js?v=469';
+} from '../kitchen-db.js?v=470';
+import { getProducts, getCategories } from '../db.js?v=470';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=469';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=469';
-import { openModal, closeModal } from '../modal.js?v=469';
-import { requestAutoBackupNow } from '../backup-service.js?v=469';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=469';
-import { openBarcodeScanner } from '../barcode-scan.js?v=469';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=469';
+} from '../supplier-import.js?v=470';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=470';
+import { openModal, closeModal } from '../modal.js?v=470';
+import { requestAutoBackupNow } from '../backup-service.js?v=470';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=470';
+import { openBarcodeScanner } from '../barcode-scan.js?v=470';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=470';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -45,7 +48,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=469';
+} from '../order-reminder.js?v=470';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1246,6 +1249,27 @@ function bindBrowseResultsHandlers(body, container) {
     });
   });
 
+  body.querySelectorAll('#browse-results .browse-add-mat').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const supplierId = Number(btn.dataset.supplierId);
+      const categoryId = Number(btn.dataset.categoryId);
+      if (!supplierId || !categoryId) return;
+      const layout = container._browseLayout;
+      const cat = layout?.categories?.find((c) => Number(c.id) === categoryId);
+      const suppliers = (cat?.suppliers || []).map((s) => ({ id: s.id, name: s.name }));
+      const expandedIds = new Set(
+        JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
+      );
+      expandedIds.add(supplierId);
+      container.dataset.browseExpanded = JSON.stringify([...expandedIds]);
+      await openAddMaterialModal(container, categoryId, suppliers, cat, {
+        preferredSupplierId: supplierId,
+      });
+    });
+  });
+
   bindMaterialBarcodeScanButtons(body.querySelector('#browse-results'), {
     onAssigned: async () => {
       await renderSuppliers(container);
@@ -1300,11 +1324,11 @@ async function renderBrowseTab(body, container) {
   body.innerHTML = `
     <div class="card supplier-browse-intro">
       <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · לחץ על חומר גלם לצפייה בהיסטוריית מחירים · 📷 לשייך ברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
+      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · «+ חומר» להוספה תחת הספק · לחץ על חומר לצפייה · 📷 לברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
       ${hasData ? `
       <div class="form-group" style="margin:0">
         <input type="search" id="browse-search" class="catalog-search-input"
-          placeholder="חיפוש ספק או חומר גלם..." value="${escapeHtml(container.dataset.browseSearch || '')}">
+          placeholder="חיפוש ספק / חומר / מק״ט / ברקוד..." value="${escapeHtml(container.dataset.browseSearch || '')}">
       </div>` : ''}
     </div>
     <div id="browse-results">${renderBrowseResultsHTML(filtered, search, expandedIds, hasData)}</div>`;
@@ -1329,7 +1353,9 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
         <span class="supplier-browse-cat-meta">${cat.suppliers.length} ספקים · ${matCount} ${supplierCategoryItemsLabel(cat)}</span>
       </button>
       <div class="supplier-browse-cat-body">
-        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, { search, expandedIds, isPackaging, isCleaning })).join('')}
+        ${cat.suppliers.map((s) => renderBrowseSupplierBlock(s, {
+    search, expandedIds, isPackaging, isCleaning, categoryId: cat.id,
+  })).join('')}
       </div>
     </div>`;
 }
@@ -1419,12 +1445,14 @@ function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
     : '';
   const packMeta = renderPackagingMetaLine(m).replace(/^\s·\s*/, '');
   const hasBarcode = !!sanitizeBarcode(m.barcode);
+  const sku = sanitizeSku(m.sku);
   return `
         <div class="browse-material-item" data-material-id="${m.id}">
           <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
             <span class="browse-mat-main">
               <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
               <span class="browse-mat-price">${formatMaterialPriceMeta(m)}</span>
+              ${sku ? `<span class="browse-mat-sku" title="מק״ט">מק״ט ${escapeHtml(sku)}</span>` : ''}
               ${packMeta ? `<span class="browse-mat-pack">${packMeta}</span>` : ''}
               ${hasBarcode ? `<span class="browse-mat-barcode">${renderMaterialBarcodeMeta(m)}</span>` : ''}
             </span>
@@ -1466,7 +1494,9 @@ function renderBrowseSupplierMaterialsHTML(materials, { isPackaging = false, isC
   return sections.join('');
 }
 
-function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging = false, isCleaning = false } = {}) {
+function renderBrowseSupplierBlock(supplier, {
+  search, expandedIds, isPackaging = false, isCleaning = false, categoryId = null,
+} = {}) {
   const expanded = supplier.autoExpand || expandedIds.has(supplier.id);
   const collapsedClass = expanded ? '' : ' is-collapsed';
   const activeCount = supplier.materials.filter((m) => m.active === true).length;
@@ -1479,17 +1509,23 @@ function renderBrowseSupplierBlock(supplier, { search, expandedIds, isPackaging 
     if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
   }
   const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
+  const addLabel = isCleaning ? '+ חומר ניקיון' : (isPackaging ? '+ אריזה' : '+ חומר');
   return `
-    <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}">
-      <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
-        <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
-        <span class="supplier-browse-sup-meta">${metaText}</span>
-      </button>
+    <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}">
+      <div class="supplier-browse-sup-top">
+        <button type="button" class="supplier-browse-sup-header supplier-toggle-browse">
+          <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
+          <span class="supplier-browse-sup-meta">${metaText}</span>
+        </button>
+        <button type="button" class="btn btn-secondary btn-sm browse-add-mat"
+          data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}"
+          title="הוסף חומר תחת ספק זה">${addLabel}</button>
+      </div>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
         ${renderBrowseSupplierMaterialsHTML(supplier.materials, { isPackaging, isCleaning })}
       </div>`
-    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')}</p>`}
+    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')} — לחץ «${addLabel}» להוספה</p>`}
     </section>`;
 }
 
@@ -1523,13 +1559,20 @@ async function openMaterialDetailModal(container, materialId) {
       ${priceBadges ? `<div class="material-detail-badges" style="margin:8px 0">${priceBadges}</div>` : ''}
       <div class="material-detail-meta">
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(mat.supplierId) || '')}</span>` : ''}
+        ${sanitizeSku(mat.sku) ? `<span class="form-hint">מק״ט: <strong>${escapeHtml(sanitizeSku(mat.sku))}</strong></span>` : ''}
         ${mat.unit ? `<span class="form-hint">יחידת רכישה: ${escapeHtml(mat.unit)}</span>` : ''}
+        ${sanitizeMinOrderQty(mat.minOrderQty) != null ? `<span class="form-hint">הזמנה מינימלית: ${sanitizeMinOrderQty(mat.minOrderQty)} ${escapeHtml(mat.unit || '')}</span>` : ''}
         ${mat.isRecipeDefault ? '<span class="recipe-default-badge">★ ברירת מחדל למתכונים</span>' : ''}
         ${mat.isPortion ? `<span class="recipe-default-badge">מנה · ${mat.portionWeightKg != null ? `${mat.portionWeightKg} ק"ג` : ''}</span>` : ''}
         ${mat.packagingKind ? `<span class="form-hint">${escapeHtml(getPackagingKindLabel(mat.packagingKind))}${mat.packUnitsCount > 1 ? ` · ${mat.packUnitsCount} בחבילה` : ''}${mat.packagingKind === PACKAGING_KIND_CARTON && mat.packProductsPerUnit ? ` · ${mat.packProductsPerUnit} מוצרים/קרטון` : ''}</span>` : ''}
         ${mat.packLinkedProductId || mat.packLinkedCategoryId ? `<span class="form-hint" id="mat-pack-link-label">טוען שיוך...</span>` : ''}
         ${computePackagingCostPerProduct(mat) != null ? `<span class="form-hint packaging-cost-hint">עלות אריזה למוצר: <strong>${formatMoney(computePackagingCostPerProduct(mat))}</strong></span>` : ''}
       </div>
+      ${sanitizeMaterialNotes(mat.notes) ? `
+      <div class="form-group" style="margin-top:10px">
+        <label>הערות</label>
+        <p class="material-detail-notes">${escapeHtml(sanitizeMaterialNotes(mat.notes))}</p>
+      </div>` : ''}
       <div class="form-group material-detail-barcode" style="margin-top:12px">
         <label>ברקוד</label>
         <div class="mat-barcode-row">
@@ -1754,7 +1797,7 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
       </div>
       <div class="form-group" style="margin-bottom:10px">
         <input type="search" id="edit-mat-search" class="edit-mat-search-input"
-          placeholder="חיפוש לפי שם / מילה נרדפת / ספק..."
+          placeholder="חיפוש לפי שם / מק״ט / ברקוד / ספק..."
           value="${escapeHtml(matSearch)}" autocomplete="off">
       </div>
       <div class="filter-row" style="margin-bottom:12px">
@@ -1909,6 +1952,7 @@ function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMat
           <div class="list-item-meta">
             ${formatMaterialPriceMeta(m)}
             ${m.supplierId ? ` · ${escapeHtml(supMap.get(m.supplierId) || '')}` : ''}
+            ${sanitizeSku(m.sku) ? ` · מק״ט ${escapeHtml(sanitizeSku(m.sku))}` : ''}
             ${sanitizeBarcode(m.barcode) ? ` · ברקוד ${escapeHtml(sanitizeBarcode(m.barcode))}` : ''}
           </div>
           ${m.packagingKind ? `<div class="list-item-pack-meta">${renderPackagingMetaLine(m).replace(/^\s·\s*/, '')}</div>` : ''}
@@ -2126,16 +2170,25 @@ function bindPackagingFormFields() {
   syncLinkMode();
 }
 
-async function openAddMaterialModal(container, categoryId, suppliers, category) {
+async function openAddMaterialModal(container, categoryId, suppliers, category, {
+  preferredSupplierId = null,
+} = {}) {
   const isPackaging = isPackagingSupplierCategory(category);
   const isCleaning = isCleaningSupplierCategory(category);
   const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
+  const seedMat = preferredSupplierId
+    ? { supplierId: Number(preferredSupplierId) }
+    : null;
   openModal({
     title: isCleaning ? 'חומר ניקיון חדש 🧹' : (isPackaging ? 'אריזה חדשה' : 'חומר גלם חדש'),
-    bodyHTML: materialFormHTML(null, suppliers, { isPackaging, isCleaning, products, categories }),
+    bodyHTML: materialFormHTML(seedMat, suppliers, { isPackaging, isCleaning, products, categories }),
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="save-mat">שמור</button>`,
   });
   bindMaterialForm(container, categoryId, null, { isPackaging, isCleaning });
+  if (preferredSupplierId) {
+    const sel = document.getElementById('mat-supplier');
+    if (sel) sel.value = String(preferredSupplierId);
+  }
 }
 
 function openEditMaterialModal(container, mat) {
@@ -2198,7 +2251,7 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
   const packProductId = mat?.packLinkedProductId ? Number(mat.packLinkedProductId) : '';
   const packCategoryId = mat?.packLinkedCategoryId ? Number(mat.packLinkedCategoryId) : '';
   const packLinkMode = packProductId ? 'product' : (packCategoryId ? 'category' : 'none');
-  const isNew = !mat;
+  const isNew = !mat?.id;
   const portionProductChecks = (products || [])
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
@@ -2230,6 +2283,28 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
         <button type="button" class="btn btn-secondary btn-sm btn-icon" id="mat-barcode-clear" title="נקה ברקוד">✕</button>
       </div>
       <p class="form-hint">שיוך ברקוד מהאריזה — לסריקה מהירה בקבלה ובמלאי</p>
+    </div>`;
+
+  const skuBlock = `
+    <div class="form-group mat-sku-group">
+      <label for="mat-sku">מק״ט (קוד פריט אצל הספק)</label>
+      <input type="text" id="mat-sku" autocomplete="off"
+        value="${mat ? escapeHtml(sanitizeSku(mat.sku) || '') : ''}"
+        placeholder="למשל: FLR-25KG / 12345">
+      <p class="form-hint">מופיע בחיפוש ובהזמנות — עוזר לזהות את הפריט אצל הספק</p>
+    </div>`;
+
+  const notesMoqBlock = `
+    <div class="form-group">
+      <label for="mat-min-order">הזמנה מינימלית (MOQ)</label>
+      <input type="number" id="mat-min-order" min="0" step="0.001"
+        value="${mat && sanitizeMinOrderQty(mat.minOrderQty) != null ? sanitizeMinOrderQty(mat.minOrderQty) : ''}"
+        placeholder="אופציונלי — כמה יחידות מינימום להזמנה">
+    </div>
+    <div class="form-group">
+      <label for="mat-notes">הערות</label>
+      <textarea id="mat-notes" rows="2" maxlength="500"
+        placeholder="הערות פנימיות — אריזה, תנאי אחסון, הערות לספק...">${mat ? escapeHtml(sanitizeMaterialNotes(mat.notes) || '') : ''}</textarea>
     </div>`;
 
   const synonymsBlock = `
@@ -2353,33 +2428,36 @@ function materialFormHTML(mat, suppliers, { isPackaging = false, isCleaning = fa
     </div>` : '';
 
   const advancedWrap = (inner) => (isNew
-    ? `<details class="mat-advanced-details"><summary>פרטים נוספים (ברקוד, מילים נרדפות${isPackaging || isCleaning ? '' : ', עיבוד/מנה'}…)</summary>${inner}</details>`
+    ? `<details class="mat-advanced-details"><summary>פרטים נוספים (ברקוד, הערות, מילים נרדפות${isPackaging || isCleaning ? '' : ', עיבוד/מנה'}…)</summary>${inner}</details>`
     : inner);
 
   if (isCleaning) {
     return `
       ${essentialsIntro}
-      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name || '') : ''}"></div>
+      ${skuBlock}
       ${cleaningBlock}
       ${supplierBlock}
-      ${advancedWrap(`${barcodeBlock}${synonymsBlock}`)}
+      ${advancedWrap(`${notesMoqBlock}${barcodeBlock}${synonymsBlock}`)}
       ${recipeDefaultBlock}`;
   }
   if (isPackaging) {
     return `
       ${essentialsIntro}
-      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+      <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name || '') : ''}"></div>
+      ${skuBlock}
       ${packagingBlock}
       ${supplierBlock}
-      ${advancedWrap(`${barcodeBlock}${synonymsBlock}`)}
+      ${advancedWrap(`${notesMoqBlock}${barcodeBlock}${synonymsBlock}`)}
       ${recipeDefaultBlock}`;
   }
   return `
     ${essentialsIntro}
-    <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name) : ''}"></div>
+    <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name || '') : ''}"></div>
+    ${skuBlock}
     ${rawPricingBlock}
     ${supplierBlock}
-    ${advancedWrap(`${barcodeBlock}${synonymsBlock}${advancedRawBlock}`)}
+    ${advancedWrap(`${notesMoqBlock}${barcodeBlock}${synonymsBlock}${advancedRawBlock}`)}
     ${recipeDefaultBlock}`;
 }
 
@@ -2485,6 +2563,9 @@ function bindMaterialForm(container, categoryId, materialId, { isPackaging = fal
         isFree: !simplePrice && !!document.getElementById('mat-is-free')?.checked,
         synonyms: readMaterialSynonymsFromForm(),
         barcode: document.getElementById('mat-barcode')?.value,
+        sku: document.getElementById('mat-sku')?.value,
+        notes: document.getElementById('mat-notes')?.value,
+        minOrderQty: document.getElementById('mat-min-order')?.value,
         ...(isPackaging ? readPackagingFieldsFromForm() : {}),
       };
       const portionEnabled = !!document.getElementById('mat-as-portion')?.checked;
@@ -3019,7 +3100,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=469');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=470');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3041,7 +3122,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=469');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=470');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3059,7 +3140,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=469');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=470');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

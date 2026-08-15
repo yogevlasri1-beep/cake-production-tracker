@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=469';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=469';
+} from './runner.js?v=470';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=470';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,10 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-} from '../js/kitchen-db.js?v=469';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=469';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=469';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=469';
+} from '../js/kitchen-db.js?v=470';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=470';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=470';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=470';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -386,6 +386,37 @@ export async function runIntegrationTests() {
     assertEqual(Number((await db.suppliers.get(flourSup)).categoryId), Number(rawId), 'ספק קמח → חומ״ג');
     assertEqual(Number((await db.suppliers.get(boxSup)).categoryId), Number(packId), 'ספק אריזות נשאר');
     assertEqual(Number((await db.suppliers.get(soapSup)).categoryId), Number(cleanId), 'ספק ניקיון → ניקיון');
+  });
+
+  await testAsync('addRawMaterial — מק״ט / הערות / MOQ נשמרים ומסונכרנים ל-payload', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supId = await addSupplier({ categoryId: catId, name: 'ספק מק״ט' });
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supId,
+      name: 'חמאה בדיקת מקט',
+      unit: 'ק"ג',
+      unitPrice: 28,
+      packageWeightGrams: 1000,
+      sku: 'BUT-1KG',
+      notes: 'שמור בקירור',
+      minOrderQty: 4,
+    });
+    const mat = await db.rawMaterials.get(matId);
+    assertEqual(mat.sku, 'BUT-1KG');
+    assertEqual(mat.notes, 'שמור בקירור');
+    assertEqual(mat.minOrderQty, 4);
+    assertEqual(Number(mat.supplierId), Number(supId));
+
+    await wait(50);
+    const queue = await db.syncQueue.toArray();
+    const matPush = queue.find((q) => q.collection === 'rawMaterials' && String(q.localKey) === String(matId));
+    assertOk(matPush, 'נוסף ל-syncQueue');
   });
 
 await flushTests();

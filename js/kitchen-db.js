@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=469';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=470';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=469';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=469';
-import { logAuditEvent } from './audit.js?v=469';
-import { markMetaDeleted } from './sync/id-map.js?v=469';
+} from './validators.js?v=470';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=470';
+import { logAuditEvent } from './audit.js?v=470';
+import { markMetaDeleted } from './sync/id-map.js?v=470';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4115,6 +4115,28 @@ export function sanitizeBarcode(value) {
   return s.slice(0, 64);
 }
 
+/** מק״ט / קוד פריט ספק — מחרוזת קצרה או null */
+export function sanitizeSku(value) {
+  const s = String(value ?? '').trim().replace(/\s+/g, ' ');
+  if (!s) return null;
+  return s.slice(0, 64);
+}
+
+/** הערות חומר גלם */
+export function sanitizeMaterialNotes(value) {
+  const s = String(value ?? '').trim();
+  if (!s) return null;
+  return s.slice(0, 500);
+}
+
+/** כמות הזמנה מינימלית (MOQ) — מספר חיובי או null */
+export function sanitizeMinOrderQty(value) {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 1000) / 1000;
+}
+
 export async function findRawMaterialsByBarcode(barcode, { excludeId = null } = {}) {
   const code = sanitizeBarcode(barcode);
   if (!code) return [];
@@ -4151,6 +4173,9 @@ export async function addRawMaterial({
   synonyms,
   allergens,
   barcode,
+  sku,
+  notes,
+  minOrderQty,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -4193,6 +4218,9 @@ export async function addRawMaterial({
     synonyms: sanitizeMaterialSynonyms(synonyms),
     allergens: sanitizeProductAllergenIds(allergens),
     barcode: code,
+    sku: sanitizeSku(sku),
+    notes: sanitizeMaterialNotes(notes),
+    minOrderQty: sanitizeMinOrderQty(minOrderQty),
     ...packaging,
     active: simplePricing,
     sortOrder: maxOrder + 1,
@@ -4243,6 +4271,9 @@ export async function updateRawMaterial(id, patch) {
     }
     data.barcode = code;
   }
+  if ('sku' in data) data.sku = sanitizeSku(data.sku);
+  if ('notes' in data) data.notes = sanitizeMaterialNotes(data.notes);
+  if ('minOrderQty' in data) data.minOrderQty = sanitizeMinOrderQty(data.minOrderQty);
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
     || 'packLinkedProductId' in data || 'packLinkedCategoryId' in data) {
     const current = await db.rawMaterials.get(mid);
@@ -4467,7 +4498,7 @@ export function getMaterialSynonyms(material) {
   return sanitizeMaterialSynonyms(material?.synonyms);
 }
 
-/** חיפוש חומר גלם לפי שם, מילים נרדפות, ברקוד או שם ספק */
+/** חיפוש חומר גלם לפי שם, מילים נרדפות, ברקוד, מק״ט או שם ספק */
 export function materialMatchesSearch(material, query, { supplierName = '' } = {}) {
   const q = String(query || '').trim().toLocaleLowerCase('he');
   if (!q) return true;
@@ -4475,6 +4506,10 @@ export function materialMatchesSearch(material, query, { supplierName = '' } = {
   if (name.includes(q)) return true;
   const code = String(material?.barcode || '').toLocaleLowerCase('he');
   if (code && code.includes(q)) return true;
+  const sku = String(material?.sku || '').toLocaleLowerCase('he');
+  if (sku && sku.includes(q)) return true;
+  const notes = String(material?.notes || '').toLocaleLowerCase('he');
+  if (notes && notes.includes(q)) return true;
   const sup = String(supplierName || '').toLocaleLowerCase('he');
   if (sup && sup.includes(q)) return true;
   return getMaterialSynonyms(material).some((s) => s.toLocaleLowerCase('he').includes(q));
@@ -4817,6 +4852,18 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
   if (!sanitizeBarcode(keep.barcode)) {
     const from = fieldSources.find((o) => sanitizeBarcode(o.barcode));
     if (from) patch.barcode = sanitizeBarcode(from.barcode);
+  }
+  if (!sanitizeSku(keep.sku)) {
+    const from = fieldSources.find((o) => sanitizeSku(o.sku));
+    if (from) patch.sku = sanitizeSku(from.sku);
+  }
+  if (!sanitizeMaterialNotes(keep.notes)) {
+    const from = fieldSources.find((o) => sanitizeMaterialNotes(o.notes));
+    if (from) patch.notes = sanitizeMaterialNotes(from.notes);
+  }
+  if (sanitizeMinOrderQty(keep.minOrderQty) == null) {
+    const from = fieldSources.find((o) => sanitizeMinOrderQty(o.minOrderQty) != null);
+    if (from) patch.minOrderQty = sanitizeMinOrderQty(from.minOrderQty);
   }
   {
     const mergedAllergens = sanitizeProductAllergenIds([
