@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=466';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=466';
+} from './runner.js?v=467';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=467';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -14,10 +14,10 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-} from '../js/kitchen-db.js?v=466';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=466';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=466';
-import { installLiveSyncMiddleware, findLocalByFingerprint } from '../js/supabase-sync.js?v=466';
+} from '../js/kitchen-db.js?v=467';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=467';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=467';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=467';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -329,5 +329,27 @@ export async function runIntegrationTests() {
     },
   );
 
-  await flushTests();
+  
+  await testAsync('repairOrphanSupplierCategoryLinks — ספק יתום חוזר לחומ״ג', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const rawId = await addSupplierCategory('חומרי גלם');
+    const ghostId = await addSupplierCategory('חומרי גלם יבשים');
+    const supId = await addSupplier({ categoryId: ghostId, name: 'ספק יתום בדיקה' });
+    // מדמים מחיקת הקטגוריה בלי retarget (כמו tombstone מהענן)
+    await db.supplierCategories.delete(ghostId);
+
+    const before = await db.suppliers.get(supId);
+    assertOk(!await db.supplierCategories.get(Number(before.categoryId)), 'הקטגוריה נמחקה — הספק יתום');
+
+    const fixed = await repairOrphanSupplierCategoryLinks();
+    assertOk(fixed >= 1, 'תוקן לפחות ספק אחד');
+    const after = await db.suppliers.get(supId);
+    assertEqual(Number(after.categoryId), Number(rawId), 'הספק שויך חזרה לחומרי גלם');
+  });
+
+await flushTests();
 }

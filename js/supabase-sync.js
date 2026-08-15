@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=466';
+import { db, getSetting, setSetting } from './db.js?v=467';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=466';
+} from './supabase-backup.js?v=467';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=466';
+} from './sync/collections.js?v=467';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=466';
-import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=466';
+} from './sync/id-map.js?v=467';
+import { repairRecipeProductLinksFromComposition } from './kitchen-db.js?v=467';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -112,10 +112,9 @@ export function formatLiveSyncErrorForUi(live) {
 
 /**
  * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
- * v15: claimed-fingerprint tombstone for master-data collections (products/categories/recipes/…)
- * beyond supplierCategories/rawMaterials — re-run once to sweep multi-device races.
+ * v16: repair orphan supplier/material category FKs after role-dedupe tombstones.
  */
-const DEDUPE_VERSION = 15;
+const DEDUPE_VERSION = 16;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -571,7 +570,8 @@ export async function dedupeLocalSyncCollections() {
   // אחרי מיזוג קטגוריות — ספקים/חומרים יכולים לחלוק fingerprint רק עכשיו
   removed += await dedupeCollectionByFingerprint('suppliers');
   removed += await dedupeCollectionByFingerprint('rawMaterials');
-  return { removed };
+  const repaired = await repairOrphanSupplierCategoryLinks();
+  return { removed, repaired };
 }
 
 /** שמות ברירת-מחדל / seed ישנים — ריקים נמחקים אחרי pull */
@@ -703,6 +703,64 @@ async function dedupeSupplierCategoriesByRole() {
     }
   }
   return removed;
+}
+
+/**
+ * מתקן ספקים/חומרים ש-categoryId שלהם מצביע על קטגוריה שנמחקה (אחרי dedupe/tombstone).
+ * בלי זה טאב «ספקים» מסתיר אותם כי הסינון הוא לפי categoryId קיים.
+ */
+export async function repairOrphanSupplierCategoryLinks() {
+  if (!db.supplierCategories || !db.suppliers || !db.rawMaterials) return 0;
+  const cats = await db.supplierCategories.toArray();
+  if (!cats.length) return 0;
+  const byId = new Map(cats.map((c) => [Number(c.id), c]));
+  const byRole = new Map();
+  for (const c of cats) {
+    const role = supplierCategoryRoleKey(c);
+    if (role && !byRole.has(role)) byRole.set(role, c);
+  }
+  const fallback = byRole.get('raw')
+    || cats.find((c) => !c.isPackaging && !c.isCleaning)
+    || cats[0];
+
+  let fixed = 0;
+  const suppliers = await db.suppliers.toArray();
+  for (const s of suppliers) {
+    const cid = Number(s.categoryId);
+    if (cid && byId.has(cid)) continue;
+    let target = null;
+    const mats = await db.rawMaterials.where('supplierId').equals(s.id).toArray();
+    for (const m of mats) {
+      const mcid = Number(m.supplierCategoryId);
+      if (mcid && byId.has(mcid)) {
+        target = byId.get(mcid);
+        break;
+      }
+    }
+    if (!target) target = fallback;
+    if (!target || Number(s.categoryId) === Number(target.id)) continue;
+    await db.suppliers.update(s.id, { categoryId: target.id });
+    await enqueueUpsert('suppliers', s.id);
+    fixed += 1;
+  }
+
+  const materials = await db.rawMaterials.toArray();
+  for (const m of materials) {
+    const cid = Number(m.supplierCategoryId);
+    if (cid && byId.has(cid)) continue;
+    let target = null;
+    if (m.supplierId) {
+      const sup = await db.suppliers.get(Number(m.supplierId));
+      const scid = Number(sup?.categoryId);
+      if (scid && byId.has(scid)) target = byId.get(scid);
+    }
+    if (!target) target = fallback;
+    if (!target || Number(m.supplierCategoryId) === Number(target.id)) continue;
+    await db.rawMaterials.update(m.id, { supplierCategoryId: target.id });
+    await enqueueUpsert('rawMaterials', m.id);
+    fixed += 1;
+  }
+  return fixed;
 }
 
 /** Prefer the survivor that matches cloud cleanup (richest material link, then oldest id). */
@@ -871,6 +929,23 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     if (existingMeta) {
       const local = await readLocalRecord(collection, existingMeta.localKey);
       if (local) {
+        // לפני מחיקת קטגוריית ספק — העבר ספקים/חומרים ל-survivor לפי תפקיד
+        // (אחרת הם נעלמים מטאב «ספקים» כיתומים).
+        if (collection === 'supplierCategories') {
+          const dropId = Number(existingMeta.localKey);
+          const role = supplierCategoryRoleKey(local);
+          const cats = await db.supplierCategories.toArray();
+          let survivor = null;
+          if (role) {
+            survivor = cats.find((c) => Number(c.id) !== dropId && supplierCategoryRoleKey(c) === role);
+          }
+          if (!survivor) {
+            survivor = cats.find((c) => Number(c.id) !== dropId);
+          }
+          if (survivor) {
+            await retargetLocalForeignKeys('supplierCategories', dropId, survivor.id);
+          }
+        }
         applyingRemote = true;
         try {
           if (collection === 'settings') await db.settings.delete(existingMeta.localKey);
@@ -1311,11 +1386,12 @@ export async function dedupeSupplierWorkspaceLight() {
   removed += await dedupeCollectionByFingerprint('supplierCategories');
   removed += await dedupeCollectionByFingerprint('suppliers');
   removed += await dedupeCollectionByFingerprint('rawMaterials');
-  if (removed) {
-    console.info('live sync light supplier dedupe removed', removed);
+  const repaired = await repairOrphanSupplierCategoryLinks();
+  if (removed || repaired) {
+    console.info('live sync light supplier dedupe', { removed, repaired });
     try { await flushSyncQueue(); } catch { /* ignore */ }
   }
-  return { removed };
+  return { removed, repaired };
 }
 
 export async function startLiveSync() {

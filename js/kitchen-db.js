@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=466';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=467';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=466';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=466';
-import { logAuditEvent } from './audit.js?v=466';
-import { markMetaDeleted } from './sync/id-map.js?v=466';
+} from './validators.js?v=467';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=467';
+import { logAuditEvent } from './audit.js?v=467';
+import { markMetaDeleted } from './sync/id-map.js?v=467';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -5311,6 +5311,7 @@ export async function getSuppliersBrowseLayout() {
     getSuppliers(),
     db.rawMaterials.toArray(),
   ]);
+  const catIds = new Set(categories.map((c) => Number(c.id)));
   const matsBySupplier = new Map();
   for (const m of materials) {
     if (!m.supplierId) continue;
@@ -5325,15 +5326,33 @@ export async function getSuppliersBrowseLayout() {
       return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
     });
   }
+  const attach = (s) => ({
+    ...s,
+    materials: matsBySupplier.get(s.id) || [],
+  });
+  // Number() — מונע חוסר התאמה string/number אחרי סנכרון
   const grouped = categories.map((cat) => ({
     ...cat,
     suppliers: suppliers
-      .filter((s) => s.categoryId === cat.id)
-      .map((s) => ({
-        ...s,
-        materials: matsBySupplier.get(s.id) || [],
-      })),
+      .filter((s) => Number(s.categoryId) === Number(cat.id))
+      .map(attach),
   }));
+  // ספקים שקטגוריה שלהם נמחקה/לא קיימת — אחרת נעלמים מטאב «ספקים»
+  const orphans = suppliers
+    .filter((s) => {
+      const cid = Number(s.categoryId);
+      return !cid || !catIds.has(cid);
+    })
+    .map(attach);
+  if (orphans.length) {
+    grouped.push({
+      id: 'orphan',
+      name: 'ללא קטגוריה',
+      isPackaging: false,
+      isCleaning: false,
+      suppliers: orphans,
+    });
+  }
   return { categories: grouped, allMaterials: materials };
 }
 
