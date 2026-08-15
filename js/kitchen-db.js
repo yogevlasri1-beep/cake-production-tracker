@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=471';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=472';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=471';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=471';
-import { logAuditEvent } from './audit.js?v=471';
-import { markMetaDeleted } from './sync/id-map.js?v=471';
+} from './validators.js?v=472';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=472';
+import { logAuditEvent } from './audit.js?v=472';
+import { markMetaDeleted } from './sync/id-map.js?v=472';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -3688,6 +3688,28 @@ export function isCleaningSupplierCategory(cat) {
   return !!cat?.isCleaning;
 }
 
+/**
+ * סדר תצוגה קבוע בעמדת ספקים:
+ * חומרי גלם → אריזות → חומרי ניקיון → ייבוא ממתכונים → שאר הקטגוריות.
+ */
+export function supplierCategoryDisplayRank(cat) {
+  if (!cat) return 99;
+  const name = String(cat.name || '').trim();
+  if (cat.isCleaning || /ניקיון/.test(name)) return 3;
+  if (cat.isPackaging || /^אריז/.test(name)) return 2;
+  if (/^חומרי\s*גלם/.test(name)) return 1;
+  if (/יי?בוא/.test(name) && /מתכו/.test(name)) return 4;
+  if (cat.id === 'orphan' || name === 'ללא קטגוריה') return 90;
+  return 10;
+}
+
+export function compareSupplierCategories(a, b) {
+  const ra = supplierCategoryDisplayRank(a);
+  const rb = supplierCategoryDisplayRank(b);
+  if (ra !== rb) return ra - rb;
+  return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (Number(a.id) || 0) - (Number(b.id) || 0);
+}
+
 /** קטגוריה שאינה חומרי גלם למתכונים (אריזות / חומרי ניקיון) — החומרים בה תמיד פעילים */
 export function isNonRecipeSupplierCategory(cat) {
   return isPackagingSupplierCategory(cat) || isCleaningSupplierCategory(cat);
@@ -3838,7 +3860,7 @@ export async function syncProductPackagingToMaterial(productId, {
 
 export async function getSupplierCategories() {
   const rows = await db.supplierCategories.toArray();
-  rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  rows.sort(compareSupplierCategories);
   return rows;
 }
 
@@ -3938,6 +3960,19 @@ export async function ensureRoleSupplierCategories() {
   if (raw) byRole.set('raw', raw);
   if (packaging) byRole.set('packaging', packaging);
   if (cleaning) byRole.set('cleaning', cleaning);
+
+  const desiredOrder = [
+    [raw, 1],
+    [packaging, 2],
+    [cleaning, 3],
+  ];
+  for (const [cat, order] of desiredOrder) {
+    if (cat && Number(cat.sortOrder) !== order) {
+      await db.supplierCategories.update(cat.id, { sortOrder: order });
+      cat.sortOrder = order;
+    }
+  }
+
   return byRole;
 }
 

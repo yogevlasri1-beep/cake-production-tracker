@@ -1,7 +1,7 @@
 import {
   getPortionPresetIngredientsFormData,
   savePortionPresetIngredientSettings,
-} from './kitchen-db.js?v=471';
+} from './kitchen-db.js?v=472';
 import {
   saveRunPortionIngredientBatches,
   saveRunStepPortionIngredientBatches,
@@ -10,11 +10,11 @@ import {
   getStepPortionBatches,
   getSuggestedPackagingBatchNumbers,
   lookupPackagingBatchSuggestion,
-} from './db.js?v=471';
-import { escapeHtml, showToast, formatDecimal } from './utils.js?v=471';
-import { openModal, closeModal } from './modal.js?v=471';
-import { requestAutoBackupNow } from './backup-service.js?v=471';
-import { renderLotPickerFieldHTML, bindLotPickerFields } from './lot-picker.js?v=471';
+} from './db.js?v=472';
+import { escapeHtml, showToast, formatDecimal } from './utils.js?v=472';
+import { openModal, closeModal } from './modal.js?v=472';
+import { requestAutoBackupNow } from './backup-service.js?v=472';
+import { renderLotPickerFieldHTML, bindLotPickerFields } from './lot-picker.js?v=472';
 
 function supplierFieldHTML(row, index) {
   const { supplierOptions, rawMaterialId } = row;
