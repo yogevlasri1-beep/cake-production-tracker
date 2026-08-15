@@ -3301,6 +3301,7 @@ body.flow-checklist-drag-active {
 }
 
 .flow-run-collapse--portions .flow-run-collapse-body,
+.flow-run-collapse--waste .flow-run-collapse-body,
 .flow-run-collapse--steps .flow-run-collapse-body,
 .flow-run-collapse--time .flow-run-collapse-body {
   padding-top: 4px;
@@ -3515,6 +3516,57 @@ body.flow-checklist-drag-active {
   color: var(--primary);
   text-align: end;
   white-space: nowrap;
+}
+
+.run-waste-table-wrap {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.run-waste-row .run-portions-summary-qty,
+.run-waste-summary-total {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+}
+
+.flow-waste-qty {
+  color: var(--danger) !important;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-waste-badge {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 999px;
+  padding: 1px 7px;
+  margin-inline-end: 4px;
+  vertical-align: 1px;
+}
+
+.flow-production-entry--waste {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, white);
+}
+
+.flow-prod-waste-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 12px;
+  font-size: 0.9rem;
+  font-weight: 650;
+  cursor: pointer;
+  user-select: none;
+  color: var(--danger);
+}
+
+.flow-prod-waste-row input {
+  margin-top: 3px;
+  accent-color: var(--danger);
 }
 
 .run-portions-summary-date {
@@ -6825,7 +6877,13 @@ table.report-table tfoot td {
 }
 
 .flow-metrics-grid--secondary {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 720px) {
+  .flow-metrics-grid--secondary {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .flow-metrics-stat--products {
@@ -6835,6 +6893,25 @@ table.report-table tfoot td {
 
 button.flow-metrics-stat--products:hover {
   background: color-mix(in srgb, var(--primary-soft, #d1fae5) 85%, white);
+}
+
+.flow-metrics-stat--waste {
+  background: color-mix(in srgb, var(--danger) 8%, white);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+
+button.flow-metrics-stat--waste:hover {
+  background: color-mix(in srgb, var(--danger) 14%, white);
+}
+
+.flow-metrics-waste-hint {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.flow-metrics-waste-hint strong {
+  color: var(--primary);
 }
 
 .flow-metrics-products-detail {

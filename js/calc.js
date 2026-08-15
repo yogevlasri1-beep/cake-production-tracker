@@ -1,4 +1,4 @@
-import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=472';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=473';
 
 export { roundMoney };
 
@@ -151,6 +151,11 @@ export function sumEntryQuantities(entries) {
   return total;
 }
 
+/** רישום פחת מוצר — לא נמכר, עלות נשארת, כמות יורדת מהייצור */
+export function isWasteProductionRecord(entry, product = null) {
+  return !!(entry?.isWaste || product?.isProductWaste);
+}
+
 export function computeProductionTotals(entries, productMap) {
   const byProduct = {};
   const byCategory = {};
@@ -159,6 +164,8 @@ export function computeProductionTotals(entries, productMap) {
   let totalValue = 0;
   let totalCost = 0;
   let skipped = 0;
+  let wasteQty = 0;
+  let wasteCost = 0;
 
   for (const e of entries || []) {
     const product = mapGetById(productMap, e.productId);
@@ -169,6 +176,12 @@ export function computeProductionTotals(entries, productMap) {
     }
     if (!product) {
       skipped++;
+      continue;
+    }
+    if (isWasteProductionRecord(e, product)) {
+      wasteQty += qty;
+      wasteCost += qty * productUnitCost(product);
+      totalCost += qty * productUnitCost(product);
       continue;
     }
     const unitCost = productUnitCost(product);
@@ -195,6 +208,8 @@ export function computeProductionTotals(entries, productMap) {
     totalValue: roundMoney(totalValue),
     totalCost: roundMoney(totalCost),
     skipped,
+    wasteQty,
+    wasteCost: roundMoney(wasteCost),
   };
 }
 
@@ -202,6 +217,7 @@ export function computeReportRows(entries, categories, products, productMap, cat
   const byProduct = {};
   for (const e of entries || []) {
     const p = mapGetById(productMap, e.productId);
+    if (isWasteProductionRecord(e, p)) continue;
     const qty = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
     if (qty == null) continue;
     const prodId = Number(e.productId);
@@ -213,6 +229,7 @@ export function computeReportRows(entries, categories, products, productMap, cat
     .sort((a, b) => a.date.localeCompare(b.date) || a.productId - b.productId)
     .map((e) => {
       const p = mapGetById(productMap, e.productId);
+      if (isWasteProductionRecord(e, p)) return null;
       const qty = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
       if (!p || qty == null) return null;
       return [e.date, catMap.get(p.categoryId) || '', p.name, qty, productLineValue(p, qty)];
@@ -304,6 +321,7 @@ export function qtyForCategoryOnDate(entries, productMap, categoryId, dateIso) {
   for (const e of entries || []) {
     if (e.date !== dateIso) continue;
     const p = mapGetById(productMap, e.productId);
+    if (isWasteProductionRecord(e, p)) continue;
     const q = p ? entryQuantityForProduct(e.quantity, p) : sanitizeQuantity(e.quantity, { allowZero: false });
     if (Number(p?.categoryId) === Number(categoryId) && q != null) sum += q;
   }
@@ -363,7 +381,7 @@ export function auditProductionData(products, entries, categories = []) {
   const dayProductKeys = new Map();
   for (const e of entries || []) {
     if (!validProductIds.has(e.productId)) continue;
-    const key = `${e.date}|${e.productId}`;
+    const key = `${e.date}|${e.productId}|${e.isWaste ? '1' : '0'}`;
     if (dayProductKeys.has(key)) {
       issues.push({
         kind: 'duplicate_date_product',
@@ -381,6 +399,7 @@ export function auditProductionData(products, entries, categories = []) {
   const productSum = Object.values(totals.byProduct).reduce((s, n) => s + n, 0);
   const categorySum = Object.values(totals.byCategory).reduce((s, n) => s + n, 0);
   const rawEntryQty = sumEntryQuantities(validEntries);
+  const expectedRawQty = (totals.total || 0) + (totals.wasteQty || 0);
 
   if (productSum !== totals.total) {
     issues.push({ kind: 'product_sum_mismatch', productSum, total: totals.total });
@@ -388,8 +407,8 @@ export function auditProductionData(products, entries, categories = []) {
   if (categorySum !== totals.total) {
     issues.push({ kind: 'category_sum_mismatch', categorySum, total: totals.total });
   }
-  if (rawEntryQty !== totals.total) {
-    issues.push({ kind: 'raw_qty_mismatch', rawEntryQty, total: totals.total });
+  if (rawEntryQty !== expectedRawQty) {
+    issues.push({ kind: 'raw_qty_mismatch', rawEntryQty, total: expectedRawQty });
   }
 
   for (const cat of categories || []) {

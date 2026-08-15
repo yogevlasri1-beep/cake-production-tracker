@@ -28,10 +28,11 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-} from '../db.js?v=472';
+  ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
+} from '../db.js?v=473';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=472').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=473').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -74,7 +75,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=472');
+    } = await import('../inventory-db.js?v=473');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -115,7 +116,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=472');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=473');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -141,7 +142,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=472');
+    } = await import('../inventory-db.js?v=473');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -170,14 +171,14 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=472';
-import { openModal, closeModal } from '../modal.js?v=472';
-import { requestAutoBackupNow } from '../backup-service.js?v=472';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=472';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=472';
-import { materialMatchesSearch } from '../kitchen-db.js?v=472';
-import { getCurrentUserRole } from '../auth.js?v=472';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=472';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=473';
+import { openModal, closeModal } from '../modal.js?v=473';
+import { requestAutoBackupNow } from '../backup-service.js?v=473';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=473';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=473';
+import { materialMatchesSearch } from '../kitchen-db.js?v=473';
+import { getCurrentUserRole } from '../auth.js?v=473';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=473';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1106,21 +1107,28 @@ function resolveRunCategoryIds(run) {
 }
 
 function filterCategoriesForRun(run, categories) {
+  const wasteCats = (categories || []).filter((c) => isProductWasteCategory(c));
   const catIds = resolveRunCategoryIds(run);
+  let scoped;
   if (catIds.length) {
-    const set = new Set(catIds);
-    return categories.filter((c) => set.has(c.id));
+    const set = new Set(catIds.map(Number));
+    scoped = categories.filter((c) => set.has(Number(c.id)));
+  } else if (run.categoryGroupId) {
+    scoped = categories.filter((c) => Number(c.groupId) === Number(run.categoryGroupId));
+  } else {
+    scoped = [...categories];
   }
-  if (run.categoryGroupId) {
-    return categories.filter((c) => Number(c.groupId) === Number(run.categoryGroupId));
+  const seen = new Set(scoped.map((c) => Number(c.id)));
+  for (const w of wasteCats) {
+    if (!seen.has(Number(w.id))) scoped.push(w);
   }
-  return categories;
+  return scoped;
 }
 
 async function filterProductsForRun(run, products, categories) {
   const scopedCats = filterCategoriesForRun(run, categories);
-  const catSet = new Set(scopedCats.map((c) => c.id));
-  let list = products.filter((p) => catSet.has(p.categoryId));
+  const catSet = new Set(scopedCats.map((c) => Number(c.id)));
+  let list = products.filter((p) => catSet.has(Number(p.categoryId)));
   if (run.productId) list = list.filter((p) => p.id === run.productId);
   if (run.flowId) {
     const linked = await getLinkedProductsForFlow(run.flowId);
@@ -1214,6 +1222,8 @@ function stepProductionPanelHTML({
     ? productMap.get(Number(selectedFormProduct || formProducts[0]?.id))
     : singleProduct;
   const qtyIsKg = productRecordUsesKg(formProduct);
+  const wasteDefault = isProductWasteCategory(scopedCategories.find((c) => String(c.id) === String(selectedCategory)))
+    || isProductWasteCategory(scopedCategories.find((c) => Number(c.id) === Number(formProduct?.categoryId)));
 
   const listFilterHTML = multiProducts ? `
     <div class="form-group" style="margin-bottom:8px">
@@ -1259,6 +1269,10 @@ function stepProductionPanelHTML({
             <label for="step-${stepIndex}-prod-qty" class="flow-prod-qty-label">${qtyIsKg ? 'משקל (ק"ג)' : "כמות (יח')"}</label>
             <input type="number" id="step-${stepIndex}-prod-qty" class="flow-prod-qty" min="${qtyIsKg ? '0.001' : '1'}" step="${qtyIsKg ? '0.001' : '1'}" placeholder="${qtyIsKg ? '2.5' : '50'}" required>
           </div>
+          <label class="checkbox-row flow-prod-waste-row">
+            <input type="checkbox" class="flow-prod-waste" id="step-${stepIndex}-prod-waste"${wasteDefault ? ' checked' : ''}>
+            <span>פחת מוצר — לא למכירה (יורד מהייצור)</span>
+          </label>
           <button type="submit" class="btn btn-primary btn-sm flow-prod-submit" style="width:100%">+ הוסף רישום ייצור</button>
         </form>` : ''}
       <div class="flow-production-entries">
@@ -1268,13 +1282,14 @@ function stepProductionPanelHTML({
     ? '<p class="form-hint" style="margin:8px 0 0">אין רישומים עדיין</p>'
     : entries.map((e) => {
       const p = productMap.get(e.productId);
-      return `<div class="list-item flow-production-entry" data-entry-id="${e.id}">
+      const waste = isWasteProductionEntry(e, p, scopedCategories.find((c) => Number(c.id) === Number(p?.categoryId)));
+      return `<div class="list-item flow-production-entry${waste ? ' flow-production-entry--waste' : ''}" data-entry-id="${e.id}">
         <div class="list-item-info">
-          <div class="list-item-name">${escapeHtml(p?.name || '—')}</div>
+          <div class="list-item-name">${waste ? '<span class="flow-waste-badge">פחת</span> ' : ''}${escapeHtml(p?.name || '—')}</div>
           <div class="list-item-meta">${formatDate(e.date)} · ${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
         </div>
         <div class="list-item-actions">
-          <strong>${formatProductQuantity(p, e.quantity)}</strong>
+          <strong class="${waste ? 'flow-waste-qty' : ''}">${waste ? '−' : ''}${formatProductQuantity(p, e.quantity)}</strong>
           ${canManageEntries ? `
             <button type="button" class="btn btn-secondary btn-sm btn-icon flow-prod-edit" data-step="${stepIndex}" data-id="${e.id}" title="ערוך">✏️</button>
             <button type="button" class="btn btn-danger btn-sm btn-icon flow-prod-del" data-step="${stepIndex}" data-id="${e.id}" title="מחק">🗑</button>` : ''}
@@ -1750,6 +1765,7 @@ function formatRunEntriesSummary(entries, productMap) {
   if (!entries?.length) return '';
   const byProduct = new Map();
   for (const e of entries) {
+    if (isWasteProductionEntry(e, productMap?.get?.(Number(e.productId)) || productMap?.get?.(e.productId))) continue;
     const pid = e.productId;
     byProduct.set(pid, (byProduct.get(pid) || 0) + (Number(e.quantity) || 0));
   }
@@ -1775,6 +1791,9 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
   const productTypes = metricsProductionRows(metrics, productMap).length;
   const portionsLine = metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—';
   const weightLine = metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—';
+  const wasteQty = Number(metrics.wasteQty) || 0;
+  const wasteLine = wasteQty > 0 ? `−${formatDecimal(wasteQty)}` : '—';
+  const grossQty = Number(metrics.grossProductionQty) || ((Number(metrics.productionQty) || 0) + wasteQty);
   const timeLine = metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—';
   const metaParts = [];
   if (metrics.runCount > 1) metaParts.push(`${metrics.runCount} תהליכים`);
@@ -1793,10 +1812,11 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
           <span class="flow-metrics-icon">📦</span>
           <div class="flow-metrics-body">
             <span class="flow-metrics-value">${productsLine}</span>
-            <span class="flow-metrics-label">סה״כ מוצרים${productTypes ? ` · ${productTypes} סוגים` : ''}</span>
+            <span class="flow-metrics-label">סה״כ מוצרים${productTypes ? ` · ${productTypes} סוגים` : ''}${wasteQty > 0 ? ` · נטו אחרי פחת` : ''}</span>
           </div>
         ${clickable ? '</button>' : '</div>'}
       </div>
+      ${wasteQty > 0 ? `<p class="flow-metrics-waste-hint">ייצור ${formatDecimal(grossQty)} − פחת ${formatDecimal(wasteQty)} = <strong>${formatDecimal(metrics.productionQty)}</strong> למכירה</p>` : ''}
       ${!clickable ? `
       <div class="flow-metrics-products">
         <div class="flow-metrics-products-label">פירוט ייצור</div>
@@ -1808,6 +1828,13 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
           <div class="flow-metrics-body">
             <span class="flow-metrics-value">${portionsLine}</span>
             <span class="flow-metrics-label">מנות (כמות)</span>
+          </div>
+        ${clickable ? '</button>' : '</div>'}
+        ${clickable ? `<button type="button" class="flow-metrics-stat flow-metrics-stat--btn flow-metrics-stat--waste" data-metrics-detail="waste" title="פירוט פחת מוצר">` : '<div class="flow-metrics-stat flow-metrics-stat--waste">'}
+          <span class="flow-metrics-icon">🔻</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value flow-waste-qty">${wasteLine}</span>
+            <span class="flow-metrics-label">פחת מוצר</span>
           </div>
         ${clickable ? '</button>' : '</div>'}
         ${clickable ? `<button type="button" class="flow-metrics-stat flow-metrics-stat--btn" data-metrics-detail="weight" title="פירוט משקל מנות וחומרי גלם">` : '<div class="flow-metrics-stat">'}
@@ -1825,7 +1852,7 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
           </div>
         ${clickable ? '</button>' : '</div>'}
       </div>
-      ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מוצרים / מנות / משקל / זמן לפירוט</p>' : ''}
+      ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מוצרים / מנות / משקל / זמן / פחת לפירוט</p>' : ''}
       <div class="flow-metrics-batch-track">
         <div class="flow-metrics-batch-track-title">📦 מעקב מנות חומרי גלם</div>
         ${batchRows.length ? `
@@ -2009,8 +2036,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=472');
-    const { db } = await import('../db.js?v=472');
+    const { getRecipe } = await import('../kitchen-db.js?v=473');
+    const { db } = await import('../db.js?v=473');
     const blocks = [];
 
     for (const row of rows) {
@@ -2115,6 +2142,11 @@ function bindRunMetricsDetailClicks(container, run, { productMap, catMap } = {})
       } else if (kind === 'portions') openRunPortionsQuantityModal(run);
       else if (kind === 'weight') await openRunPortionsWeightModal(run);
       else if (kind === 'time') openRunStepsTimeModal(run);
+      else if (kind === 'waste') {
+        const entries = await getRunProductionEntries(run.id);
+        const cats = await getCategories();
+        openRunWasteDetailModal(run, entries, productMap || new Map(), new Map(cats.map((c) => [Number(c.id), c])));
+      }
     });
   });
 }
@@ -2333,6 +2365,7 @@ async function renderFlowHistoryView(container, ctx) {
               <div class="flow-history-run-metrics form-hint">
                 🍽 ${runMetrics.portionCount != null ? formatPortionCount(runMetrics.portionCount) : '—'}
                 · ⚖️ ${runMetrics.portionWeightKg != null ? formatPortionWeightKg(runMetrics.portionWeightKg) : '—'}
+                ${runMetrics.wasteQty > 0 ? ` · <span class="flow-waste-qty">🔻 −${formatDecimal(runMetrics.wasteQty)}</span>` : ''}
               </div>
             </div>
             <div class="list-item-actions">
@@ -2597,6 +2630,79 @@ function renderRunStepPortionsListHTML(run) {
     </ul>`;
 }
 
+function collectRunWasteRows(entries, productMap, categoryMap) {
+  const rows = [];
+  for (const e of entries || []) {
+    const product = productMap?.get?.(Number(e.productId));
+    const category = product && categoryMap
+      ? categoryMap.get(Number(product.categoryId))
+      : null;
+    if (!isWasteProductionEntry(e, product, category)) continue;
+    rows.push({
+      id: e.id,
+      date: e.date,
+      quantity: Number(e.quantity) || 0,
+      product,
+      productId: Number(e.productId),
+    });
+  }
+  rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (b.id || 0) - (a.id || 0));
+  return rows;
+}
+
+function renderRunWasteSectionHTML(entries, productMap, categoryMap) {
+  const rows = collectRunWasteRows(entries, productMap, categoryMap);
+  const total = rows.reduce((s, r) => s + r.quantity, 0);
+  return `
+    <div class="run-waste-section">
+      <p class="form-hint" style="margin-top:0">מוצרים שלא יצאו טוב ולא ניתן למכור — נרשמים בתיעוד ייצור עם סימון «פחת מוצר», ומופיעים כאן באדום כמינוס מהייצור.</p>
+      ${rows.length ? `
+      <div class="run-portions-summary run-waste-summary">
+        <div class="run-portions-summary-title">רשימת פחת בתהליך</div>
+        <div class="run-portions-summary-table-wrap run-waste-table-wrap">
+          <table class="run-portions-summary-table run-waste-table">
+            <thead>
+              <tr>
+                <th>מוצר</th>
+                <th>כמות</th>
+                <th>תאריך</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr class="run-waste-row">
+                  <td class="run-portions-summary-name">${escapeHtml(r.product?.name || `#${r.productId}`)}</td>
+                  <td class="run-portions-summary-qty flow-waste-qty">−${r.product ? formatProductQuantity(r.product, r.quantity) : formatDecimal(r.quantity)}</td>
+                  <td class="run-portions-summary-date">${r.date ? formatDate(r.date) : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <p class="run-waste-summary-total">סה״כ פחת: <strong class="flow-waste-qty">−${formatDecimal(total)}</strong></p>
+      </div>` : '<p class="form-hint run-portions-summary-empty" style="margin:0">אין פחת מתועד בתהליך — סמן «פחת מוצר» בתיעוד ייצור</p>'}
+    </div>`;
+}
+
+function openRunWasteDetailModal(run, entries, productMap, categoryMap) {
+  const rows = collectRunWasteRows(entries, productMap, categoryMap);
+  const total = rows.reduce((s, r) => s + r.quantity, 0);
+  openModal({
+    title: 'פירוט פחת מוצר',
+    bodyHTML: rows.length ? `
+      <ul class="flow-metrics-detail-list">
+        ${rows.map((r) => `
+          <li class="flow-metrics-detail-row">
+            <span class="flow-metrics-detail-name">${escapeHtml(r.product?.name || `#${r.productId}`)}</span>
+            <span class="flow-metrics-detail-value flow-waste-qty">−${r.product ? formatProductQuantity(r.product, r.quantity) : formatDecimal(r.quantity)}</span>
+          </li>`).join('')}
+      </ul>
+      <p class="flow-metrics-detail-total flow-waste-qty"><strong>סה״כ פחת:</strong> −${formatDecimal(total)}</p>`
+      : '<p class="form-hint">אין פחת מתועד בתהליך</p>',
+    footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">סגור</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+}
+
 function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, materials = [], suppliers = [] } = {}) {
   const logs = getRunPortionLogs(run);
   const processing = getRunMaterialProcessingLogs(run);
@@ -2831,11 +2937,12 @@ async function renderRunView(container, runId, ctx) {
   let productionCtx = null;
   let runEntries = [];
 
+  await ensureProductWasteCategory();
   const [products, categories] = await Promise.all([getProducts(true), getCategories()]);
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=472');
+    const kitchen = await import('../kitchen-db.js?v=473');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -2924,7 +3031,8 @@ async function renderRunView(container, runId, ctx) {
   const runDurationLabel = runDurMs != null
     ? `${formatDuration(runDurMs)}${run.status === 'active' ? ' (בתהליך)' : ''}`
     : '—';
-  const runMetrics = computeRunMetrics(run, runEntries);
+  const categoryById = new Map(categories.map((c) => [Number(c.id), c]));
+  const runMetrics = computeRunMetrics(run, runEntries, { productMap, categoryMap: categoryById });
 
   container.innerHTML = `
     <div class="card flow-run-header-card">
@@ -3014,6 +3122,22 @@ async function renderRunView(container, runId, ctx) {
       {
         defaultOpen: false,
         className: 'flow-run-collapse--portions',
+      },
+    );
+  })()}
+
+    ${(() => {
+    const wasteRows = collectRunWasteRows(runEntries, productMap, new Map(categories.map((c) => [Number(c.id), c])));
+    const wasteTotal = wasteRows.reduce((s, r) => s + r.quantity, 0);
+    const wasteBadge = wasteTotal > 0 ? ` (−${formatDecimal(wasteTotal)})` : '';
+    return renderCollapsibleRunCard(
+      run.id,
+      'waste',
+      `🔻 פחת מוצר${wasteBadge}`,
+      renderRunWasteSectionHTML(runEntries, productMap, new Map(categories.map((c) => [Number(c.id), c]))),
+      {
+        defaultOpen: wasteTotal > 0,
+        className: 'flow-run-collapse--waste',
       },
     );
   })()}
@@ -3757,9 +3881,20 @@ function syncFlowProdQtyField(panel, productMap) {
   qtyInput.placeholder = isKg ? '2.5' : '50';
 }
 
+function syncFlowProdWasteField(panel, productMap, categories = []) {
+  const wasteInput = panel.querySelector('.flow-prod-waste');
+  if (!wasteInput) return;
+  const productInput = panel.querySelector('.flow-prod-product');
+  const catSelect = panel.querySelector('.flow-prod-category');
+  const p = productMap?.get?.(Number(productInput?.value));
+  const catId = catSelect?.value || p?.categoryId;
+  const cat = (categories || []).find((c) => Number(c.id) === Number(catId));
+  if (isProductWasteCategory(cat) || isProductWasteCategory(p)) wasteInput.checked = true;
+}
+
 function bindRunProductionPanels(container, run, productionCtx) {
   if (!productionCtx) return;
-  const { productMap } = productionCtx;
+  const { productMap, scopedCategories } = productionCtx;
 
   container.querySelectorAll('.flow-prod-date').forEach((input) => {
     input.addEventListener('change', (e) => {
@@ -3800,8 +3935,10 @@ function bindRunProductionPanels(container, run, productionCtx) {
         container.dataset[`runProdFormProduct_${stepIndex}`] = select.value;
       }
       syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
+      syncFlowProdWasteField(select.closest('.flow-production-panel'), productMap, scopedCategories);
     });
     syncFlowProdQtyField(select.closest('.flow-production-panel'), productMap);
+    syncFlowProdWasteField(select.closest('.flow-production-panel'), productMap, scopedCategories);
   });
 
   container.querySelectorAll('.flow-production-form').forEach((form) => {
@@ -3812,11 +3949,12 @@ function bindRunProductionPanels(container, run, productionCtx) {
       const date = panel.querySelector('.flow-prod-date')?.value;
       const productId = panel.querySelector('.flow-prod-product')?.value;
       const quantity = panel.querySelector('.flow-prod-qty')?.value;
+      const isWaste = !!panel.querySelector('.flow-prod-waste')?.checked;
       if (!productId) return showToast('בחר קטגוריה ומוצר');
       try {
-        await addRunStepProductionEntry(run.id, stepIndex, { date, productId, quantity });
+        await addRunStepProductionEntry(run.id, stepIndex, { date, productId, quantity, isWaste });
         requestAutoBackupNow().catch(() => {});
-        showToast('ייצור נרשם ✓');
+        showToast(isWaste ? 'פחת נרשם ✓' : 'ייצור נרשם ✓');
         container.dataset.runProdDate = date;
         container.dataset.runProdDateRunId = String(run.id);
         container.dataset.runId = String(run.id);
@@ -3865,7 +4003,11 @@ function bindRunProductionPanels(container, run, productionCtx) {
           <div class="form-group">
             <label for="flow-edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
             <input type="number" id="flow-edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${formatDecimal(entry.quantity)}">
-          </div>`,
+          </div>
+          <label class="checkbox-row flow-prod-waste-row">
+            <input type="checkbox" id="flow-edit-waste"${isWasteProductionEntry(entry, p) ? ' checked' : ''}>
+            <span>פחת מוצר — לא למכירה</span>
+          </label>`,
         footerHTML: `
           <button class="btn btn-secondary modal-cancel">ביטול</button>
           <button class="btn btn-primary" id="flow-edit-save">שמור</button>`,
@@ -3873,7 +4015,10 @@ function bindRunProductionPanels(container, run, productionCtx) {
       document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
       document.getElementById('flow-edit-save')?.addEventListener('click', async () => {
         try {
-          await updateProductionEntry(entryId, { quantity: document.getElementById('flow-edit-qty').value });
+          await updateProductionEntry(entryId, {
+            quantity: document.getElementById('flow-edit-qty').value,
+            isWaste: !!document.getElementById('flow-edit-waste')?.checked,
+          });
           closeModal();
           showToast('עודכן ✓');
           container.dataset.runId = String(run.id);
@@ -5190,6 +5335,7 @@ export async function renderProcess(container) {
   const view = container.dataset.view || 'list';
   const date = container.dataset.selectedDate || todayISO();
 
+  await ensureProductWasteCategory();
   const [layout, groups, products] = await Promise.all([
     getProductsCatalogLayout(),
     getCategoryGroups(),

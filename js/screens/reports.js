@@ -10,32 +10,32 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=472';
+} from '../db.js?v=473';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=472';
+} from '../utils.js?v=473';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=472';
-import { openModal, closeModal } from '../modal.js?v=472';
+} from '../export.js?v=473';
+import { openModal, closeModal } from '../modal.js?v=473';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=472';
-import { isSheetsConfigured } from '../google-sheets.js?v=472';
+} from '../sheets-flow.js?v=473';
+import { isSheetsConfigured } from '../google-sheets.js?v=473';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
   productUnitCost, productLineValue, entryQuantityForProduct,
-} from '../calc.js?v=472';
-import { defaultColorForIndex } from '../chart.js?v=472';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=472';
+} from '../calc.js?v=473';
+import { defaultColorForIndex } from '../chart.js?v=473';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=473';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=472';
+} from '../purchasing-db.js?v=473';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -217,8 +217,13 @@ function buildReportDisplayCardHTML({
     <div class="stat-grid">
       <div class="stat-box">
         <div class="stat-value">${formatDecimal(totals.total)}</div>
-        <div class="stat-label">ייצור מוצרים (יח')</div>
+        <div class="stat-label">ייצור נטו (יח')</div>
       </div>
+      ${Number(totals.wasteQty) > 0 ? `
+      <div class="stat-box">
+        <div class="stat-value flow-waste-qty">−${formatDecimal(totals.wasteQty)}</div>
+        <div class="stat-label">פחת מוצר</div>
+      </div>` : ''}
       <div class="stat-box">
         <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
         <div class="stat-label">עלות ייצור</div>
@@ -1020,19 +1025,30 @@ function formatMetricsProductionLine(metrics, productMap) {
 }
 
 function renderMetricsSummaryGrid(metrics, productMap, { title = 'סיכום כולל' } = {}) {
+  const wasteQty = Number(metrics.wasteQty) || 0;
+  const wasteLine = wasteQty > 0 ? `−${formatDecimal(wasteQty)}` : '—';
+  const grossQty = Number(metrics.grossProductionQty) || ((Number(metrics.productionQty) || 0) + wasteQty);
   return `
     <div class="flow-metrics-card flow-metrics-card--report">
       <div class="flow-metrics-title">${escapeHtml(title)}</div>
       <div class="flow-metrics-products">
-        <div class="flow-metrics-products-label">ייצור · ${metrics.runCount || 0} תהליכים</div>
+        <div class="flow-metrics-products-label">ייצור נטו${wasteQty > 0 ? ' אחרי פחת' : ''} · ${metrics.runCount || 0} תהליכים</div>
         ${renderMetricsProductionRowsHTML(metrics, productMap)}
       </div>
+      ${wasteQty > 0 ? `<p class="flow-metrics-waste-hint">ייצור ${formatDecimal(grossQty)} − פחת ${formatDecimal(wasteQty)} = <strong>${formatDecimal(metrics.productionQty || 0)}</strong> למכירה</p>` : ''}
       <div class="flow-metrics-grid flow-metrics-grid--secondary">
         <div class="flow-metrics-stat">
           <span class="flow-metrics-icon">🍽</span>
           <div class="flow-metrics-body">
             <span class="flow-metrics-value">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</span>
             <span class="flow-metrics-label">מנות (כמות)</span>
+          </div>
+        </div>
+        <div class="flow-metrics-stat flow-metrics-stat--waste">
+          <span class="flow-metrics-icon">🔻</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value flow-waste-qty">${wasteLine}</span>
+            <span class="flow-metrics-label">פחת מוצר</span>
           </div>
         </div>
         <div class="flow-metrics-stat">
@@ -1093,6 +1109,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
         <td class="report-cell-num">${metrics.completedCount || 0}</td>
         <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(metrics, productMap)}</td>
         <td class="report-cell-num">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</td>
+        <td class="report-cell-num flow-waste-qty">${metrics.wasteQty > 0 ? `−${formatDecimal(metrics.wasteQty)}` : '—'}</td>
         <td class="report-cell-num">${metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—'}</td>
         <td class="report-cell-num">${metrics.durationMs != null ? formatDuration(metrics.durationMs) : '—'}</td>
         <td class="report-cell-num">${avgMs != null ? formatDuration(avgMs) : '—'}</td>
@@ -1112,6 +1129,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
             <td class="report-cell-num">${m.completedCount || 0}</td>
             <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(m, productMap)}</td>
             <td class="report-cell-num">${m.portionCount != null ? formatPortionCount(m.portionCount) : '—'}</td>
+            <td class="report-cell-num flow-waste-qty">${m.wasteQty > 0 ? `−${formatDecimal(m.wasteQty)}` : '—'}</td>
             <td class="report-cell-num">${m.portionWeightKg != null ? formatPortionWeightKg(m.portionWeightKg) : '—'}</td>
             <td class="report-cell-num">${m.durationMs != null ? formatDuration(m.durationMs) : '—'}</td>
             <td class="report-cell-num">—</td>
@@ -1126,7 +1144,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
       <table class="report-table report-flows-summary-table">
         <thead><tr>
           <th>תזרים</th><th>תהליכים</th><th>הושלמו</th><th>ייצור</th>
-          <th>מנות</th><th>משקל מנות</th><th>זמן כולל</th><th>ממוצע לתהליך</th>
+          <th>מנות</th><th>פחת</th><th>משקל מנות</th><th>זמן כולל</th><th>ממוצע לתהליך</th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
@@ -2014,6 +2032,15 @@ function buildPnlPreviewHTML(ctx, totals, rows, entries, productMap) {
           <div class="stat-value ${margin >= 0 ? 'report-pnl-positive' : 'report-pnl-negative'}">${formatMoney(margin)}</div>
           <div class="stat-label">רווח / הפסד</div>
         </div>
+        ${Number(totals.wasteQty) > 0 ? `
+        <div class="stat-box">
+          <div class="stat-value flow-waste-qty">−${formatDecimal(totals.wasteQty)}</div>
+          <div class="stat-label">פחת מוצר</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-value flow-waste-qty">${formatMoney(totals.wasteCost || 0)}</div>
+          <div class="stat-label">עלות פחת (נשארת)</div>
+        </div>` : ''}
       </div>
       <h4 class="report-preview-heading">${ctx.reportType === 'pnl-daily' ? 'פירוט יומי' : ctx.reportType === 'pnl-monthly' ? 'פירוט חודשי' : 'פירוט מוצרים'}</h4>
       ${body}
@@ -2044,12 +2071,18 @@ function renderCategorySummaryTable(catSummary) {
 }
 
 function renderProductionStatsGrid(totals) {
+  const wasteQty = Number(totals.wasteQty) || 0;
   return `
     <div class="stat-grid">
       <div class="stat-box">
         <div class="stat-value">${formatDecimal(totals.total)}</div>
-        <div class="stat-label">ייצור (יח')</div>
+        <div class="stat-label">ייצור נטו (יח')</div>
       </div>
+      ${wasteQty > 0 ? `
+      <div class="stat-box">
+        <div class="stat-value flow-waste-qty">−${formatDecimal(wasteQty)}</div>
+        <div class="stat-label">פחת מוצר</div>
+      </div>` : ''}
       <div class="stat-box">
         <div class="stat-value">${formatMoney(totals.totalCost || 0)}</div>
         <div class="stat-label">עלות ייצור</div>

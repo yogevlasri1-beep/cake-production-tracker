@@ -424,7 +424,7 @@ export function rowFingerprint(collection, row) {
         ? `${collection}|${row.bakingProfileId}|${row.scopeType ?? ''}|${row.scopeId ?? ''}`
         : '';
     case 'productionEntries':
-      return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}`;
+      return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}|${row.isWaste ? '1' : '0'}`;
     case 'productionRuns':
       return row.date
         ? `${collection}|${row.date}|${row.batchNumber ?? ''}|${row.flowId ?? ''}`
@@ -607,7 +607,7 @@ export function rowDedupeFingerprint(collection, row) {
     const pid = Number(row.productId) || row.productId || '';
     const qtyNum = Number(row.quantity);
     const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
-    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}` : '';
+    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}|${row.isWaste ? '1' : '0'}` : '';
   }
   // חומרי גלם: אותו שם+ספק = כפילות גם תחת קטגוריות שונות
   // (seed «חומרי גלם יבשים» מול «חומרי גלם» אמיתי — מחיר על הכפילות לא נראה בראשי)

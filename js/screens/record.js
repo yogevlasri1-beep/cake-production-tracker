@@ -1,11 +1,12 @@
 import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
-} from '../db.js?v=472';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=472';
-import { openModal, closeModal } from '../modal.js?v=472';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=472';
-import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=472';
+  ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
+} from '../db.js?v=473';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=473';
+import { openModal, closeModal } from '../modal.js?v=473';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=473';
+import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=473';
 
 async function offerInventoryIssueForRecord({ productId, quantity, productName }) {
   try {
@@ -16,7 +17,7 @@ async function offerInventoryIssueForRecord({ productId, quantity, productName }
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=472');
+    } = await import('../inventory-db.js?v=473');
 
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) return;
@@ -49,6 +50,7 @@ export async function renderRecord(container) {
   const selectedCategory = container.dataset.selectedCategory || '';
   const sheetsHTML = await renderSheetsStatusHTML();
 
+  await ensureProductWasteCategory();
   const [products, categories, entries] = await Promise.all([
     getProducts(true),
     getCategories(),
@@ -96,6 +98,10 @@ export async function renderRecord(container) {
           <input type="number" id="record-qty" min="1" step="1" placeholder="לדוגמה: 50" required>
           <p class="form-hint hidden" id="record-qty-hint"></p>
         </div>
+        <label class="checkbox-row flow-prod-waste-row">
+          <input type="checkbox" id="record-waste"${isProductWasteCategory(categories.find((c) => String(c.id) === selectedCategory)) ? ' checked' : ''}>
+          <span>פחת מוצר — לא למכירה (יורד מהייצור, באדום)</span>
+        </label>
         <button type="submit" class="btn btn-primary" ${categories.length === 0 ? 'disabled' : ''}>
           שמור רישום
         </button>
@@ -108,13 +114,15 @@ export async function renderRecord(container) {
         ? '<p style="color:var(--text-muted);font-size:0.9rem;text-align:center;padding:12px">אין רישומים לתאריך זה</p>'
         : entries.map((e) => {
             const p = productMap.get(e.productId);
-            return `<div class="list-item" data-entry-id="${e.id}">
+            const cat = categories.find((c) => Number(c.id) === Number(p?.categoryId));
+            const waste = isWasteProductionEntry(e, p, cat);
+            return `<div class="list-item${waste ? ' flow-production-entry--waste' : ''}" data-entry-id="${e.id}">
               <div class="list-item-info">
-                <div class="list-item-name">${escapeHtml(p?.name || '—')}</div>
+                <div class="list-item-name">${waste ? '<span class="flow-waste-badge">פחת</span> ' : ''}${escapeHtml(p?.name || '—')}</div>
                 <div class="list-item-meta">${escapeHtml(catMap.get(p?.categoryId) || '')}</div>
               </div>
               <div class="list-item-actions">
-                <strong style="margin-left:8px">${formatProductQuantity(p, e.quantity)}</strong>
+                <strong class="${waste ? 'flow-waste-qty' : ''}" style="margin-left:8px">${waste ? '−' : ''}${formatProductQuantity(p, e.quantity)}</strong>
                 <button class="btn btn-secondary btn-sm btn-icon edit-entry" data-id="${e.id}" title="ערוך">✏️</button>
                 <button class="btn btn-danger btn-sm btn-icon delete-entry" data-id="${e.id}" title="מחק">🗑</button>
               </div>
@@ -209,14 +217,17 @@ export async function renderRecord(container) {
     const d = document.getElementById('record-date').value;
     const productId = document.getElementById('record-product').value;
     const quantity = document.getElementById('record-qty').value;
+    const isWaste = !!document.getElementById('record-waste')?.checked;
     if (!productId) return showToast('בחר קטגוריה ומוצר');
     try {
-      await addProductionEntry({ date: d, productId, quantity });
-      showToast('הרישום נשמר ✓');
+      await addProductionEntry({ date: d, productId, quantity, isWaste });
+      showToast(isWaste ? 'פחת נרשם ✓' : 'הרישום נשמר ✓');
       const productName = productMap.get(Number(productId))?.name || '';
       document.getElementById('record-qty').value = '';
       container.dataset.selectedDate = d;
-      await offerInventoryIssueForRecord({ productId, quantity, productName });
+      if (!isWaste) {
+        await offerInventoryIssueForRecord({ productId, quantity, productName });
+      }
       renderRecord(container);
     } catch (err) {
       showToast(err.message || 'שגיאה בשמירה');
@@ -259,7 +270,11 @@ function editEntry(id, entries, productMap, container) {
       <div class="form-group">
         <label for="edit-qty">${isKg ? 'משקל (ק"ג)' : 'כמות (יח\')'}</label>
         <input type="number" id="edit-qty" min="${isKg ? '0.001' : '1'}" step="${isKg ? '0.001' : '1'}" value="${formatDecimal(entry.quantity)}">
-      </div>`,
+      </div>
+      <label class="checkbox-row flow-prod-waste-row">
+        <input type="checkbox" id="edit-waste"${isWasteProductionEntry(entry, p) ? ' checked' : ''}>
+        <span>פחת מוצר — לא למכירה</span>
+      </label>`,
     footerHTML: `
       <button class="btn btn-secondary modal-cancel">ביטול</button>
       <button class="btn btn-primary" id="edit-save">שמור</button>`,
@@ -268,7 +283,10 @@ function editEntry(id, entries, productMap, container) {
   document.querySelector('.modal-cancel').addEventListener('click', closeModal);
   document.getElementById('edit-save').addEventListener('click', async () => {
     try {
-      await updateProductionEntry(entry.id, { quantity: document.getElementById('edit-qty').value });
+      await updateProductionEntry(entry.id, {
+        quantity: document.getElementById('edit-qty').value,
+        isWaste: !!document.getElementById('edit-waste')?.checked,
+      });
       closeModal();
       showToast('עודכן ✓');
       renderRecord(container);

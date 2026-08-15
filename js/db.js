@@ -10,15 +10,16 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=472';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=472';
-import { defaultColorForIndex } from './chart.js?v=472';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=472';
-import { logAuditEvent } from './audit.js?v=472';
+} from './validators.js?v=473';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=473';
+import { defaultColorForIndex } from './chart.js?v=473';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=473';
+import { logAuditEvent } from './audit.js?v=473';
 
 export { ValidationError };
 
 export const PRODUCTION_STEP_NAME = 'תיעוד ייצור';
+export const PRODUCT_WASTE_CATEGORY_NAME = 'פחת מוצר';
 
 export const db = new Dexie('CakeProduction');
 
@@ -3668,7 +3669,14 @@ export async function isDatabaseEmpty() {
 }
 
 export async function getCategories() {
-  return db.categories.orderBy('sortOrder').toArray();
+  const rows = await db.categories.orderBy('sortOrder').toArray();
+  rows.sort((a, b) => {
+    const aw = isProductWasteCategory(a) ? 1 : 0;
+    const bw = isProductWasteCategory(b) ? 1 : 0;
+    if (aw !== bw) return aw - bw;
+    return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+  return rows;
 }
 
 export async function getProducts(activeOnly = false) {
@@ -3788,7 +3796,7 @@ export async function setCategoryOrderInContainer(groupId, categoryIds) {
   });
 }
 
-export async function addCategory(name, color = null, groupId = null) {
+export async function addCategory(name, color = null, groupId = null, extra = {}) {
   const clean = sanitizeName(name);
   if (!clean) throw new ValidationError('שם קטגוריה לא תקין');
   const maxOrder = await db.categories.orderBy('sortOrder').last();
@@ -3800,10 +3808,11 @@ export async function addCategory(name, color = null, groupId = null) {
     sortOrder: (maxOrder?.sortOrder ?? 0) + 1,
     color: resolvedColor,
     groupId: gid || null,
+    isProductWaste: !!extra.isProductWaste,
   });
 }
 
-export async function updateCategory(id, { name, color, groupId } = {}) {
+export async function updateCategory(id, { name, color, groupId, isProductWaste } = {}) {
   const patch = {};
   if (name != null) {
     const clean = sanitizeName(name);
@@ -3818,6 +3827,8 @@ export async function updateCategory(id, { name, color, groupId } = {}) {
   if (groupId !== undefined) {
     patch.groupId = groupId ? sanitizeProductId(groupId) : null;
   }
+  if (isProductWaste !== undefined) patch.isProductWaste = !!isProductWaste;
+
   if (!Object.keys(patch).length) return;
   return db.categories.update(id, patch);
 }
@@ -4873,7 +4884,34 @@ export async function toggleProductActive(id) {
   return db.products.update(id, { active: !p.active });
 }
 
-export async function addProductionEntry({ date, productId, quantity, runId, stepIndex }, { merge = false } = {}) {
+export function isProductWasteCategory(cat) {
+  if (!cat) return false;
+  if (cat.isProductWaste) return true;
+  const n = String(cat.name || '').trim();
+  return n === PRODUCT_WASTE_CATEGORY_NAME || n === 'פחת';
+}
+
+/** רישום ייצור שמסומן כפחת — לא נמכר, יורד מהכמות שיוצרה */
+export function isWasteProductionEntry(entry, product = null, category = null) {
+  if (entry?.isWaste) return true;
+  if (isProductWasteCategory(category)) return true;
+  if (isProductWasteCategory(product)) return true;
+  return false;
+}
+
+export async function ensureProductWasteCategory() {
+  const cats = await getCategories();
+  const existing = cats.find((c) => isProductWasteCategory(c));
+  if (existing) {
+    if (!existing.isProductWaste) {
+      await db.categories.update(existing.id, { isProductWaste: true });
+    }
+    return existing.id;
+  }
+  return addCategory(PRODUCT_WASTE_CATEGORY_NAME, '#ef4444', null, { isProductWaste: true });
+}
+
+export async function addProductionEntry({ date, productId, quantity, runId, stepIndex, isWaste }, { merge = false } = {}) {
   if (!isValidISODate(date)) throw new ValidationError('תאריך לא תקין');
   const pid = sanitizeProductId(productId);
   if (!pid) throw new ValidationError('מוצר לא תקין');
@@ -4887,12 +4925,15 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
     throw new ValidationError(msg);
   }
 
+  const category = product.categoryId ? await db.categories.get(product.categoryId) : null;
+  const waste = !!isWaste || isProductWasteCategory(category);
+
   if (merge) {
     const existing = await db.productionEntries
       .where('[date+productId]')
       .equals([date, pid])
       .first();
-    if (existing) {
+    if (existing && !!existing.isWaste === waste) {
       const patch = { quantity: (existing.quantity || 0) + qty };
       const rid = sanitizeProductId(runId);
       if (rid) patch.runId = rid;
@@ -4902,7 +4943,7 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
     }
   }
 
-  const record = { date, productId: pid, quantity: qty };
+  const record = { date, productId: pid, quantity: qty, isWaste: waste };
   const rid = sanitizeProductId(runId);
   if (rid) record.runId = rid;
   if (stepIndex != null && !Number.isNaN(Number(stepIndex))) record.stepIndex = Number(stepIndex);
@@ -4922,6 +4963,7 @@ export async function updateProductionEntry(id, data) {
     }
     patch.quantity = qty;
   }
+  if ('isWaste' in patch) patch.isWaste = !!patch.isWaste;
   if ('date' in patch && !isValidISODate(patch.date)) {
     throw new ValidationError('תאריך לא תקין');
   }
@@ -4979,7 +5021,7 @@ async function collectProductionEntryIdsForRun(runId) {
   return entryIds;
 }
 
-export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity }) {
+export async function addRunStepProductionEntry(runId, stepIndex, { date, productId, quantity, isWaste }) {
   const run = await getProductionRun(runId);
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (run.status !== 'active' && run.status !== 'completed') {
@@ -4997,7 +5039,7 @@ export async function addRunStepProductionEntry(runId, stepIndex, { date, produc
   }
 
   const entryDate = date && isValidISODate(date) ? date : (run.date || todayISOFromDate());
-  const entryId = await addProductionEntry({ date: entryDate, productId, quantity, runId, stepIndex });
+  const entryId = await addProductionEntry({ date: entryDate, productId, quantity, runId, stepIndex, isWaste });
   const ids = [...(step.productionEntryIds || []), entryId];
   await db.runStepStates.update(step.id, { productionEntryIds: ids });
   return entryId;
@@ -7681,13 +7723,24 @@ function runDurationMsFromRun(run) {
 }
 
 /** סיכום מדדים לתהליך יצור בודד */
-export function computeRunMetrics(run, entries = []) {
+export function computeRunMetrics(run, entries = [], { productMap = null, categoryMap = null } = {}) {
   let productionQty = 0;
+  let wasteQty = 0;
   const productionByProduct = new Map();
+  const wasteByProduct = new Map();
   for (const e of entries) {
     const q = Number(e.quantity) || 0;
-    productionQty += q;
     const pid = Number(e.productId);
+    const product = productMap?.get?.(pid) || null;
+    const category = product && categoryMap
+      ? (categoryMap.get(Number(product.categoryId)) || null)
+      : null;
+    if (isWasteProductionEntry(e, product, category)) {
+      wasteQty += q;
+      if (pid) wasteByProduct.set(pid, (wasteByProduct.get(pid) || 0) + q);
+      continue;
+    }
+    productionQty += q;
     if (pid) productionByProduct.set(pid, (productionByProduct.get(pid) || 0) + q);
   }
 
@@ -7727,7 +7780,10 @@ export function computeRunMetrics(run, entries = []) {
 
   return {
     productionQty: Math.round(productionQty * 1000) / 1000,
+    wasteQty: Math.round(wasteQty * 1000) / 1000,
+    grossProductionQty: Math.round((productionQty + wasteQty) * 1000) / 1000,
     productionByProduct,
+    wasteByProduct,
     portionCount: hasPortions ? Math.round(portionCount * 100) / 100 : null,
     portionWeightKg: hasPortionWeight ? Math.round(portionWeightKg * 1000) / 1000 : null,
     durationMs: runDurationMsFromRun(run),
@@ -7741,8 +7797,14 @@ export function computeRunMetrics(run, entries = []) {
 
 function mergeRunMetrics(into, add) {
   into.productionQty = (into.productionQty || 0) + (add.productionQty || 0);
+  into.wasteQty = (into.wasteQty || 0) + (add.wasteQty || 0);
+  into.grossProductionQty = (into.grossProductionQty || 0) + (add.grossProductionQty || 0);
   for (const [pid, qty] of add.productionByProduct || []) {
     into.productionByProduct.set(pid, (into.productionByProduct.get(pid) || 0) + qty);
+  }
+  if (!into.wasteByProduct) into.wasteByProduct = new Map();
+  for (const [pid, qty] of add.wasteByProduct || []) {
+    into.wasteByProduct.set(pid, (into.wasteByProduct.get(pid) || 0) + qty);
   }
   if (add.portionCount != null) {
     into.portionCount = (into.portionCount || 0) + add.portionCount;
@@ -7765,7 +7827,10 @@ function mergeRunMetrics(into, add) {
 export function aggregateRunsMetrics(runsWithEntries) {
   const merged = {
     productionQty: 0,
+    wasteQty: 0,
+    grossProductionQty: 0,
     productionByProduct: new Map(),
+    wasteByProduct: new Map(),
     portionCount: null,
     portionWeightKg: null,
     durationMs: null,
