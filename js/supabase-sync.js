@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=468';
+import { db, getSetting, setSetting } from './db.js?v=469';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=468';
+} from './supabase-backup.js?v=469';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=468';
+} from './sync/collections.js?v=469';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,8 +35,8 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=468';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole } from './kitchen-db.js?v=468';
+} from './sync/id-map.js?v=469';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole } from './kitchen-db.js?v=469';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -715,6 +715,39 @@ async function dedupeSupplierCategoriesByRole() {
 export async function repairOrphanSupplierCategoryLinks() {
   if (!db.supplierCategories || !db.suppliers || !db.rawMaterials) return 0;
 
+  const catsQuick = await db.supplierCategories.toArray();
+  const byIdQuick = new Map(catsQuick.map((c) => [Number(c.id), c]));
+  const materials = await db.rawMaterials.toArray();
+  const suppliers = await db.suppliers.toArray();
+
+  // סריקה מהירה — אם הכל כבר משויך נכון, לא נוגעים ב-DB
+  let likelyNeedsWork = !catsQuick.length;
+  if (!likelyNeedsWork) {
+    for (const m of materials) {
+      const role = inferRawMaterialSupplierRole(m, byIdQuick);
+      const cat = byIdQuick.get(Number(m.supplierCategoryId));
+      const curRole = supplierCategoryRoleKey(cat);
+      const fakePack = role !== 'packaging' && !!m.packagingKind;
+      if (!cat || curRole !== role || fakePack) {
+        // import vs raw: שמר על import אם זה התפקיד
+        if (role === 'raw' && curRole === 'import') continue;
+        if (role === 'import' && curRole === 'import') continue;
+        if (role === 'raw' && !curRole && cat && !cat.isPackaging && !cat.isCleaning) continue;
+        likelyNeedsWork = true;
+        break;
+      }
+    }
+  }
+  if (!likelyNeedsWork) {
+    for (const s of suppliers) {
+      if (!byIdQuick.has(Number(s.categoryId))) {
+        likelyNeedsWork = true;
+        break;
+      }
+    }
+  }
+  if (!likelyNeedsWork) return 0;
+
   const byRole = await ensureRoleSupplierCategories();
   const rawCat = byRole.get('raw');
   const packCat = byRole.get('packaging');
@@ -734,8 +767,8 @@ export async function repairOrphanSupplierCategoryLinks() {
   };
 
   let fixed = 0;
-  const materials = await db.rawMaterials.toArray();
   const matRoleById = new Map();
+  const packNameRe = /קרטון|קופס|מגש|שקית|ניילון|מדבק|סרט|לוגו|מכסה|אלומינ|כפפ|מנשא|מיכל|תבנית|אריז|פלסטיק|פואל|פויל|רדיד/;
 
   for (const m of materials) {
     const role = inferRawMaterialSupplierRole(m, byId);
@@ -745,11 +778,10 @@ export async function repairOrphanSupplierCategoryLinks() {
     const cid = Number(m.supplierCategoryId);
     const alreadyOk = cid === Number(target.id) && byId.has(cid);
     const clearFakePackaging = role !== 'packaging' && !!m.packagingKind
-      && !/קרטון|קופס|מגש|שקית|ניילון|מדבק|סרט|לוגו|מכסה|אלומינ|כפפ|מנשא|מיכל|תבנית|אריז|פלסטיק|פואל|פויל|רדיד/
-        .test(String(m.name || ''));
+      && !packNameRe.test(String(m.name || ''));
     if (alreadyOk && !clearFakePackaging) continue;
     const patch = { supplierCategoryId: target.id };
-    if (clearFakePackaging || (role !== 'packaging' && m.packagingKind && role === 'cleaning')) {
+    if (clearFakePackaging || (role === 'cleaning' && m.packagingKind)) {
       patch.packagingKind = null;
       patch.packUnitsCount = null;
       patch.packProductsPerUnit = null;
@@ -761,7 +793,6 @@ export async function repairOrphanSupplierCategoryLinks() {
     fixed += 1;
   }
 
-  const suppliers = await db.suppliers.toArray();
   for (const s of suppliers) {
     const mats = materials.filter((m) => Number(m.supplierId) === Number(s.id));
     const counts = { raw: 0, packaging: 0, cleaning: 0, import: 0 };
@@ -773,13 +804,11 @@ export async function repairOrphanSupplierCategoryLinks() {
     let bestCount = -1;
     for (const role of ['raw', 'cleaning', 'packaging', 'import']) {
       const n = counts[role] || 0;
-      // tie-break: raw > cleaning > packaging (אל תדחוף הכל לאריזות)
       if (n > bestCount) {
         bestCount = n;
         bestRole = role;
       }
     }
-    // ספק בלי חומרים: אם כבר בקטגוריה חיה עם תפקיד — השאר; אחרת חומ״ג
     let target;
     if (!mats.length) {
       const cur = byId.get(Number(s.categoryId));
@@ -1413,23 +1442,44 @@ async function repushPolymorphicCollections() {
 }
 
 /**
- * ניקוי קל אחרי כל pull — מונע חזרת כפילויות קטגוריות/חומרים מהענן
- * גם אחרי ש-dedupeVersion כבר סומן כבוצע.
+ * ניקוי קל אחרי pull — מונע חזרת כפילויות.
+ * מוגבל בתדירות (ברירת מחדל כל 3 דקות) כדי לא להאט טעינה/רינדור.
  */
-export async function dedupeSupplierWorkspaceLight() {
-  let removed = 0;
-  removed += await pruneUnsyncedEmptySeedSupplierCategories();
-  removed += await dedupeSupplierCategoriesByRole();
-  // אותו שם מדויק (למשל «ייבוא ממתכונים» כפול) — fingerprint רגיל
-  removed += await dedupeCollectionByFingerprint('supplierCategories');
-  removed += await dedupeCollectionByFingerprint('suppliers');
-  removed += await dedupeCollectionByFingerprint('rawMaterials');
-  const repaired = await repairOrphanSupplierCategoryLinks();
-  if (removed || repaired) {
-    console.info('live sync light supplier dedupe', { removed, repaired });
-    try { await flushSyncQueue(); } catch { /* ignore */ }
+let lastLightDedupeAt = 0;
+let lightDedupeInFlight = null;
+const LIGHT_DEDUPE_MIN_MS = 3 * 60 * 1000;
+
+export async function dedupeSupplierWorkspaceLight({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - lastLightDedupeAt < LIGHT_DEDUPE_MIN_MS) {
+    return { removed: 0, repaired: 0, skipped: true };
   }
-  return { removed, repaired };
+  if (lightDedupeInFlight) return lightDedupeInFlight;
+
+  lightDedupeInFlight = (async () => {
+    try {
+      let removed = 0;
+      removed += await pruneUnsyncedEmptySeedSupplierCategories();
+      removed += await dedupeSupplierCategoriesByRole();
+      // fingerprint רק ב-force / פעם ראשונה אחרי אתחול — יקר על אלפי חומרים
+      if (force || !lastLightDedupeAt) {
+        removed += await dedupeCollectionByFingerprint('supplierCategories');
+        removed += await dedupeCollectionByFingerprint('suppliers');
+        removed += await dedupeCollectionByFingerprint('rawMaterials');
+      }
+      const repaired = await repairOrphanSupplierCategoryLinks();
+      lastLightDedupeAt = Date.now();
+      if (removed || repaired) {
+        console.info('live sync light supplier dedupe', { removed, repaired });
+        try { await flushSyncQueue(); } catch { /* ignore */ }
+      }
+      return { removed, repaired, skipped: false };
+    } finally {
+      lightDedupeInFlight = null;
+    }
+  })();
+
+  return lightDedupeInFlight;
 }
 
 export async function startLiveSync() {
@@ -1444,9 +1494,12 @@ export async function startLiveSync() {
   const tick = async () => {
     try {
       await flushSyncQueue();
-      await pullAllCollections({ full: false });
+      const pulled = await pullAllCollections({ full: false });
       pulledOk = true;
-      await dedupeSupplierWorkspaceLight();
+      // ניקוי כבד רק כשיש עדכונים מהענן (ולא יותר מפעם ב־3 דקות)
+      if ((pulled?.applied || 0) > 0) {
+        await dedupeSupplierWorkspaceLight();
+      }
     } catch (err) {
       console.warn('live sync tick', err);
     }
@@ -1460,7 +1513,7 @@ export async function startLiveSync() {
       await flushSyncQueue();
       await pullAllCollections({ full: true });
       await repushPolymorphicCollections();
-      await dedupeSupplierWorkspaceLight();
+      await dedupeSupplierWorkspaceLight({ force: true });
       await saveLiveSyncSettings({ repairVersion: REPAIR_VERSION });
       pulledOk = true;
     } catch (err) {
@@ -1520,7 +1573,7 @@ export async function startLiveSync() {
     }
   }
 
-  pullTimer = setInterval(tick, 5000);
+  pullTimer = setInterval(tick, 15000);
   window.addEventListener('online', () => tick());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') tick();
