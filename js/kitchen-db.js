@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=474';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=475';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=474';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=474';
-import { logAuditEvent } from './audit.js?v=474';
-import { markMetaDeleted } from './sync/id-map.js?v=474';
+} from './validators.js?v=475';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=475';
+import { logAuditEvent } from './audit.js?v=475';
+import { markMetaDeleted } from './sync/id-map.js?v=475';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1347,13 +1347,42 @@ function recipeVersionBucketId(ing, versions) {
   return match?.id ?? homeId;
 }
 
+export function uniqueRecipeIngredientsByName(ingredients) {
+  const seen = new Set();
+  const out = [];
+  for (const ing of ingredients || []) {
+    const key = normalizeMaterialKey(ing.name);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(ing);
+  }
+  return out;
+}
+
+function ingredientQtyKey(ing) {
+  const kind = ing.unitKind || normalizeRecipeUnitKind(ing.unit);
+  return `${Number(ing.quantity)}|${kind}`;
+}
+
+function findIngredientOnOtherVersions(byVersion, versions, selfId, nameKey) {
+  for (const v of versions) {
+    if (sameRecipeVersionId(v.id, selfId)) continue;
+    for (const ing of byVersion.get(v.id) || []) {
+      if (normalizeMaterialKey(ing.name) === nameKey) return ing;
+    }
+  }
+  return null;
+}
+
 /**
- * מתקן גרסאות שבהן חומרי גרסה 1 עברו לגרסה 2 (הכל כפול שם, הגרסה האחרת ריקה/חסרה).
- * כפילות לפי שם: העותק הראשון נשאר, העותקים הבאים עוברים לגרסה שחסר בה החומר.
+ * מתקן לשוניות גרסה: חומרים שכפלו על גרסה אחת במקום להישאר גרסאות נפרדות.
+ * עותק עודף עובר לגרסה שחסר בה החומר; אם הגרסה האחרת כבר מלאה —
+ * נשמר הקו הייחודי לכל גרסה ונמחק העותק הכפול.
  */
 export function planRecipeVersionIngredientRepair(versions, ingredients) {
   const retags = [];
   const moves = [];
+  const deletes = [];
   const sortedVersions = [...(versions || [])].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id,
   );
@@ -1361,7 +1390,7 @@ export function planRecipeVersionIngredientRepair(versions, ingredients) {
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id,
   );
   const homeId = sortedVersions[0]?.id ?? null;
-  if (!sortedVersions.length) return { retags, moves };
+  if (!sortedVersions.length) return { retags, moves, deletes };
 
   for (const ing of ings) {
     if (ing?.id == null) continue;
@@ -1370,7 +1399,7 @@ export function planRecipeVersionIngredientRepair(versions, ingredients) {
     }
   }
 
-  if (sortedVersions.length < 2) return { retags, moves };
+  if (sortedVersions.length < 2) return { retags, moves, deletes };
 
   const byVersion = new Map(sortedVersions.map((v) => [v.id, []]));
   for (const ing of ings) {
@@ -1400,40 +1429,61 @@ export function planRecipeVersionIngredientRepair(versions, ingredients) {
     }
     for (const [key, group] of groups) {
       if (group.length < 2) continue;
+      const dest = sortedVersions.find((other) => {
+        if (sameRecipeVersionId(other.id, v.id)) return false;
+        return !namesOnVersion.get(other.id)?.has(key);
+      });
+      if (dest) {
+        for (let i = 1; i < group.length; i++) {
+          const extra = group[i];
+          if (extra?.id == null) continue;
+          moves.push({ ingredientId: extra.id, toVersionId: dest.id });
+          namesOnVersion.get(dest.id).add(key);
+        }
+        continue;
+      }
+      const otherIng = findIngredientOnOtherVersions(byVersion, sortedVersions, v.id, key);
+      const first = group[0];
       for (let i = 1; i < group.length; i++) {
         const extra = group[i];
-        const dest = sortedVersions.find((other) => {
-          if (sameRecipeVersionId(other.id, v.id)) return false;
-          return !namesOnVersion.get(other.id)?.has(key);
-        });
-        if (!dest || extra?.id == null) continue;
-        moves.push({ ingredientId: extra.id, toVersionId: dest.id });
-        namesOnVersion.get(dest.id).add(key);
+        if (extra?.id == null) continue;
+        const extraDupOfFirst = ingredientQtyKey(extra) === ingredientQtyKey(first);
+        const firstMatchesOther = otherIng && ingredientQtyKey(first) === ingredientQtyKey(otherIng);
+        const extraMatchesOther = otherIng && ingredientQtyKey(extra) === ingredientQtyKey(otherIng);
+        if (extraDupOfFirst || extraMatchesOther || !firstMatchesOther) {
+          deletes.push(extra.id);
+        } else {
+          deletes.push(first.id);
+        }
       }
     }
   }
 
-  return { retags, moves };
+  return { retags, moves, deletes: [...new Set(deletes)] };
 }
 
 async function applyRecipeVersionIngredientRepair(recipeId, versions) {
   const ings = await db.recipeIngredients.where('recipeId').equals(Number(recipeId)).toArray();
   const plan = planRecipeVersionIngredientRepair(versions, ings);
-  if (!plan.retags.length && !plan.moves.length) return plan;
+  if (!plan.retags.length && !plan.moves.length && !plan.deletes.length) return plan;
   for (const row of plan.retags) {
     await db.recipeIngredients.update(row.ingredientId, { recipeVersionId: row.toVersionId });
   }
   for (const row of plan.moves) {
     await db.recipeIngredients.update(row.ingredientId, { recipeVersionId: row.toVersionId });
   }
+  for (const id of plan.deletes) {
+    await db.recipeIngredients.delete(id);
+  }
   return plan;
 }
 
 export async function repairSplitDoubledRecipeVersionIngredients() {
-  if (!db.recipeVersions) return { recipes: 0, retags: 0, moves: 0 };
+  if (!db.recipeVersions) return { recipes: 0, retags: 0, moves: 0, deletes: 0 };
   const recipes = await db.recipes.toArray();
   let retagCount = 0;
   let moveCount = 0;
+  let deleteCount = 0;
   let recipeCount = 0;
   const touched = [];
   for (const recipe of recipes) {
@@ -1441,9 +1491,10 @@ export async function repairSplitDoubledRecipeVersionIngredients() {
     const versions = await listRecipeVersions(recipe.id);
     if (!versions.length) continue;
     const plan = await applyRecipeVersionIngredientRepair(recipe.id, versions);
-    if (!plan.retags.length && !plan.moves.length) continue;
+    if (!plan.retags.length && !plan.moves.length && !plan.deletes.length) continue;
     retagCount += plan.retags.length;
     moveCount += plan.moves.length;
+    deleteCount += plan.deletes.length;
     recipeCount += 1;
     touched.push(recipe.id);
   }
@@ -1454,7 +1505,7 @@ export async function repairSplitDoubledRecipeVersionIngredients() {
       /* מנה לא חובה לתיקון השיוך */
     }
   }
-  return { recipes: recipeCount, retags: retagCount, moves: moveCount };
+  return { recipes: recipeCount, retags: retagCount, moves: moveCount, deletes: deleteCount };
 }
 
 export async function getRecipe(id, { versionId = null, useDefaultVersion = true } = {}) {
@@ -1726,6 +1777,7 @@ export async function addRecipeVersion(recipeId, {
     const def = await getRecipe(rid);
     sourceIngs = def?.ingredients || [];
   }
+  sourceIngs = uniqueRecipeIngredientsByName(sourceIngs);
 
   let order = 0;
   for (const ing of sourceIngs) {

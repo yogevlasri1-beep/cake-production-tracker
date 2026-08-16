@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=474';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=474';
+} from './runner.js?v=475';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=475';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -18,10 +18,10 @@ import {
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
-} from '../js/kitchen-db.js?v=474';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=474';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=474';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=474';
+} from '../js/kitchen-db.js?v=475';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=475';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=475';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=475';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -550,6 +550,49 @@ export async function runIntegrationTests() {
 
     const again = await repairSplitDoubledRecipeVersionIngredients();
     assertEqual(again.moves, 0, 'תיקון חוזר לא מזיז שוב');
+    assertEqual(again.deletes, 0, 'תיקון חוזר לא מוחק שוב');
+  });
+
+  await testAsync('עוגת דבש — גרסה 2 כפולה כשגרסה 1 עדיין מלאה מנקה כפילות', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const recCatId = await addRecipeCategory('מתכוני דבש בדיקה 2');
+    const recipeId = await addRecipe({ categoryId: recCatId, name: 'עוגת דבש' });
+    await addRecipeIngredient(recipeId, { name: 'קמח', quantity: 12, unitKind: 'kg' });
+    await addRecipeIngredient(recipeId, { name: 'סוכר', quantity: 7.5, unitKind: 'kg' });
+
+    const v1 = await getRecipe(recipeId);
+    const v2id = await addRecipeVersion(recipeId, {
+      name: 'גרסה 2',
+      copyFromVersionId: v1.activeVersionId,
+    });
+    // מדמה העתקה כפולה לגרסה 2 בזמן שגרסה 1 נשארה מלאה
+    const v2ings = (await db.recipeIngredients.where('recipeId').equals(recipeId).toArray())
+      .filter((i) => Number(i.recipeVersionId) === Number(v2id));
+    for (const ing of v2ings) {
+      await db.recipeIngredients.add({
+        recipeId,
+        recipeVersionId: v2id,
+        name: ing.name,
+        quantity: ing.quantity,
+        unit: ing.unit,
+        unitKind: ing.unitKind,
+        sortOrder: (ing.sortOrder || 0) + 10,
+        priceSource: 'max',
+      });
+    }
+
+    const repairedV2 = await getRecipe(recipeId, { versionId: v2id, useDefaultVersion: false });
+    const repairedV1 = await getRecipe(recipeId, { versionId: v1.activeVersionId, useDefaultVersion: false });
+    assertEqual((repairedV1.ingredients || []).length, 2, 'גרסה 1 נשארת עם 2 חומרים');
+    assertEqual((repairedV2.ingredients || []).length, 2, 'גרסה 2 ירדה מ-4 ל-2 חומרים');
+    assertEqual(
+      repairedV2.ingredients.map((i) => i.name).sort().join(','),
+      ['קמח', 'סוכר'].sort().join(','),
+    );
   });
 
 await flushTests();
