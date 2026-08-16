@@ -33,21 +33,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=473';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=473';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=473';
-import { renderRecipesMachines } from '../recipes-machines.js?v=473';
-import { renderRecipesPortions } from '../recipes-portions.js?v=473';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=473';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=473';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=473';
-import { openModal, closeModal } from '../modal.js?v=473';
-import { getCurrentUserRole } from '../auth.js?v=473';
-import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=473';
+} from '../kitchen-db.js?v=474';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=474';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=474';
+import { renderRecipesMachines } from '../recipes-machines.js?v=474';
+import { renderRecipesPortions } from '../recipes-portions.js?v=474';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=474';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=474';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=474';
+import { openModal, closeModal } from '../modal.js?v=474';
+import { getCurrentUserRole } from '../auth.js?v=474';
+import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=474';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=473';
-import { defaultColorForIndex } from '../chart.js?v=473';
+} from '../product-drag.js?v=474';
+import { defaultColorForIndex } from '../chart.js?v=474';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -2614,9 +2614,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=473');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=474');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=473');
+    const { navigateToWorkspace } = await import('../app.js?v=474');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
@@ -2637,7 +2637,7 @@ async function openIngredientSupplierPicker(container, recipe, ing, ctx, mats, s
     try { await syncProductCostFromRecipe(recipe.id); } catch { /* no products */ }
     closeModal();
     openRecipeForm(container, {
-      recipe: await getRecipe(recipe.id),
+      recipe: await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null }),
       productCatalog,
       layout: catalogLayout,
       returnToView,
@@ -4327,7 +4327,7 @@ function openRecipeNotesEditor(container, recipe, { productCatalog, layout }) {
     const notes = document.getElementById('recipe-notes')?.value?.trim() || '';
     try {
       await updateRecipe(recipe.id, { notes });
-      const updated = await getRecipe(recipe.id);
+      const updated = await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null });
       closeModal();
       showToast('הערות נשמרו ✓');
       openRecipeView(container, updated || { ...recipe, notes }, { productCatalog, layout });
@@ -4629,7 +4629,8 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
       await deleteRecipeIngredient(Number(btn.dataset.id));
       closeModal();
       openRecipeForm(container, {
-        recipe: await getRecipe(recipe.id), productCatalog: catalog, layout: catalogLayout, returnToView,
+        recipe: await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null }),
+        productCatalog: catalog, layout: catalogLayout, returnToView,
       });
     });
   });
@@ -4667,7 +4668,7 @@ async function openRecipeForm(container, { recipe, categoryId, productCatalog, l
         closeModal();
         showToast('נשמר ✓');
         if (returnToView) {
-          const updated = await getRecipe(recipe.id);
+          const updated = await getRecipe(recipe.id, { versionId: recipe.activeVersionId || null });
           openRecipeView(container, updated, { productCatalog: catalog, layout: catalogLayout });
         } else {
           renderRecipes(container);

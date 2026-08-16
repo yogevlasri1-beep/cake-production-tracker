@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=473';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=473';
-import { defaultColorForIndex } from './chart.js?v=473';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=473';
-import { logAuditEvent } from './audit.js?v=473';
+} from './validators.js?v=474';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=474';
+import { defaultColorForIndex } from './chart.js?v=474';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=474';
+import { logAuditEvent } from './audit.js?v=474';
 
 export { ValidationError };
 
@@ -3572,6 +3572,15 @@ export async function initDB() {
     await ensurePurchaseCategories();
   } catch (err) {
     console.warn('purchase categories', err);
+  }
+  try {
+    const { repairSplitDoubledRecipeVersionIngredients } = await import('./kitchen-db.js');
+    const split = await repairSplitDoubledRecipeVersionIngredients();
+    if (split?.recipes) {
+      console.info('recipe version ingredient repair', split);
+    }
+  } catch (err) {
+    console.warn('recipe version ingredient repair', err);
   }
   try {
     // v2: force re-sync so portion weights match current recipe ingredient totals

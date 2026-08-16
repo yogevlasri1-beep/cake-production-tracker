@@ -1,5 +1,5 @@
-import { db } from '../db.js?v=473';
-import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=473';
+import { db } from '../db.js?v=474';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=474';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {

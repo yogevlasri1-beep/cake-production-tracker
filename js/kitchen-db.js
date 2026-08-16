@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=473';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=474';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=473';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=473';
-import { logAuditEvent } from './audit.js?v=473';
-import { markMetaDeleted } from './sync/id-map.js?v=473';
+} from './validators.js?v=474';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=474';
+import { logAuditEvent } from './audit.js?v=474';
+import { markMetaDeleted } from './sync/id-map.js?v=474';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1307,6 +1307,156 @@ export async function getRecipes(categoryId) {
   return rows;
 }
 
+export function isUntaggedRecipeVersionId(vid) {
+  return vid == null || vid === '' || vid === 0 || vid === '0';
+}
+
+export function sameRecipeVersionId(a, b) {
+  if (isUntaggedRecipeVersionId(a) || isUntaggedRecipeVersionId(b)) return false;
+  if (sameNumericId(a, b)) return true;
+  return String(a) === String(b);
+}
+
+export function homeRecipeVersionId(versions) {
+  if (!versions?.length) return null;
+  const sorted = [...versions].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  return sorted[0]?.id ?? null;
+}
+
+export function findRecipeVersionById(versions, versionId) {
+  if (!versions?.length || isUntaggedRecipeVersionId(versionId)) return null;
+  return versions.find((v) => sameRecipeVersionId(v.id, versionId)) || null;
+}
+
+/**
+ * חומר בלי recipeVersionId שייך לגרסה הראשונה (לא לברירת המחדל הנוכחית).
+ * אחרת כשגרסה 2 נקבעת למנות, חומרי גרסה 1 הלא-משויכים מופיעים שם ויוצרים כפילות.
+ */
+export function ingredientBelongsToRecipeVersion(ing, version, versions) {
+  if (!ing || !version) return false;
+  if (isUntaggedRecipeVersionId(ing.recipeVersionId)) {
+    return sameRecipeVersionId(version.id, homeRecipeVersionId(versions));
+  }
+  return sameRecipeVersionId(ing.recipeVersionId, version.id);
+}
+
+function recipeVersionBucketId(ing, versions) {
+  const homeId = homeRecipeVersionId(versions);
+  if (isUntaggedRecipeVersionId(ing?.recipeVersionId)) return homeId;
+  const match = findRecipeVersionById(versions, ing.recipeVersionId);
+  return match?.id ?? homeId;
+}
+
+/**
+ * מתקן גרסאות שבהן חומרי גרסה 1 עברו לגרסה 2 (הכל כפול שם, הגרסה האחרת ריקה/חסרה).
+ * כפילות לפי שם: העותק הראשון נשאר, העותקים הבאים עוברים לגרסה שחסר בה החומר.
+ */
+export function planRecipeVersionIngredientRepair(versions, ingredients) {
+  const retags = [];
+  const moves = [];
+  const sortedVersions = [...(versions || [])].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id,
+  );
+  const ings = [...(ingredients || [])].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id,
+  );
+  const homeId = sortedVersions[0]?.id ?? null;
+  if (!sortedVersions.length) return { retags, moves };
+
+  for (const ing of ings) {
+    if (ing?.id == null) continue;
+    if (isUntaggedRecipeVersionId(ing.recipeVersionId) && homeId != null) {
+      retags.push({ ingredientId: ing.id, toVersionId: homeId });
+    }
+  }
+
+  if (sortedVersions.length < 2) return { retags, moves };
+
+  const byVersion = new Map(sortedVersions.map((v) => [v.id, []]));
+  for (const ing of ings) {
+    const vid = recipeVersionBucketId(ing, sortedVersions);
+    if (vid == null) continue;
+    if (!byVersion.has(vid)) byVersion.set(vid, []);
+    byVersion.get(vid).push(ing);
+  }
+
+  const namesOnVersion = new Map();
+  for (const v of sortedVersions) {
+    const names = new Set();
+    for (const ing of byVersion.get(v.id) || []) {
+      const key = normalizeMaterialKey(ing.name);
+      if (key) names.add(key);
+    }
+    namesOnVersion.set(v.id, names);
+  }
+
+  for (const v of sortedVersions) {
+    const groups = new Map();
+    for (const ing of byVersion.get(v.id) || []) {
+      const key = normalizeMaterialKey(ing.name);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(ing);
+    }
+    for (const [key, group] of groups) {
+      if (group.length < 2) continue;
+      for (let i = 1; i < group.length; i++) {
+        const extra = group[i];
+        const dest = sortedVersions.find((other) => {
+          if (sameRecipeVersionId(other.id, v.id)) return false;
+          return !namesOnVersion.get(other.id)?.has(key);
+        });
+        if (!dest || extra?.id == null) continue;
+        moves.push({ ingredientId: extra.id, toVersionId: dest.id });
+        namesOnVersion.get(dest.id).add(key);
+      }
+    }
+  }
+
+  return { retags, moves };
+}
+
+async function applyRecipeVersionIngredientRepair(recipeId, versions) {
+  const ings = await db.recipeIngredients.where('recipeId').equals(Number(recipeId)).toArray();
+  const plan = planRecipeVersionIngredientRepair(versions, ings);
+  if (!plan.retags.length && !plan.moves.length) return plan;
+  for (const row of plan.retags) {
+    await db.recipeIngredients.update(row.ingredientId, { recipeVersionId: row.toVersionId });
+  }
+  for (const row of plan.moves) {
+    await db.recipeIngredients.update(row.ingredientId, { recipeVersionId: row.toVersionId });
+  }
+  return plan;
+}
+
+export async function repairSplitDoubledRecipeVersionIngredients() {
+  if (!db.recipeVersions) return { recipes: 0, retags: 0, moves: 0 };
+  const recipes = await db.recipes.toArray();
+  let retagCount = 0;
+  let moveCount = 0;
+  let recipeCount = 0;
+  const touched = [];
+  for (const recipe of recipes) {
+    if (recipe.parentRecipeId) continue;
+    const versions = await listRecipeVersions(recipe.id);
+    if (!versions.length) continue;
+    const plan = await applyRecipeVersionIngredientRepair(recipe.id, versions);
+    if (!plan.retags.length && !plan.moves.length) continue;
+    retagCount += plan.retags.length;
+    moveCount += plan.moves.length;
+    recipeCount += 1;
+    touched.push(recipe.id);
+  }
+  for (const rid of touched) {
+    try {
+      await syncRecipePortionPresets(rid);
+    } catch {
+      /* מנה לא חובה לתיקון השיוך */
+    }
+  }
+  return { recipes: recipeCount, retags: retagCount, moves: moveCount };
+}
+
 export async function getRecipe(id, { versionId = null, useDefaultVersion = true } = {}) {
   const recipe = await db.recipes.get(Number(id));
   if (!recipe) return null;
@@ -1314,23 +1464,28 @@ export async function getRecipe(id, { versionId = null, useDefaultVersion = true
   let versions = [];
   let activeVersion = null;
   if (db.recipeVersions) {
+    if (!recipe.parentRecipeId) {
+      await ensureDefaultRecipeVersion(recipe.id);
+    }
     versions = await listRecipeVersions(recipe.id);
-    if (!versions.length && !recipe.parentRecipeId) {
-      activeVersion = await ensureDefaultRecipeVersion(recipe.id);
-      versions = await listRecipeVersions(recipe.id);
-    } else if (versionId) {
-      activeVersion = versions.find((v) => Number(v.id) === Number(versionId)) || null;
+    if (versionId) {
+      activeVersion = findRecipeVersionById(versions, versionId)
+        || (useDefaultVersion ? (versions.find((v) => v.isDefault) || versions[0] || null) : null);
     } else if (useDefaultVersion) {
       activeVersion = versions.find((v) => v.isDefault) || versions[0] || null;
+    }
+    if (!activeVersion && versions.length && useDefaultVersion) {
+      activeVersion = versions[0];
     }
   }
 
   const allIngredients = await db.recipeIngredients.where('recipeId').equals(recipe.id).toArray();
   let ingredients = allIngredients;
-  if (activeVersion) {
+  if (activeVersion && versions.length) {
     ingredients = allIngredients.filter((ing) =>
-      Number(ing.recipeVersionId) === Number(activeVersion.id)
-      || (!ing.recipeVersionId && activeVersion.isDefault));
+      ingredientBelongsToRecipeVersion(ing, activeVersion, versions));
+  } else if (versions.length && versionId && !useDefaultVersion) {
+    ingredients = [];
   }
   ingredients.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
 
@@ -1378,7 +1533,10 @@ export async function ensureDefaultRecipeVersion(recipeId) {
   const rid = Number(recipeId);
   if (!rid || !db.recipeVersions) return null;
   const existing = await listRecipeVersions(rid);
-  if (existing.length) return existing.find((v) => v.isDefault) || existing[0];
+  if (existing.length) {
+    await applyRecipeVersionIngredientRepair(rid, existing);
+    return existing.find((v) => v.isDefault) || existing[0];
+  }
 
   const verId = await db.recipeVersions.add({
     recipeId: rid,
@@ -1389,7 +1547,7 @@ export async function ensureDefaultRecipeVersion(recipeId) {
   });
   const ings = await db.recipeIngredients.where('recipeId').equals(rid).toArray();
   for (const ing of ings) {
-    if (!ing.recipeVersionId) {
+    if (isUntaggedRecipeVersionId(ing.recipeVersionId)) {
       await db.recipeIngredients.update(ing.id, { recipeVersionId: verId });
     }
   }
@@ -1563,7 +1721,7 @@ export async function addRecipeVersion(recipeId, {
   let sourceIngs = ingredients;
   if (!sourceIngs && copyFromVersionId) {
     const src = await getRecipe(rid, { versionId: copyFromVersionId, useDefaultVersion: false });
-    sourceIngs = src?.ingredients || [];
+    sourceIngs = src?.activeVersion ? (src.ingredients || []) : [];
   } else if (!sourceIngs) {
     const def = await getRecipe(rid);
     sourceIngs = def?.ingredients || [];

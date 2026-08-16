@@ -5,21 +5,23 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=473';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=473';
+} from './runner.js?v=474';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=474';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
+  addRecipeVersion, getRecipe, listRecipeVersions,
+  repairSplitDoubledRecipeVersionIngredients,
   setRawMaterialRecipeDefault, mergeSelectedRawMaterials,
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
-} from '../js/kitchen-db.js?v=473';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=473';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=473';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=473';
+} from '../js/kitchen-db.js?v=474';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=474';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=474';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=474';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -506,6 +508,48 @@ export async function runIntegrationTests() {
       (unassigned.materials || []).some((m) => Number(m.id) === Number(matId)),
       'החומר מופיע תחת ללא ספק',
     );
+  });
+
+  await testAsync('עוגת דבש — כפילות בגרסה 2 מתפצלת חזרה לגרסה 1', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const recCatId = await addRecipeCategory('מתכוני דבש בדיקה');
+    const recipeId = await addRecipe({ categoryId: recCatId, name: 'עוגת דבש' });
+    await addRecipeIngredient(recipeId, { name: 'קמח', quantity: 12, unitKind: 'kg' });
+    await addRecipeIngredient(recipeId, { name: 'סוכר', quantity: 7.5, unitKind: 'kg' });
+    await addRecipeIngredient(recipeId, { name: 'דבש טבעי', quantity: 500, unitKind: 'g' });
+
+    const v1 = await getRecipe(recipeId);
+    assertEqual((v1.ingredients || []).length, 3, 'גרסה 1: 3 חומרים');
+    const v2id = await addRecipeVersion(recipeId, {
+      name: 'גרסה 2',
+      copyFromVersionId: v1.activeVersionId,
+    });
+    const versions = await listRecipeVersions(recipeId);
+    assertEqual(versions.length, 2);
+
+    // מדמה את הבאג: כל חומרי גרסה 1 עברו לגרסה 2 — שם הכל כפול, גרסה 1 ריקה
+    const allIngs = await db.recipeIngredients.where('recipeId').equals(recipeId).toArray();
+    for (const ing of allIngs) {
+      await db.recipeIngredients.update(ing.id, { recipeVersionId: v2id });
+    }
+
+    const brokenV2 = await getRecipe(recipeId, { versionId: v2id, useDefaultVersion: false });
+    // getRecipe מפעיל תיקון אוטומטי — אחרי המעבר המדומה הפתיחה עצמה אמורה לפצל
+    const repairedV1 = await getRecipe(recipeId, { versionId: versions[0].id, useDefaultVersion: false });
+    const repairedV2 = await getRecipe(recipeId, { versionId: v2id, useDefaultVersion: false });
+    assertEqual((repairedV1.ingredients || []).length, 3, 'גרסה 1 חזרה ל-3 חומרים');
+    assertEqual((repairedV2.ingredients || []).length, 3, 'גרסה 2 נשארת עם 3 חומרים');
+    const names1 = repairedV1.ingredients.map((i) => i.name).sort().join(',');
+    const names2 = repairedV2.ingredients.map((i) => i.name).sort().join(',');
+    assertEqual(names1, names2);
+    assertOk(brokenV2, 'גרסה 2 קיימת אחרי התיקון');
+
+    const again = await repairSplitDoubledRecipeVersionIngredients();
+    assertEqual(again.moves, 0, 'תיקון חוזר לא מזיז שוב');
   });
 
 await flushTests();
