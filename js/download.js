@@ -1,14 +1,29 @@
 /** הורדה / שיתוף קובץ — תואם iPhone (PWA) */
-export async function downloadBlob(blob, filename) {
-  const safeName = filename.endsWith('.json') ? filename : `${filename}.json`;
-  const file = new File([blob], safeName, { type: 'application/json' });
+
+const DEFAULT_SHARE_TEXT = 'מעקב יצור';
+
+export function resolveDownloadFilename(filename, blob) {
+  const name = String(filename || 'download').trim() || 'download';
+  if (/\.[a-z0-9]{2,8}$/i.test(name)) return name;
+  const type = blob?.type || '';
+  if (type.includes('spreadsheet') || type.includes('excel')) return `${name}.xlsx`;
+  if (type.includes('csv')) return `${name}.csv`;
+  if (type.includes('html')) return `${name}.html`;
+  if (type.includes('png')) return `${name}.png`;
+  return `${name}.json`;
+}
+
+export async function downloadBlob(blob, filename, { shareText } = {}) {
+  const safeName = resolveDownloadFilename(filename, blob);
+  const type = blob.type || 'application/octet-stream';
+  const file = new File([blob], safeName, { type });
 
   if (navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({
         files: [file],
         title: safeName,
-        text: 'גיבוי מעקב יצור',
+        text: shareText || DEFAULT_SHARE_TEXT,
       });
       return 'share';
     } catch (err) {
