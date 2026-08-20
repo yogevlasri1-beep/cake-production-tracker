@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=476';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=476';
+} from './runner.js?v=477';
+import { db, initDB, addCategory, addProduct } from '../js/db.js?v=477';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -18,10 +18,10 @@ import {
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
-} from '../js/kitchen-db.js?v=476';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=476';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=476';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=476';
+} from '../js/kitchen-db.js?v=477';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=477';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=477';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=477';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });

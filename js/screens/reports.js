@@ -10,32 +10,33 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=476';
+} from '../db.js?v=477';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=476';
+} from '../utils.js?v=477';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=476';
-import { openModal, closeModal } from '../modal.js?v=476';
+} from '../export.js?v=477';
+import { openModal, closeModal } from '../modal.js?v=477';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=476';
-import { isSheetsConfigured } from '../google-sheets.js?v=476';
+} from '../sheets-flow.js?v=477';
+import { isSheetsConfigured } from '../google-sheets.js?v=477';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
   productUnitCost, productLineValue, entryQuantityForProduct,
-} from '../calc.js?v=476';
-import { defaultColorForIndex } from '../chart.js?v=476';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=476';
+  metricsProductionValueBreakdown,
+} from '../calc.js?v=477';
+import { defaultColorForIndex } from '../chart.js?v=477';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=477';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=476';
+} from '../purchasing-db.js?v=477';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -1024,18 +1025,79 @@ function formatMetricsProductionLine(metrics, productMap) {
     .join('<br>');
 }
 
+let flowValueDetailSeq = 0;
+const flowValueDetailStore = new Map();
+
+function registerFlowValueDetail(metrics, productMap, title) {
+  const id = `fv${++flowValueDetailSeq}`;
+  flowValueDetailStore.set(id, { metrics, productMap, title });
+  return id;
+}
+
+function openFlowValueDetailModal(metrics, productMap, title = 'ערך לפי מוצר') {
+  const { rows, totalValue } = metricsProductionValueBreakdown(metrics, productMap);
+  openModal({
+    title,
+    modalClass: 'modal-metrics-detail',
+    bodyHTML: rows.length ? `
+      <p class="form-hint" style="margin-top:0">ערך ללקוח לפי מחיר המוצר · סה״כ <strong>${formatMoney(totalValue)}</strong></p>
+      <ul class="flow-metrics-detail-list">
+        ${rows.map((r) => `
+          <li class="flow-metrics-detail-row flow-metrics-detail-row--value">
+            <span class="flow-metrics-detail-name">${escapeHtml(r.name)}</span>
+            <span class="flow-metrics-detail-qty">${r.product ? formatProductQuantity(r.product, r.qty) : formatDecimal(r.qty)}</span>
+            <span class="flow-metrics-detail-value">${formatMoney(r.value)}</span>
+          </li>`).join('')}
+      </ul>
+      <p class="flow-metrics-detail-total"><strong>סה״כ ערך:</strong> ${formatMoney(totalValue)}</p>`
+      : '<p class="form-hint">אין ייצור מתועד — אין ערך להצגה</p>',
+    footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">סגור</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+}
+
+function bindFlowValueDetailClicks(root) {
+  root.querySelectorAll('[data-flow-value-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const payload = flowValueDetailStore.get(btn.dataset.flowValueId);
+      if (!payload) return;
+      openFlowValueDetailModal(payload.metrics, payload.productMap, payload.title);
+    });
+  });
+}
+
+function renderFlowValueButtonHTML(metrics, productMap, { title = 'ערך לפי מוצר', className = '', emptyText = '—' } = {}) {
+  const { totalValue } = metricsProductionValueBreakdown(metrics, productMap);
+  const id = registerFlowValueDetail(metrics, productMap, title);
+  const label = totalValue > 0 ? formatMoney(totalValue) : emptyText;
+  return `<button type="button" class="${className}" data-flow-value-id="${id}" title="פירוט ערך לפי מוצר">${label}</button>`;
+}
+
 function renderMetricsSummaryGrid(metrics, productMap, { title = 'סיכום כולל' } = {}) {
   const wasteQty = Number(metrics.wasteQty) || 0;
   const wasteLine = wasteQty > 0 ? `−${formatDecimal(wasteQty)}` : '—';
   const grossQty = Number(metrics.grossProductionQty) || ((Number(metrics.productionQty) || 0) + wasteQty);
+  const valueId = registerFlowValueDetail(metrics, productMap, `${title} — ערך לפי מוצר`);
+  const { totalValue } = metricsProductionValueBreakdown(metrics, productMap);
+  const valueLine = totalValue > 0 ? formatMoney(totalValue) : '—';
   return `
     <div class="flow-metrics-card flow-metrics-card--report">
       <div class="flow-metrics-title">${escapeHtml(title)}</div>
+      <div class="flow-metrics-grid flow-metrics-grid--value" style="margin-bottom:12px">
+        <button type="button" class="flow-metrics-stat flow-metrics-stat--btn flow-metrics-stat--value" data-flow-value-id="${valueId}" title="פירוט ערך לפי מוצר">
+          <span class="flow-metrics-icon">₪</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${valueLine}</span>
+            <span class="flow-metrics-label">ערך ללקוח · לחץ לפירוט</span>
+          </div>
+        </button>
+      </div>
       <div class="flow-metrics-products">
         <div class="flow-metrics-products-label">ייצור נטו${wasteQty > 0 ? ' אחרי פחת' : ''} · ${metrics.runCount || 0} תהליכים</div>
         ${renderMetricsProductionRowsHTML(metrics, productMap)}
       </div>
       ${wasteQty > 0 ? `<p class="flow-metrics-waste-hint">ייצור ${formatDecimal(grossQty)} − פחת ${formatDecimal(wasteQty)} = <strong>${formatDecimal(metrics.productionQty || 0)}</strong> למכירה</p>` : ''}
+      <p class="form-hint flow-metrics-click-hint">לחץ על הערך לפירוט לפי מוצר</p>
       <div class="flow-metrics-grid flow-metrics-grid--secondary">
         <div class="flow-metrics-stat">
           <span class="flow-metrics-icon">🍽</span>
@@ -1074,6 +1136,9 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
     return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
   }
 
+  flowValueDetailStore.clear();
+  flowValueDetailSeq = 0;
+
   const runsWithEntries = await Promise.all(productionRuns.map(async (run) => ({
     run,
     entries: await getRunProductionEntries(run.id),
@@ -1108,6 +1173,10 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
         <td class="report-cell-num">${metrics.runCount}</td>
         <td class="report-cell-num">${metrics.completedCount || 0}</td>
         <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(metrics, productMap)}</td>
+        <td class="report-cell-num">${renderFlowValueButtonHTML(metrics, productMap, {
+          title: `${flowLabel} — ערך לפי מוצר`,
+          className: 'report-flow-value-btn',
+        })}</td>
         <td class="report-cell-num">${metrics.portionCount != null ? formatPortionCount(metrics.portionCount) : '—'}</td>
         <td class="report-cell-num flow-waste-qty">${metrics.wasteQty > 0 ? `−${formatDecimal(metrics.wasteQty)}` : '—'}</td>
         <td class="report-cell-num">${metrics.portionWeightKg != null ? formatPortionWeightKg(metrics.portionWeightKg) : '—'}</td>
@@ -1128,6 +1197,10 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
             <td class="report-cell-num">${m.runCount}</td>
             <td class="report-cell-num">${m.completedCount || 0}</td>
             <td class="report-cell-text report-cell-production">${formatMetricsProductionLine(m, productMap)}</td>
+            <td class="report-cell-num">${renderFlowValueButtonHTML(m, productMap, {
+              title: 'ללא תזרים מוגדר — ערך לפי מוצר',
+              className: 'report-flow-value-btn',
+            })}</td>
             <td class="report-cell-num">${m.portionCount != null ? formatPortionCount(m.portionCount) : '—'}</td>
             <td class="report-cell-num flow-waste-qty">${m.wasteQty > 0 ? `−${formatDecimal(m.wasteQty)}` : '—'}</td>
             <td class="report-cell-num">${m.portionWeightKg != null ? formatPortionWeightKg(m.portionWeightKg) : '—'}</td>
@@ -1143,7 +1216,7 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
     <div class="report-table-wrap" style="margin-top:16px">
       <table class="report-table report-flows-summary-table">
         <thead><tr>
-          <th>תזרים</th><th>תהליכים</th><th>הושלמו</th><th>ייצור</th>
+          <th>תזרים</th><th>תהליכים</th><th>הושלמו</th><th>ייצור</th><th>ערך</th>
           <th>מנות</th><th>פחת</th><th>משקל מנות</th><th>זמן כולל</th><th>ממוצע לתהליך</th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
@@ -3438,6 +3511,7 @@ export async function renderReports(container) {
     bindFilterEvents(container);
     bindReportCollapse(container);
     bindReportPageToolbar(container, { fullTitle, ctx, safeLabel, previewHtml });
+    bindFlowValueDetailClicks(container);
     return;
   }
 
@@ -3505,6 +3579,7 @@ export async function renderReports(container) {
 
   bindFilterEvents(container);
   bindReportCollapse(container);
+  bindFlowValueDetailClicks(container);
 
   const openFullReportPage = () => {
     container.dataset.reportView = 'page';
@@ -3578,6 +3653,7 @@ export async function renderReports(container) {
         <button type="button" class="btn btn-primary" id="preview-export">הורד Excel</button>`,
     });
     document.querySelector('.modal-close-btn')?.addEventListener('click', closeModal);
+    bindFlowValueDetailClicks(document.getElementById('modal-body') || document);
     document.getElementById('preview-open-page')?.addEventListener('click', () => {
       closeModal();
       openFullReportPage();

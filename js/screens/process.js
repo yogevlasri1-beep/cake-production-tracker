@@ -29,10 +29,10 @@ import {
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-} from '../db.js?v=476';
+} from '../db.js?v=477';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=476').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=477').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -75,7 +75,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=476');
+    } = await import('../inventory-db.js?v=477');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -116,7 +116,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=476');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=477');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -142,7 +142,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=476');
+    } = await import('../inventory-db.js?v=477');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -171,14 +171,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal } from '../utils.js?v=476';
-import { openModal, closeModal } from '../modal.js?v=476';
-import { requestAutoBackupNow } from '../backup-service.js?v=476';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=476';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=476';
-import { materialMatchesSearch } from '../kitchen-db.js?v=476';
-import { getCurrentUserRole } from '../auth.js?v=476';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=476';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney } from '../utils.js?v=477';
+import { metricsProductionValueBreakdown } from '../calc.js?v=477';
+import { openModal, closeModal } from '../modal.js?v=477';
+import { requestAutoBackupNow } from '../backup-service.js?v=477';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=477';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=477';
+import { materialMatchesSearch } from '../kitchen-db.js?v=477';
+import { getCurrentUserRole } from '../auth.js?v=477';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=477';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1785,6 +1786,19 @@ function formatMetricsProductionLine(metrics, productMap) {
   }).join(' · ');
 }
 
+function renderFlowMetricsValueStatHTML(metrics, productMap, { clickable = true } = {}) {
+  const { totalValue } = metricsProductionValueBreakdown(metrics, productMap);
+  const valueLine = totalValue > 0 ? formatMoney(totalValue) : '—';
+  return `
+        ${clickable ? `<button type="button" class="flow-metrics-stat flow-metrics-stat--btn flow-metrics-stat--value" data-metrics-detail="value" title="פירוט ערך לפי מוצר">` : '<div class="flow-metrics-stat flow-metrics-stat--value">'}
+          <span class="flow-metrics-icon">₪</span>
+          <div class="flow-metrics-body">
+            <span class="flow-metrics-value">${valueLine}</span>
+            <span class="flow-metrics-label">ערך ללקוח</span>
+          </div>
+        ${clickable ? '</button>' : '</div>'}`;
+}
+
 function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', compact = false, interactive = false } = {}) {
   if (!metrics) return '';
   const productsLine = metrics.productionQty > 0 ? formatDecimal(metrics.productionQty) : '—';
@@ -1815,6 +1829,7 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
             <span class="flow-metrics-label">סה״כ מוצרים${productTypes ? ` · ${productTypes} סוגים` : ''}${wasteQty > 0 ? ` · נטו אחרי פחת` : ''}</span>
           </div>
         ${clickable ? '</button>' : '</div>'}
+        ${renderFlowMetricsValueStatHTML(metrics, productMap, { clickable: true })}
       </div>
       ${wasteQty > 0 ? `<p class="flow-metrics-waste-hint">ייצור ${formatDecimal(grossQty)} − פחת ${formatDecimal(wasteQty)} = <strong>${formatDecimal(metrics.productionQty)}</strong> למכירה</p>` : ''}
       ${!clickable ? `
@@ -1852,7 +1867,7 @@ function renderFlowMetricsCard(metrics, productMap, { title = 'סיכום', comp
           </div>
         ${clickable ? '</button>' : '</div>'}
       </div>
-      ${clickable ? '<p class="form-hint flow-metrics-click-hint">לחץ על מוצרים / מנות / משקל / זמן / פחת לפירוט</p>' : ''}
+      <p class="form-hint flow-metrics-click-hint">${clickable ? 'לחץ על מוצרים / ערך / מנות / משקל / זמן / פחת לפירוט' : 'לחץ על ערך לפירוט לפי מוצר'}</p>
       <div class="flow-metrics-batch-track">
         <div class="flow-metrics-batch-track-title">📦 מעקב מנות חומרי גלם</div>
         ${batchRows.length ? `
@@ -2036,8 +2051,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=476');
-    const { db } = await import('../db.js?v=476');
+    const { getRecipe } = await import('../kitchen-db.js?v=477');
+    const { db } = await import('../db.js?v=477');
     const blocks = [];
 
     for (const row of rows) {
@@ -2133,12 +2148,45 @@ function openRunStepsTimeModal(run) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
 }
 
+function openMetricsValueDetailModal(metrics, productMap, { title = 'ערך לפי מוצר' } = {}) {
+  const { rows, totalValue } = metricsProductionValueBreakdown(metrics, productMap);
+  openModal({
+    title,
+    modalClass: 'modal-metrics-detail',
+    bodyHTML: rows.length ? `
+      <p class="form-hint" style="margin-top:0">ערך ללקוח לפי מחיר המוצר · סה״כ <strong>${formatMoney(totalValue)}</strong></p>
+      <ul class="flow-metrics-detail-list">
+        ${rows.map((r) => `
+          <li class="flow-metrics-detail-row flow-metrics-detail-row--value">
+            <span class="flow-metrics-detail-name">${escapeHtml(r.name)}</span>
+            <span class="flow-metrics-detail-qty">${r.product ? formatProductQuantity(r.product, r.qty) : formatDecimal(r.qty)}</span>
+            <span class="flow-metrics-detail-value">${formatMoney(r.value)}</span>
+          </li>`).join('')}
+      </ul>
+      <p class="flow-metrics-detail-total"><strong>סה״כ ערך:</strong> ${formatMoney(totalValue)}</p>`
+      : '<p class="form-hint">אין ייצור מתועד — אין ערך להצגה</p>',
+    footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">סגור</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+}
+
+function bindMetricsValueClicks(container, metrics, productMap) {
+  container.querySelectorAll('[data-metrics-detail="value"]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openMetricsValueDetailModal(metrics, productMap || new Map());
+    });
+  });
+}
+
 function bindRunMetricsDetailClicks(container, run, { productMap, catMap } = {}) {
   container.querySelectorAll('[data-metrics-detail]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const kind = btn.dataset.metricsDetail;
       if (kind === 'products') {
         await openRunProductsDetailModal(run, productMap || new Map(), catMap || new Map());
+      } else if (kind === 'value') {
+        const entries = await getRunProductionEntries(run.id);
+        openMetricsValueDetailModal(computeRunMetrics(run, entries), productMap || new Map());
       } else if (kind === 'portions') openRunPortionsQuantityModal(run);
       else if (kind === 'weight') await openRunPortionsWeightModal(run);
       else if (kind === 'time') openRunStepsTimeModal(run);
@@ -2382,6 +2430,7 @@ async function renderFlowHistoryView(container, ctx) {
     renderProcess(container);
   });
 
+  bindMetricsValueClicks(container, flowAggregate, productMap);
   bindOpenRunListClicks(container);
 }
 
@@ -2942,7 +2991,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=476');
+    const kitchen = await import('../kitchen-db.js?v=477');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
