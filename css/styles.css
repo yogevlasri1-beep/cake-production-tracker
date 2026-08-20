@@ -6895,6 +6895,46 @@ button.flow-metrics-stat--products:hover {
   background: color-mix(in srgb, var(--primary-soft, #d1fae5) 85%, white);
 }
 
+.flow-metrics-stat--value {
+  background: color-mix(in srgb, #f59e0b 12%, white);
+  border-color: color-mix(in srgb, #d97706 35%, var(--border));
+}
+
+button.flow-metrics-stat--value:hover {
+  background: color-mix(in srgb, #f59e0b 18%, white);
+}
+
+.flow-metrics-grid--value {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.flow-metrics-detail-row--value {
+  align-items: center;
+}
+
+.flow-metrics-detail-qty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.report-flow-value-btn {
+  font: inherit;
+  font-weight: 700;
+  color: var(--primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.report-flow-value-btn:hover {
+  color: var(--primary-dark, #0f766e);
+}
+
 .flow-metrics-stat--waste {
   background: color-mix(in srgb, var(--danger) 8%, white);
   border-color: color-mix(in srgb, var(--danger) 40%, var(--border));

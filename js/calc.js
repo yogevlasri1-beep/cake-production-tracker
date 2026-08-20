@@ -1,4 +1,4 @@
-import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=476';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=477';
 
 export { roundMoney };
 
@@ -83,6 +83,32 @@ export function sumCategoryTotals(categoryId, products, byProduct) {
 export function productProductionValue(product, byProduct) {
   const qty = mapLookup(byProduct, product?.id);
   return { qty, value: productLineValue(product, qty) };
+}
+
+/** ערך ללקוח לפי מוצר מתוך מדדי תזרים (ייצור נטו, בלי פחת) */
+export function metricsProductionValueBreakdown(metrics, productMap) {
+  const rows = [];
+  let totalValue = 0;
+  const byProduct = metrics?.productionByProduct;
+  const entries = byProduct instanceof Map
+    ? byProduct.entries()
+    : Object.entries(byProduct || {});
+  for (const [pid, qty] of entries) {
+    const q = Number(qty) || 0;
+    if (q <= 0) continue;
+    const product = mapGetById(productMap, pid);
+    const value = productLineValue(product, q);
+    totalValue += value;
+    rows.push({
+      productId: Number(pid) || 0,
+      product: product || null,
+      name: product?.name || `#${pid}`,
+      qty: q,
+      value,
+    });
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name, 'he') || a.productId - b.productId);
+  return { rows, totalValue: roundMoney(totalValue) };
 }
 
 export function productProductionCost(product, byProduct) {
