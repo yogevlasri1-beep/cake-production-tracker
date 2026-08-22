@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '477';
+const VERSION = '478';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -62,6 +62,8 @@ const PRECACHE = [
   v('./js/kitchen-db.js'),
   v('./js/purchasing-db.js'),
   v('./js/haccp-db.js'),
+  v('./js/finance-db.js'),
+  v('./js/finance-import.js'),
   v('./js/haccp-print.js'),
   v('./js/portion-ingredients.js'),
   v('./js/recipes-portions.js'),
@@ -78,6 +80,7 @@ const PRECACHE = [
   v('./js/screens/targets.js'),
   v('./js/screens/reports.js'),
   v('./js/screens/backup.js'),
+  v('./js/screens/finance.js'),
   v('./js/screens/recipes.js'),
   v('./js/screens/suppliers.js'),
   v('./js/screens/purchasing.js'),

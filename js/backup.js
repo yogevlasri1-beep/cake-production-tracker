@@ -1,9 +1,13 @@
-import { exportAllData, importAllData } from './db.js?v=477';
-import { APP_VERSION } from './version.js?v=477';
-import { defaultColorForIndex } from './chart.js?v=477';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=477';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=477';
-import { ValidationError } from './validators.js?v=477';
+import { exportAllData, importAllData } from './db.js?v=478';
+import {
+  financeRestoreWouldWipe,
+  confirmFinanceRestoreWipe,
+} from './finance-db.js?v=478';
+import { APP_VERSION } from './version.js?v=478';
+import { defaultColorForIndex } from './chart.js?v=478';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=478';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=478';
+import { ValidationError } from './validators.js?v=478';
 
 export const BACKUP_VERSION = 3;
 
@@ -240,6 +244,15 @@ export function enrichBackupData(raw) {
     haccpDocuments: raw.haccpDocuments || [],
     haccpPrpControls: raw.haccpPrpControls || [],
     haccpMonitoringLogs: raw.haccpMonitoringLogs || [],
+    financeAccountMap: Array.isArray(raw.financeAccountMap) ? raw.financeAccountMap : [],
+    financeImports: Array.isArray(raw.financeImports) ? raw.financeImports : [],
+    financeLines: Array.isArray(raw.financeLines) ? raw.financeLines : [],
+    __financeBackupPresent: raw.__financeBackupPresent === true || (
+      raw.__financeBackupPresent !== false
+      && Object.prototype.hasOwnProperty.call(raw, 'financeAccountMap')
+      && Object.prototype.hasOwnProperty.call(raw, 'financeImports')
+      && Object.prototype.hasOwnProperty.call(raw, 'financeLines')
+    ),
     settings: raw.settings || [],
   };
 }
@@ -315,6 +328,9 @@ export function summarizeBackupData(data) {
     haccpDocuments: data.haccpDocuments?.length || 0,
     haccpPrpControls: data.haccpPrpControls?.length || 0,
     haccpMonitoringLogs: data.haccpMonitoringLogs?.length || 0,
+    financeAccountMap: data.financeAccountMap?.length || 0,
+    financeImports: data.financeImports?.length || 0,
+    financeLines: data.financeLines?.length || 0,
   };
 }
 
@@ -375,6 +391,9 @@ export function formatBackupSummary(counts) {
   if (counts.haccpDocuments) parts.push(`${counts.haccpDocuments} מסמכי תיעוד`);
   if (counts.haccpPrpControls) parts.push(`${counts.haccpPrpControls} בקרות PRP`);
   if (counts.haccpMonitoringLogs) parts.push(`${counts.haccpMonitoringLogs} רשומות ניטור`);
+  if (counts.financeAccountMap) parts.push(`${counts.financeAccountMap} סיווגי חשבון`);
+  if (counts.financeImports) parts.push(`${counts.financeImports} ייבוא כספים`);
+  if (counts.financeLines) parts.push(`${counts.financeLines} שורות כספים`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.inventoryBalances) parts.push(`${counts.inventoryBalances} יתרות מלאי`);
@@ -529,8 +548,18 @@ export async function parseBackupFile(file) {
   };
 }
 
-export async function restoreBackupPayload(data) {
-  await importAllData(enrichBackupData(data));
+export async function restoreBackupPayload(data, options = {}) {
+  const enriched = enrichBackupData(data);
+  if (await financeRestoreWouldWipe(enriched)) {
+    const allowed = options.allowFinanceWipe === true
+      || (typeof options.confirmFinanceWipe === 'function'
+        ? await options.confirmFinanceWipe()
+        : confirmFinanceRestoreWipe());
+    if (!allowed) throw new ValidationError('השחזור בוטל');
+    await importAllData(enriched, { allowFinanceWipe: true });
+    return;
+  }
+  await importAllData(enriched, { allowFinanceWipe: true });
 }
 
 export async function restoreBackupFromFile(file) {
