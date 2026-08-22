@@ -1,0 +1,18 @@
+{
+  "recommendations": [
+    "anthropic.claude-code",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "supabase.postgrestools",
+    "ritwickdey.LiveServer",
+    "formulahendry.auto-rename-tag",
+    "christian-kohler.path-intellisense",
+    "zignd.html-css-class-completion",
+    "ecmel.vscode-html-css",
+    "bierner.color-info",
+    "ms-python.python",
+    "redhat.vscode-yaml",
+    "streetsidesoftware.code-spell-checker",
+    "usernamehw.errorlens"
+  ]
+}
