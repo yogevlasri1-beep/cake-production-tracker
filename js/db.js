@@ -3360,6 +3360,12 @@ db.version(86).stores({
   rawMaterials: '++id, supplierCategoryId, name, supplierId, active, sortOrder, barcode, sku',
 });
 
+db.version(87).stores({
+  financeAccountMap: '++id, &accountCode, category, behavior',
+  financeImports: '++id, reportType, periodStart, periodEnd, importedAt, [reportType+periodStart+periodEnd]',
+  financeLines: '++id, importId, accountCode, periodStart, periodEnd',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3886,6 +3892,7 @@ export async function resetAllData() {
     'managerShiftNotes', 'managerResponsibilityAreas', 'managerEmployees',
     'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
     'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls', 'haccpMonitoringLogs',
+    'financeAccountMap', 'financeImports', 'financeLines',
   ), async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
@@ -3942,6 +3949,9 @@ export async function resetAllData() {
     await db.haccpIntendedUses?.clear?.();
     await db.haccpProductDescriptions?.clear?.();
     await db.haccpPlans?.clear?.();
+    await db.financeLines?.clear?.();
+    await db.financeImports?.clear?.();
+    await db.financeAccountMap?.clear?.();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -4094,6 +4104,9 @@ export async function exportAllData() {
     inventoryBalances,
     inventoryMovements,
     activeLots,
+    financeAccountMap,
+    financeImports,
+    financeLines,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -4173,6 +4186,9 @@ export async function exportAllData() {
     db.inventoryBalances?.toArray?.() ?? Promise.resolve([]),
     db.inventoryMovements?.toArray?.() ?? Promise.resolve([]),
     db.activeLots?.toArray?.() ?? Promise.resolve([]),
+    db.financeAccountMap?.toArray?.() ?? Promise.resolve([]),
+    db.financeImports?.toArray?.() ?? Promise.resolve([]),
+    db.financeLines?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4252,6 +4268,9 @@ export async function exportAllData() {
     inventoryBalances,
     inventoryMovements,
     activeLots,
+    financeAccountMap,
+    financeImports,
+    financeLines,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4350,6 +4369,33 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
   if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
   if (!Array.isArray(payload.activeLots)) payload.activeLots = [];
+  const financeBackupPresent = payload.__financeBackupPresent === true
+    || (
+      payload.__financeBackupPresent !== false
+      && Object.prototype.hasOwnProperty.call(payload, 'financeAccountMap')
+      && Object.prototype.hasOwnProperty.call(payload, 'financeImports')
+      && Object.prototype.hasOwnProperty.call(payload, 'financeLines')
+      && Array.isArray(payload.financeAccountMap)
+      && Array.isArray(payload.financeImports)
+      && Array.isArray(payload.financeLines)
+    );
+  if (!Array.isArray(payload.financeAccountMap)) payload.financeAccountMap = [];
+  if (!Array.isArray(payload.financeImports)) payload.financeImports = [];
+  if (!Array.isArray(payload.financeLines)) payload.financeLines = [];
+  if (!financeBackupPresent && db.financeLines) {
+    const localFinanceCount = (
+      await db.financeAccountMap.count()
+    ) + (
+      await db.financeImports.count()
+    ) + (
+      await db.financeLines.count()
+    );
+    if (localFinanceCount > 0) {
+      throw new ValidationError(
+        'הגיבוי לא כולל טבלאות כספים, ובמסד המקומי יש נתוני כספים. שחזור ימחק אותם. ייצא קודם גיבוי JSON חדש, או שחזר גיבוי שכולל financeAccountMap / financeImports / financeLines.',
+      );
+    }
+  }
 
   if (!payload.flows.length && payload.flowSteps.length) {
     payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
@@ -4388,6 +4434,7 @@ export async function importAllData(payload) {
       'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
       'purchaseCategories', 'purchaseItems',
       'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls', 'haccpMonitoringLogs',
+      'financeAccountMap', 'financeImports', 'financeLines',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -4421,6 +4468,9 @@ export async function importAllData(payload) {
       await db.haccpIntendedUses?.clear?.();
       await db.haccpProductDescriptions?.clear?.();
       await db.haccpPlans?.clear?.();
+      await db.financeLines?.clear?.();
+      await db.financeImports?.clear?.();
+      await db.financeAccountMap?.clear?.();
       await db.recipeIngredients.clear();
       await db.recipeVersions?.clear?.();
       await db.recipeProductLinks.clear();
@@ -4630,6 +4680,9 @@ export async function importAllData(payload) {
       if (payload.haccpMonitoringLogs?.length) {
         await db.haccpMonitoringLogs.bulkPut(payload.haccpMonitoringLogs);
       }
+      if (payload.financeAccountMap?.length) await db.financeAccountMap.bulkPut(payload.financeAccountMap);
+      if (payload.financeImports?.length) await db.financeImports.bulkPut(payload.financeImports);
+      if (payload.financeLines?.length) await db.financeLines.bulkPut(payload.financeLines);
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
       } else {

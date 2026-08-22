@@ -88,6 +88,9 @@ export const DATA_TABLE_LABELS = {
   inventoryBalances: 'יתרות מלאי',
   inventoryMovements: 'תנועות מלאי',
   activeLots: 'לוטים פעילים',
+  financeAccountMap: 'סיווג חשבונות כספים',
+  financeImports: 'ייבוא כספים',
+  financeLines: 'שורות כספים',
   settings: 'הגדרות',
 };
 

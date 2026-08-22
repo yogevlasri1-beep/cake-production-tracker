@@ -48,6 +48,19 @@ import {
   sanitizeWorkspaceAccess, defaultWorkspacesForRole, workspaceLabel,
 } from '../js/permissions.js?v=477';
 import { lotTraceEmptyHint } from '../js/lot-trace.js?v=477';
+import {
+  signedAmountForCategory,
+  requireManualPeriod,
+  assertImportLineBudget,
+  backupHasFinanceTables,
+  parseFinanceAmount,
+  incomeTotal,
+  expenseTotal,
+  profitTotal,
+  FINANCE_BACKUP_KEYS,
+  FINANCE_IMPORT_HARD_MAX_LINES,
+  FINANCE_CATEGORIES,
+} from '../js/finance-db.js?v=477';
 
 export async function runAllTests() {
   /* validators */
@@ -2578,6 +2591,82 @@ export async function runAllTests() {
     assertEqual(productSheet.aoa[1][1], 'פרג 30');
     assertEqual(listDataTables({}).length, Object.keys(DATA_TABLE_LABELS).length);
     assertOk(specs.length === Object.keys(DATA_TABLE_LABELS).length + 1);
+  });
+
+  test('finance — כלל סימן: הכנסה חיובית, הוצאה שלילית, לפי קטגוריה', () => {
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, -1200), 1200);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, '1,234.50'), 1234.5);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.materials, 80), -80);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.payroll, '-90,5'), -90.5);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.ignore, 10), null);
+    assertEqual(incomeTotal([1200, -80, -90.5]), 1200);
+    assertEqual(expenseTotal([1200, -80, -90.5]), 170.5);
+    assertEqual(profitTotal([1200, -80, -90.5]), 1029.5);
+    assertEqual(parseFinanceAmount('1.234,56'), 1234.56);
+  });
+
+  test('finance — תקופה רק מבורר ידני, לא מקובץ', () => {
+    const period = requireManualPeriod('2026-07-01', '2026-07-31');
+    assertEqual(period.periodStart, '2026-07-01');
+    assertEqual(period.periodEnd, '2026-07-31');
+    let threw = false;
+    try { requireManualPeriod('', '2026-07-31'); } catch { threw = true; }
+    assertEqual(threw, true);
+    threw = false;
+    try { requireManualPeriod('2026-08-01', '2026-07-31'); } catch { threw = true; }
+    assertEqual(threw, true);
+  });
+
+  test('finance — ייבוא ברמת מאזן בוחן, לא תנועות', () => {
+    assertEqual(assertImportLineBudget(300), 300);
+    let threw = false;
+    try { assertImportLineBudget(FINANCE_IMPORT_HARD_MAX_LINES + 1); } catch { threw = true; }
+    assertEqual(threw, true);
+  });
+
+  test('finance — גיבוי JSON חייב לכלול את שלוש הטבלאות', () => {
+    const enrichedMissing = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+    });
+    assertEqual(enrichedMissing.__financeBackupPresent, false);
+    assertEqual(Array.isArray(enrichedMissing.financeAccountMap), true);
+    assertEqual(Array.isArray(enrichedMissing.financeImports), true);
+    assertEqual(Array.isArray(enrichedMissing.financeLines), true);
+    assertEqual(backupHasFinanceTables(enrichedMissing), false);
+    const enrichedTwice = enrichBackupData(enrichedMissing);
+    assertEqual(enrichedTwice.__financeBackupPresent, false);
+    assertEqual(backupHasFinanceTables(enrichedTwice), false);
+
+    const enrichedPresent = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      financeAccountMap: [{ id: 1, accountCode: '6000', category: 'materials' }],
+      financeImports: [{ id: 1, reportType: 'trial_balance' }],
+      financeLines: [{ id: 1, importId: 1, amount: -10 }],
+    });
+    assertEqual(enrichedPresent.__financeBackupPresent, true);
+    assertEqual(backupHasFinanceTables(enrichedPresent), true);
+    assertEqual(enrichedPresent.financeLines.length, 1);
+    const counts = summarizeBackupData(enrichedPresent);
+    assertEqual(counts.financeAccountMap, 1);
+    assertEqual(counts.financeImports, 1);
+    assertEqual(counts.financeLines, 1);
+    assertOk(formatBackupSummary(counts).includes('שורות כספים'));
+    assertEqual(FINANCE_BACKUP_KEYS.join(','), 'financeAccountMap,financeImports,financeLines');
+    assertEqual(DATA_TABLE_LABELS.financeLines, 'שורות כספים');
+    assertEqual(COLLECTION_TABLE.financeLines, undefined);
+    assertEqual(SYNC_ORDER.includes('financeLines'), false);
+    assertEqual(SYNC_ORDER.includes('financeImports'), false);
+    assertEqual(SYNC_ORDER.includes('financeAccountMap'), false);
   });
 
   test('sync — recipeVersions באוסף וטביעת אצבע כוללת גרסה', () => {
