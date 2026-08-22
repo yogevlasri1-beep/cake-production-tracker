@@ -57,10 +57,23 @@ import {
   incomeTotal,
   expenseTotal,
   profitTotal,
+  confirmFinanceRestoreWipe,
   FINANCE_BACKUP_KEYS,
   FINANCE_IMPORT_HARD_MAX_LINES,
   FINANCE_CATEGORIES,
+  FINANCE_RESTORE_WIPE_QUESTION,
 } from '../js/finance-db.js?v=477';
+import {
+  detectCsvEncoding,
+  parseCsvText,
+  guessColumnMapping,
+  extractMappedLines,
+  uniqueAccountsFromLines,
+  mappingHasRequiredRoles,
+  mergeColumnMappingByReportType,
+  FINANCE_COLUMN_ROLES,
+  FINANCE_ENCODINGS,
+} from '../js/finance-import.js?v=477';
 
 export async function runAllTests() {
   /* validators */
@@ -2593,16 +2606,25 @@ export async function runAllTests() {
     assertOk(specs.length === Object.keys(DATA_TABLE_LABELS).length + 1);
   });
 
-  test('finance — כלל סימן: הכנסה חיובית, הוצאה שלילית, לפי קטגוריה', () => {
-    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, -1200), 1200);
+  test('finance — כלל סימן: הקטגוריה קובעת כיוון, לא מוחקת סימן', () => {
     assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, '1,234.50'), 1234.5);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, -1200), -1200);
     assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.materials, 80), -80);
-    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.payroll, '-90,5'), -90.5);
     assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.ignore, 10), null);
-    assertEqual(incomeTotal([1200, -80, -90.5]), 1200);
-    assertEqual(expenseTotal([1200, -80, -90.5]), 170.5);
-    assertEqual(profitTotal([1200, -80, -90.5]), 1029.5);
     assertEqual(parseFinanceAmount('1.234,56'), 1234.56);
+  });
+
+  test('finance — שורת זיכוי מקטינה הוצאות ולא מתהפכת לערך מוחלט', () => {
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.materials, -5000), 5000);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.payroll, '-90,5'), 90.5);
+    const lines = [
+      { category: FINANCE_CATEGORIES.income, amount: 10000 },
+      { category: FINANCE_CATEGORIES.materials, amount: -8000 },
+      { category: FINANCE_CATEGORIES.materials, amount: 5000 },
+    ];
+    assertEqual(incomeTotal(lines), 10000);
+    assertEqual(expenseTotal(lines), 3000);
+    assertEqual(profitTotal(lines), 7000);
   });
 
   test('finance — תקופה רק מבורר ידני, לא מקובץ', () => {
@@ -2667,6 +2689,31 @@ export async function runAllTests() {
     assertEqual(SYNC_ORDER.includes('financeLines'), false);
     assertEqual(SYNC_ORDER.includes('financeImports'), false);
     assertEqual(SYNC_ORDER.includes('financeAccountMap'), false);
+  });
+
+  test('finance — שחזור גיבוי ישן שואל ולא חוסם אוטומטית', () => {
+    assertOk(FINANCE_RESTORE_WIPE_QUESTION.includes('לא מכיל נתוני כספים'));
+    assertEqual(confirmFinanceRestoreWipe(() => true), true);
+    assertEqual(confirmFinanceRestoreWipe(() => false), false);
+  });
+
+  test('finance — אשף: קידוד, מיפוי עמודות וחילוץ שורות', () => {
+    const winBytes = new Uint8Array([0xE0, 0xE1, 0xE2, 0x2C, 0x31]);
+    assertEqual(detectCsvEncoding(winBytes), FINANCE_ENCODINGS.windows1255);
+    const utfBytes = new TextEncoder().encode('קוד,סכום\n6000,10');
+    assertEqual(detectCsvEncoding(utfBytes), FINANCE_ENCODINGS.utf8);
+
+    const rows = parseCsvText('קוד חשבון,שם,סכום\n6000,קמח,8000\n6000,קמח,-5000\n');
+    const mapping = guessColumnMapping(rows[0]);
+    assertEqual(mapping[0], FINANCE_COLUMN_ROLES.accountCode);
+    assertEqual(mapping[2], FINANCE_COLUMN_ROLES.amount);
+    assertEqual(mappingHasRequiredRoles(mapping), true);
+    const lines = extractMappedLines(rows, 1, mapping);
+    assertEqual(lines.length, 2);
+    assertEqual(lines[0].accountCode, '6000');
+    assertEqual(uniqueAccountsFromLines(lines).length, 1);
+    const merged = mergeColumnMappingByReportType({}, 'trial_balance', mapping);
+    assertEqual(merged.trial_balance[0], FINANCE_COLUMN_ROLES.accountCode);
   });
 
   test('sync — recipeVersions באוסף וטביעת אצבע כוללת גרסה', () => {

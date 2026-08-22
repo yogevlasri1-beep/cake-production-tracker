@@ -4277,7 +4277,7 @@ export async function exportAllData() {
   };
 }
 
-export async function importAllData(payload) {
+export async function importAllData(payload, options = {}) {
   const tables = [
     'categories',
     'products',
@@ -4382,7 +4382,7 @@ export async function importAllData(payload) {
   if (!Array.isArray(payload.financeAccountMap)) payload.financeAccountMap = [];
   if (!Array.isArray(payload.financeImports)) payload.financeImports = [];
   if (!Array.isArray(payload.financeLines)) payload.financeLines = [];
-  if (!financeBackupPresent && db.financeLines) {
+  if (!financeBackupPresent && db.financeLines && options.allowFinanceWipe !== true) {
     const localFinanceCount = (
       await db.financeAccountMap.count()
     ) + (
@@ -4392,7 +4392,7 @@ export async function importAllData(payload) {
     );
     if (localFinanceCount > 0) {
       throw new ValidationError(
-        'הגיבוי לא כולל טבלאות כספים, ובמסד המקומי יש נתוני כספים. שחזור ימחק אותם. ייצא קודם גיבוי JSON חדש, או שחזר גיבוי שכולל financeAccountMap / financeImports / financeLines.',
+        'הגיבוי הזה לא מכיל נתוני כספים, שחזור ימחק אותם — להמשיך?',
       );
     }
   }

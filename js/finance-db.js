@@ -4,13 +4,15 @@
  * אין FK לטבלאות ייצור / מוצרים / מתכונים.
  * סנכרון לענן: עדיין לא מחובר ל-SYNC_ORDER. קודם SQL ידני, ורק אז פרסום.
  *
- * כלל סימן (חובה, נאכף בייבוא — לא לפי הסימן בחשבשבת):
- *   הכנסה  → amount חיובי  (+|סכום|)
- *   הוצאה  → amount שלילי  (-|סכום|)
+ * כלל סימן (חובה, נאכף בייבוא):
+ *   הקטגוריה קובעת כיוון, לא מוחקת את הסימן מהקובץ.
+ *   בקובץ: חיובי = חיוב, שלילי = זיכוי.
+ *   הכנסה  → נשמר הסימן מהקובץ (חיוב +, זיכוי −)
+ *   הוצאה  → הפוך לסימן הקובץ: חיוב נשמר שלילי, זיכוי נשמר חיובי
  *   ignore → השורה לא נשמרת
  *   rawRow שומר את הסכום המקורי מהקובץ.
- * סיכום רוו"ה: sum(amount) — חיובי = רווח, שלילי = הפסד.
- * סה"כ הוצאות בדוח: סכום הערכים המוחלטים של שורות הוצאה.
+ * סיכום רוו"ה: sum(amount) — חיובי = רווח.
+ * סה"כ הוצאות: -(סכום שורות ההוצאה) — זיכוי חיובי מקטין את הסכום.
  *
  * periodStart / periodEnd: רק מבורר תאריכים ידני באשף. לא נגזרים מהקובץ.
  *
@@ -100,6 +102,8 @@ export function isIgnoredCategory(category) {
   return category === FINANCE_CATEGORIES.ignore;
 }
 
+export const FINANCE_RESTORE_WIPE_QUESTION = 'הגיבוי הזה לא מכיל נתוני כספים, שחזור ימחק אותם — להמשיך?';
+
 export function backupHasFinanceTables(payload) {
   if (!payload || typeof payload !== 'object') return false;
   if (payload.__financeBackupPresent === true) return true;
@@ -126,8 +130,8 @@ function roundMoney2(n) {
 }
 
 /**
- * מחיל את כלל הסימן: הכנסה +, הוצאה −, לפי קטגוריה ולא לפי סימן הקובץ.
- * מחזיר null לקטגוריית ignore.
+ * הקטגוריה קובעת כיוון; הסימן מהקובץ נשמר יחסית.
+ * הוצאה רגילה (חיוב בקובץ) → שלילי. זיכוי בקובץ → חיובי ומקטין את סה״כ ההוצאות.
  */
 export function signedAmountForCategory(category, rawAmount) {
   if (isIgnoredCategory(category)) return null;
@@ -136,9 +140,9 @@ export function signedAmountForCategory(category, rawAmount) {
   }
   const raw = parseFinanceAmount(rawAmount);
   if (raw == null) throw new ValidationError('סכום לא תקין');
-  const magnitude = roundMoney2(Math.abs(raw));
-  if (isIncomeCategory(category)) return magnitude;
-  if (isExpenseCategory(category)) return -magnitude;
+  const signed = roundMoney2(raw);
+  if (isIncomeCategory(category)) return signed;
+  if (isExpenseCategory(category)) return roundMoney2(-signed);
   throw new ValidationError('קטגוריית חשבון לא תקינה');
 }
 
@@ -168,20 +172,63 @@ export function assertImportLineBudget(rowCount) {
   return n;
 }
 
-export function incomeTotal(signedAmounts) {
+function lineAmount(line) {
+  if (line && typeof line === 'object' && 'amount' in line) return Number(line.amount || 0);
+  return Number(line || 0);
+}
+
+function lineCategory(line) {
+  return line && typeof line === 'object' ? line.category : null;
+}
+
+/** סכום הכנסות חתום (זיכוי הכנסה מקטין). מקבל שורות {amount, category}. */
+export function incomeTotal(lines) {
   return roundMoney2(
-    (signedAmounts || []).reduce((sum, amount) => (amount > 0 ? sum + amount : sum), 0),
+    (lines || [])
+      .filter((line) => isIncomeCategory(lineCategory(line)))
+      .reduce((sum, line) => sum + lineAmount(line), 0),
   );
 }
 
-export function expenseTotal(signedAmounts) {
+/** סה״כ הוצאות נטו כמספר חיובי. זיכוי (amount חיובי) מקטין, לא מתהפך לערך מוחלט. */
+export function expenseTotal(lines) {
+  const net = (lines || [])
+    .filter((line) => isExpenseCategory(lineCategory(line)))
+    .reduce((sum, line) => sum + lineAmount(line), 0);
+  return roundMoney2(-net);
+}
+
+export function profitTotal(lines) {
   return roundMoney2(
-    (signedAmounts || []).reduce((sum, amount) => (amount < 0 ? sum + -amount : sum), 0),
+    (lines || [])
+      .filter((line) => !isIgnoredCategory(lineCategory(line)))
+      .reduce((sum, line) => sum + lineAmount(line), 0),
   );
 }
 
-export function profitTotal(signedAmounts) {
-  return roundMoney2((signedAmounts || []).reduce((sum, amount) => sum + Number(amount || 0), 0));
+export async function localFinanceRowCount() {
+  if (!db.financeLines) return 0;
+  return (
+    (await db.financeAccountMap.count())
+    + (await db.financeImports.count())
+    + (await db.financeLines.count())
+  );
+}
+
+export async function financeRestoreWouldWipe(payload) {
+  if (backupHasFinanceTables(payload)) return false;
+  return (await localFinanceRowCount()) > 0;
+}
+
+export function confirmFinanceRestoreWipe(confirmFn = globalThis.confirm) {
+  if (typeof confirmFn !== 'function') return false;
+  return !!confirmFn(FINANCE_RESTORE_WIPE_QUESTION);
+}
+
+export async function listFinanceAccountMap() {
+  if (!db.financeAccountMap) return [];
+  const rows = await db.financeAccountMap.toArray();
+  return rows.sort((a, b) => String(a.accountCode).localeCompare(String(b.accountCode), 'he'));
 }
 
 function sanitizeAccountCode(raw) {

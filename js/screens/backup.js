@@ -174,6 +174,9 @@ export async function renderBackup(container, { navigate } = {}) {
         </button>`) + `
       <button type="button" class="btn btn-secondary" id="backup-history-btn" style="width:100%">
         📜 היסטוריית גיבויים
+      </button>
+      <button type="button" class="btn btn-secondary" id="open-finance-import" style="width:100%;margin-top:8px">
+        ₪ ייבוא דוחות כספים
       </button>`;
 
   const supabaseBody = `
@@ -636,6 +639,7 @@ export async function renderBackup(container, { navigate } = {}) {
 
   const openHistory = () => openBackupHistoryModal(navigate);
   document.getElementById('backup-history-btn')?.addEventListener('click', openHistory);
+  document.getElementById('open-finance-import')?.addEventListener('click', () => navigate?.('finance'));
   document.getElementById('supabase-open-history')?.addEventListener('click', openHistory);
 
   const runManual = async (shareToFiles) => {

@@ -1,4 +1,8 @@
 import { exportAllData, importAllData } from './db.js?v=477';
+import {
+  financeRestoreWouldWipe,
+  confirmFinanceRestoreWipe,
+} from './finance-db.js?v=477';
 import { APP_VERSION } from './version.js?v=477';
 import { defaultColorForIndex } from './chart.js?v=477';
 import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=477';
@@ -544,8 +548,18 @@ export async function parseBackupFile(file) {
   };
 }
 
-export async function restoreBackupPayload(data) {
-  await importAllData(enrichBackupData(data));
+export async function restoreBackupPayload(data, options = {}) {
+  const enriched = enrichBackupData(data);
+  if (await financeRestoreWouldWipe(enriched)) {
+    const allowed = options.allowFinanceWipe === true
+      || (typeof options.confirmFinanceWipe === 'function'
+        ? await options.confirmFinanceWipe()
+        : confirmFinanceRestoreWipe());
+    if (!allowed) throw new ValidationError('השחזור בוטל');
+    await importAllData(enriched, { allowFinanceWipe: true });
+    return;
+  }
+  await importAllData(enriched, { allowFinanceWipe: true });
 }
 
 export async function restoreBackupFromFile(file) {

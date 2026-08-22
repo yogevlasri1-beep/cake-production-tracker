@@ -5,6 +5,7 @@ import { renderManager, managerMeta } from './screens/manager.js?v=477';
 import { renderProcess, processMeta } from './screens/process.js?v=477';
 import { renderReports, reportsMeta } from './screens/reports.js?v=477';
 import { renderBackup, backupMeta } from './screens/backup.js?v=477';
+import { renderFinance, financeMeta } from './screens/finance.js?v=477';
 import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=477';
 import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=477';
 import { renderHaccp, haccpMeta } from './screens/haccp.js?v=477';
@@ -30,6 +31,10 @@ const PRODUCTION_SCREENS = {
   backup: {
     render: (container) => renderBackup(container, { navigate }),
     meta: backupMeta,
+  },
+  finance: {
+    render: (container) => renderFinance(container, { navigate }),
+    meta: financeMeta,
   },
 };
 
