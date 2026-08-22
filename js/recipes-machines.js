@@ -6,9 +6,9 @@ import {
   MACHINE_TARGET_PRODUCT, MACHINE_TARGET_CATEGORY, MACHINE_TARGET_GROUP,
   getMachineMeasureLabel, getMachineUnitLabel, getRecipeForProduct,
   countEffectiveMachineProducts,
-} from './kitchen-db.js?v=480';
-import { escapeHtml, showToast } from './utils.js?v=480';
-import { openModal, closeModal } from './modal.js?v=480';
+} from './kitchen-db.js?v=481';
+import { escapeHtml, showToast } from './utils.js?v=481';
+import { openModal, closeModal } from './modal.js?v=481';
 
 function machineUnitOptionsHTML(measureKind, selected) {
   const kind = measureKind === MACHINE_MEASURE_LENGTH

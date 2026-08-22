@@ -1,13 +1,13 @@
-import { exportAllData, importAllData } from './db.js?v=480';
+import { exportAllData, importAllData } from './db.js?v=481';
 import {
   financeRestoreWouldWipe,
   confirmFinanceRestoreWipe,
-} from './finance-db.js?v=480';
-import { APP_VERSION } from './version.js?v=480';
-import { defaultColorForIndex } from './chart.js?v=480';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=480';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=480';
-import { ValidationError } from './validators.js?v=480';
+} from './finance-db.js?v=481';
+import { APP_VERSION } from './version.js?v=481';
+import { defaultColorForIndex } from './chart.js?v=481';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=481';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=481';
+import { ValidationError } from './validators.js?v=481';
 
 export const BACKUP_VERSION = 3;
 
