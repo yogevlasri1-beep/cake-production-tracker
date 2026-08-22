@@ -18,8 +18,8 @@
  *
  * גרעין ייבוא: מאזן בוחן חודשי (~100–300 שורות), לא תנועות בודדות.
  */
-import { db, ValidationError } from './db.js?v=477';
-import { isValidISODate, sanitizeName } from './validators.js?v=477';
+import { db, ValidationError } from './db.js?v=478';
+import { isValidISODate, sanitizeName } from './validators.js?v=478';
 
 export const FINANCE_BACKUP_KEYS = ['financeAccountMap', 'financeImports', 'financeLines'];
 
