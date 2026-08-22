@@ -1,7 +1,7 @@
 import {
   escapeHtml, formatDate, formatDateTime, showToast,
-} from '../utils.js?v=477';
-import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=477';
+} from '../utils.js?v=478';
+import { searchLotTrace, lotTraceEmptyHint } from '../lot-trace.js?v=478';
 
 export function lotsMeta() {
   return {
@@ -165,7 +165,7 @@ function bindResultActions(container, resultsEl) {
         main.dataset.runId = String(runId);
       }
       try {
-        const { navigateToWorkspace } = await import('../app.js?v=477');
+        const { navigateToWorkspace } = await import('../app.js?v=478');
         await navigateToWorkspace('production', 'process');
       } catch (err) {
         showToast(err.message || 'לא ניתן לפתוח תזרים');
@@ -175,7 +175,7 @@ function bindResultActions(container, resultsEl) {
   resultsEl.querySelectorAll('.lots-close-lot').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
-        const { closeActiveLot } = await import('../inventory-db.js?v=477');
+        const { closeActiveLot } = await import('../inventory-db.js?v=478');
         await closeActiveLot(btn.dataset.lotId);
         showToast('המנה נסגרה ✓');
         const input = container.querySelector('#lots-query');

@@ -28,19 +28,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=477';
-import { getProducts, getCategories } from '../db.js?v=477';
+} from '../kitchen-db.js?v=478';
+import { getProducts, getCategories } from '../db.js?v=478';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=477';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=477';
-import { openModal, closeModal } from '../modal.js?v=477';
-import { requestAutoBackupNow } from '../backup-service.js?v=477';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=477';
-import { openBarcodeScanner } from '../barcode-scan.js?v=477';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=477';
+} from '../supplier-import.js?v=478';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=478';
+import { openModal, closeModal } from '../modal.js?v=478';
+import { requestAutoBackupNow } from '../backup-service.js?v=478';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=478';
+import { openBarcodeScanner } from '../barcode-scan.js?v=478';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=478';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -48,7 +48,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=477';
+} from '../order-reminder.js?v=478';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -333,7 +333,11 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
     ${importUndo ? renderImportUndoBanner(importUndo) : ''}
     <div class="card catalog-intro">
       <div class="filter-row" style="margin-bottom:8px">
-        <div class="card-title" style="margin:0;flex:1">מחסן חומרי גלם</div>
+        <div class="card-title" style="margin:0">מחסן חומרי גלם</div>
+        <button type="button" class="catalog-add-plus" id="catalog-add-material"
+          title="הוסף חומר גלם / אריזה / חומר ניקיון"
+          aria-label="הוסף למחסן">+</button>
+        <div style="flex:1"></div>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-import-btn">📊 Excel</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-dup">אחד כפילויות</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-selected">איחוד נבחרים</button>
@@ -394,6 +398,92 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
   });
   document.getElementById('catalog-merge-similar')?.addEventListener('click', () => {
     openSimilarNamesModal(container);
+  });
+  document.getElementById('catalog-add-material')?.addEventListener('click', () => {
+    openCatalogAddMaterialChooser(container, categories, catId);
+  });
+}
+
+function catalogCategoriesOfKind(categories, kind) {
+  return (categories || []).filter((c) => {
+    if (kind === 'cleaning') return isCleaningSupplierCategory(c);
+    if (kind === 'packaging') return isPackagingSupplierCategory(c);
+    return !isCleaningSupplierCategory(c) && !isPackagingSupplierCategory(c);
+  });
+}
+
+async function openAddMaterialForCategory(container, category) {
+  if (!category?.id) {
+    showToast('אין קטגוריה מתאימה — צור אחת בעריכה');
+    return;
+  }
+  const suppliers = await getSuppliers();
+  await openAddMaterialModal(container, Number(category.id), suppliers, category);
+}
+
+function openCatalogAddMaterialChooser(container, categories, selectedCatId) {
+  const selected = selectedCatId
+    ? (categories || []).find((c) => Number(c.id) === Number(selectedCatId))
+    : null;
+
+  const pickKind = async (kind) => {
+    if (kind === 'cleaning') {
+      await ensureCleaningSupplierCategory().catch(() => {});
+    }
+    const fresh = await getSupplierCategories();
+    const matches = catalogCategoriesOfKind(fresh, kind);
+    if (!matches.length) {
+      showToast(kind === 'packaging'
+        ? 'אין קטגוריית אריזות — צור אחת בלשונית עריכה'
+        : 'אין קטגוריה מתאימה — צור אחת בלשונית עריכה');
+      return;
+    }
+    if (matches.length === 1) {
+      closeModal();
+      await openAddMaterialForCategory(container, matches[0]);
+      return;
+    }
+    openModal({
+      title: kind === 'cleaning' ? 'בחר קטגוריית ניקיון' : (kind === 'packaging' ? 'בחר קטגוריית אריזות' : 'בחר קטגוריית חומרי גלם'),
+      bodyHTML: `
+        <div class="catalog-add-kind-list">
+          ${matches.map((c) => `
+            <button type="button" class="btn btn-secondary catalog-add-kind-btn" data-add-cat="${c.id}">
+              ${renderSupplierCategoryChipLabel(c)}
+            </button>`).join('')}
+        </div>`,
+      footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">ביטול</button>',
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.querySelectorAll('[data-add-cat]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const cat = matches.find((c) => Number(c.id) === Number(btn.dataset.addCat));
+        closeModal();
+        await openAddMaterialForCategory(container, cat);
+      });
+    });
+  };
+
+  openModal({
+    title: 'הוסף למחסן',
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0">מה להוסיף?</p>
+      <div class="catalog-add-kind-list">
+        <button type="button" class="btn btn-secondary catalog-add-kind-btn" data-add-kind="raw">חומר גלם</button>
+        <button type="button" class="btn btn-secondary catalog-add-kind-btn" data-add-kind="packaging">📦 אריזה</button>
+        <button type="button" class="btn btn-secondary catalog-add-kind-btn" data-add-kind="cleaning">🧹 חומר ניקיון</button>
+      </div>
+      ${selected ? `<p class="form-hint">המסנן הפעיל: ${renderSupplierCategoryChipLabel(selected)} — אפשר להוסיף ישר לקטגוריה זו</p>
+        <button type="button" class="btn btn-primary catalog-add-kind-btn" id="catalog-add-in-filter">הוסף ל«${escapeHtml(selected.name)}»</button>` : ''}`,
+    footerHTML: '<button type="button" class="btn btn-secondary modal-cancel">ביטול</button>',
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.querySelectorAll('[data-add-kind]').forEach((btn) => {
+    btn.addEventListener('click', () => pickKind(btn.dataset.addKind));
+  });
+  document.getElementById('catalog-add-in-filter')?.addEventListener('click', async () => {
+    closeModal();
+    await openAddMaterialForCategory(container, selected);
   });
 }
 
@@ -3102,7 +3192,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=477');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=478');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3124,7 +3214,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=477');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=478');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3142,7 +3232,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=477');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=478');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
