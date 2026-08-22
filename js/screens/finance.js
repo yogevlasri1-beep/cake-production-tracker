@@ -279,9 +279,11 @@ async function hydrateClassifications() {
   wizard.classifications = next;
 }
 
-function bind(container, { navigate }) {
+function bind(container, opts) {
+  const { navigate, openBackup } = opts || {};
   document.getElementById('finance-back-backup')?.addEventListener('click', () => {
-    navigate?.('backup');
+    if (typeof openBackup === 'function') openBackup();
+    else navigate?.('backup');
   });
 
   document.getElementById('finance-file')?.addEventListener('change', async (e) => {
@@ -291,7 +293,7 @@ function bind(container, { navigate }) {
       wizard.encodingManual = false;
       wizard.columnMapping = {};
       await loadFileIntoWizard(file);
-      renderFinance(container, { navigate });
+      renderFinance(container, opts);
     } catch (err) {
       showToast(err.message || 'לא ניתן לקרוא את הקובץ');
     }
@@ -310,7 +312,7 @@ function bind(container, { navigate }) {
     if (wizard.file) {
       try {
         await loadFileIntoWizard(wizard.file, wizard.encoding);
-        renderFinance(container, { navigate });
+        renderFinance(container, opts);
       } catch (err) {
         showToast(err.message || 'שגיאת קידוד');
       }
@@ -320,7 +322,7 @@ function bind(container, { navigate }) {
     wizard.sheetName = e.target.value;
     wizard.rows = wizard.bySheet?.[wizard.sheetName] || wizard.rows;
     wizard.columnMapping = guessColumnMapping(wizard.rows[0] || []);
-    renderFinance(container, { navigate });
+    renderFinance(container, opts);
   });
   document.getElementById('finance-period-start')?.addEventListener('change', (e) => {
     wizard.periodStart = e.target.value;
@@ -358,7 +360,7 @@ function bind(container, { navigate }) {
   document.getElementById('finance-prev')?.addEventListener('click', () => {
     wizard.step = Math.max(1, wizard.step - 1);
     wizard.result = null;
-    renderFinance(container, { navigate });
+    renderFinance(container, opts);
   });
 
   document.getElementById('finance-next')?.addEventListener('click', async () => {
@@ -382,7 +384,7 @@ function bind(container, { navigate }) {
         await hydrateClassifications();
         wizard.step = 4;
       }
-      renderFinance(container, { navigate });
+      renderFinance(container, opts);
     } catch (err) {
       showToast(err.message || 'יש להשלים את השלב');
     }
@@ -406,7 +408,7 @@ function bind(container, { navigate }) {
       });
       wizard.result = result;
       showToast(`יובאו ${result.rowCount} שורות ✓`);
-      renderFinance(container, { navigate });
+      renderFinance(container, opts);
     } catch (err) {
       showToast(err.message || 'הייבוא נכשל');
       if (btn) { btn.disabled = false; btn.textContent = 'ייבא'; }
@@ -414,7 +416,7 @@ function bind(container, { navigate }) {
   });
 }
 
-export async function renderFinance(container, { navigate } = {}) {
+export async function renderFinance(container, opts = {}) {
   renderStep(container);
-  bind(container, { navigate });
+  bind(container, opts);
 }

@@ -29,12 +29,8 @@ const PRODUCTION_SCREENS = {
   products: { render: renderProducts, meta: productsMeta },
   reports: { render: renderReports, meta: reportsMeta },
   backup: {
-    render: (container) => renderBackup(container, { navigate }),
+    render: (container) => renderBackup(container, { navigate, openFinance: openFinanceScreen }),
     meta: backupMeta,
-  },
-  finance: {
-    render: (container) => renderFinance(container, { navigate }),
-    meta: financeMeta,
   },
 };
 
@@ -63,6 +59,12 @@ const WORKSPACE_SCREENS = {
   },
   productCatalog: {
     productCatalog: { render: renderProductCatalog, meta: productCatalogMeta },
+  },
+  finance: {
+    finance: {
+      render: (container) => renderFinance(container, { navigate, openBackup: openBackupScreen }),
+      meta: financeMeta,
+    },
   },
 };
 
@@ -143,6 +145,18 @@ function openBackupScreen() {
     updateWorkspaceChrome();
   }
   navigate('backup');
+}
+
+function openFinanceScreen() {
+  closeWorkspaceDrawer();
+  if (!canAccessWorkspace(getCurrentUserRole(), 'finance', getCurrentWorkspaceAccess())) {
+    showToast(PERMISSION_DENIED_MESSAGE);
+    return;
+  }
+  currentWorkspace = 'finance';
+  saveWorkspace('finance');
+  updateWorkspaceChrome();
+  navigate('finance');
 }
 
 function initWorkspaceMenu() {

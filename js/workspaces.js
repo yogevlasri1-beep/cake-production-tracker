@@ -53,6 +53,12 @@ export const WORKSPACES = {
     icon: '🧁',
     defaultScreen: 'productCatalog',
   },
+  finance: {
+    id: 'finance',
+    label: 'כספים',
+    icon: '₪',
+    defaultScreen: 'finance',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';

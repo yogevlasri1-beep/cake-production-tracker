@@ -1361,8 +1361,8 @@ export async function runAllTests() {
   test('permissions — allowedWorkspaces לפי תפקיד + עמדת חשבונות', () => {
     assertEqual(allowedWorkspaces('production').sort().join(','), 'haccp,lots,productCatalog,production,recipes');
     assertEqual(allowedWorkspaces('quality').sort().join(','), 'haccp,inventory,lots,productCatalog,production,recipes,suppliers');
-    assertEqual(allowedWorkspaces('manager').sort().join(','), 'accounts,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
-    assertEqual(allowedWorkspaces('admin').sort().join(','), 'accounts,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
+    assertEqual(allowedWorkspaces('manager').sort().join(','), 'accounts,finance,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
+    assertEqual(allowedWorkspaces('admin').sort().join(','), 'accounts,finance,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
     assertEqual(allowedWorkspaces('unknown-role').sort().join(','), 'haccp,lots,productCatalog,production,recipes');
   });
 
@@ -1393,16 +1393,19 @@ export async function runAllTests() {
     assertOk(!canAccessWorkspace('production', 'suppliers'));
     assertOk(!canAccessWorkspace('production', 'manager'));
     assertOk(!canAccessWorkspace('production', 'accounts'));
+    assertOk(!canAccessWorkspace('production', 'finance'));
 
     assertOk(canAccessWorkspace('quality', 'suppliers'));
     assertOk(canAccessWorkspace('quality', 'lots'));
     assertOk(canAccessWorkspace('quality', 'inventory'));
     assertOk(!canAccessWorkspace('quality', 'manager'));
     assertOk(!canAccessWorkspace('quality', 'accounts'));
+    assertOk(!canAccessWorkspace('quality', 'finance'));
 
     assertOk(canAccessWorkspace('manager', 'manager'));
     assertOk(canAccessWorkspace('manager', 'suppliers'));
     assertOk(canAccessWorkspace('manager', 'accounts'));
+    assertOk(canAccessWorkspace('manager', 'finance'));
     assertOk(canAccessWorkspace('manager', 'lots'));
     assertOk(canAccessWorkspace('manager', 'inventory'));
     assertOk(canAccessWorkspace('admin', 'accounts'));
@@ -1422,6 +1425,9 @@ export async function runAllTests() {
     assertEqual(WORKSPACES.lots?.label, 'מעקב אצוות');
     assertEqual(WORKSPACES.inventory?.defaultScreen, 'inventory');
     assertEqual(WORKSPACES.inventory?.label, 'מלאי');
+    assertEqual(WORKSPACES.finance?.defaultScreen, 'finance');
+    assertEqual(WORKSPACES.finance?.label, 'כספים');
+    assertEqual(workspaceLabel('finance'), 'כספים');
   });
 
   test('lotTraceEmptyHint — טקסט הדרכה', () => {

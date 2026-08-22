@@ -92,7 +92,7 @@ function unsupportedFolderMessage(status) {
   return 'פתח ב-Chrome על Mac/Windows לבחירת תיקייה, או התקן את האפליקציה המקורית.';
 }
 
-export async function renderBackup(container, { navigate } = {}) {
+export async function renderBackup(container, { navigate, openFinance } = {}) {
   const status = await getBackupStatus();
   const {
     settings, snapshots, hasDefaultFolder, canWriteToFolder,
@@ -641,7 +641,10 @@ export async function renderBackup(container, { navigate } = {}) {
 
   const openHistory = () => openBackupHistoryModal(navigate);
   document.getElementById('backup-history-btn')?.addEventListener('click', openHistory);
-  document.getElementById('open-finance-import')?.addEventListener('click', () => navigate?.('finance'));
+  document.getElementById('open-finance-import')?.addEventListener('click', () => {
+    if (typeof openFinance === 'function') openFinance();
+    else navigate?.('finance');
+  });
   document.getElementById('supabase-open-history')?.addEventListener('click', openHistory);
 
   const runManual = async (shareToFiles) => {
