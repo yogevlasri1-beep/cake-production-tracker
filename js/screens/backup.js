@@ -335,7 +335,9 @@ export async function renderBackup(container, { navigate } = {}) {
     const kind = ls.lastErrorKind || '';
     const tip = kind === 'pending' || kind === 'rls'
       ? '<br><span class="form-hint">טיפ: מנהל מאשר משתמשים בעמדת «חשבונות».</span>'
-      : '';
+      : kind === 'auth'
+        ? '<br><span class="form-hint">רענן את הדף והתחבר מחדש.</span>'
+        : '';
     return `<br><span style="color:var(--danger)">${kind === 'pending' || kind === 'rls' ? '⚠️ ' : 'שגיאה: '}${escapeHtml(msg)}</span>${tip}`;
   })()}
         ${ls.seedDone ? '<br>✓ סנכרון ראשוני בוצע' : '<br>ממתין לסנכרון ראשוני...'}

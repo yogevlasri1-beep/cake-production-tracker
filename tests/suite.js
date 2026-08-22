@@ -22,7 +22,13 @@ import {
 import { isAutoBackupDue } from '../js/backup-service.js?v=478';
 import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair } from '../js/kitchen-db.js?v=478';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=478';
-import { supplierCategoryRoleKey, classifyLiveSyncError } from '../js/supabase-sync.js?v=478';
+import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi } from '../js/supabase-sync.js?v=478';
+import {
+  AUTH_RECONNECT_MESSAGE,
+  jwtExpiryMs,
+  sessionNeedsRefresh,
+  isTransientAuthError,
+} from '../js/auth.js?v=478';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
@@ -672,6 +678,43 @@ export async function runAllTests() {
     assertEqual(classifyLiveSyncError('Failed to fetch').kind, 'network');
     assertEqual(classifyLiveSyncError('החשבון ממתין לאישור מנהל').kind, 'pending');
     assertOk(classifyLiveSyncError('Supabase: weird').message);
+  });
+
+  test('classifyLiveSyncError — 401 ו-jwt expired הם התחברות מחדש, לא RLS', () => {
+    const rlsMsg = classifyLiveSyncError('row-level security').message;
+    assertEqual(classifyLiveSyncError('JWT expired').kind, 'auth');
+    assertEqual(classifyLiveSyncError('JWT expired').message, AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('Supabase sync: 401').kind, 'auth');
+    assertEqual(classifyLiveSyncError('Supabase sync: 401').message, AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('invalid JWT').kind, 'auth');
+    assertEqual(classifyLiveSyncError('PGRST301').kind, 'auth');
+    assertEqual(classifyLiveSyncError('new row violates row-level security policy').kind, 'rls');
+    assertOk(classifyLiveSyncError('JWT expired').message !== rlsMsg);
+    assertOk(!String(classifyLiveSyncError('JWT expired').message).includes('אישור מנהל'));
+    assertEqual(formatLiveSyncErrorForUi({ lastErrorKind: 'auth', lastError: 'JWT expired' }), AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('אין חיבור').kind, 'network');
+    assertOk(!String(classifyLiveSyncError('Failed to fetch').message).includes('אישור מנהל'));
+  });
+
+  test('sessionNeedsRefresh — קורא exp מה-JWT ולא רק expires_at מקומי', () => {
+    const encode = (obj) => {
+      const json = JSON.stringify(obj);
+      return btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    const jwt = (exp) => `${encode({ alg: 'none' })}.${encode({ exp })}.sig`;
+    const now = 1_700_000_000_000;
+    const futureLocal = now + 3_600_000;
+    assertEqual(sessionNeedsRefresh({
+      access_token: jwt(Math.floor((now - 120_000) / 1000)),
+      expires_at: futureLocal,
+    }, now), true);
+    assertEqual(sessionNeedsRefresh({
+      access_token: jwt(Math.floor((now + 3_600_000) / 1000)),
+      expires_at: futureLocal,
+    }, now), false);
+    assertOk(jwtExpiryMs(jwt(1_700_000_123)) === 1_700_000_123_000);
+    assertEqual(isTransientAuthError({ kind: 'network', message: 'Failed to fetch' }), true);
+    assertEqual(isTransientAuthError({ kind: 'revoked', message: AUTH_RECONNECT_MESSAGE }), false);
   });
 
   test('applyImportPriceBasis — מחיר לק"ג הופך למחיר אריזה', () => {

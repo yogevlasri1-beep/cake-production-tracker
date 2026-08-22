@@ -37,6 +37,12 @@ import {
   upsertMeta,
 } from './sync/id-map.js?v=478';
 import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=478';
+import {
+  AUTH_RECONNECT_MESSAGE,
+  AUTH_OFFLINE_MESSAGE,
+  isTransientAuthError,
+  forceRefreshSession,
+} from './auth.js?v=478';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -76,8 +82,19 @@ export function classifyLiveSyncError(err) {
     };
   }
   if (
-    /row-level security|rls|permission denied|not authorized|42501|jwt expired|invalid jwt|pgrst301/i.test(raw)
-    || (/403|401/.test(raw) && /supabase/i.test(raw))
+    /jwt expired|invalid jwt|pgrst301|token.*expired/i.test(raw)
+    || /\b401\b/.test(raw)
+    || raw === AUTH_RECONNECT_MESSAGE
+  ) {
+    return {
+      kind: 'auth',
+      message: AUTH_RECONNECT_MESSAGE,
+      technical: raw,
+    };
+  }
+  if (
+    /row-level security|rls|permission denied|not authorized|42501/i.test(raw)
+    || (/\b403\b/.test(raw) && /supabase/i.test(raw))
   ) {
     return {
       kind: 'rls',
@@ -85,11 +102,11 @@ export function classifyLiveSyncError(err) {
       technical: raw,
     };
   }
-  if (/failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed/i.test(raw)
+  if (/failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed|אין חיבור/i.test(raw)
       || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
     return {
       kind: 'network',
-      message: 'בעיית רשת — לא ניתן להתחבר לענן כרגע. הבדוק חיבור ונסה «סנכרן עכשיו».',
+      message: `${AUTH_OFFLINE_MESSAGE} — הסנכרון ינסה שוב כשהרשת תחזור.`,
       technical: raw,
     };
   }
@@ -102,6 +119,7 @@ export function classifyLiveSyncError(err) {
 
 export function formatLiveSyncErrorForUi(live) {
   if (!live?.lastError && !live?.lastErrorKind) return '';
+  if (live.lastErrorKind === 'auth') return AUTH_RECONNECT_MESSAGE;
   const classified = classifyLiveSyncError(live.lastError || live.lastErrorKind);
   if (classified.kind && classified.kind !== 'other') return classified.message;
   if (live.lastErrorKind === 'pending') {
@@ -132,6 +150,9 @@ let applyingRemote = false;
 let flushTimer = null;
 let pullTimer = null;
 let started = false;
+let authHalted = false;
+let liveSyncOnlineHandler = null;
+let liveSyncVisibilityHandler = null;
 let statusListeners = new Set();
 
 export function onLiveSyncStatus(fn) {
@@ -143,6 +164,48 @@ function emitStatus(patch) {
   for (const fn of statusListeners) {
     try { fn(patch); } catch { /* ignore */ }
   }
+}
+
+function stopLiveSyncTimers() {
+  if (pullTimer) {
+    clearInterval(pullTimer);
+    pullTimer = null;
+  }
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (liveSyncOnlineHandler) {
+    window.removeEventListener('online', liveSyncOnlineHandler);
+    liveSyncOnlineHandler = null;
+  }
+  if (liveSyncVisibilityHandler) {
+    document.removeEventListener('visibilitychange', liveSyncVisibilityHandler);
+    liveSyncVisibilityHandler = null;
+  }
+}
+
+export function isLiveSyncAuthHalted() {
+  return authHalted;
+}
+
+export async function haltLiveSyncForAuth() {
+  authHalted = true;
+  stopLiveSyncTimers();
+  started = false;
+  await saveLiveSyncSettings({
+    lastError: AUTH_RECONNECT_MESSAGE,
+    lastErrorKind: 'auth',
+  });
+  try {
+    const { showToast } = await import('./utils.js?v=478');
+    showToast(AUTH_RECONNECT_MESSAGE);
+  } catch { /* ignore */ }
+}
+
+function isAuthExpiredResponse(status, detail) {
+  const text = String(detail || '');
+  return Number(status) === 401 || /jwt expired|invalid jwt|pgrst301/i.test(text);
 }
 
 export async function getLiveSyncSettings() {
@@ -162,7 +225,10 @@ export function isApplyingRemoteSync() {
   return applyingRemote;
 }
 
-async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {} } = {}) {
+async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {}, allowAuthRetry = true } = {}) {
+  if (authHalted) {
+    throw new Error(AUTH_RECONNECT_MESSAGE);
+  }
   const url = buildSupabaseRestUrl(cfg.supabaseUrl, path);
   const accessToken = await resolveSupabaseUserAccessToken();
   const res = await fetch(url, {
@@ -179,6 +245,23 @@ async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {} } =
       const errJson = await res.json();
       detail = errJson.message || errJson.error || errJson.hint || detail;
     } catch { /* ignore */ }
+    const expired = isAuthExpiredResponse(res.status, detail);
+    if (expired && allowAuthRetry) {
+      try {
+        await forceRefreshSession();
+      } catch (err) {
+        if (isTransientAuthError(err)) {
+          throw new Error('Failed to fetch');
+        }
+        await haltLiveSyncForAuth();
+        throw new Error(AUTH_RECONNECT_MESSAGE);
+      }
+      return supabaseFetch(cfg, path, { method, body, headers, allowAuthRetry: false });
+    }
+    if (expired && !allowAuthRetry) {
+      await haltLiveSyncForAuth();
+      throw new Error(AUTH_RECONNECT_MESSAGE);
+    }
     throw new Error(`Supabase sync: ${detail || res.status}`);
   }
   if (res.status === 204) return null;
@@ -322,6 +405,7 @@ async function pushDelete(cfg, collection, localKey, deviceId) {
 }
 
 export async function flushSyncQueue() {
+  if (authHalted) return { flushed: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { flushed: 0 };
   const cfg = await getSupabaseBackupConfig();
@@ -1178,6 +1262,7 @@ export async function pullCollection(collection, { since, deferred } = {}) {
 }
 
 export async function pullAllCollections({ full = false } = {}) {
+  if (authHalted) return { applied: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { applied: 0 };
   const since = full ? null : live.lastPullAt;
@@ -1501,7 +1586,14 @@ export async function dedupeSupplierWorkspaceLight({ force = false } = {}) {
 
 export async function startLiveSync() {
   if (started) return;
+  const token = await resolveSupabaseUserAccessToken();
+  if (authHalted && !token) return;
+  const resumeAfterAuthHalt = authHalted;
+  authHalted = false;
   started = true;
+  if (resumeAfterAuthHalt) {
+    await saveLiveSyncSettings({ lastError: null, lastErrorKind: null });
+  }
   installLiveSyncMiddleware();
 
   const live = await getLiveSyncSettings();
@@ -1509,6 +1601,7 @@ export async function startLiveSync() {
 
   let pulledOk = false;
   const tick = async () => {
+    if (authHalted) return;
     try {
       await flushSyncQueue();
       const pulled = await pullAllCollections({ full: false });
@@ -1591,10 +1684,12 @@ export async function startLiveSync() {
   }
 
   pullTimer = setInterval(tick, 15000);
-  window.addEventListener('online', () => tick());
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') tick();
-  });
+  liveSyncOnlineHandler = () => { if (!authHalted) tick(); };
+  liveSyncVisibilityHandler = () => {
+    if (!authHalted && document.visibilityState === 'visible') tick();
+  };
+  window.addEventListener('online', liveSyncOnlineHandler);
+  document.addEventListener('visibilitychange', liveSyncVisibilityHandler);
 }
 
 /** Push only local rows that are not yet linked to a cloud syncId. */

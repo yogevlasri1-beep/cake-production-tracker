@@ -4,6 +4,9 @@ import { ValidationError } from './validators.js?v=478';
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
 
+export const AUTH_RECONNECT_MESSAGE = 'הסנכרון מושבת, יש להתחבר מחדש';
+export const AUTH_OFFLINE_MESSAGE = 'אין חיבור';
+
 export const USER_ROLES = ['production', 'quality', 'manager', 'admin'];
 
 const USER_ROLE_LABELS = {
@@ -244,37 +247,141 @@ export async function signOut() {
 
 export { getStoredSession };
 
+export function isTransientAuthError(err) {
+  if (err?.kind === 'network') return true;
+  const raw = String(err?.message || err || '');
+  return /failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed/i.test(raw)
+    || (typeof navigator !== 'undefined' && navigator.onLine === false && /fetch|network/i.test(raw));
+}
+
+/** פענוח exp מגוף ה-JWT בלי אימות חתימה. מחזיר ms או null. */
+export function jwtExpiryMs(accessToken) {
+  try {
+    const parts = String(accessToken || '').split('.');
+    if (parts.length < 2) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const payload = JSON.parse(atob(padded));
+    const exp = Number(payload?.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+export function sessionNeedsRefresh(session, now = Date.now()) {
+  if (!session?.access_token) return true;
+  const localExp = Number(session.expires_at);
+  const jwtExp = jwtExpiryMs(session.access_token);
+  const candidates = [localExp, jwtExp].filter((n) => Number.isFinite(n) && n > 0);
+  if (!candidates.length) return true;
+  return Math.min(...candidates) - REFRESH_SKEW_MS <= now;
+}
+
+let refreshInFlight = null;
+
+async function postRefreshToken(session) {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey || !session?.refresh_token) {
+    clearSession();
+    const err = new ValidationError(AUTH_RECONNECT_MESSAGE);
+    err.kind = 'revoked';
+    throw err;
+  }
+  const url = buildAuthUrl(cfg.supabaseUrl, '/token?grant_type=refresh_token');
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.anonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refresh_token: session.refresh_token }),
+    });
+  } catch (err) {
+    const wrapped = new Error(err?.message || 'Failed to fetch');
+    wrapped.kind = 'network';
+    throw wrapped;
+  }
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status >= 500 || res.status === 408 || res.status === 429) {
+      const err = new Error(json?.error_description || json?.msg || 'Failed to fetch');
+      err.kind = 'network';
+      throw err;
+    }
+    clearSession();
+    const err = new ValidationError(AUTH_RECONNECT_MESSAGE);
+    err.kind = 'revoked';
+    throw err;
+  }
+  // 200 בלי JSON (למשל דף פורטל של Wi‑Fi) — זו רשת, לא ביטול טוקן
+  if (!json) {
+    const err = new Error('Failed to fetch');
+    err.kind = 'network';
+    throw err;
+  }
+  if (!json.access_token) {
+    clearSession();
+    const err = new ValidationError(AUTH_RECONNECT_MESSAGE);
+    err.kind = 'revoked';
+    throw err;
+  }
+  const refreshed = saveSession(toSession(json));
+  try {
+    return await attachProfile(cfg, refreshed, { requireActive: true });
+  } catch (err) {
+    if (isTransientAuthError(err)) return getStoredSession() || refreshed;
+    throw err;
+  }
+}
+
+/** רענון כפוי — גם אם expires_at המקומי עדיין בעתיד. בקשות מקבילות מתכנסות לניסיון אחד. */
+export function forceRefreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const session = getStoredSession();
+      if (!session?.refresh_token) {
+        clearSession();
+        const err = new ValidationError(AUTH_RECONNECT_MESSAGE);
+        err.kind = 'revoked';
+        throw err;
+      }
+      return postRefreshToken(session);
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
 export async function getValidSession() {
   const session = getStoredSession();
   if (!session?.access_token) return null;
-  if (session.expires_at - REFRESH_SKEW_MS > Date.now()) {
+  if (!sessionNeedsRefresh(session)) {
+    if (session.status !== undefined && session.status !== 'active') {
+      clearSession();
+      return null;
+    }
     if (session.role !== undefined && session.status !== undefined) {
-      if (session.status !== 'active') {
-        clearSession();
-        return null;
-      }
       return session;
     }
     const cfg = await getSupabaseBackupConfig();
     try {
       return await attachProfile(cfg, session, { requireActive: true });
-    } catch {
+    } catch (err) {
+      if (isTransientAuthError(err)) return session;
       return null;
     }
   }
 
-  const cfg = await getSupabaseBackupConfig();
-  if (!cfg.supabaseUrl || !cfg.anonKey || !session.refresh_token) {
-    clearSession();
-    return null;
-  }
   try {
-    const json = await authFetch(cfg, '/token?grant_type=refresh_token', {
-      refresh_token: session.refresh_token,
-    });
-    const refreshed = saveSession(toSession(json));
-    return await attachProfile(cfg, refreshed, { requireActive: true });
-  } catch {
+    return await forceRefreshSession();
+  } catch (err) {
+    if (isTransientAuthError(err)) {
+      return session;
+    }
     clearSession();
     return null;
   }
