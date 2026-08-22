@@ -19,7 +19,7 @@ import { initNetworkCheck } from './network.js?v=480';
 import { registerServiceWorker } from './sw-register.js?v=480';
 import { APP_VERSION } from './version.js?v=480';
 import { showToast } from './utils.js?v=480';
-import { getCurrentUserRole, getCurrentWorkspaceAccess } from './auth.js?v=480';
+import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=480';
 import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=480';
 import './modal.js?v=480';
 
@@ -172,6 +172,13 @@ function initWorkspaceMenu() {
   document.getElementById('workspace-menu-backup')?.addEventListener('click', (e) => {
     e.stopPropagation();
     openBackupScreen();
+  });
+
+  document.getElementById('workspace-menu-sign-out')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!confirm('להתנתק מהחשבון?')) return;
+    await signOut();
+    location.reload();
   });
 
   document.addEventListener('click', (e) => {

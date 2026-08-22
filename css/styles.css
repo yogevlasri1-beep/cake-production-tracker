@@ -106,11 +106,48 @@ body {
 }
 
 .workspace-drawer-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: min(78dvh, calc(100dvh - 6.5rem - env(safe-area-inset-bottom, 0px)));
   background: #fff;
   border-radius: 14px;
   box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
   padding: 8px;
   border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.workspace-drawer-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.workspace-drawer-footer {
+  flex-shrink: 0;
+  padding: 8px 8px 4px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.workspace-menu-sign-out {
+  display: block;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  border-radius: 10px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.workspace-menu-sign-out:active {
+  filter: brightness(0.92);
 }
 
 .workspace-drawer-title {
