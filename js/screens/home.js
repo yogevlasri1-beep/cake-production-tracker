@@ -3,23 +3,27 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=481';
+} from '../db.js?v=482';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=481';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=481';
+} from '../utils.js?v=482';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=482';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=481';
-import { requestAutoBackupNow } from '../backup-service.js?v=481';
+} from '../calc.js?v=482';
+import { requestAutoBackupNow } from '../backup-service.js?v=482';
+import {
+  computeProductionMaterialUsage,
+  formatMaterialUsageQty,
+} from '../kitchen-db.js?v=482';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=481';
+} from '../order-reminder.js?v=482';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -469,6 +473,62 @@ function buildProcessSection(processLogs, catMap, viewMode, periodLabel) {
     <div class="card process-card">${body}</div>`;
 }
 
+function buildMaterialsUsageSection(usage, { isDay, periodLabel }) {
+  const title = isDay ? 'חומרי גלם בשימוש · יומי' : 'חומרי גלם בשימוש · חודשי';
+  const qtyHint = isDay ? 'הכמות ששימשה ביום זה' : 'סה"כ הכמות ששימשה בחודש זה';
+  const items = usage?.items || [];
+  const categories = usage?.categories || [];
+  const skipped = usage?.skippedProducts || [];
+
+  if (!items.length) {
+    const skipHint = skipped.length
+      ? `יש ייצור בלי מתכון/הרכב (${skipped.slice(0, 3).map((p) => escapeHtml(p.name)).join(', ')}${skipped.length > 3 ? '…' : ''})`
+      : 'אין רישומי ייצור עם מתכון או הרכב מוצר בתקופה זו';
+    return `
+      <div class="section-header home-section-header">
+        <h2>${title}</h2>
+      </div>
+      <p class="home-section-subtitle">${periodLabel} · ${qtyHint}</p>
+      <div class="card home-materials-card">
+        <p class="home-cat-empty">${skipHint}</p>
+      </div>`;
+  }
+
+  const grouped = categories.length > 1;
+  const body = grouped
+    ? categories.map((cat) => `
+        <div class="home-materials-cat">${escapeHtml(cat.categoryName)}</div>
+        <ul class="home-materials-list">
+          ${cat.items.map((item) => `
+            <li class="home-materials-item">
+              <span class="home-materials-name">${escapeHtml(item.name)}</span>
+              <span class="home-materials-qty">${escapeHtml(formatMaterialUsageQty(item.totalQty, item.unitKind))}</span>
+            </li>`).join('')}
+        </ul>`).join('')
+    : `<ul class="home-materials-list">
+        ${items.map((item) => `
+          <li class="home-materials-item">
+            <span class="home-materials-name">${escapeHtml(item.name)}</span>
+            <span class="home-materials-qty">${escapeHtml(formatMaterialUsageQty(item.totalQty, item.unitKind))}</span>
+          </li>`).join('')}
+      </ul>`;
+
+  const skipNote = skipped.length
+    ? `<p class="home-materials-hint">לא נכללו ${skipped.length} מוצרים בלי מתכון או הרכב</p>`
+    : '';
+
+  return `
+    <div class="section-header home-section-header">
+      <h2>${title}</h2>
+    </div>
+    <p class="home-section-subtitle">${periodLabel} · ${qtyHint}</p>
+    <div class="card home-materials-card">
+      ${body}
+      <p class="home-materials-hint">סה"כ ${items.length} חומרי גלם</p>
+      ${skipNote}
+    </div>`;
+}
+
 function bindCategoryCardClicks(container) {
   container.querySelectorAll('.home-cat-card').forEach((card) => {
     const open = () => {
@@ -529,7 +589,10 @@ export async function renderHome(container) {
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
   const activeProducts = allProducts.filter((p) => p.active);
-  const totals = await getProductionTotals(entries, productMap);
+  const [totals, materialUsage] = await Promise.all([
+    getProductionTotals(entries, productMap),
+    computeProductionMaterialUsage(entries, { products: allProducts, categories }),
+  ]);
 
   const totalTarget = await getTarget('total', null, targetPeriod);
   const totalPct = pct(totals.total, totalTarget);
@@ -547,6 +610,7 @@ export async function renderHome(container) {
 
   const processSection = buildProcessSection(processLogs, catMap, viewMode, periodLabel);
   const activeFlowsSection = buildActiveFlowsSection(activeRuns, catMap, productMap, groupMap);
+  const materialsSection = buildMaterialsUsageSection(materialUsage, { isDay, periodLabel });
   const orderReminder = await getOrderReminderInfo();
 
   document.getElementById('page-title').textContent = 'מעקב יצור';
@@ -596,6 +660,8 @@ export async function renderHome(container) {
       ? '<div class="empty-state"><p>הוסף קטגוריות במסך מוצרים</p></div>'
       : (categorySections || `<div class="empty-state"><p>${noProductionHint}</p></div>`)}
 
+    ${materialsSection}
+
     ${activeFlowsSection}
 
     ${processSection}
@@ -642,7 +708,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigate } = await import('../app.js?v=481');
+    const { navigate } = await import('../app.js?v=482');
     navigate('suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -669,7 +735,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=481');
+    const { navigate } = await import('../app.js?v=482');
     navigate('process');
   };
 
@@ -694,7 +760,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=481');
+    const { navigate } = await import('../app.js?v=482');
     navigate('backup');
   });
 

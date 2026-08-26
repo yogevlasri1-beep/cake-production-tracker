@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=481';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=481';
+} from './runner.js?v=482';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=482';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -16,12 +16,13 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
+  computeProductionMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
-} from '../js/kitchen-db.js?v=481';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=481';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=481';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=481';
+} from '../js/kitchen-db.js?v=482';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=482';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=482';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=482';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -330,6 +331,49 @@ export async function runIntegrationTests() {
       assertOk(flourNeed, 'נמצא צורך בקמח');
       // 40 יחידות / 10 יחידות-לאצווה = 4 אצוות; 4 * 1000 גרם = 4000 גרם קמח, לא 40000.
       assertEqual(flourNeed.totalQty, 4000, 'כמות קמח נכונה: 4 אצוות * 1000 גרם, לא 40 * 1000');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — יום לפי מתכון, חודש מסכם ימים, פחת לא נספר',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות שימוש');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגת שימוש' });
+      const recCatId = await addRecipeCategory('מתכוני שימוש');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגת שימוש',
+        linkedProductId: productId,
+        portionWeightGrams: 100,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח שימוש', quantity: 1000, unitKind: 'g' });
+
+      await addProductionEntry({ date: '2026-08-02', productId, quantity: 20 });
+      await addProductionEntry({ date: '2026-08-15', productId, quantity: 20 });
+      await addProductionEntry({ date: '2026-08-15', productId, quantity: 10, isWaste: true });
+
+      const dayEntries = await db.productionEntries.where('date').equals('2026-08-02').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח שימוש');
+      assertOk(dayFlour, 'נמצא קמח ביום');
+      // 20 יחידות / 10 יחידות-לאצווה = 2 אצוות; 2 * 1000 גרם = 2 ק"ג
+      assertEqual(dayFlour.totalQty, 2, 'קמח יומי: 2 ק"ג');
+      assertEqual(dayFlour.unitKind, 'kg');
+
+      const monthEntries = await db.productionEntries
+        .where('date')
+        .between('2026-08-01', '2026-08-31', true, true)
+        .toArray();
+      const monthUsage = await computeProductionMaterialUsage(monthEntries);
+      const monthFlour = monthUsage.items.find((n) => n.name === 'קמח שימוש');
+      assertOk(monthFlour, 'נמצא קמח בחודש');
+      // 40 יחידות ייצור (בלי פחת) = 4 אצוות * 1000 גרם = 4 ק"ג
+      assertEqual(monthFlour.totalQty, 4, 'קמח חודשי: 4 ק"ג מכל הימים, בלי פחת');
     },
   );
 

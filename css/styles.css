@@ -6551,6 +6551,59 @@ table.report-table tfoot td {
   text-align: center;
 }
 
+.home-screen .home-materials-card {
+  padding: 14px 16px 12px;
+}
+
+.home-screen .home-materials-cat {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  margin: 12px 0 4px;
+}
+
+.home-screen .home-materials-cat:first-child {
+  margin-top: 0;
+}
+
+.home-screen .home-materials-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.home-screen .home-materials-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.home-screen .home-materials-item:last-child {
+  border-bottom: none;
+}
+
+.home-screen .home-materials-name {
+  font-weight: 650;
+  text-align: right;
+}
+
+.home-screen .home-materials-qty {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.home-screen .home-materials-hint {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 10px 0 0;
+  text-align: center;
+}
+
 .home-screen .home-charts-block .card-title,
 .home-screen .history-card .card-title {
   text-align: center;
