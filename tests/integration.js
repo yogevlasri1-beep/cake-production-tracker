@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=482';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=482';
+} from './runner.js?v=483';
+import { db, initDB, addCategory, addProduct, addProductionEntry, createFlow, startProductionRun, getProductionRun, getRunProductionEntries, repairProductionAfterSync, completeAllRunSteps } from '../js/db.js?v=483';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -19,10 +19,10 @@ import {
   computeProductionMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
-} from '../js/kitchen-db.js?v=482';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=482';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=482';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=482';
+} from '../js/kitchen-db.js?v=483';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=483';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=483';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=483';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -637,6 +637,42 @@ export async function runIntegrationTests() {
       repairedV2.ingredients.map((i) => i.name).sort().join(','),
       ['קמח', 'סוכר'].sort().join(','),
     );
+  });
+
+  await testAsync('repairProductionAfterSync — מחבר ייצור יתום וסוגר תזרים שכל שלביו הושלמו', async () => {
+    const catId = await addCategory('עוגות בדיקה תזרים');
+    const productId = await addProduct({ categoryId: catId, name: 'עוגת בדיקה תזרים', active: true });
+    const flowId = await createFlow({ categoryId: catId, name: 'תזרים בדיקה' });
+    const runId = await startProductionRun({ categoryId: catId, flowId });
+    const run = await getProductionRun(runId);
+    assertOk(run && run.status === 'active', 'run starts active');
+
+    const entryId = await addProductionEntry({
+      date: run.date,
+      productId,
+      quantity: 8,
+    });
+    const orphan = await db.productionEntries.get(entryId);
+    assertOk(!orphan.runId, 'entry starts without runId');
+
+    const result = await repairProductionAfterSync();
+    assertOk(result.linked >= 1, 'orphan entry relinked');
+
+    const linked = await db.productionEntries.get(entryId);
+    assertEqual(Number(linked.runId), Number(runId), 'entry points at the run');
+
+    const shown = await getRunProductionEntries(runId);
+    assertOk(shown.some((e) => Number(e.id) === Number(entryId)), 'run view shows old production');
+
+    await completeAllRunSteps(runId);
+    await db.productionRuns.update(runId, { status: 'active', completedAt: null });
+    const reopened = await getProductionRun(runId, { normalize: false });
+    assertEqual(reopened.status, 'active', 'simulated stale active after disconnect');
+
+    const recovered = await repairProductionAfterSync();
+    assertOk(recovered.recovered >= 1, 'stale active run closed');
+    const fixed = await getProductionRun(runId, { normalize: false });
+    assertEqual(fixed.status, 'completed', 'run is completed again');
   });
 
 await flushTests();

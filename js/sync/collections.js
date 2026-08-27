@@ -199,6 +199,8 @@ export const COLLECTION_FKS = {
 export const ARRAY_FKS = {
   rawMaterials: { portionProductIds: 'products' },
   haccpFlowVerifications: { verifierMemberIds: 'haccpTeamMembers' },
+  // Remapped on the deferred second pull pass (entries are synced after steps).
+  runStepStates: { productionEntryIds: 'productionEntries' },
 };
 
 /**
@@ -424,10 +426,12 @@ export function rowFingerprint(collection, row) {
         ? `${collection}|${row.bakingProfileId}|${row.scopeType ?? ''}|${row.scopeId ?? ''}`
         : '';
     case 'productionEntries':
-      return `${collection}|${row.date ?? ''}|${row.productId ?? ''}|${row.runId ?? ''}|${row.isWaste ? '1' : '0'}`;
+      return `${collection}|${row.date ?? ''}|${Number(row.productId) || row.productId || ''}|${Number(row.runId) || row.runId || ''}|${row.isWaste ? '1' : '0'}`;
     case 'productionRuns':
+      // startedAt keeps two same-day / same-flow / same-batch runs from collapsing
+      // into one "active" ghost after reconnect.
       return row.date
-        ? `${collection}|${row.date}|${row.batchNumber ?? ''}|${row.flowId ?? ''}`
+        ? `${collection}|${row.date}|${row.batchNumber ?? ''}|${Number(row.flowId) || row.flowId || ''}|${row.startedAt ?? ''}`
         : '';
     case 'runStepStates':
       return row.runId != null
@@ -593,8 +597,9 @@ export function rowFingerprint(collection, row) {
  * Looser fingerprint used only by local/cloud dedupe. For recipe ingredients,
  * two copies of the same line that differ only in linked material are treated
  * as duplicates (post-merge bug); pull-match still uses rowFingerprint.
- * For production entries, ignore runId so null-run twins of a run-linked row
- * (left by orphan-run cleanup) collapse without wiping legitimate different qtys.
+ * For production entries, keep runId so two runs of the same product/qty/date
+ * are not deleted. Null-run twins are collapsed separately via
+ * rowProductionEntryTwinFingerprint.
  */
 export function rowDedupeFingerprint(collection, row) {
   if (!row) return '';
@@ -607,7 +612,10 @@ export function rowDedupeFingerprint(collection, row) {
     const pid = Number(row.productId) || row.productId || '';
     const qtyNum = Number(row.quantity);
     const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
-    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}|${row.isWaste ? '1' : '0'}` : '';
+    const runKey = row.runId != null && row.runId !== ''
+      ? String(Number(row.runId) || row.runId)
+      : 'norun';
+    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}|${row.isWaste ? '1' : '0'}|${runKey}` : '';
   }
   // חומרי גלם: אותו שם+ספק = כפילות גם תחת קטגוריות שונות
   // (seed «חומרי גלם יבשים» מול «חומרי גלם» אמיתי — מחיר על הכפילות לא נראה בראשי)
@@ -674,4 +682,63 @@ export function rowNameFingerprint(collection, row) {
   }
   return n ? `${collection}|name|${n}` : '';
 }
+
+/**
+ * Same-day / same-product / same-qty twin of a production entry, ignoring runId.
+ * Used only to drop a null-run copy when a run-linked row already exists.
+ */
+export function rowProductionEntryTwinFingerprint(row) {
+  if (!row) return '';
+  const date = row.date ?? '';
+  const pid = Number(row.productId) || row.productId || '';
+  const qtyNum = Number(row.quantity);
+  const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
+  return date && pid !== '' ? `productionEntries|${date}|${pid}|${qty}|${row.isWaste ? '1' : '0'}` : '';
+}
+
+function unionIdList(localIds, remoteIds) {
+  const out = [];
+  const seen = new Set();
+  for (const id of [...(localIds || []), ...(remoteIds || [])]) {
+    if (id == null || id === '') continue;
+    const n = Number(id);
+    const key = Number.isFinite(n) && n !== 0 ? String(n) : String(id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(Number.isFinite(n) && n !== 0 ? n : id);
+  }
+  return out;
+}
+
+/**
+ * Keep local completions when a stale cloud row would reopen a finished run/step,
+ * and union productionEntryIds so an empty cloud array cannot hide ייצור.
+ */
+export function mergeRemoteTransactionalRow(collection, local, remote) {
+  if (!remote) return remote;
+  if (!local) return { ...remote };
+  const out = { ...remote };
+  if (collection === 'productionRuns') {
+    if (local.status === 'completed' && remote.status !== 'completed') {
+      out.status = 'completed';
+      out.completedAt = local.completedAt || remote.completedAt || null;
+      const localIdx = Number(local.currentStepIndex);
+      const remoteIdx = Number(remote.currentStepIndex);
+      out.currentStepIndex = Math.max(
+        Number.isFinite(localIdx) ? localIdx : 0,
+        Number.isFinite(remoteIdx) ? remoteIdx : 0,
+      );
+    }
+  }
+  if (collection === 'runStepStates') {
+    if (local.status === 'completed' && remote.status !== 'completed') {
+      out.status = 'completed';
+      out.startedAt = local.startedAt || remote.startedAt || null;
+      out.completedAt = local.completedAt || remote.completedAt || null;
+    }
+    out.productionEntryIds = unionIdList(local.productionEntryIds, remote.productionEntryIds);
+  }
+  return out;
+}
+
 
