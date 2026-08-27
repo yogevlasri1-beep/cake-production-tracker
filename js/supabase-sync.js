@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=482';
+import { db, getSetting, setSetting } from './db.js?v=483';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=482';
+} from './supabase-backup.js?v=483';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,9 +23,11 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
+  rowProductionEntryTwinFingerprint,
+  mergeRemoteTransactionalRow,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=482';
+} from './sync/collections.js?v=483';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,14 +37,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=482';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=482';
+} from './sync/id-map.js?v=483';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=483';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=482';
+} from './auth.js?v=483';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -132,8 +134,9 @@ export function formatLiveSyncErrorForUi(live) {
  * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
  * v17: rebalance materials/suppliers wrongly dumped into אריזות back to חומ״ג/ניקיון.
  * v18: coerce string FKs + unassigned-material fingerprint includes category.
+ * v19: production entry dedupe keeps runId (orphan twins cleaned separately).
  */
-const DEDUPE_VERSION = 18;
+const DEDUPE_VERSION = 19;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -143,8 +146,9 @@ const DEDUPE_VERSION = 18;
  * v8: after cloud SQL cleanup of seed categories — full re-pull + material cross-category dedupe.
  * v9: merge «חומרי גלם»/«חומרי גלם יבשים» + re-pull after unique packaging/cleaning indexes.
  * v10: coerce string FKs + reconcile unitPrice from price history after pull.
+ * v11: repair orphan production entries + do not reopen completed runs.
  */
-const REPAIR_VERSION = 10;
+const REPAIR_VERSION = 11;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -198,7 +202,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=482');
+    const { showToast } = await import('./utils.js?v=483');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -665,6 +669,7 @@ export async function dedupeLocalSyncCollections() {
   // אחרי מיזוג קטגוריות — ספקים/חומרים יכולים לחלוק fingerprint רק עכשיו
   removed += await dedupeCollectionByFingerprint('suppliers');
   removed += await dedupeCollectionByFingerprint('rawMaterials');
+  removed += await dedupeOrphanProductionEntryTwins();
   const repaired = await repairOrphanSupplierCategoryLinks();
   return { removed, repaired };
 }
@@ -1077,6 +1082,47 @@ async function dedupeFlowChecklistLinksByName() {
   return removed;
 }
 
+async function hasPendingLocalWrite(collection, localKey) {
+  if (!localKey || !db.syncQueue) return false;
+  const op = await db.syncQueue
+    .where('status')
+    .anyOf('pending', 'error')
+    .filter((item) => (
+      item.collection === collection
+      && String(item.localKey) === String(localKey)
+    ))
+    .first();
+  return !!op;
+}
+
+/**
+ * Keep a run-linked production entry and drop the null-run twin created when
+ * orphan-run cleanup nulled runId — without collapsing two real runs.
+ */
+async function dedupeOrphanProductionEntryTwins() {
+  if (!db.productionEntries) return 0;
+  const rows = await db.productionEntries.toArray();
+  const groups = new Map();
+  for (const row of rows) {
+    const fp = rowProductionEntryTwinFingerprint(row);
+    if (!fp) continue;
+    if (!groups.has(fp)) groups.set(fp, []);
+    groups.get(fp).push(row);
+  }
+  let removed = 0;
+  for (const list of groups.values()) {
+    if (list.length < 2) continue;
+    const withRun = list.filter((r) => r.runId != null && r.runId !== '');
+    const withoutRun = list.filter((r) => r.runId == null || r.runId === '');
+    if (!withRun.length || !withoutRun.length) continue;
+    for (const drop of withoutRun) {
+      await deleteLocalDuplicateRow('productionEntries', drop);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false } = {}) {
   if (!cloudRow?.id) return false;
 
@@ -1139,7 +1185,9 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     return false;
   }
 
-  // Pending local delete not yet flushed — don't undo a merge mid-sync.
+  // Pending local write (upsert or delete) not yet flushed — keep local.
+  // After a disconnect the completed run lives in Dexie but syncMeta still
+  // has the old timestamp, so LWW would otherwise reopen it from the cloud.
   if (existingMeta) {
     const pendingDelete = await db.syncQueue
       .where('status')
@@ -1151,6 +1199,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
       ))
       .first();
     if (pendingDelete) return false;
+    if (await hasPendingLocalWrite(collection, existingMeta.localKey)) return false;
   }
 
   const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});
@@ -1192,20 +1241,27 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
         }
         return true;
       }
+      const localMeta = await getMetaByLocal(collection, String(match.id));
+      if (localMeta && !shouldApplyRemote(localMeta.updatedAt, remoteUpdated)) return false;
+      if (await hasPendingLocalWrite(collection, String(match.id))) return false;
       existingMeta = {
         collection,
         localKey: String(match.id),
         syncId,
-        updatedAt: remoteUpdated,
+        updatedAt: localMeta?.updatedAt || remoteUpdated,
       };
     }
+  } else if (await hasPendingLocalWrite(collection, existingMeta.localKey)) {
+    return false;
   }
 
   applyingRemote = true;
   try {
     if (existingMeta) {
       const localId = Number(existingMeta.localKey);
-      const { id: _drop, ...rest } = payload;
+      const local = Number.isFinite(localId) ? await readLocalRecord(collection, localId) : null;
+      const merged = mergeRemoteTransactionalRow(collection, local, payload);
+      const { id: _drop, ...rest } = merged;
       let localKey = existingMeta.localKey;
       const updated = Number.isFinite(localId) ? await db[collection].update(localId, rest) : 0;
       if (!updated) {
@@ -1289,9 +1345,13 @@ export async function pullAllCollections({ full = false } = {}) {
       }
     }
     await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null, lastErrorKind: null });
-    if (applied > 0) {
+    if (applied > 0 || full) {
       try { await coerceSupplierNumericFks(); } catch { /* ignore */ }
       try { await reconcileRawMaterialPricesFromHistory(); } catch { /* ignore */ }
+      try {
+        const { repairProductionAfterSync } = await import('./db.js?v=483');
+        await repairProductionAfterSync();
+      } catch { /* ignore */ }
     }
   } catch (err) {
     const classified = classifyLiveSyncError(err);

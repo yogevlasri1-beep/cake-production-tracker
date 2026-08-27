@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=482';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=482';
-import { defaultColorForIndex } from './chart.js?v=482';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=482';
-import { logAuditEvent } from './audit.js?v=482';
+} from './validators.js?v=483';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=483';
+import { defaultColorForIndex } from './chart.js?v=483';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=483';
+import { logAuditEvent } from './audit.js?v=483';
 
 export { ValidationError };
 
@@ -3611,6 +3611,11 @@ export async function initDB() {
   } catch (err) {
     console.warn('product recipes cost default sync', err);
   }
+  try {
+    await repairProductionAfterSync();
+  } catch (err) {
+    console.warn('production run repair', err);
+  }
 }
 
 export async function getSetting(key) {
@@ -5077,7 +5082,7 @@ async function collectProductionEntryIdsForRun(runId) {
     /* index may be missing on very old DB */
   }
 
-  const legacy = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
+  const legacy = await db.productionEntries.filter((e) => runIdMatches(e.runId, rid)).toArray();
   legacy.forEach((e) => entryIds.add(e.id));
 
   return entryIds;
@@ -5111,6 +5116,13 @@ export async function removeRunStepProductionEntry(runId, stepIndex, entryId) {
   await deleteProductionEntryFully(Number(entryId));
 }
 
+function runIdMatches(entryRunId, rid) {
+  if (entryRunId == null || entryRunId === '') return false;
+  const n = Number(entryRunId);
+  if (Number.isFinite(n) && n === rid) return true;
+  return String(entryRunId) === String(rid);
+}
+
 export async function getRunProductionEntries(runId) {
   const rid = sanitizeProductId(runId);
   if (!rid) return [];
@@ -5118,7 +5130,7 @@ export async function getRunProductionEntries(runId) {
   const seen = new Set();
   const entries = [];
 
-  const byRunId = await db.productionEntries.filter((e) => Number(e.runId) === rid).toArray();
+  const byRunId = await db.productionEntries.filter((e) => runIdMatches(e.runId, rid)).toArray();
   for (const e of byRunId) {
     if (!seen.has(e.id)) {
       seen.add(e.id);
@@ -5141,6 +5153,131 @@ export async function getRunProductionEntries(runId) {
 
   entries.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
   return entries;
+}
+
+async function relinkOrphanProductionEntries() {
+  if (!db.productionEntries || !db.productionRuns) return 0;
+  const runs = await db.productionRuns.toArray();
+  if (!runs.length) return 0;
+  const runIds = new Set(runs.map((r) => Number(r.id)).filter(Boolean));
+  const entries = await db.productionEntries.toArray();
+  const products = db.products ? await db.products.toArray() : [];
+  const productById = new Map(products.map((p) => [Number(p.id), p]));
+  const runsByDate = new Map();
+  for (const run of runs) {
+    const d = run.date || '';
+    if (!runsByDate.has(d)) runsByDate.set(d, []);
+    runsByDate.get(d).push(run);
+  }
+
+  let linked = 0;
+  for (const entry of entries) {
+    const rid = Number(entry.runId);
+    if (rid && runIds.has(rid)) continue;
+    const candidates = runsByDate.get(entry.date) || [];
+    if (!candidates.length) continue;
+    let match = null;
+    if (candidates.length === 1) {
+      match = candidates[0];
+    } else {
+      const product = productById.get(Number(entry.productId));
+      match = candidates.find((run) => {
+        if (run.productId && Number(run.productId) === Number(entry.productId)) return true;
+        const catIds = Array.isArray(run.categoryIds) && run.categoryIds.length
+          ? run.categoryIds.map(Number)
+          : (run.categoryId ? [Number(run.categoryId)] : []);
+        return !!(product && catIds.includes(Number(product.categoryId)));
+      }) || null;
+    }
+    if (!match) continue;
+    await db.productionEntries.update(entry.id, { runId: match.id });
+    linked += 1;
+  }
+  return linked;
+}
+
+async function attachRunProductionEntryIds() {
+  if (!db.productionEntries || !db.runStepStates) return 0;
+  const runs = await db.productionRuns.toArray();
+  let attached = 0;
+  for (const run of runs) {
+    const steps = await db.runStepStates.where('runId').equals(run.id).toArray();
+    if (!steps.length) continue;
+    const entries = await db.productionEntries
+      .filter((e) => runIdMatches(e.runId, Number(run.id)))
+      .toArray();
+    if (!entries.length) continue;
+    steps.sort((a, b) => a.stepIndex - b.stepIndex);
+    const prod = steps.find((s) => s.tracksProduction)
+      || steps.find((s) => s.stepName === PRODUCTION_STEP_NAME)
+      || steps[steps.length - 1];
+    if (!prod) continue;
+    const existing = new Set((prod.productionEntryIds || []).map(Number).filter(Boolean));
+    let changed = false;
+    for (const entry of entries) {
+      if (!existing.has(Number(entry.id))) {
+        existing.add(Number(entry.id));
+        changed = true;
+      }
+    }
+    if (changed) {
+      await db.runStepStates.update(prod.id, { productionEntryIds: [...existing] });
+      attached += 1;
+    }
+  }
+  return attached;
+}
+
+async function recoverEffectivelyFinishedRun(run) {
+  if (!run?.id || run.status === 'completed' || !run.steps?.length) return false;
+  const prodIdx = resolveProductionStepIndex(run);
+  if (prodIdx < 0) return finalizeProductionRunIfComplete(run);
+  const prodStep = run.steps[prodIdx];
+
+  // שלבים שנוספו מסוף התבנית אחרי ששלב התיעוד כבר הושלם — לא משאירים תזרים «פעיל»
+  const trailing = run.steps.slice(prodIdx + 1);
+  if (
+    prodStep.status === 'completed'
+    && trailing.length
+    && trailing.every((s) => (
+      (s.status === 'pending' || s.status === 'active')
+      && !s.startedAt
+      && !(s.productionEntryIds || []).length
+    ))
+  ) {
+    const finishedAt = nowISO();
+    for (const step of trailing) {
+      await db.runStepStates.update(step.id, {
+        status: 'completed',
+        completedAt: finishedAt,
+      });
+      step.status = 'completed';
+      step.completedAt = finishedAt;
+    }
+  }
+
+  return finalizeProductionRunIfComplete(run);
+}
+
+/**
+ * After reconnect/sync: reattach ייצור to its run, and close runs that were
+ * already finished but came back as "active" with leftover template steps.
+ */
+export async function repairProductionAfterSync() {
+  const linked = await relinkOrphanProductionEntries();
+  const attached = await attachRunProductionEntryIds();
+  let recovered = 0;
+  const active = await db.productionRuns.where('status').equals('active').toArray();
+  for (const row of active) {
+    const run = await getProductionRun(row.id, { normalize: true });
+    if (!run) continue;
+    if (run.status === 'completed') {
+      recovered += 1;
+      continue;
+    }
+    if (await recoverEffectivelyFinishedRun(run)) recovered += 1;
+  }
+  return { linked, attached, recovered };
 }
 
 export async function getEntriesForDate(date) {
@@ -8772,8 +8909,8 @@ export async function updateRunStepFields(runId, stepIndex, {
   }
 }
 
-/** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרim העדכניות (שלבים, דגלים, שמות) */
-export async function syncProductionRunWithFlow(runId) {
+/** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרים העדכניות (שלבים, דגלים, שמות) */
+export async function syncProductionRunWithFlow(runId, { addMissingSteps = true } = {}) {
   const run = await getProductionRun(runId, { normalize: false });
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (!run.flowId) return { updated: false, reason: 'no-flow' };
@@ -8811,7 +8948,7 @@ export async function syncProductionRunWithFlow(runId) {
           await db.runStepStates.update(ex.id, patch);
           changed = true;
         }
-      } else {
+      } else if (addMissingSteps) {
         let stepStatus = 'pending';
         if (run.status === 'completed') stepStatus = 'completed';
         else if (i < run.currentStepIndex) stepStatus = 'completed';
@@ -8859,7 +8996,7 @@ export async function syncAllActiveProductionRuns() {
   let updated = 0;
   for (const run of runs) {
     try {
-      const res = await syncProductionRunWithFlow(run.id);
+      const res = await syncProductionRunWithFlow(run.id, { addMissingSteps: false });
       if (res.updated) updated += 1;
     } catch {
       /* skip broken runs */
