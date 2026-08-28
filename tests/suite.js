@@ -10,7 +10,7 @@ import {
   isWasteProductionRecord, metricsProductionValueBreakdown, productLineValue,
 } from '../js/calc.js?v=482';
 import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=482';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=482';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary, backupHasTable } from '../js/backup.js?v=482';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -2737,9 +2737,9 @@ export async function runAllTests() {
       activityPresets: [],
     });
     assertEqual(enrichedMissing.__financeBackupPresent, false);
-    assertEqual(Array.isArray(enrichedMissing.financeAccountMap), true);
-    assertEqual(Array.isArray(enrichedMissing.financeImports), true);
-    assertEqual(Array.isArray(enrichedMissing.financeLines), true);
+    assertEqual(Object.prototype.hasOwnProperty.call(enrichedMissing, 'financeAccountMap'), false);
+    assertEqual(Object.prototype.hasOwnProperty.call(enrichedMissing, 'financeImports'), false);
+    assertEqual(Object.prototype.hasOwnProperty.call(enrichedMissing, 'financeLines'), false);
     assertEqual(backupHasFinanceTables(enrichedMissing), false);
     const enrichedTwice = enrichBackupData(enrichedMissing);
     assertEqual(enrichedTwice.__financeBackupPresent, false);
@@ -2770,6 +2770,41 @@ export async function runAllTests() {
     assertEqual(SYNC_ORDER.includes('financeLines'), false);
     assertEqual(SYNC_ORDER.includes('financeImports'), false);
     assertEqual(SYNC_ORDER.includes('financeAccountMap'), false);
+  });
+
+  test('גיבוי — מפתח חסר לא הופך ל-[] ; רק [] מפורש נשאר ריק', () => {
+    const missing = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+    });
+    assertEqual(Object.prototype.hasOwnProperty.call(missing, 'bakingProfiles'), false);
+    assertEqual(Object.prototype.hasOwnProperty.call(missing, 'recipeGroups'), false);
+    assertEqual(Object.prototype.hasOwnProperty.call(missing, 'categoryGroups'), false);
+    assertEqual(backupHasTable(missing, 'bakingProfiles'), false);
+    assertEqual(backupHasTable(missing, 'recipeGroups'), false);
+
+    const explicitEmpty = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      bakingProfiles: [],
+      recipeGroups: [],
+    });
+    assertEqual(backupHasTable(explicitEmpty, 'bakingProfiles'), true);
+    assertEqual(explicitEmpty.bakingProfiles.length, 0);
+    assertEqual(backupHasTable(explicitEmpty, 'recipeGroups'), true);
+    assertEqual(explicitEmpty.recipeGroups.length, 0);
+
+    const twice = enrichBackupData(missing);
+    assertEqual(Object.prototype.hasOwnProperty.call(twice, 'bakingProfiles'), false);
+    assertEqual(Object.prototype.hasOwnProperty.call(twice, 'recipeGroups'), false);
   });
 
   test('finance — שחזור גיבוי ישן שואל ולא חוסם אוטומטית', () => {

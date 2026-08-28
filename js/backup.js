@@ -1,4 +1,4 @@
-import { exportAllData, importAllData } from './db.js?v=482';
+import { exportAllData, importAllData, backupHasTable } from './db.js?v=482';
 import {
   financeRestoreWouldWipe,
   confirmFinanceRestoreWipe,
@@ -12,6 +12,32 @@ import { ValidationError } from './validators.js?v=482';
 export const BACKUP_VERSION = 3;
 
 const SUPPORTED_BACKUP_VERSIONS = new Set([1, 2, 3]);
+
+const OPTIONAL_BACKUP_TABLE_KEYS = [
+  'categoryGroups', 'flows', 'flowSteps', 'flowPortionPresets', 'groupPortionPresets',
+  'portionPresetLinks', 'portionPresetIngredientSettings',
+  'groupPreparations', 'flowPreparations',
+  'recipeGroups', 'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
+  'recipeCategories', 'recipes', 'recipeVersions', 'recipeIngredients',
+  'bakingProfiles', 'bakingProfileProducts', 'bakingProfileScopes',
+  'productRecipeComponents', 'productPortionComponents', 'productFlowLinks',
+  'productionMachines', 'productionMachineFields', 'productionMachineProducts', 'productionMachineProductValues',
+  'supplierCategories', 'suppliers', 'rawMaterials',
+  'inventoryBalances', 'inventoryMovements', 'activeLots', 'supplierShortages', 'rawMaterialPriceHistory',
+  'weeklyProductionPlans', 'weeklyProductionPlanItems',
+  'productionRuns', 'runStepStates', 'productPreparations', 'runPreparationChecks',
+  'flowCleaningTasks', 'checklistTasks', 'flowChecklistItems', 'runCleaningChecks',
+  'managerPlans', 'managerPlanItems', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
+  'managerResponsibilityAreas', 'managerEmployees', 'managerDepartments',
+  'departmentCleaningLists', 'departmentCleaningTasks',
+  'purchaseCategories', 'purchaseItems',
+  'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses',
+  'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps',
+  'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions',
+  'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls', 'haccpMonitoringLogs',
+  'financeAccountMap', 'financeImports', 'financeLines',
+  'settings',
+];
 
 function todayFileStamp() {
   const d = new Date();
@@ -166,96 +192,41 @@ export function enrichBackupData(raw) {
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
     .map((step, index) => normalizeBackupFlowStep(step, index));
 
-  return {
+  const out = {
     categories,
-    categoryGroups,
     products,
-    productionEntries: raw.productionEntries || [],
-    targets: raw.targets || [],
-    processLogs: raw.processLogs || [],
-    activityPresets: raw.activityPresets || [],
-    flows,
-    flowSteps,
-    flowPortionPresets: raw.flowPortionPresets || [],
-    groupPortionPresets: raw.groupPortionPresets || [],
-    portionPresetLinks: raw.portionPresetLinks || [],
-    portionPresetIngredientSettings: raw.portionPresetIngredientSettings || [],
-    groupPreparations: raw.groupPreparations || [],
-    flowPreparations: raw.flowPreparations || [],
-    recipeGroups: raw.recipeGroups || [],
-    recipeProductLinks: raw.recipeProductLinks || [],
-    recipeProductCategoryLinks: raw.recipeProductCategoryLinks || [],
-    recipeProductGroupLinks: raw.recipeProductGroupLinks || [],
-    recipeCategories: raw.recipeCategories || [],
-    recipes: raw.recipes || [],
-    recipeVersions: raw.recipeVersions || [],
-    recipeIngredients: raw.recipeIngredients || [],
-    bakingProfiles: raw.bakingProfiles || [],
-    bakingProfileProducts: raw.bakingProfileProducts || [],
-    bakingProfileScopes: raw.bakingProfileScopes || [],
-    productRecipeComponents: raw.productRecipeComponents || [],
-    productPortionComponents: raw.productPortionComponents || [],
-    productFlowLinks: raw.productFlowLinks || [],
-    productionMachines: raw.productionMachines || [],
-    productionMachineFields: raw.productionMachineFields || [],
-    productionMachineProducts: raw.productionMachineProducts || [],
-    productionMachineProductValues: raw.productionMachineProductValues || [],
-    supplierCategories: raw.supplierCategories || [],
-    suppliers: raw.suppliers || [],
-    rawMaterials: raw.rawMaterials || [],
-    inventoryBalances: raw.inventoryBalances || [],
-    inventoryMovements: raw.inventoryMovements || [],
-    supplierShortages: raw.supplierShortages || [],
-    rawMaterialPriceHistory: raw.rawMaterialPriceHistory || [],
-    weeklyProductionPlans: raw.weeklyProductionPlans || [],
-    weeklyProductionPlanItems: raw.weeklyProductionPlanItems || [],
-    productionRuns: raw.productionRuns || [],
-    runStepStates: raw.runStepStates || [],
-    productPreparations: raw.productPreparations || [],
-    runPreparationChecks: raw.runPreparationChecks || [],
-    flowCleaningTasks: raw.flowCleaningTasks || [],
-    checklistTasks: raw.checklistTasks || [],
-    flowChecklistItems: raw.flowChecklistItems || [],
-    runCleaningChecks: raw.runCleaningChecks || [],
-    managerPlans: raw.managerPlans || [],
-    managerPlanItems: raw.managerPlanItems || [],
-    managerTasks: raw.managerTasks || [],
-    managerIncidents: raw.managerIncidents || [],
-    managerShiftNotes: raw.managerShiftNotes || [],
-    managerResponsibilityAreas: raw.managerResponsibilityAreas || [],
-    managerEmployees: raw.managerEmployees || [],
-    managerDepartments: raw.managerDepartments || [],
-    departmentCleaningLists: raw.departmentCleaningLists || [],
-    departmentCleaningTasks: raw.departmentCleaningTasks || [],
-    purchaseCategories: raw.purchaseCategories || [],
-    purchaseItems: raw.purchaseItems || [],
-    haccpTeamMembers: raw.haccpTeamMembers || [],
-    haccpPlans: raw.haccpPlans || [],
-    haccpProductDescriptions: raw.haccpProductDescriptions || [],
-    haccpIntendedUses: raw.haccpIntendedUses || [],
-    haccpFlowSteps: raw.haccpFlowSteps || [],
-    haccpFlowVerifications: raw.haccpFlowVerifications || [],
-    haccpHazards: raw.haccpHazards || [],
-    haccpCcps: raw.haccpCcps || [],
-    haccpCriticalLimits: raw.haccpCriticalLimits || [],
-    haccpMonitoring: raw.haccpMonitoring || [],
-    haccpCorrectiveActions: raw.haccpCorrectiveActions || [],
-    haccpVerificationProcs: raw.haccpVerificationProcs || [],
-    haccpDocuments: raw.haccpDocuments || [],
-    haccpPrpControls: raw.haccpPrpControls || [],
-    haccpMonitoringLogs: raw.haccpMonitoringLogs || [],
-    financeAccountMap: Array.isArray(raw.financeAccountMap) ? raw.financeAccountMap : [],
-    financeImports: Array.isArray(raw.financeImports) ? raw.financeImports : [],
-    financeLines: Array.isArray(raw.financeLines) ? raw.financeLines : [],
-    __financeBackupPresent: raw.__financeBackupPresent === true || (
-      raw.__financeBackupPresent !== false
-      && Object.prototype.hasOwnProperty.call(raw, 'financeAccountMap')
+    productionEntries: Array.isArray(raw.productionEntries) ? raw.productionEntries : [],
+    targets: Array.isArray(raw.targets) ? raw.targets : [],
+    processLogs: Array.isArray(raw.processLogs) ? raw.processLogs : [],
+    activityPresets: Array.isArray(raw.activityPresets) ? raw.activityPresets : [],
+  };
+
+  if (Object.prototype.hasOwnProperty.call(raw, 'categoryGroups')) out.categoryGroups = categoryGroups;
+  if (Object.prototype.hasOwnProperty.call(raw, 'flows')) out.flows = flows;
+  if (Object.prototype.hasOwnProperty.call(raw, 'flowSteps')) out.flowSteps = flowSteps;
+
+  for (const key of OPTIONAL_BACKUP_TABLE_KEYS) {
+    if (key === 'categoryGroups' || key === 'flows' || key === 'flowSteps') continue;
+    if (!Object.prototype.hasOwnProperty.call(raw, key)) continue;
+    out[key] = Array.isArray(raw[key]) ? raw[key] : [];
+  }
+
+  if (raw.__financeBackupPresent === true) out.__financeBackupPresent = true;
+  else if (raw.__financeBackupPresent === false) out.__financeBackupPresent = false;
+  else {
+    out.__financeBackupPresent = (
+      Object.prototype.hasOwnProperty.call(raw, 'financeAccountMap')
       && Object.prototype.hasOwnProperty.call(raw, 'financeImports')
       && Object.prototype.hasOwnProperty.call(raw, 'financeLines')
-    ),
-    settings: raw.settings || [],
-  };
+      && Array.isArray(raw.financeAccountMap)
+      && Array.isArray(raw.financeImports)
+      && Array.isArray(raw.financeLines)
+    );
+  }
+  return out;
 }
+
+export { backupHasTable };
 
 export function summarizeBackupData(data) {
   return {
@@ -427,74 +398,12 @@ function validateBackupPayload(raw) {
       throw new ValidationError(`חסרה טבלה בגיבוי: ${key}`);
     }
   }
-  if (!Array.isArray(data.categoryGroups)) {
-    data.categoryGroups = [];
+  for (const key of OPTIONAL_BACKUP_TABLE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(data, key)) continue;
+    if (!Array.isArray(data[key])) {
+      throw new ValidationError(`נתוני גיבוי לא תקינים: ${key}`);
+    }
   }
-  if (!Array.isArray(data.flowSteps)) data.flowSteps = [];
-  if (!Array.isArray(data.flows)) data.flows = [];
-  if (!Array.isArray(data.flowPortionPresets)) data.flowPortionPresets = [];
-  if (!Array.isArray(data.productionRuns)) data.productionRuns = [];
-  if (!Array.isArray(data.runStepStates)) data.runStepStates = [];
-  if (!Array.isArray(data.groupPreparations)) data.groupPreparations = [];
-  if (!Array.isArray(data.flowPreparations)) data.flowPreparations = [];
-  if (!Array.isArray(data.productPreparations)) data.productPreparations = [];
-  if (!Array.isArray(data.runPreparationChecks)) data.runPreparationChecks = [];
-  if (!Array.isArray(data.flowCleaningTasks)) data.flowCleaningTasks = [];
-  if (!Array.isArray(data.checklistTasks)) data.checklistTasks = [];
-  if (!Array.isArray(data.flowChecklistItems)) data.flowChecklistItems = [];
-  if (!Array.isArray(data.runCleaningChecks)) data.runCleaningChecks = [];
-  if (!Array.isArray(data.recipeGroups)) data.recipeGroups = [];
-  if (!Array.isArray(data.recipeProductLinks)) data.recipeProductLinks = [];
-  if (!Array.isArray(data.recipeProductCategoryLinks)) data.recipeProductCategoryLinks = [];
-  if (!Array.isArray(data.recipeProductGroupLinks)) data.recipeProductGroupLinks = [];
-  if (!Array.isArray(data.recipeCategories)) data.recipeCategories = [];
-  if (!Array.isArray(data.recipes)) data.recipes = [];
-  if (!Array.isArray(data.recipeVersions)) data.recipeVersions = [];
-  if (!Array.isArray(data.recipeIngredients)) data.recipeIngredients = [];
-  if (!Array.isArray(data.bakingProfiles)) data.bakingProfiles = [];
-  if (!Array.isArray(data.bakingProfileProducts)) data.bakingProfileProducts = [];
-  if (!Array.isArray(data.bakingProfileScopes)) data.bakingProfileScopes = [];
-  if (!Array.isArray(data.productRecipeComponents)) data.productRecipeComponents = [];
-  if (!Array.isArray(data.productPortionComponents)) data.productPortionComponents = [];
-  if (!Array.isArray(data.productFlowLinks)) data.productFlowLinks = [];
-  if (!Array.isArray(data.productionMachines)) data.productionMachines = [];
-  if (!Array.isArray(data.productionMachineFields)) data.productionMachineFields = [];
-  if (!Array.isArray(data.productionMachineProducts)) data.productionMachineProducts = [];
-  if (!Array.isArray(data.productionMachineProductValues)) data.productionMachineProductValues = [];
-  if (!Array.isArray(data.supplierCategories)) data.supplierCategories = [];
-  if (!Array.isArray(data.suppliers)) data.suppliers = [];
-  if (!Array.isArray(data.rawMaterials)) data.rawMaterials = [];
-  if (!Array.isArray(data.inventoryBalances)) data.inventoryBalances = [];
-  if (!Array.isArray(data.inventoryMovements)) data.inventoryMovements = [];
-  if (!Array.isArray(data.supplierShortages)) data.supplierShortages = [];
-  if (!Array.isArray(data.rawMaterialPriceHistory)) data.rawMaterialPriceHistory = [];
-  if (!Array.isArray(data.weeklyProductionPlans)) data.weeklyProductionPlans = [];
-  if (!Array.isArray(data.weeklyProductionPlanItems)) data.weeklyProductionPlanItems = [];
-  if (!Array.isArray(data.groupPortionPresets)) data.groupPortionPresets = [];
-  if (!Array.isArray(data.portionPresetLinks)) data.portionPresetLinks = [];
-  if (!Array.isArray(data.portionPresetIngredientSettings)) data.portionPresetIngredientSettings = [];
-  if (!Array.isArray(data.managerPlans)) data.managerPlans = [];
-  if (!Array.isArray(data.managerPlanItems)) data.managerPlanItems = [];
-  if (!Array.isArray(data.managerTasks)) data.managerTasks = [];
-  if (!Array.isArray(data.managerIncidents)) data.managerIncidents = [];
-  if (!Array.isArray(data.managerShiftNotes)) data.managerShiftNotes = [];
-  if (!Array.isArray(data.managerResponsibilityAreas)) data.managerResponsibilityAreas = [];
-  if (!Array.isArray(data.managerEmployees)) data.managerEmployees = [];
-  if (!Array.isArray(data.managerDepartments)) data.managerDepartments = [];
-  if (!Array.isArray(data.departmentCleaningLists)) data.departmentCleaningLists = [];
-  if (!Array.isArray(data.departmentCleaningTasks)) data.departmentCleaningTasks = [];
-  if (!Array.isArray(data.purchaseCategories)) data.purchaseCategories = [];
-  if (!Array.isArray(data.purchaseItems)) data.purchaseItems = [];
-  if (!Array.isArray(data.haccpTeamMembers)) data.haccpTeamMembers = [];
-  if (!Array.isArray(data.haccpPlans)) data.haccpPlans = [];
-  if (!Array.isArray(data.haccpProductDescriptions)) data.haccpProductDescriptions = [];
-  if (!Array.isArray(data.haccpIntendedUses)) data.haccpIntendedUses = [];
-  if (!Array.isArray(data.haccpFlowSteps)) data.haccpFlowSteps = [];
-  if (!Array.isArray(data.haccpFlowVerifications)) data.haccpFlowVerifications = [];
-  if (!Array.isArray(data.haccpHazards)) data.haccpHazards = [];
-  if (!Array.isArray(data.haccpCcps)) data.haccpCcps = [];
-  if (!Array.isArray(data.haccpCriticalLimits)) data.haccpCriticalLimits = [];
-  if (!Array.isArray(data.haccpMonitoring)) data.haccpMonitoring = [];
   return enrichBackupData(data);
 }
 

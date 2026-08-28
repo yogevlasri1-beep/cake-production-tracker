@@ -28,6 +28,48 @@ export function pickDbTables(...names) {
   return names.map((name) => db[name]).filter(Boolean);
 }
 
+/** מפתח קיים במפורש כמערך — כולל []. מפתח חסר ≠ טבלה ריקה. */
+export function backupHasTable(data, key) {
+  return !!data && typeof data === 'object'
+    && Object.prototype.hasOwnProperty.call(data, key)
+    && Array.isArray(data[key]);
+}
+
+async function replaceImportedTable(table, rows) {
+  if (!table) return;
+  await table.clear();
+  if (Array.isArray(rows) && rows.length) await table.bulkPut(rows);
+}
+
+const IMPORT_OPTIONAL_TABLES = [
+  'categoryGroups',
+  'weeklyProductionPlanItems', 'weeklyProductionPlans',
+  'productRecipeComponents', 'productPortionComponents', 'productFlowLinks',
+  'productionMachineProductValues', 'productionMachineProducts',
+  'productionMachineFields', 'productionMachines',
+  'purchaseItems', 'purchaseCategories',
+  'haccpTeamMembers', 'haccpMonitoringLogs',
+  'inventoryBalances', 'inventoryMovements', 'activeLots',
+  'haccpPrpControls', 'haccpDocuments', 'haccpVerificationProcs', 'haccpCorrectiveActions',
+  'haccpMonitoring', 'haccpCriticalLimits', 'haccpCcps', 'haccpHazards',
+  'haccpFlowVerifications', 'haccpFlowSteps', 'haccpIntendedUses',
+  'haccpProductDescriptions', 'haccpPlans',
+  'financeLines', 'financeImports', 'financeAccountMap',
+  'recipeIngredients', 'recipeVersions',
+  'recipeProductLinks', 'recipeProductCategoryLinks', 'recipeProductGroupLinks',
+  'recipes', 'recipeCategories', 'recipeGroups',
+  'bakingProfileProducts', 'bakingProfileScopes', 'bakingProfiles',
+  'rawMaterialPriceHistory', 'rawMaterials', 'supplierShortages', 'suppliers', 'supplierCategories',
+  'runPreparationChecks', 'runCleaningChecks', 'runStepStates', 'productionRuns',
+  'flowPortionPresets', 'groupPortionPresets', 'portionPresetLinks', 'portionPresetIngredientSettings',
+  'groupPreparations', 'flowCleaningTasks', 'flowChecklistItems', 'checklistTasks',
+  'flowSteps', 'flows',
+  'managerPlanItems', 'managerPlans', 'managerTasks', 'managerIncidents', 'managerShiftNotes',
+  'managerEmployees', 'managerResponsibilityAreas',
+  'departmentCleaningTasks', 'departmentCleaningLists', 'managerDepartments',
+  'productPreparations',
+];
+
 const PRODUCTION_DB_TABLES = [
   'productionRuns', 'runStepStates', 'settings', 'runPreparationChecks', 'runCleaningChecks',
   'flows', 'flowSteps', 'flowCleaningTasks', 'flowChecklistItems', 'checklistTasks',
@@ -4291,120 +4333,39 @@ export async function importAllData(payload, options = {}) {
       throw new ValidationError(`נתוני גיבוי לא תקינים: ${key}`);
     }
   }
-  if (!Array.isArray(payload.categoryGroups)) {
-    payload.categoryGroups = [];
-  }
-  if (!Array.isArray(payload.flowSteps)) payload.flowSteps = [];
-  if (!Array.isArray(payload.flows)) payload.flows = [];
-  if (!Array.isArray(payload.flowPortionPresets)) payload.flowPortionPresets = [];
-  if (!Array.isArray(payload.groupPortionPresets)) payload.groupPortionPresets = [];
-  if (!Array.isArray(payload.portionPresetLinks)) payload.portionPresetLinks = [];
-  if (!Array.isArray(payload.portionPresetIngredientSettings)) payload.portionPresetIngredientSettings = [];
-  if (!Array.isArray(payload.groupPreparations)) payload.groupPreparations = [];
-  if (!Array.isArray(payload.flowPreparations)) payload.flowPreparations = [];
-  if (!Array.isArray(payload.productionRuns)) payload.productionRuns = [];
-  if (!Array.isArray(payload.runStepStates)) payload.runStepStates = [];
-  if (!Array.isArray(payload.productPreparations)) payload.productPreparations = [];
-  if (!Array.isArray(payload.runPreparationChecks)) payload.runPreparationChecks = [];
-  if (!Array.isArray(payload.flowCleaningTasks)) payload.flowCleaningTasks = [];
-  if (!Array.isArray(payload.checklistTasks)) payload.checklistTasks = [];
-  if (!Array.isArray(payload.flowChecklistItems)) payload.flowChecklistItems = [];
-  if (!Array.isArray(payload.runCleaningChecks)) payload.runCleaningChecks = [];
-  if (!Array.isArray(payload.weeklyProductionPlanItems)) payload.weeklyProductionPlanItems = [];
-  if (!Array.isArray(payload.recipeGroups)) payload.recipeGroups = [];
-  if (!Array.isArray(payload.recipeProductLinks)) payload.recipeProductLinks = [];
-  if (!Array.isArray(payload.recipeProductCategoryLinks)) payload.recipeProductCategoryLinks = [];
-  if (!Array.isArray(payload.recipeProductGroupLinks)) payload.recipeProductGroupLinks = [];
-  if (!Array.isArray(payload.recipeCategories)) payload.recipeCategories = [];
-  if (!Array.isArray(payload.recipes)) payload.recipes = [];
-  if (!Array.isArray(payload.recipeVersions)) payload.recipeVersions = [];
-  if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
-  if (!Array.isArray(payload.recipeIngredients)) payload.recipeIngredients = [];
-  if (!Array.isArray(payload.supplierCategories)) payload.supplierCategories = [];
-  if (!Array.isArray(payload.suppliers)) payload.suppliers = [];
-  if (!Array.isArray(payload.rawMaterials)) payload.rawMaterials = [];
-  if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
-  if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
-  if (!Array.isArray(payload.activeLots)) payload.activeLots = [];
-  if (!Array.isArray(payload.rawMaterialPriceHistory)) payload.rawMaterialPriceHistory = [];
-  if (!Array.isArray(payload.supplierShortages)) payload.supplierShortages = [];
-  if (!Array.isArray(payload.weeklyProductionPlans)) payload.weeklyProductionPlans = [];
-  if (!Array.isArray(payload.managerPlans)) payload.managerPlans = [];
-  if (!Array.isArray(payload.managerPlanItems)) payload.managerPlanItems = [];
-  if (!Array.isArray(payload.purchaseCategories)) payload.purchaseCategories = [];
-  if (!Array.isArray(payload.purchaseItems)) payload.purchaseItems = [];
-  if (!Array.isArray(payload.managerTasks)) payload.managerTasks = [];
-  if (!Array.isArray(payload.managerIncidents)) payload.managerIncidents = [];
-  if (!Array.isArray(payload.managerShiftNotes)) payload.managerShiftNotes = [];
-  if (!Array.isArray(payload.managerResponsibilityAreas)) payload.managerResponsibilityAreas = [];
-  if (!Array.isArray(payload.managerEmployees)) payload.managerEmployees = [];
-  if (!Array.isArray(payload.managerDepartments)) payload.managerDepartments = [];
-  if (!Array.isArray(payload.departmentCleaningLists)) payload.departmentCleaningLists = [];
-  if (!Array.isArray(payload.departmentCleaningTasks)) payload.departmentCleaningTasks = [];
-  if (!Array.isArray(payload.bakingProfiles)) payload.bakingProfiles = [];
-  if (!Array.isArray(payload.bakingProfileProducts)) payload.bakingProfileProducts = [];
-  if (!Array.isArray(payload.bakingProfileScopes)) payload.bakingProfileScopes = [];
-  if (!Array.isArray(payload.productRecipeComponents)) payload.productRecipeComponents = [];
-  if (!Array.isArray(payload.productPortionComponents)) payload.productPortionComponents = [];
-  if (!Array.isArray(payload.productFlowLinks)) payload.productFlowLinks = [];
-  if (!Array.isArray(payload.productionMachines)) payload.productionMachines = [];
-  if (!Array.isArray(payload.productionMachineFields)) payload.productionMachineFields = [];
-  if (!Array.isArray(payload.productionMachineProducts)) payload.productionMachineProducts = [];
-  if (!Array.isArray(payload.productionMachineProductValues)) payload.productionMachineProductValues = [];
-  if (!Array.isArray(payload.haccpTeamMembers)) payload.haccpTeamMembers = [];
-  if (!Array.isArray(payload.haccpPlans)) payload.haccpPlans = [];
-  if (!Array.isArray(payload.haccpProductDescriptions)) payload.haccpProductDescriptions = [];
-  if (!Array.isArray(payload.haccpIntendedUses)) payload.haccpIntendedUses = [];
-  if (!Array.isArray(payload.haccpFlowSteps)) payload.haccpFlowSteps = [];
-  if (!Array.isArray(payload.haccpFlowVerifications)) payload.haccpFlowVerifications = [];
-  if (!Array.isArray(payload.haccpHazards)) payload.haccpHazards = [];
-  if (!Array.isArray(payload.haccpCcps)) payload.haccpCcps = [];
-  if (!Array.isArray(payload.haccpCriticalLimits)) payload.haccpCriticalLimits = [];
-  if (!Array.isArray(payload.haccpMonitoring)) payload.haccpMonitoring = [];
-  if (!Array.isArray(payload.haccpCorrectiveActions)) payload.haccpCorrectiveActions = [];
-  if (!Array.isArray(payload.haccpVerificationProcs)) payload.haccpVerificationProcs = [];
-  if (!Array.isArray(payload.haccpDocuments)) payload.haccpDocuments = [];
-  if (!Array.isArray(payload.haccpPrpControls)) payload.haccpPrpControls = [];
-  if (!Array.isArray(payload.haccpMonitoringLogs)) payload.haccpMonitoringLogs = [];
-  if (!Array.isArray(payload.inventoryBalances)) payload.inventoryBalances = [];
-  if (!Array.isArray(payload.inventoryMovements)) payload.inventoryMovements = [];
-  if (!Array.isArray(payload.activeLots)) payload.activeLots = [];
-  const financeBackupPresent = payload.__financeBackupPresent === true
-    || (
-      payload.__financeBackupPresent !== false
-      && Object.prototype.hasOwnProperty.call(payload, 'financeAccountMap')
-      && Object.prototype.hasOwnProperty.call(payload, 'financeImports')
-      && Object.prototype.hasOwnProperty.call(payload, 'financeLines')
-      && Array.isArray(payload.financeAccountMap)
-      && Array.isArray(payload.financeImports)
-      && Array.isArray(payload.financeLines)
-    );
-  if (!Array.isArray(payload.financeAccountMap)) payload.financeAccountMap = [];
-  if (!Array.isArray(payload.financeImports)) payload.financeImports = [];
-  if (!Array.isArray(payload.financeLines)) payload.financeLines = [];
-  if (!financeBackupPresent && db.financeLines && options.allowFinanceWipe !== true) {
-    const localFinanceCount = (
-      await db.financeAccountMap.count()
-    ) + (
-      await db.financeImports.count()
-    ) + (
-      await db.financeLines.count()
-    );
-    if (localFinanceCount > 0) {
-      throw new ValidationError(
-        'הגיבוי הזה לא מכיל נתוני כספים, שחזור ימחק אותם — להמשיך?',
+
+  const financeKeys = ['financeAccountMap', 'financeImports', 'financeLines'];
+  const presentFinance = financeKeys.filter((key) => backupHasTable(payload, key));
+  if (presentFinance.length && options.allowFinanceWipe !== true) {
+    const incoming = presentFinance.reduce((n, key) => n + payload[key].length, 0);
+    if (incoming === 0 && db.financeLines) {
+      const localFinanceCount = (
+        await db.financeAccountMap.count()
+      ) + (
+        await db.financeImports.count()
+      ) + (
+        await db.financeLines.count()
       );
+      if (localFinanceCount > 0) {
+        throw new ValidationError(
+          'הגיבוי הזה לא מכיל נתוני כספים, שחזור ימחק אותם — להמשיך?',
+        );
+      }
     }
   }
 
-  if (!payload.flows.length && payload.flowSteps.length) {
-    payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
+  if (backupHasTable(payload, 'flowSteps') && payload.flowSteps.length) {
+    if (!backupHasTable(payload, 'flows') || !payload.flows.length) {
+      payload.flows = migrateLegacyFlowStepsToFlows(payload.flowSteps);
+    }
   }
 
-  const categoryGroups = payload.categoryGroups
-    .slice()
-    .sort(compareGroups)
-    .map(stripCategoryGroupForImport);
+  if (backupHasTable(payload, 'categoryGroups')) {
+    payload.categoryGroups = payload.categoryGroups
+      .slice()
+      .sort(compareGroups)
+      .map(stripCategoryGroupForImport);
+  }
   const categories = payload.categories
     .slice()
     .sort(compareCategories)
@@ -4438,256 +4399,51 @@ export async function importAllData(payload, options = {}) {
     ),
     async (tx) => {
       await db.productionEntries.clear();
-      await db.processLogs.clear();
-      await db.weeklyProductionPlanItems.clear();
-      await db.weeklyProductionPlans.clear();
-      await db.productRecipeComponents.clear();
-      await db.productPortionComponents?.clear?.();
-      await db.productFlowLinks?.clear?.();
-      await db.productionMachineProductValues?.clear?.();
-      await db.productionMachineProducts?.clear?.();
-      await db.productionMachineFields?.clear?.();
-      await db.productionMachines?.clear?.();
-      await db.purchaseItems?.clear?.();
-      await db.purchaseCategories?.clear?.();
-      await db.haccpTeamMembers?.clear?.();
-      await db.haccpMonitoringLogs?.clear?.();
-      await db.inventoryBalances?.clear?.();
-      await db.inventoryMovements?.clear?.();
-      await db.activeLots?.clear?.();
-      await db.haccpPrpControls?.clear?.();
-      await db.haccpDocuments?.clear?.();
-      await db.haccpVerificationProcs?.clear?.();
-      await db.haccpCorrectiveActions?.clear?.();
-      await db.haccpMonitoring?.clear?.();
-      await db.haccpCriticalLimits?.clear?.();
-      await db.haccpCcps?.clear?.();
-      await db.haccpHazards?.clear?.();
-      await db.haccpFlowVerifications?.clear?.();
-      await db.haccpFlowSteps?.clear?.();
-      await db.haccpIntendedUses?.clear?.();
-      await db.haccpProductDescriptions?.clear?.();
-      await db.haccpPlans?.clear?.();
-      await db.financeLines?.clear?.();
-      await db.financeImports?.clear?.();
-      await db.financeAccountMap?.clear?.();
-      await db.recipeIngredients.clear();
-      await db.recipeVersions?.clear?.();
-      await db.recipeProductLinks.clear();
-      await db.recipeProductCategoryLinks.clear();
-      await db.recipeProductGroupLinks.clear();
-      await db.recipes.clear();
-      await db.recipeCategories.clear();
-      await db.recipeGroups.clear();
-      await db.bakingProfileProducts?.clear?.();
-      await db.bakingProfileScopes?.clear?.();
-      await db.bakingProfiles?.clear?.();
-      await db.rawMaterialPriceHistory?.clear?.();
-      await db.rawMaterials.clear();
-      await db.supplierShortages?.clear?.();
-      await db.suppliers.clear();
-      await db.supplierCategories.clear();
-      await db.runPreparationChecks.clear();
-      await db.runCleaningChecks?.clear?.();
-      await db.runStepStates.clear();
-      await db.productionRuns.clear();
-      await db.flowPortionPresets.clear();
-      await db.groupPortionPresets.clear();
-      await db.portionPresetLinks?.clear?.();
-      await db.portionPresetIngredientSettings?.clear?.();
-      await db.groupPreparations.clear();
-      await db.flowCleaningTasks?.clear?.();
-      await db.flowChecklistItems?.clear?.();
-      await db.checklistTasks?.clear?.();
-      await db.flowSteps.clear();
-      await db.flows.clear();
-      await db.managerPlanItems.clear();
-      await db.managerPlans.clear();
-      await db.managerTasks.clear();
-      await db.managerIncidents.clear();
-      await db.managerShiftNotes.clear();
-      await db.managerEmployees.clear();
-      await db.managerResponsibilityAreas.clear();
-      await db.departmentCleaningTasks?.clear?.();
-      await db.departmentCleaningLists?.clear?.();
-      await db.productPreparations.clear();
-      await db.products.clear();
-      await db.categories.clear();
-      await db.categoryGroups.clear();
-      await db.targets.clear();
-      await db.activityPresets.clear();
-
-      if (categoryGroups.length) await db.categoryGroups.bulkPut(categoryGroups);
-      if (categories.length) await db.categories.bulkPut(categories);
-      if (products.length) await db.products.bulkPut(products);
       if (payload.productionEntries.length) await db.productionEntries.bulkPut(payload.productionEntries);
-      if (payload.targets.length) await db.targets.bulkPut(payload.targets);
+      await db.processLogs.clear();
       if (payload.processLogs.length) await db.processLogs.bulkPut(payload.processLogs);
-      if (payload.flows.length) await db.flows.bulkPut(payload.flows);
-      if (payload.flowSteps.length) await db.flowSteps.bulkPut(payload.flowSteps);
-      if (payload.flowPortionPresets.length) await db.flowPortionPresets.bulkPut(payload.flowPortionPresets);
-      if (payload.groupPortionPresets.length) {
-        await db.groupPortionPresets.bulkPut(payload.groupPortionPresets);
-      }
-      if (payload.portionPresetLinks?.length) {
-        await db.portionPresetLinks.bulkPut(payload.portionPresetLinks);
-      } else {
-        await migrateImportedFlowPresetsToGroup(tx);
-      }
-      if (payload.portionPresetIngredientSettings?.length) {
-        await db.portionPresetIngredientSettings.bulkPut(payload.portionPresetIngredientSettings);
-      }
-      if (payload.groupPreparations.length) {
-        await db.groupPreparations.bulkPut(payload.groupPreparations);
-      } else if (payload.flowPreparations.length) {
-        const prepIdRemap = await migrateImportedFlowPreparationsToGroup(tx, payload);
-        if (prepIdRemap.size && payload.runPreparationChecks.length) {
-          payload.runPreparationChecks = payload.runPreparationChecks.map((check) => {
-            if (!check.flowPreparationId || !prepIdRemap.has(check.flowPreparationId)) return check;
-            return { ...check, flowPreparationId: prepIdRemap.get(check.flowPreparationId) };
-          });
-        }
-      }
-      if (payload.productionRuns.length) await db.productionRuns.bulkPut(payload.productionRuns);
-      if (payload.runStepStates.length) await db.runStepStates.bulkPut(payload.runStepStates);
-      if (payload.productPreparations.length) await db.productPreparations.bulkPut(payload.productPreparations);
-      if (payload.runPreparationChecks.length) await db.runPreparationChecks.bulkPut(payload.runPreparationChecks);
-      if (payload.flowCleaningTasks.length) await db.flowCleaningTasks.bulkPut(payload.flowCleaningTasks);
-      if (payload.checklistTasks.length) await db.checklistTasks.bulkPut(payload.checklistTasks);
-      if (payload.flowChecklistItems.length) await db.flowChecklistItems.bulkPut(payload.flowChecklistItems);
-      if (payload.runCleaningChecks.length) await db.runCleaningChecks.bulkPut(payload.runCleaningChecks);
-      if (payload.recipeGroups.length) await db.recipeGroups.bulkPut(payload.recipeGroups);
-      if (payload.recipeCategories.length) await db.recipeCategories.bulkPut(payload.recipeCategories);
-      if (payload.recipes.length) await db.recipes.bulkPut(payload.recipes);
-      if (payload.recipeVersions?.length) await db.recipeVersions.bulkPut(payload.recipeVersions);
-      if (payload.recipeIngredients.length) await db.recipeIngredients.bulkPut(payload.recipeIngredients);
-      if (payload.recipeProductLinks.length) await db.recipeProductLinks.bulkPut(payload.recipeProductLinks);
-      if (payload.recipeProductCategoryLinks.length) {
-        await db.recipeProductCategoryLinks.bulkPut(payload.recipeProductCategoryLinks);
-      }
-      if (payload.recipeProductGroupLinks.length) {
-        await db.recipeProductGroupLinks.bulkPut(payload.recipeProductGroupLinks);
-      }
-      await migrateRecipeProductScopeLinks(tx);
-      if (payload.bakingProfiles?.length) await db.bakingProfiles.bulkPut(payload.bakingProfiles);
-      if (payload.bakingProfileProducts?.length) {
-        await db.bakingProfileProducts.bulkPut(payload.bakingProfileProducts);
-      }
-      if (payload.bakingProfileScopes?.length) {
-        await db.bakingProfileScopes.bulkPut(payload.bakingProfileScopes);
-      }
-      if (payload.productRecipeComponents?.length) {
-        await db.productRecipeComponents.bulkPut(payload.productRecipeComponents);
-      }
-      if (payload.productPortionComponents?.length && db.productPortionComponents) {
-        await db.productPortionComponents.bulkPut(payload.productPortionComponents);
-      }
-      if (payload.productFlowLinks?.length) {
-        await db.productFlowLinks.bulkPut(payload.productFlowLinks);
-      }
-      if (payload.productionMachines?.length) await db.productionMachines.bulkPut(payload.productionMachines);
-      if (payload.productionMachineFields?.length) {
-        await db.productionMachineFields.bulkPut(payload.productionMachineFields);
-      }
-      if (payload.productionMachineProducts?.length) {
-        await db.productionMachineProducts.bulkPut(payload.productionMachineProducts);
-      }
-      if (payload.productionMachineProductValues?.length) {
-        await db.productionMachineProductValues.bulkPut(payload.productionMachineProductValues);
-      }
-      if (payload.purchaseCategories?.length) {
-        await db.purchaseCategories.bulkPut(payload.purchaseCategories);
-      } else {
-        await db.purchaseCategories.bulkAdd([
-          { catKey: 'accessories', name: 'אביזרים', sortOrder: 1 },
-          { catKey: 'machines', name: 'מכונות', sortOrder: 2 },
-        ]);
-      }
-      if (payload.purchaseItems?.length) await db.purchaseItems.bulkPut(payload.purchaseItems);
-      await migrateLegacyRecipeCategoriesIfNeeded(tx);
-      if (payload.supplierCategories.length) await db.supplierCategories.bulkPut(payload.supplierCategories);
-      if (payload.suppliers.length) await db.suppliers.bulkPut(payload.suppliers);
-      if (payload.rawMaterials.length) await db.rawMaterials.bulkPut(payload.rawMaterials);
-      if (payload.inventoryBalances?.length) await db.inventoryBalances.bulkPut(payload.inventoryBalances);
-      if (payload.inventoryMovements?.length) await db.inventoryMovements.bulkPut(payload.inventoryMovements);
-      if (payload.activeLots?.length) await db.activeLots.bulkPut(payload.activeLots);
-      if (payload.supplierShortages?.length) await db.supplierShortages.bulkPut(payload.supplierShortages);
-      if (payload.rawMaterialPriceHistory?.length) await db.rawMaterialPriceHistory.bulkPut(payload.rawMaterialPriceHistory);
-      if (payload.weeklyProductionPlans.length) await db.weeklyProductionPlans.bulkPut(payload.weeklyProductionPlans);
-      if (payload.weeklyProductionPlanItems.length) {
-        await db.weeklyProductionPlanItems.bulkPut(payload.weeklyProductionPlanItems);
-      }
-      if (payload.managerPlans.length) await db.managerPlans.bulkPut(payload.managerPlans);
-      if (payload.managerPlanItems.length) await db.managerPlanItems.bulkPut(payload.managerPlanItems);
-      if (payload.managerTasks.length) await db.managerTasks.bulkPut(payload.managerTasks);
-      if (payload.managerIncidents.length) await db.managerIncidents.bulkPut(payload.managerIncidents);
-      if (payload.managerShiftNotes.length) await db.managerShiftNotes.bulkPut(payload.managerShiftNotes);
-      if (payload.managerResponsibilityAreas.length) {
-        await db.managerResponsibilityAreas.bulkPut(payload.managerResponsibilityAreas);
-      }
-      if (payload.managerEmployees.length) await db.managerEmployees.bulkPut(payload.managerEmployees);
-      if (payload.managerDepartments.length) {
-        await db.managerDepartments.bulkPut(payload.managerDepartments);
-      } else {
-        for (const d of DEFAULT_MANAGER_DEPARTMENTS) {
-          await db.managerDepartments.add({ ...d, active: true });
-        }
-      }
-      if (payload.departmentCleaningLists?.length) {
-        await db.departmentCleaningLists.bulkPut(payload.departmentCleaningLists);
-      }
-      if (payload.departmentCleaningTasks?.length) {
-        await db.departmentCleaningTasks.bulkPut(payload.departmentCleaningTasks);
-      }
-      if (payload.haccpTeamMembers?.length) await db.haccpTeamMembers.bulkPut(payload.haccpTeamMembers);
-      if (payload.haccpPlans?.length) await db.haccpPlans.bulkPut(payload.haccpPlans);
-      if (payload.haccpProductDescriptions?.length) {
-        await db.haccpProductDescriptions.bulkPut(payload.haccpProductDescriptions);
-      }
-      if (payload.haccpIntendedUses?.length) {
-        await db.haccpIntendedUses.bulkPut(payload.haccpIntendedUses);
-      }
-      if (payload.haccpFlowSteps?.length) {
-        await db.haccpFlowSteps.bulkPut(payload.haccpFlowSteps);
-      }
-      if (payload.haccpFlowVerifications?.length) {
-        await db.haccpFlowVerifications.bulkPut(payload.haccpFlowVerifications);
-      }
-      if (payload.haccpHazards?.length) {
-        await db.haccpHazards.bulkPut(payload.haccpHazards);
-      }
-      if (payload.haccpCcps?.length) {
-        await db.haccpCcps.bulkPut(payload.haccpCcps);
-      }
-      if (payload.haccpCriticalLimits?.length) {
-        await db.haccpCriticalLimits.bulkPut(payload.haccpCriticalLimits);
-      }
-      if (payload.haccpMonitoring?.length) {
-        await db.haccpMonitoring.bulkPut(payload.haccpMonitoring);
-      }
-      if (payload.haccpCorrectiveActions?.length) {
-        await db.haccpCorrectiveActions.bulkPut(payload.haccpCorrectiveActions);
-      }
-      if (payload.haccpVerificationProcs?.length) {
-        await db.haccpVerificationProcs.bulkPut(payload.haccpVerificationProcs);
-      }
-      if (payload.haccpDocuments?.length) {
-        await db.haccpDocuments.bulkPut(payload.haccpDocuments);
-      }
-      if (payload.haccpPrpControls?.length) {
-        await db.haccpPrpControls.bulkPut(payload.haccpPrpControls);
-      }
-      if (payload.haccpMonitoringLogs?.length) {
-        await db.haccpMonitoringLogs.bulkPut(payload.haccpMonitoringLogs);
-      }
-      if (payload.financeAccountMap?.length) await db.financeAccountMap.bulkPut(payload.financeAccountMap);
-      if (payload.financeImports?.length) await db.financeImports.bulkPut(payload.financeImports);
-      if (payload.financeLines?.length) await db.financeLines.bulkPut(payload.financeLines);
+      await db.targets.clear();
+      if (payload.targets.length) await db.targets.bulkPut(payload.targets);
+      await db.products.clear();
+      if (products.length) await db.products.bulkPut(products);
+      await db.categories.clear();
+      if (categories.length) await db.categories.bulkPut(categories);
+      await db.activityPresets.clear();
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
       } else {
         const defaults = ['הכנת בצק', 'שקילות', 'אריזה', 'אפייה', 'קישוט', 'ערבוב', 'קירור'];
         await db.activityPresets.bulkAdd(defaults.map((name) => ({ categoryId: 0, name })));
+      }
+
+      for (const name of IMPORT_OPTIONAL_TABLES) {
+        if (!backupHasTable(payload, name)) continue;
+        await replaceImportedTable(db[name], payload[name]);
+      }
+
+      if (!backupHasTable(payload, 'portionPresetLinks') || !payload.portionPresetLinks.length) {
+        await migrateImportedFlowPresetsToGroup(tx);
+      }
+      if (
+        (!backupHasTable(payload, 'groupPreparations') || !payload.groupPreparations.length)
+        && backupHasTable(payload, 'flowPreparations')
+        && payload.flowPreparations.length
+      ) {
+        const prepIdRemap = await migrateImportedFlowPreparationsToGroup(tx, payload);
+        if (prepIdRemap.size && backupHasTable(payload, 'runPreparationChecks') && payload.runPreparationChecks.length) {
+          payload.runPreparationChecks = payload.runPreparationChecks.map((check) => {
+            if (!check.flowPreparationId || !prepIdRemap.has(check.flowPreparationId)) return check;
+            return { ...check, flowPreparationId: prepIdRemap.get(check.flowPreparationId) };
+          });
+          if (backupHasTable(payload, 'runPreparationChecks')) {
+            await replaceImportedTable(db.runPreparationChecks, payload.runPreparationChecks);
+          }
+        }
+      }
+
+      await migrateRecipeProductScopeLinks(tx);
+      if (!backupHasTable(payload, 'recipeGroups')) {
+        await migrateLegacyRecipeCategoriesIfNeeded(tx);
       }
 
       if (Array.isArray(payload.settings)) {
@@ -4698,8 +4454,10 @@ export async function importAllData(payload, options = {}) {
       }
     }
   );
-  const { repairRecipeCategoryPlacement } = await import('./kitchen-db.js');
-  await repairRecipeCategoryPlacement();
+  if (backupHasTable(payload, 'recipeGroups') && payload.recipeGroups.length) {
+    const { repairRecipeCategoryPlacement } = await import('./kitchen-db.js');
+    await repairRecipeCategoryPlacement();
+  }
 }
 
 function sanitizeProductAllergensField(raw) {
