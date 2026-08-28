@@ -18,7 +18,7 @@
  *
  * גרעין ייבוא: מאזן בוחן חודשי (~100–300 שורות), לא תנועות בודדות.
  */
-import { db, ValidationError } from './db.js?v=482';
+import { db, ValidationError, backupHasTable } from './db.js?v=482';
 import { isValidISODate, sanitizeName } from './validators.js?v=482';
 
 export const FINANCE_BACKUP_KEYS = ['financeAccountMap', 'financeImports', 'financeLines'];
@@ -216,7 +216,10 @@ export async function localFinanceRowCount() {
 }
 
 export async function financeRestoreWouldWipe(payload) {
-  if (backupHasFinanceTables(payload)) return false;
+  const presentKeys = FINANCE_BACKUP_KEYS.filter((key) => backupHasTable(payload, key));
+  if (!presentKeys.length) return false;
+  const incoming = presentKeys.reduce((n, key) => n + payload[key].length, 0);
+  if (incoming > 0) return false;
   return (await localFinanceRowCount()) > 0;
 }
 

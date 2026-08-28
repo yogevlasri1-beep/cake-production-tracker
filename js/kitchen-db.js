@@ -1,4 +1,4 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry } from './db.js?v=482';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, backupHasTable } from './db.js?v=482';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
@@ -7072,11 +7072,14 @@ export async function importKitchenTables(payload) {
   if (!stores.length) return;
   await db.transaction('rw', ...stores, async () => {
     for (const t of tables) {
+      if (!backupHasTable(payload, t)) continue;
       await db[t].clear();
       const rows = payload[t];
-      if (Array.isArray(rows) && rows.length) await db[t].bulkPut(rows);
+      if (rows.length) await db[t].bulkPut(rows);
     }
-    await ensureRecipeHierarchyInTx(db);
+    if (!backupHasTable(payload, 'recipeGroups')) {
+      await ensureRecipeHierarchyInTx(db);
+    }
     for (const r of await db.recipes.toArray()) {
       const patch = {};
       if (r.linkedProductCategoryId) {

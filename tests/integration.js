@@ -6,7 +6,7 @@
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
 } from './runner.js?v=482';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=482';
+import { db, initDB, addCategory, addProduct, addProductionEntry, importAllData } from '../js/db.js?v=482';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -19,6 +19,7 @@ import {
   computeProductionMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers,
+  importKitchenTables,
 } from '../js/kitchen-db.js?v=482';
 import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=482';
 import { shouldApplyRemote } from '../js/sync/collections.js?v=482';
@@ -637,6 +638,67 @@ export async function runIntegrationTests() {
       repairedV2.ingredients.map((i) => i.name).sort().join(','),
       ['קמח', 'סוכר'].sort().join(','),
     );
+  });
+
+  await testAsync('importAllData — מפתח חסר לא מוחק; [] מפורש מנקה', async () => {
+    await db.bakingProfiles.put({
+      id: 9001,
+      name: 'פרופיל-בדיקת-גיבוי',
+      bakeTimeMinutes: 16,
+      sortOrder: 91,
+    });
+    await db.recipeGroups.put({
+      id: 9002,
+      name: 'קבוצת-בדיקת-גיבוי',
+      sortOrder: 91,
+      linkedCategoryGroupId: null,
+    });
+    assertEqual((await db.bakingProfiles.get(9001))?.name, 'פרופיל-בדיקת-גיבוי');
+    assertEqual((await db.recipeGroups.get(9002))?.name, 'קבוצת-בדיקת-גיבוי');
+
+    await importAllData({
+      categories: [{ id: 1, name: 'בדיקת גיבוי', sortOrder: 1 }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+    }, { allowFinanceWipe: true });
+
+    assertEqual((await db.bakingProfiles.get(9001))?.name, 'פרופיל-בדיקת-גיבוי');
+    assertEqual((await db.recipeGroups.get(9002))?.name, 'קבוצת-בדיקת-גיבוי');
+
+    await importAllData({
+      categories: [{ id: 1, name: 'בדיקת גיבוי', sortOrder: 1 }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      bakingProfiles: [],
+      recipeGroups: [],
+    }, { allowFinanceWipe: true });
+
+    assertEqual(await db.bakingProfiles.get(9001), undefined);
+    assertEqual(await db.recipeGroups.get(9002), undefined);
+  });
+
+  await testAsync('importKitchenTables — מפתח חסר לא מוחק פרופיל אפייה', async () => {
+    await db.bakingProfiles.put({
+      id: 9003,
+      name: 'פרופיל-מטבח-גיבוי',
+      bakeTimeMinutes: 28,
+      sortOrder: 92,
+    });
+    await importKitchenTables({
+      recipes: [],
+      recipeCategories: [],
+    });
+    assertEqual((await db.bakingProfiles.get(9003))?.name, 'פרופיל-מטבח-גיבוי');
+    await importKitchenTables({
+      bakingProfiles: [],
+    });
+    assertEqual(await db.bakingProfiles.get(9003), undefined);
   });
 
 await flushTests();
