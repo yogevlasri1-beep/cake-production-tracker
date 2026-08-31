@@ -22,6 +22,7 @@ import {
 import { isAutoBackupDue } from '../js/backup-service.js?v=482';
 import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair, addMaterialUsageToMap, formatMaterialUsageQty, groupMaterialUsageByCategory } from '../js/kitchen-db.js?v=482';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=482';
+import { parseNumericLocalKey, isUuidLikeId, collectionUsesNumericLocalKey } from '../js/sync/id-map.js?v=482';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi } from '../js/supabase-sync.js?v=482';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -1233,6 +1234,27 @@ export async function runAllTests() {
     assertOk(shouldApplyRemote('2026-07-24T09:00:00.000Z', '2026-07-24T10:00:00.000Z'));
     assertOk(!shouldApplyRemote('2026-07-24T11:00:00.000Z', '2026-07-24T10:00:00.000Z'));
     assertOk(shouldApplyRemote('2026-07-24T10:00:00.000Z', '2026-07-24T10:00:00.000Z'));
+  });
+
+  test('parseNumericLocalKey — מספר בלבד, לא UUID', () => {
+    assertEqual(parseNumericLocalKey(12), 12);
+    assertEqual(parseNumericLocalKey('12'), 12);
+    assertEqual(parseNumericLocalKey('773dfa6f-8cfb-45c8-8b9c-727204604dbd'), null);
+    assertEqual(parseNumericLocalKey(''), null);
+    assertEqual(parseNumericLocalKey(null), null);
+  });
+
+  test('isUuidLikeId — מזהה ענן מול מספר מקומי', () => {
+    assertOk(isUuidLikeId('773dfa6f-8cfb-45c8-8b9c-727204604dbd'));
+    assertOk(!isUuidLikeId(12));
+    assertOk(!isUuidLikeId('12'));
+    assertOk(!isUuidLikeId(null));
+  });
+
+  test('collectionUsesNumericLocalKey — settings הוא מחרוזת', () => {
+    assertOk(!collectionUsesNumericLocalKey('settings'));
+    assertOk(collectionUsesNumericLocalKey('managerPlanItems'));
+    assertOk(collectionUsesNumericLocalKey('flowSteps'));
   });
 
   test('sync collections registry — כל האוספים ממופים לטבלה', () => {

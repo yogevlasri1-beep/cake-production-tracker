@@ -30,6 +30,8 @@ import {
   ensureSyncId,
   getMetaByLocal,
   getMetaBySyncId,
+  inspectBrokenSyncMeta,
+  isUuidLikeId,
   localKeyOf,
   markMetaDeleted,
   remapFksToLocalIds,
@@ -364,6 +366,9 @@ async function pushUpsert(cfg, collection, localKey, deviceId) {
   if (!row) return;
   const updatedAt = new Date().toISOString();
   const syncId = await ensureSyncId(collection, localKey, { updatedAt });
+  if (!syncId) {
+    throw new Error(`סנכרון נדחה: מפתח מקומי לא תקין (${collection}/${localKey}) — הפריט נשאר בתור`);
+  }
   const payload = await remapFksToSyncIds(collection, row);
   if (collection === 'settings') payload.key = row.key;
   const cloudRow = {
@@ -389,6 +394,9 @@ async function pushDelete(cfg, collection, localKey, deviceId) {
   const updatedAt = new Date().toISOString();
   let syncId = await markMetaDeleted(collection, localKey, updatedAt);
   if (!syncId) syncId = await ensureSyncId(collection, localKey, { updatedAt });
+  if (!syncId) {
+    throw new Error(`סנכרון נדחה: מפתח מקומי לא תקין (${collection}/${localKey}) — הפריט נשאר בתור`);
+  }
   const table = tableOf(collection);
   await supabaseFetch(cfg, `/${table}?on_conflict=id`, {
     method: 'POST',
@@ -680,7 +688,7 @@ const FRESH_SEED_SUPPLIER_CATEGORY_NAMES = new Set([
 
 // supplierCategoryRoleKey moved to ./sync/collections.js (also used by rowDedupeFingerprint
 // there); re-exported below so existing imports from this module keep working.
-export { supplierCategoryRoleKey, supplierCategoryCanonicalName };
+export { supplierCategoryRoleKey, supplierCategoryCanonicalName, inspectBrokenSyncMeta };
 
 /**
  * מוחק קטגוריות ברירת-מחדל ריקות (גם אם כבר סונכרנו לענן) —
@@ -1157,15 +1165,6 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
 
   if (unresolved.length && !allowUnresolvedFks) return 'defer';
 
-  if (unresolved.length) {
-    // Last resort: keep whatever the local row already has instead of writing a
-    // UUID (or null) into a numeric FK, which would orphan the row.
-    const local = existingMeta ? await readLocalRecord(collection, existingMeta.localKey) : null;
-    for (const field of unresolved) {
-      payload[field] = local ? (local[field] ?? null) : null;
-    }
-  }
-
   if (collection === 'settings') {
     const key = payload.key || existingMeta?.localKey;
     if (!key) return false;
@@ -1198,6 +1197,25 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
         syncId,
         updatedAt: remoteUpdated,
       };
+    }
+  }
+
+  if (unresolved.length) {
+    const local = existingMeta ? await readLocalRecord(collection, existingMeta.localKey) : null;
+    for (const field of unresolved) {
+      if (local) {
+        if (isUuidLikeId(local[field])) {
+          console.warn('live sync: leftover UUID FK on local row (not overwritten)', {
+            collection,
+            field,
+            localKey: existingMeta.localKey,
+            value: local[field],
+          });
+        }
+        delete payload[field];
+      } else {
+        payload[field] = null;
+      }
     }
   }
 
@@ -1343,7 +1361,9 @@ async function runSeed({ force = false } = {}) {
       const updatedAt = new Date().toISOString();
       // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
       const syncId = await ensureSyncId(collection, localKey, { updatedAt });
-      if (!syncId) continue;
+      if (!syncId) {
+        throw new Error(`סנכרון seed: מפתח מקומי לא תקין (${collection}/${localKey})`);
+      }
       const payload = await remapFksToSyncIds(collection, row);
       if (collection === 'settings') payload.key = row.key;
       cloudRows.push({
@@ -1598,6 +1618,12 @@ export async function startLiveSync() {
 
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
+
+  try {
+    await inspectBrokenSyncMeta();
+  } catch (err) {
+    console.warn('live sync inspectBrokenSyncMeta', err);
+  }
 
   let pulledOk = false;
   const tick = async () => {
