@@ -21,9 +21,47 @@ export async function getMetaBySyncId(syncId) {
   return db.syncMeta.where('syncId').equals(syncId).first();
 }
 
+/** settings uses a string key; every other sync collection uses a Dexie numeric id. */
+export function collectionUsesNumericLocalKey(collection) {
+  return collection !== 'settings';
+}
+
+/** Parse a Dexie numeric id. Returns null for UUIDs, empty strings, and NaN. */
+export function parseNumericLocalKey(localKey) {
+  const key = String(localKey ?? '').trim();
+  if (!/^\d+$/.test(key)) return null;
+  const n = Number(key);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function isUuidLikeId(val) {
+  if (val == null || val === '') return false;
+  if (typeof val === 'number' && Number.isFinite(val)) return false;
+  const s = String(val).trim();
+  if (!s || /^\d+$/.test(s)) return false;
+  return true;
+}
+
+function warnBadLocalKey(kind, details) {
+  console.warn(`live sync: ${kind}`, details);
+}
+
+function assertNumericLocalKey(collection, localKey, { throwOnBad = false } = {}) {
+  if (!collectionUsesNumericLocalKey(collection)) return String(localKey ?? '');
+  const key = String(localKey ?? '');
+  if (parseNumericLocalKey(key) != null) return key;
+  const details = { collection, localKey: key };
+  warnBadLocalKey('refused non-numeric localKey', details);
+  if (throwOnBad) {
+    throw new Error(`סנכרון נדחה: מפתח מקומי לא תקין (${collection}/${key}) — הפריט נשאר בתור`);
+  }
+  return null;
+}
+
 export async function ensureSyncId(collection, localKey, { updatedAt } = {}) {
   const key = String(localKey ?? '');
   if (!key || key === 'null' || key === 'undefined' || key === 'NaN') return null;
+  if (assertNumericLocalKey(collection, key) == null) return null;
   const existing = await getMetaByLocal(collection, key);
   if (existing?.syncId) {
     if (updatedAt && updatedAt !== existing.updatedAt) {
@@ -44,9 +82,11 @@ export async function ensureSyncId(collection, localKey, { updatedAt } = {}) {
 }
 
 export async function upsertMeta({ collection, localKey, syncId, updatedAt, deletedAt = null }) {
+  const key = String(localKey);
+  if (assertNumericLocalKey(collection, key, { throwOnBad: true }) == null) return;
   await db.syncMeta.put({
     collection,
-    localKey: String(localKey),
+    localKey: key,
     syncId,
     updatedAt: updatedAt || new Date().toISOString(),
     deletedAt,
@@ -128,6 +168,21 @@ export async function remapFksToSyncIds(collection, row) {
   return out;
 }
 
+function resolveMappedLocalId(meta, targetCollection, field, syncVal) {
+  if (!meta || meta.collection !== targetCollection) return null;
+  const localId = parseNumericLocalKey(meta.localKey);
+  if (localId == null) {
+    warnBadLocalKey('syncMeta localKey is not numeric — FK marked unresolved', {
+      targetCollection,
+      field,
+      syncId: syncVal,
+      localKey: meta.localKey,
+    });
+    return null;
+  }
+  return localId;
+}
+
 /**
  * Replace FK sync UUIDs with local ids for applying remote rows.
  * A UUID with no local mapping is reported in `unresolved` and left untouched —
@@ -149,8 +204,9 @@ export async function remapFksToLocalIds(collection, payload) {
       continue;
     }
     const meta = await getMetaBySyncId(String(val));
-    if (meta && meta.collection === targetCollection) {
-      out[field] = collection === 'settings' ? meta.localKey : Number(meta.localKey) || meta.localKey;
+    const localId = resolveMappedLocalId(meta, targetCollection, field, val);
+    if (localId != null) {
+      out[field] = localId;
     } else {
       unresolved.push(field);
     }
@@ -168,16 +224,18 @@ export async function remapFksToLocalIds(collection, payload) {
         continue;
       }
       const meta = await getMetaBySyncId(String(val));
-      if (meta && meta.collection === targetCollection) {
-        mapped.push(Number(meta.localKey) || meta.localKey);
+      const localId = resolveMappedLocalId(meta, targetCollection, field, val);
+      if (localId != null) {
+        mapped.push(localId);
       } else {
-        // Keep the UUID so a later pass can still resolve it.
-        mapped.push(val);
         missing = true;
       }
     }
-    out[field] = mapped;
-    if (missing) unresolved.push(field);
+    if (missing) {
+      unresolved.push(field);
+    } else {
+      out[field] = mapped;
+    }
   }
   const poly = POLYMORPHIC_FKS[collection];
   if (poly) {
@@ -185,12 +243,53 @@ export async function remapFksToLocalIds(collection, payload) {
     const val = out[poly.idField];
     if (targetCollection && typeof val === 'string' && !/^\d+$/.test(val)) {
       const meta = await getMetaBySyncId(val);
-      if (meta && meta.collection === targetCollection) {
-        out[poly.idField] = Number(meta.localKey) || meta.localKey;
+      const localId = resolveMappedLocalId(meta, targetCollection, poly.idField, val);
+      if (localId != null) {
+        out[poly.idField] = localId;
       } else {
         unresolved.push(poly.idField);
       }
     }
   }
   return { payload: out, unresolved };
+}
+
+/**
+ * Count syncMeta rows whose localKey is not a Dexie numeric id.
+ * Does not delete anything — report first, delete only after an explicit OK.
+ */
+export async function inspectBrokenSyncMeta() {
+  if (!db.syncMeta) {
+    const empty = { total: 0, withValidTwin: 0, withoutTwin: 0, byCollection: {} };
+    return empty;
+  }
+  const rows = await db.syncMeta.toArray();
+  const numericBySync = new Map();
+  for (const row of rows) {
+    if (!collectionUsesNumericLocalKey(row.collection)) continue;
+    if (parseNumericLocalKey(row.localKey) == null) continue;
+    if (!row.syncId) continue;
+    const key = `${row.collection}|${row.syncId}`;
+    if (!numericBySync.has(key)) numericBySync.set(key, row);
+  }
+  const byCollection = {};
+  let withValidTwin = 0;
+  let withoutTwin = 0;
+  for (const row of rows) {
+    if (!collectionUsesNumericLocalKey(row.collection)) continue;
+    if (parseNumericLocalKey(row.localKey) != null) continue;
+    byCollection[row.collection] = (byCollection[row.collection] || 0) + 1;
+    const twin = row.syncId ? numericBySync.get(`${row.collection}|${row.syncId}`) : null;
+    if (twin) withValidTwin += 1;
+    else withoutTwin += 1;
+  }
+  const summary = {
+    total: withValidTwin + withoutTwin,
+    withValidTwin,
+    withoutTwin,
+    byCollection,
+    deleted: 0,
+  };
+  console.warn('live sync: broken syncMeta (count only, not deleted)', summary);
+  return summary;
 }
