@@ -10700,6 +10700,46 @@ body.supplier-drag-active {
   margin-bottom: 12px;
 }
 
+.supplier-browse-intro-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.supplier-browse-intro-top .card-title {
+  margin: 0;
+}
+
+.browse-add-plus {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: #22c55e;
+  color: #fff;
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.4);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.browse-add-plus:hover {
+  background: #16a34a;
+}
+
+.browse-add-plus:active {
+  transform: scale(0.94);
+}
+
 .supplier-browse-cat {
   margin-bottom: 10px;
 }
@@ -11786,6 +11826,59 @@ body.supplier-drag-active {
 
 .catalog-offers-table tr.is-recipe-default {
   background: color-mix(in srgb, var(--primary-soft) 55%, transparent);
+}
+
+.catalog-offers-table tr.is-current-offer td:first-child {
+  font-weight: 700;
+}
+
+.material-offers-wrap {
+  overflow-x: auto;
+  margin: 4px 0 8px;
+}
+
+.offer-price-update {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 150px;
+}
+
+.offer-price-update input {
+  width: 88px;
+  min-width: 72px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+.material-detail-delete-section {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.material-detail-delete-btn {
+  display: flex;
+  width: 100%;
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  padding: 14px 18px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.material-detail-delete-btn:hover,
+.material-detail-delete-btn:focus {
+  background: #b91c1c;
+  color: #fff;
+}
+
+.material-detail-delete-btn:active {
+  background: #991b1b;
 }
 
 .recipe-default-badge {

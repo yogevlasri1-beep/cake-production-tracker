@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=482';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=482';
+} from './runner.js?v=483';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=483';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -18,11 +18,12 @@ import {
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
   computeProductionMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
-  getSuppliers,
-} from '../js/kitchen-db.js?v=482';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=482';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=482';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=482';
+  getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
+  getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
+} from '../js/kitchen-db.js?v=483';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=483';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=483';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=483';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -637,6 +638,64 @@ export async function runIntegrationTests() {
       repairedV2.ingredients.map((i) => i.name).sort().join(','),
       ['קמח', 'סוכר'].sort().join(','),
     );
+  });
+
+  await testAsync('setRawMaterialPrice — עדכון נשמר בהיסטוריה של אותו ספק בלבד', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק א' });
+    const supB = await addSupplier({ categoryId: catId, name: 'ספק ב' });
+    const pkgGrams = packageWeightGramsFromKg(1);
+    const matA = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supA,
+      name: 'קמח לחם',
+      unit: 'ק"ג',
+      unitPrice: 4,
+      packageWeightGrams: pkgGrams,
+    });
+    const matB = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supB,
+      name: 'קמח לחם',
+      unit: 'ק"ג',
+      unitPrice: 5,
+      packageWeightGrams: pkgGrams,
+    });
+
+    const siblings = await getMaterialsWithSameName(matA);
+    assertEqual(siblings.length, 2, 'שני ספקים לאותו חומר');
+
+    await setRawMaterialPrice(matA, 6.5, '2026-09-03');
+    const histA = await getPriceHistory(matA);
+    const histB = await getPriceHistory(matB);
+    assertOk(histA.some((h) => Number(h.price) === 6.5), 'מחיר חדש בהיסטוריה של ספק א');
+    assertEqual(histB.some((h) => Number(h.price) === 6.5), false, 'ספק ב לא קיבל את העדכון');
+
+    const afterA = await db.rawMaterials.get(matA);
+    assertEqual(Number(afterA.unitPrice), 6.5);
+    const afterB = await db.rawMaterials.get(matB);
+    assertEqual(Number(afterB.unitPrice), 5);
+
+    const combined = await getCombinedPriceHistory(matA);
+    assertOk(combined.some((h) => h.supplierName === 'ספק א' && Number(h.price) === 6.5));
+    assertOk(combined.some((h) => h.supplierName === 'ספק ב'));
+    assertEqual(computePricePerKg(6.5, pkgGrams), 6.5);
+
+    await setRawMaterialRecipeDefault(matB, true);
+    const aAfterDefault = await db.rawMaterials.get(matA);
+    const bAfterDefault = await db.rawMaterials.get(matB);
+    assertEqual(!!aAfterDefault.isRecipeDefault, false);
+    assertEqual(!!bAfterDefault.isRecipeDefault, true);
+
+    await deleteRawMaterial(matA);
+    const left = await getMaterialsWithSameName(matB);
+    assertEqual(left.length, 1);
+    assertEqual(Number(left[0].id), Number(matB));
   });
 
 await flushTests();

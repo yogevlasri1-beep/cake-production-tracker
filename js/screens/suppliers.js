@@ -28,19 +28,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=482';
-import { getProducts, getCategories } from '../db.js?v=482';
+} from '../kitchen-db.js?v=483';
+import { getProducts, getCategories } from '../db.js?v=483';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=482';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=482';
-import { openModal, closeModal } from '../modal.js?v=482';
-import { requestAutoBackupNow } from '../backup-service.js?v=482';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=482';
-import { openBarcodeScanner } from '../barcode-scan.js?v=482';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=482';
+} from '../supplier-import.js?v=483';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=483';
+import { openModal, closeModal } from '../modal.js?v=483';
+import { requestAutoBackupNow } from '../backup-service.js?v=483';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=483';
+import { openBarcodeScanner } from '../barcode-scan.js?v=483';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=483';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -48,7 +48,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=482';
+} from '../order-reminder.js?v=483';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -192,6 +192,13 @@ function supplierCategoryItemsLabel(cat) {
   if (isCleaningSupplierCategory(cat)) return 'חומרי ניקיון';
   if (isPackagingSupplierCategory(cat)) return 'אריזות';
   return 'חומרים';
+}
+
+/** יחיד: חומר גלם / אריזה / חומר ניקיון */
+function materialItemSingularLabel(cat) {
+  if (isCleaningSupplierCategory(cat)) return 'חומר ניקיון';
+  if (isPackagingSupplierCategory(cat)) return 'אריזה';
+  return 'חומר גלם';
 }
 
 function renderSupplierCategoryChipLabel(cat) {
@@ -1249,27 +1256,6 @@ function bindBrowseResultsHandlers(body, container) {
     });
   });
 
-  body.querySelectorAll('#browse-results .browse-add-mat').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const supplierId = Number(btn.dataset.supplierId);
-      const categoryId = Number(btn.dataset.categoryId);
-      if (!supplierId || !categoryId) return;
-      const layout = container._browseLayout;
-      const cat = layout?.categories?.find((c) => Number(c.id) === categoryId);
-      const suppliers = (cat?.suppliers || []).map((s) => ({ id: s.id, name: s.name }));
-      const expandedIds = new Set(
-        JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
-      );
-      expandedIds.add(supplierId);
-      container.dataset.browseExpanded = JSON.stringify([...expandedIds]);
-      await openAddMaterialModal(container, categoryId, suppliers, cat, {
-        preferredSupplierId: supplierId,
-      });
-    });
-  });
-
   bindMaterialBarcodeScanButtons(body.querySelector('#browse-results'), {
     onAssigned: async () => {
       await renderSuppliers(container);
@@ -1323,8 +1309,12 @@ async function renderBrowseTab(body, container) {
 
   body.innerHTML = `
     <div class="card supplier-browse-intro">
-      <div class="card-title">ספקים ותמחור</div>
-      <p class="form-hint" style="margin:0 0 10px">לחץ על ספק לפתיחה · «+ חומר» להוספה תחת הספק · לחץ על חומר לצפייה · 📷 לברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
+      <div class="supplier-browse-intro-top">
+        <div class="card-title">ספקים ותמחור</div>
+        <button type="button" class="browse-add-plus" id="browse-add-plus"
+          title="הוסף חומר גלם ובחר ספק" aria-label="הוסף חומר גלם">+</button>
+      </div>
+      <p class="form-hint" style="margin:0 0 10px">לחץ + להוספת חומר ובחירת ספק · לחץ על ספק לפתיחה · לחץ על חומר לצפייה · 📷 לברקוד · <span class="browse-legend-active">ירוק = פעיל במתכונים</span> · <span class="browse-legend-inactive">אדום = לא במתכונים</span></p>
       ${hasData ? `
       <div class="form-group" style="margin:0">
         <input type="search" id="browse-search" class="catalog-search-input"
@@ -1336,6 +1326,10 @@ async function renderBrowseTab(body, container) {
   document.getElementById('browse-search')?.addEventListener('input', (e) => {
     container.dataset.browseSearch = e.target.value;
     updateBrowseResults(body, container);
+  });
+
+  document.getElementById('browse-add-plus')?.addEventListener('click', () => {
+    openBrowseAddMaterialPicker(container);
   });
 
   bindBrowseResultsHandlers(body, container);
@@ -1509,11 +1503,6 @@ function renderBrowseSupplierBlock(supplier, {
     if (inactiveCount) metaParts.push(`${inactiveCount} לא פעילים`);
   }
   const metaText = metaParts.length ? metaParts.join(' · ') : '0 חומרים';
-  const addLabel = isCleaning ? '+ חומר ניקיון' : (isPackaging ? '+ אריזה' : '+ חומר');
-  const addBtn = supplier.isUnassigned ? '' : `
-        <button type="button" class="btn btn-secondary btn-sm browse-add-mat"
-          data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}"
-          title="הוסף חומר תחת ספק זה">${addLabel}</button>`;
   return `
     <section class="supplier-browse-block${collapsedClass}" data-supplier-id="${supplier.id}" data-category-id="${categoryId || ''}">
       <div class="supplier-browse-sup-top">
@@ -1521,14 +1510,239 @@ function renderBrowseSupplierBlock(supplier, {
           <span class="supplier-browse-sup-name">${escapeHtml(supplier.name)}</span>
           <span class="supplier-browse-sup-meta">${metaText}</span>
         </button>
-        ${addBtn}
       </div>
       ${supplier.materials.length
     ? `<div class="supplier-browse-mats">
         ${renderBrowseSupplierMaterialsHTML(supplier.materials, { isPackaging, isCleaning })}
       </div>`
-    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')}${supplier.isUnassigned ? '' : ` — לחץ «${addLabel}» להוספה`}</p>`}
+    : `<p class="form-hint supplier-browse-empty">${isCleaning ? 'אין חומרי ניקיון' : (isPackaging ? 'אין אריזות' : 'אין חומרי גלם')}${supplier.isUnassigned ? '' : ' — לחץ + למעלה להוספה'}</p>`}
     </section>`;
+}
+
+async function openBrowseAddMaterialPicker(container) {
+  const [categories, suppliers] = await Promise.all([
+    getSupplierCategories(),
+    getSuppliers(),
+  ]);
+  if (!suppliers.length) {
+    showToast('אין ספקים — הוסף ספק בלשונית עריכה');
+    return;
+  }
+  const byCat = new Map(categories.map((c) => [Number(c.id), []]));
+  const uncategorized = [];
+  for (const s of suppliers) {
+    const cid = Number(s.categoryId);
+    if (byCat.has(cid)) byCat.get(cid).push(s);
+    else uncategorized.push(s);
+  }
+  const groupedOptions = [
+    ...categories.map((cat) => {
+      const list = byCat.get(Number(cat.id)) || [];
+      if (!list.length) return '';
+      return `<optgroup label="${escapeHtml(cat.name)}">
+        ${list.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+      </optgroup>`;
+    }),
+    uncategorized.length
+      ? `<optgroup label="ללא קטגוריה">
+          ${uncategorized.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+        </optgroup>`
+      : '',
+  ].join('');
+
+  openModal({
+    title: 'חומר גלם חדש',
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0">בחר ספק ואז מלא את פרטי החומר (אריזה / ניקיון לפי קטגוריית הספק)</p>
+      <div class="form-group">
+        <label for="browse-add-supplier">ספק</label>
+        <select id="browse-add-supplier">
+          <option value="">— בחר ספק —</option>
+          ${groupedOptions}
+        </select>
+      </div>`,
+    footerHTML: `<button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+      <button type="button" class="btn btn-primary" id="browse-add-continue">המשך</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('browse-add-continue')?.addEventListener('click', () => {
+    const supplierId = Number(document.getElementById('browse-add-supplier')?.value);
+    if (!supplierId) {
+      showToast('בחר ספק');
+      return;
+    }
+    const supplier = suppliers.find((s) => Number(s.id) === supplierId);
+    if (!supplier) {
+      showToast('ספק לא נמצא');
+      return;
+    }
+    const categoryId = Number(supplier.categoryId);
+    if (!categoryId) {
+      showToast('לספק אין קטגוריה — ערוך את הספק בלשונית עריכה');
+      return;
+    }
+    const category = categories.find((c) => Number(c.id) === categoryId);
+    const catSuppliers = suppliers.filter((s) => Number(s.categoryId) === categoryId);
+    const expandedIds = new Set(
+      JSON.parse(container.dataset.browseExpanded || '[]').map(Number).filter(Boolean),
+    );
+    expandedIds.add(supplierId);
+    container.dataset.browseExpanded = JSON.stringify([...expandedIds]);
+    closeModal();
+    setTimeout(() => {
+      openAddMaterialModal(container, categoryId, catSuppliers, category, {
+        preferredSupplierId: supplierId,
+      });
+    }, 180);
+  });
+}
+
+function sortMaterialOffersForTable(offers, currentId, supMap) {
+  return [...(offers || [])].sort((a, b) => {
+    if (Number(a.id) === Number(currentId)) return -1;
+    if (Number(b.id) === Number(currentId)) return 1;
+    const na = supMap.get(Number(a.supplierId)) || '';
+    const nb = supMap.get(Number(b.supplierId)) || '';
+    return na.localeCompare(nb, 'he') || Number(a.id) - Number(b.id);
+  });
+}
+
+function offerUnitPriceFromInput(offer, rawValue, { simplePrice = false } = {}) {
+  if (simplePrice) return Number(rawValue);
+  const pricing = rawMaterialPricingFromPerKg({
+    pricePerKg: rawValue,
+    packageWeightKg: packageWeightKgFromGrams(offer.packageWeightGrams),
+  });
+  return pricing.unitPrice;
+}
+
+function renderMaterialSupplierOffersTableHTML(offers, supMap, {
+  currentId, simplePrice = false, showDefault = true,
+} = {}) {
+  if (!offers.length) {
+    return '<p class="form-hint">אין שיוך לספקים עדיין</p>';
+  }
+  const priceHeader = simplePrice ? 'מחיר' : 'מחיר/ק״ג';
+  return `
+    <div class="material-offers-wrap">
+      <table class="catalog-offers-table material-offers-table">
+        <thead>
+          <tr>
+            <th>ספק</th>
+            <th>${priceHeader}</th>
+            ${simplePrice ? '' : '<th>מחיר אריזה</th>'}
+            ${showDefault ? '<th>ברירת מחדל</th>' : ''}
+            <th>עדכון מחיר</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${offers.map((o) => {
+    const isDefault = !!o.isRecipeDefault;
+    const isCurrent = Number(o.id) === Number(currentId);
+    const ppk = getMaterialPurchasePricePerKg(o);
+    const currentVal = simplePrice
+      ? ((Number(o.unitPrice) || 0) > 0 ? o.unitPrice : '')
+      : (ppk != null ? ppk : '');
+    const placeholder = simplePrice ? 'מחיר חדש' : 'מחיר לק״ג';
+    return `
+            <tr data-offer-id="${o.id}" class="${isDefault ? 'is-recipe-default' : ''}${isCurrent ? ' is-current-offer' : ''}">
+              <td>
+                ${escapeHtml(o.supplierId ? supMap.get(Number(o.supplierId)) || '—' : 'ללא ספק')}
+                ${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}
+              </td>
+              <td>${simplePrice
+    ? ((Number(o.unitPrice) || 0) > 0 ? formatMoney(o.unitPrice) : '—')
+    : (ppk != null ? formatMoney(ppk) : '—')}</td>
+              ${simplePrice ? '' : `<td>${(Number(o.unitPrice) || 0) > 0 ? formatMoney(o.unitPrice) : '—'}</td>`}
+              ${showDefault ? `
+              <td>
+                <button type="button" class="btn btn-sm ${isDefault ? 'btn-primary' : 'btn-secondary'} set-offer-default"
+                  data-id="${o.id}" data-on="${isDefault ? '1' : '0'}"
+                  title="${isDefault ? 'הסר ברירת מחדל' : 'סמן כברירת מחדל למתכונים'}">
+                  ${isDefault ? '★ ברירת מחדל' : 'סמן ברירת מחדל'}
+                </button>
+              </td>` : ''}
+              <td>
+                <div class="offer-price-update">
+                  <input type="number" class="offer-price-input" data-id="${o.id}" min="0" step="0.01"
+                    value="${currentVal !== '' ? currentVal : ''}" placeholder="${placeholder}">
+                  <button type="button" class="btn btn-secondary btn-sm update-offer-price" data-id="${o.id}">עדכן</button>
+                </div>
+              </td>
+            </tr>`;
+  }).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${showDefault ? '<p class="form-hint">ברירת מחדל — המחיר של הספק המסומן יופיע אוטומטית במתכונים</p>' : ''}
+    <p class="form-hint">עדכון מחיר נשמר בהיסטוריית המחירים של אותו ספק</p>`;
+}
+
+function renderCombinedPriceHistoryHTML(history) {
+  if (!history.length) {
+    return '<p class="form-hint">אין היסטוריה — עדכן מחיר בטבלת הספקים</p>';
+  }
+  return `<table class="price-history-table combined-history-table">
+    <thead><tr><th>תאריך</th><th>ספק</th><th>מחיר</th><th>מחיר/ק״ג</th></tr></thead>
+    <tbody>
+      ${history.map((h, i) => `
+      <tr class="${i === 0 ? 'is-current' : ''}">
+        <td>${formatDate(h.effectiveDate)}</td>
+        <td>${escapeHtml(h.supplierName || '—')}</td>
+        <td><strong>${formatMoney(h.price)}</strong></td>
+        <td>${h.pricePerKg != null ? formatMoney(h.pricePerKg) : '—'}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function reopenMaterialDetailAfterChange(container, materialId) {
+  closeModal();
+  await renderSuppliers(container);
+  openMaterialDetailModal(container, materialId);
+}
+
+function bindMaterialSupplierOffersTable(container, offers, {
+  currentId, simplePrice = false,
+} = {}) {
+  document.querySelectorAll('.set-offer-default').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        const id = Number(btn.dataset.id);
+        const currentlyOn = btn.dataset.on === '1';
+        await setRawMaterialRecipeDefault(id, !currentlyOn);
+        showToast(currentlyOn ? 'בוטלה ברירת המחדל' : 'סומן כברירת מחדל למתכונים ✓');
+        requestAutoBackupNow().catch(() => {});
+        await reopenMaterialDetailAfterChange(container, currentId || id);
+      } catch (e) {
+        showToast(e.message || 'שגיאה');
+      }
+    });
+  });
+  document.querySelectorAll('.update-offer-price').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = Number(btn.dataset.id);
+      const offer = offers.find((o) => Number(o.id) === id);
+      const input = document.querySelector(`.offer-price-input[data-id="${id}"]`);
+      const raw = input?.value;
+      if (!offer) return;
+      if (raw === '' || raw == null) {
+        showToast('הזן מחיר לעדכון');
+        return;
+      }
+      try {
+        const unitPrice = offerUnitPriceFromInput(offer, raw, { simplePrice });
+        if (!(Number(unitPrice) >= 0)) throw new Error('מחיר לא תקין');
+        await setRawMaterialPrice(id, unitPrice, todayISO());
+        showToast('המחיר עודכן ונשמר בהיסטוריה ✓');
+        requestAutoBackupNow().catch(() => {});
+        await reopenMaterialDetailAfterChange(container, currentId || id);
+      } catch (e) {
+        showToast(e.message || 'שגיאה');
+      }
+    });
+  });
 }
 
 async function openMaterialDetailModal(container, materialId) {
@@ -1536,18 +1750,22 @@ async function openMaterialDetailModal(container, materialId) {
   if (!mat) return showToast('חומר לא נמצא');
 
   const [history, sameName, suppliers, supplierCategories] = await Promise.all([
-    getPriceHistory(materialId),
+    getCombinedPriceHistory(materialId),
     getMaterialsWithSameName(materialId),
     getSuppliers(),
     getSupplierCategories(),
   ]);
   const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
-  const others = sameName.filter((m) => m.id !== materialId);
   const matCategory = supplierCategories.find((c) => Number(c.id) === Number(mat.supplierCategoryId));
   const isCleaningMat = isCleaningSupplierCategory(matCategory);
+  const isPackagingMat = isPackagingSupplierCategory(matCategory);
+  const simplePrice = isCleaningMat || isPackagingMat;
+  const itemLabel = materialItemSingularLabel(matCategory);
+  const offers = sortMaterialOffersForTable(sameName.length ? sameName : [mat], mat.id, supMap);
 
-  const prevHistPrice = history.length > 1 ? history[1].price : null;
-  const latestHistDate = history[0]?.effectiveDate || null;
+  const ownHistory = history.filter((h) => Number(h.rawMaterialId) === Number(mat.id));
+  const prevHistPrice = ownHistory.length > 1 ? ownHistory[1].price : null;
+  const latestHistDate = ownHistory[0]?.effectiveDate || history[0]?.effectiveDate || null;
   const priceBadges = materialPriceHintBadgesHTML(mat, {
     latestHistoryDate: latestHistDate,
     prevPrice: prevHistPrice,
@@ -1557,7 +1775,7 @@ async function openMaterialDetailModal(container, materialId) {
     title: escapeHtml(mat.name),
     modalClass: 'modal-material-detail',
     bodyHTML: `
-      ${renderMaterialPricingDetailsHTML(mat, { simple: isCleaningMat })}
+      ${renderMaterialPricingDetailsHTML(mat, { simple: simplePrice })}
       ${priceBadges ? `<div class="material-detail-badges" style="margin:8px 0">${priceBadges}</div>` : ''}
       <div class="material-detail-meta">
         ${mat.supplierId ? `<span class="form-hint">ספק: ${escapeHtml(supMap.get(Number(mat.supplierId)) || '')}</span>` : ''}
@@ -1586,57 +1804,24 @@ async function openMaterialDetailModal(container, materialId) {
         </div>
         <p class="form-hint">צלם/סרוק את הברקוד על האריזה כדי לשייך אותו לחומר</p>
       </div>
-      ${isCleaningMat ? '' : `
-      <div class="form-group" style="margin-top:12px">
-        <button type="button" class="btn ${mat.isRecipeDefault ? 'btn-primary' : 'btn-secondary'} btn-sm" id="mat-detail-recipe-default" style="width:100%">
-          ${mat.isRecipeDefault ? '★ ברירת מחדל למתכונים — לחץ לביטול' : '★ סמן כברירת מחדל למתכונים'}
-        </button>
-        <p class="form-hint">כשמסומן — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה</p>
-      </div>`}
       ${mat.isPortion ? `
       <div class="form-group" style="margin-top:8px">
         <p class="form-hint" style="margin:0">מסומן כמנה — ערוך שיוך למוצר ומשקל בטופס העריכה</p>
       </div>` : ''}
-      ${others.length ? `
-      <div class="material-detail-others">
-        <h4 class="material-detail-subtitle">אותו מוצר אצל ספקים נוספים</h4>
-        <ul class="material-others-list">
-          ${others.map((m) => `
-          <li>
-            <button type="button" class="link-btn browse-other-sup" data-id="${m.id}">
-              ${escapeHtml(supMap.get(Number(m.supplierId)) || 'ללא ספק')} — ${formatMaterialPriceMeta(m)}
-            </button>
-          </li>`).join('')}
-        </ul>
-      </div>` : ''}
+      <div class="catalog-offers-section material-detail-offers">
+        <h4 class="material-detail-subtitle">ספקים ומחירים</h4>
+        ${renderMaterialSupplierOffersTableHTML(offers, supMap, {
+    currentId: mat.id, simplePrice, showDefault: !isCleaningMat,
+  })}
+      </div>
       <div class="material-detail-history">
         <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
-        ${history.length
-    ? `<table class="price-history-table">
-          <thead><tr><th>תאריך</th><th>מחיר</th><th>שינוי</th></tr></thead>
-          <tbody>
-            ${history.map((h, i) => {
-    const prev = history[i + 1];
-    let delta = '—';
-    if (prev && Number(prev.price) > 0 && Number(h.price) > 0) {
-      const diff = Number(h.price) - Number(prev.price);
-      const pct = Math.round(Math.abs(diff) / Number(prev.price) * 100);
-      if (Math.abs(diff) / Number(prev.price) >= 0.005) {
-        delta = `<span class="${diff > 0 ? 'mat-price-badge-up' : 'mat-price-badge-down'}">${diff > 0 ? '↑' : '↓'}${pct}%</span>`;
-      } else {
-        delta = '=';
-      }
-    }
-    return `
-            <tr class="${i === 0 ? 'is-current' : ''}">
-              <td>${formatDate(h.effectiveDate)}</td>
-              <td><strong>${formatMoney(h.price)}</strong></td>
-              <td>${delta}</td>
-            </tr>`;
-  }).join('')}
-          </tbody>
-        </table>`
-    : '<p class="form-hint">אין היסטוריה — עדכן מחיר בעריכה</p>'}
+        ${renderCombinedPriceHistoryHTML(history)}
+      </div>
+      <div class="material-detail-delete-section">
+        <button type="button" class="btn material-detail-delete-btn" id="mat-detail-delete">
+          🗑 מחק ${itemLabel}
+        </button>
       </div>`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
@@ -1646,9 +1831,7 @@ async function openMaterialDetailModal(container, materialId) {
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   bindMaterialBarcodeScanButtons(document.querySelector('.modal-material-detail') || document, {
     onAssigned: async () => {
-      closeModal();
-      await renderSuppliers(container);
-      openMaterialDetailModal(container, mat.id);
+      await reopenMaterialDetailAfterChange(container, mat.id);
     },
   });
   document.getElementById('mat-detail-barcode-clear')?.addEventListener('click', async () => {
@@ -1656,32 +1839,30 @@ async function openMaterialDetailModal(container, materialId) {
       await updateRawMaterial(mat.id, { barcode: null });
       showToast('שיוך הברקוד הוסר');
       requestAutoBackupNow().catch(() => {});
-      closeModal();
-      await renderSuppliers(container);
-      openMaterialDetailModal(container, mat.id);
+      await reopenMaterialDetailAfterChange(container, mat.id);
     } catch (e) {
       showToast(e.message || 'שגיאה');
     }
   });
-  document.getElementById('mat-detail-recipe-default')?.addEventListener('click', async () => {
-    try {
-      await setRawMaterialRecipeDefault(mat.id, !mat.isRecipeDefault);
-      showToast(mat.isRecipeDefault ? 'בוטלה ברירת המחדל' : 'סומן כברירת מחדל למתכונים ✓');
-      requestAutoBackupNow().catch(() => {});
-      closeModal();
-      await renderSuppliers(container);
-      openMaterialDetailModal(container, mat.id);
-    } catch (e) {
-      showToast(e.message || 'שגיאה');
-    }
-  });
+  bindMaterialSupplierOffersTable(container, offers, { currentId: mat.id, simplePrice });
   document.getElementById('mat-detail-edit')?.addEventListener('click', () => {
     closeModal();
     switchSupplierTab('edit');
     setTimeout(() => openEditMaterialModal(container, mat), 300);
   });
-  document.querySelectorAll('.browse-other-sup').forEach((btn) => {
-    btn.addEventListener('click', () => openMaterialDetailModal(container, Number(btn.dataset.id)));
+  document.getElementById('mat-detail-delete')?.addEventListener('click', async () => {
+    const supplierName = mat.supplierId ? (supMap.get(Number(mat.supplierId)) || '') : '';
+    const extra = supplierName ? ` אצל ${supplierName}` : '';
+    if (!confirm(`למחוק ${itemLabel} «${mat.name}»${extra}?`)) return;
+    try {
+      await deleteRawMaterial(mat.id);
+      closeModal();
+      showToast('נמחק');
+      requestAutoBackupNow().catch(() => {});
+      await renderSuppliers(container);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
   });
 
   const linkLabel = document.getElementById('mat-pack-link-label');
@@ -3102,7 +3283,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=482');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=483');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3124,7 +3305,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=482');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=483');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3142,7 +3323,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=482');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=483');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
