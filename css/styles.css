@@ -11901,6 +11901,23 @@ body.supplier-drag-active {
   flex-shrink: 0;
 }
 
+.material-offer-add-card {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1.5px dashed #94a3b8;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.material-offer-add-card.is-empty {
+  border-style: solid;
+  border-color: var(--border);
+}
+
+.material-offer-add-toggle {
+  width: 100%;
+}
+
 .material-detail-delete-section {
   margin-top: 24px;
   padding-top: 16px;

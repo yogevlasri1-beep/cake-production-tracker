@@ -1,26 +1,26 @@
-import { escapeHtml, showToast } from '../utils.js?v=483';
-import { openModal, closeModal } from '../modal.js?v=483';
+import { escapeHtml, showToast } from '../utils.js?v=484';
+import { openModal, closeModal } from '../modal.js?v=484';
 import {
   getProductsCatalogLayout,
   setProductCatalogVisibility,
   setProductCatalogImage,
   isProductInCatalog,
-} from '../db.js?v=483';
-import { getProductDetail } from '../kitchen-db.js?v=483';
-import { getCurrentUserRole } from '../auth.js?v=483';
-import { canManageProductCatalog } from '../permissions.js?v=483';
+} from '../db.js?v=484';
+import { getProductDetail } from '../kitchen-db.js?v=484';
+import { getCurrentUserRole } from '../auth.js?v=484';
+import { canManageProductCatalog } from '../permissions.js?v=484';
 import {
   compressImageForCatalog,
   filterCatalogLayout,
   catalogProductMetaLines,
   catalogImageHtml,
   formatCatalogAllergens,
-} from '../product-catalog.js?v=483';
+} from '../product-catalog.js?v=484';
 import {
   exportProductCatalogHtml,
   exportProductCatalogExcel,
-} from '../product-catalog-export.js?v=483';
-import { describeDownloadMethod } from '../download.js?v=483';
+} from '../product-catalog-export.js?v=484';
+import { describeDownloadMethod } from '../download.js?v=484';
 
 const FILTER_KEY = 'yitzurProductCatalogFilter';
 const SEARCH_KEY = 'yitzurProductCatalogSearch';

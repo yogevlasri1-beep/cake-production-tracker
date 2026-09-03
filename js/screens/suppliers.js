@@ -2,6 +2,7 @@ import {
   getSupplierCategories, getSuppliers, addSupplierCategory, updateSupplierCategory, deleteSupplierCategory,
   addSupplier, updateSupplier, deleteSupplier,
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial, findRawMaterialsByName, findRawMaterialsByBarcode,
+  findRawMaterialBySupplierAndName,
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
@@ -28,19 +29,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=483';
-import { getProducts, getCategories } from '../db.js?v=483';
+} from '../kitchen-db.js?v=484';
+import { getProducts, getCategories } from '../db.js?v=484';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=483';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=483';
-import { openModal, closeModal } from '../modal.js?v=483';
-import { requestAutoBackupNow } from '../backup-service.js?v=483';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=483';
-import { openBarcodeScanner } from '../barcode-scan.js?v=483';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=483';
+} from '../supplier-import.js?v=484';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=484';
+import { openModal, closeModal } from '../modal.js?v=484';
+import { requestAutoBackupNow } from '../backup-service.js?v=484';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=484';
+import { openBarcodeScanner } from '../barcode-scan.js?v=484';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=484';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -48,7 +49,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=483';
+} from '../order-reminder.js?v=484';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1668,6 +1669,164 @@ function renderMaterialSupplierOffersTableHTML(offers, supMap, {
     <p class="form-hint">עדכון מחיר נשמר בהיסטוריית המחירים של אותו ספק</p>`;
 }
 
+function usedSupplierIdsFromOffers(offers) {
+  return new Set((offers || []).map((o) => Number(o.supplierId)).filter(Boolean));
+}
+
+function groupedSupplierSelectOptions(suppliers, categories, preferredCategoryId) {
+  const byCat = new Map();
+  for (const s of suppliers || []) {
+    const cid = Number(s.categoryId) || 0;
+    if (!byCat.has(cid)) byCat.set(cid, []);
+    byCat.get(cid).push(s);
+  }
+  const preferredId = Number(preferredCategoryId) || 0;
+  const catLabel = (cid) => (categories || []).find((c) => Number(c.id) === cid)?.name || 'ללא קטגוריה';
+  const renderGroup = (cid, list) => {
+    if (!list?.length) return '';
+    return `<optgroup label="${escapeHtml(catLabel(cid))}">
+      ${list.map((s) => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('')}
+    </optgroup>`;
+  };
+  const preferred = byCat.get(preferredId) || [];
+  const rest = [...byCat.entries()].filter(([cid]) => cid !== preferredId);
+  return `${renderGroup(preferredId, preferred)}${rest.map(([cid, list]) => renderGroup(cid, list)).join('')}`;
+}
+
+function renderAddSupplierOfferHTML(suppliers, categories, {
+  preferredCategoryId, offers, simplePrice = false, packageWeightKg = '',
+} = {}) {
+  const used = usedSupplierIdsFromOffers(offers);
+  const available = (suppliers || []).filter((s) => !used.has(Number(s.id)));
+  if (!available.length) {
+    return `
+      <div class="material-offer-add-card is-empty">
+        <p class="form-hint" style="margin:0">כל הספקים כבר משויכים — הוסף ספק חדש בלשונית עריכה</p>
+      </div>`;
+  }
+  const priceLabel = simplePrice ? 'מחיר (₪)' : 'מחיר לקילו (₪)';
+  const pkgBlock = simplePrice ? '' : `
+    <div class="form-group" style="margin:8px 0 0">
+      <label for="mat-add-offer-pkg">כמות באריזה (ק״ג)</label>
+      <input type="number" id="mat-add-offer-pkg" min="0" step="0.001"
+        value="${packageWeightKg !== '' && packageWeightKg != null ? packageWeightKg : ''}"
+        placeholder="למשל 1">
+    </div>
+    <p class="form-hint" id="mat-add-offer-preview"></p>`;
+  return `
+    <div class="material-offer-add-card">
+      <button type="button" class="btn btn-secondary material-offer-add-toggle" id="mat-detail-add-supplier-toggle">
+        + הוסף ספק עם מחיר
+      </button>
+      <div id="mat-detail-add-supplier-form" hidden>
+        <div class="form-group" style="margin:10px 0 0">
+          <label for="mat-add-offer-supplier">ספק</label>
+          <select id="mat-add-offer-supplier">
+            <option value="">— בחר ספק —</option>
+            ${groupedSupplierSelectOptions(available, categories, preferredCategoryId)}
+          </select>
+        </div>
+        <div class="form-group" style="margin:8px 0 0">
+          <label for="mat-add-offer-price">${priceLabel}</label>
+          <input type="number" id="mat-add-offer-price" min="0" step="0.01"
+            placeholder="${simplePrice ? 'למשל 12' : 'למשל 4.5'}">
+        </div>
+        ${pkgBlock}
+        <button type="button" class="btn btn-primary" id="mat-detail-add-supplier-save" style="width:100%;margin-top:10px">
+          שמור ספק
+        </button>
+      </div>
+    </div>`;
+}
+
+async function saveNewSupplierOfferFromDetail(mat, { simplePrice = false } = {}) {
+  const supplierId = Number(document.getElementById('mat-add-offer-supplier')?.value);
+  if (!supplierId) throw new Error('בחר ספק');
+  const priceRaw = document.getElementById('mat-add-offer-price')?.value;
+  if (priceRaw === '' || priceRaw == null) throw new Error('הזן מחיר');
+
+  let unitPrice;
+  let packageWeightGrams = simplePrice ? null : mat.packageWeightGrams;
+  if (simplePrice) {
+    unitPrice = Number(priceRaw);
+  } else {
+    const pkgKg = document.getElementById('mat-add-offer-pkg')?.value
+      || packageWeightKgFromGrams(mat.packageWeightGrams);
+    const pricing = rawMaterialPricingFromPerKg({
+      pricePerKg: priceRaw,
+      packageWeightKg: pkgKg,
+    });
+    unitPrice = pricing.unitPrice;
+    packageWeightGrams = pricing.packageWeightGrams;
+  }
+  if (!(Number(unitPrice) >= 0) || Number.isNaN(Number(unitPrice))) {
+    throw new Error('מחיר לא תקין');
+  }
+
+  const existing = await findRawMaterialBySupplierAndName(supplierId, mat.name);
+  if (existing) {
+    const patch = {};
+    if (!simplePrice && packageWeightGrams != null) patch.packageWeightGrams = packageWeightGrams;
+    if (Object.keys(patch).length) await updateRawMaterial(existing.id, patch);
+    await setRawMaterialPrice(existing.id, unitPrice, todayISO());
+    return existing.id;
+  }
+
+  const id = await addRawMaterial({
+    supplierCategoryId: mat.supplierCategoryId,
+    name: mat.name,
+    unit: mat.unit,
+    unitPrice: 0,
+    supplierId,
+    packageWeightGrams,
+    processedPricePerKg: simplePrice ? null : mat.processedPricePerKg,
+    packagingKind: mat.packagingKind,
+    packUnitsCount: mat.packUnitsCount,
+    packProductsPerUnit: mat.packProductsPerUnit,
+    packLinkedProductId: mat.packLinkedProductId,
+    packLinkedCategoryId: mat.packLinkedCategoryId,
+    synonyms: getMaterialSynonyms(mat),
+  });
+  await setRawMaterialPrice(id, unitPrice, todayISO());
+  return id;
+}
+
+function bindAddSupplierOfferForm(container, mat, { simplePrice = false, currentId } = {}) {
+  document.getElementById('mat-detail-add-supplier-toggle')?.addEventListener('click', () => {
+    const form = document.getElementById('mat-detail-add-supplier-form');
+    if (!form) return;
+    form.hidden = !form.hidden;
+    if (!form.hidden) document.getElementById('mat-add-offer-supplier')?.focus();
+  });
+
+  const updatePreview = () => {
+    const preview = document.getElementById('mat-add-offer-preview');
+    if (!preview) return;
+    const { unitPrice, packageWeightGrams } = rawMaterialPricingFromPerKg({
+      pricePerKg: document.getElementById('mat-add-offer-price')?.value,
+      packageWeightKg: document.getElementById('mat-add-offer-pkg')?.value,
+    });
+    preview.textContent = unitPrice > 0 && packageWeightGrams
+      ? `מחיר לאריזה: ${formatMoney(unitPrice)}`
+      : '';
+  };
+  ['mat-add-offer-price', 'mat-add-offer-pkg'].forEach((id) => {
+    document.getElementById(id)?.addEventListener('input', updatePreview);
+  });
+  updatePreview();
+
+  document.getElementById('mat-detail-add-supplier-save')?.addEventListener('click', async () => {
+    try {
+      await saveNewSupplierOfferFromDetail(mat, { simplePrice });
+      showToast('ספק נוסף עם מחיר ✓');
+      requestAutoBackupNow().catch(() => {});
+      await reopenMaterialDetailAfterChange(container, currentId || mat.id);
+    } catch (e) {
+      showToast(e.message || 'שגיאה');
+    }
+  });
+}
+
 function renderCombinedPriceHistoryHTML(history) {
   if (!history.length) {
     return '<p class="form-hint">אין היסטוריה — עדכן מחיר בטבלת הספקים</p>';
@@ -1802,6 +1961,12 @@ async function openMaterialDetailModal(container, materialId) {
         ${renderMaterialSupplierOffersTableHTML(offers, supMap, {
     currentId: mat.id, simplePrice, showDefault: !isCleaningMat,
   })}
+        ${renderAddSupplierOfferHTML(suppliers, supplierCategories, {
+    preferredCategoryId: mat.supplierCategoryId,
+    offers,
+    simplePrice,
+    packageWeightKg: packageWeightKgFromGrams(mat.packageWeightGrams),
+  })}
       </div>
       <div class="material-detail-history">
         <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
@@ -1834,6 +1999,7 @@ async function openMaterialDetailModal(container, materialId) {
     }
   });
   bindMaterialSupplierOffersTable(container, offers, { currentId: mat.id, simplePrice });
+  bindAddSupplierOfferForm(container, mat, { simplePrice, currentId: mat.id });
   document.getElementById('mat-detail-edit')?.addEventListener('click', () => {
     closeModal();
     switchSupplierTab('edit');
@@ -3272,7 +3438,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=483');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=484');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3294,7 +3460,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=483');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=484');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3312,7 +3478,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=483');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=484');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

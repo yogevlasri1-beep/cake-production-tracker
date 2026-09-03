@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=483';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=483';
+} from './runner.js?v=484';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=484';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
   addRecipeCategory, addRecipe, addRecipeIngredient,
@@ -20,10 +20,11 @@ import {
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
-} from '../js/kitchen-db.js?v=483';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=483';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=483';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=483';
+  assignMaterialToSupplier, findRawMaterialBySupplierAndName,
+} from '../js/kitchen-db.js?v=484';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=484';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=484';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=484';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -696,6 +697,50 @@ export async function runIntegrationTests() {
     const left = await getMaterialsWithSameName(matB);
     assertEqual(left.length, 1);
     assertEqual(Number(left[0].id), Number(matB));
+  });
+
+  await testAsync('assignMaterialToSupplier — מוסיף ספק שני עם מחיר להיסטוריה', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק א' });
+    const supB = await addSupplier({ categoryId: catId, name: 'ספק ב' });
+    const pkgGrams = packageWeightGramsFromKg(1);
+    const matA = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supA,
+      name: 'סוכר לבן',
+      unit: 'ק"ג',
+      unitPrice: 4,
+      packageWeightGrams: pkgGrams,
+    });
+
+    const idB = await assignMaterialToSupplier({
+      name: 'סוכר לבן',
+      supplierCategoryId: catId,
+      supplierId: supB,
+      unitPrice: 7.25,
+      packageWeightGrams: pkgGrams,
+      unit: 'ק"ג',
+    });
+    assertOk(idB, 'נוצרה הצעה לספק ב');
+    assertEqual(Number(idB) === Number(matA), false, 'הצעה נפרדת');
+
+    const siblings = await getMaterialsWithSameName(matA);
+    assertEqual(siblings.length, 2, 'שני ספקים לאותו חומר');
+    const found = await findRawMaterialBySupplierAndName(supB, 'סוכר לבן');
+    assertEqual(Number(found?.id), Number(idB));
+
+    const histB = await getPriceHistory(idB);
+    assertOk(histB.some((h) => Number(h.price) === 7.25), 'מחיר חדש בהיסטוריה של ספק ב');
+    const histA = await getPriceHistory(matA);
+    assertEqual(histA.some((h) => Number(h.price) === 7.25), false, 'ספק א לא קיבל את המחיר החדש');
+
+    const combined = await getCombinedPriceHistory(matA);
+    assertOk(combined.some((h) => h.supplierName === 'ספק ב' && Number(h.price) === 7.25));
   });
 
 await flushTests();
