@@ -522,7 +522,7 @@ export async function runIntegrationTests() {
     await db.rawMaterialPriceHistory.add({
       rawMaterialId: matId,
       price: 9.5,
-      effectiveDate: '2026-08-15',
+      effectiveDate: '2099-12-31',
       createdAt: new Date().toISOString(),
     });
     const n = await reconcileRawMaterialPricesFromHistory();

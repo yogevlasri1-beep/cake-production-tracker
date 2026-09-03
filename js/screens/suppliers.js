@@ -1623,21 +1623,9 @@ function renderMaterialSupplierOffersTableHTML(offers, supMap, {
   if (!offers.length) {
     return '<p class="form-hint">אין שיוך לספקים עדיין</p>';
   }
-  const priceHeader = simplePrice ? 'מחיר' : 'מחיר/ק״ג';
   return `
-    <div class="material-offers-wrap">
-      <table class="catalog-offers-table material-offers-table">
-        <thead>
-          <tr>
-            <th>ספק</th>
-            <th>${priceHeader}</th>
-            ${simplePrice ? '' : '<th>מחיר אריזה</th>'}
-            ${showDefault ? '<th>ברירת מחדל</th>' : ''}
-            <th>עדכון מחיר</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${offers.map((o) => {
+    <div class="material-offers-list">
+      ${offers.map((o) => {
     const isDefault = !!o.isRecipeDefault;
     const isCurrent = Number(o.id) === Number(currentId);
     const ppk = getMaterialPurchasePricePerKg(o);
@@ -1645,35 +1633,36 @@ function renderMaterialSupplierOffersTableHTML(offers, supMap, {
       ? ((Number(o.unitPrice) || 0) > 0 ? o.unitPrice : '')
       : (ppk != null ? ppk : '');
     const placeholder = simplePrice ? 'מחיר חדש' : 'מחיר לק״ג';
+    const priceText = simplePrice
+      ? ((Number(o.unitPrice) || 0) > 0 ? formatMoney(o.unitPrice) : '—')
+      : (ppk != null ? `${formatMoney(ppk)}/ק״ג` : '—');
+    const packText = !simplePrice && (Number(o.unitPrice) || 0) > 0
+      ? `מחיר אריזה: ${formatMoney(o.unitPrice)}`
+      : '';
+    const supplierName = o.supplierId ? (supMap.get(Number(o.supplierId)) || '—') : 'ללא ספק';
     return `
-            <tr data-offer-id="${o.id}" class="${isDefault ? 'is-recipe-default' : ''}${isCurrent ? ' is-current-offer' : ''}">
-              <td>
-                ${escapeHtml(o.supplierId ? supMap.get(Number(o.supplierId)) || '—' : 'ללא ספק')}
-                ${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}
-              </td>
-              <td>${simplePrice
-    ? ((Number(o.unitPrice) || 0) > 0 ? formatMoney(o.unitPrice) : '—')
-    : (ppk != null ? formatMoney(ppk) : '—')}</td>
-              ${simplePrice ? '' : `<td>${(Number(o.unitPrice) || 0) > 0 ? formatMoney(o.unitPrice) : '—'}</td>`}
-              ${showDefault ? `
-              <td>
-                <button type="button" class="btn btn-sm ${isDefault ? 'btn-primary' : 'btn-secondary'} set-offer-default"
-                  data-id="${o.id}" data-on="${isDefault ? '1' : '0'}"
-                  title="${isDefault ? 'הסר ברירת מחדל' : 'סמן כברירת מחדל למתכונים'}">
-                  ${isDefault ? '★ ברירת מחדל' : 'סמן ברירת מחדל'}
-                </button>
-              </td>` : ''}
-              <td>
-                <div class="offer-price-update">
-                  <input type="number" class="offer-price-input" data-id="${o.id}" min="0" step="0.01"
-                    value="${currentVal !== '' ? currentVal : ''}" placeholder="${placeholder}">
-                  <button type="button" class="btn btn-secondary btn-sm update-offer-price" data-id="${o.id}">עדכן</button>
-                </div>
-              </td>
-            </tr>`;
+        <div class="material-offer-card${isDefault ? ' is-recipe-default' : ''}${isCurrent ? ' is-current-offer' : ''}" data-offer-id="${o.id}">
+          <div class="material-offer-card-top">
+            <div class="material-offer-name">
+              ${escapeHtml(supplierName)}
+              ${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}
+            </div>
+            <div class="material-offer-price">${priceText}</div>
+          </div>
+          ${packText ? `<p class="form-hint material-offer-pack">${packText}</p>` : ''}
+          ${showDefault ? `
+          <button type="button" class="btn btn-sm ${isDefault ? 'btn-primary' : 'btn-secondary'} set-offer-default"
+            data-id="${o.id}" data-on="${isDefault ? '1' : '0'}"
+            title="${isDefault ? 'הסר ברירת מחדל' : 'סמן כברירת מחדל למתכונים'}">
+            ${isDefault ? '★ ברירת מחדל' : 'סמן ברירת מחדל'}
+          </button>` : ''}
+          <div class="offer-price-update">
+            <input type="number" class="offer-price-input" data-id="${o.id}" min="0" step="0.01"
+              value="${currentVal !== '' ? currentVal : ''}" placeholder="${placeholder}" aria-label="${placeholder}">
+            <button type="button" class="btn btn-secondary btn-sm update-offer-price" data-id="${o.id}">עדכן מחיר</button>
+          </div>
+        </div>`;
   }).join('')}
-        </tbody>
-      </table>
     </div>
     ${showDefault ? '<p class="form-hint">ברירת מחדל — המחיר של הספק המסומן יופיע אוטומטית במתכונים</p>' : ''}
     <p class="form-hint">עדכון מחיר נשמר בהיסטוריית המחירים של אותו ספק</p>`;

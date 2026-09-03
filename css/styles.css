@@ -11832,26 +11832,73 @@ body.supplier-drag-active {
   font-weight: 700;
 }
 
-.material-offers-wrap {
-  overflow-x: auto;
+.material-offers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin: 4px 0 8px;
+}
+
+.material-offer-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+
+.material-offer-card.is-recipe-default {
+  background: color-mix(in srgb, var(--primary-soft) 55%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 28%, var(--border));
+}
+
+.material-offer-card.is-current-offer .material-offer-name {
+  font-weight: 700;
+}
+
+.material-offer-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.material-offer-name {
+  font-size: 0.95rem;
+}
+
+.material-offer-price {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.material-offer-pack {
+  margin: 0 0 8px;
+}
+
+.material-offer-card .set-offer-default {
+  width: 100%;
+  margin-bottom: 8px;
 }
 
 .offer-price-update {
   display: flex;
   gap: 6px;
   align-items: center;
-  min-width: 150px;
 }
 
 .offer-price-update input {
-  width: 88px;
-  min-width: 72px;
-  padding: 6px 8px;
-  font-size: 0.85rem;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 0.9rem;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-family: inherit;
+}
+
+.offer-price-update .update-offer-price {
+  flex-shrink: 0;
 }
 
 .material-detail-delete-section {
