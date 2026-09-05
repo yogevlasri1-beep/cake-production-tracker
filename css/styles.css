@@ -11015,6 +11015,126 @@ body.supplier-drag-active {
   min-width: 0;
 }
 
+.mat-supplier-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.mat-supplier-tab {
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.mat-supplier-tab.is-active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+  font-weight: 600;
+}
+
+.mat-supplier-tab-add {
+  border-style: dashed;
+  color: #0f766e;
+}
+
+.mat-active-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.mat-active-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mat-active-switch {
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: #dc2626;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.mat-active-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  inset-inline-start: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.mat-active-toggle.is-on .mat-active-switch {
+  background: #16a34a;
+}
+
+.mat-active-toggle.is-on .mat-active-switch::after {
+  transform: translateX(-18px);
+}
+
+[dir="rtl"] .mat-active-toggle.is-on .mat-active-switch::after,
+html[lang="he"] .mat-active-toggle.is-on .mat-active-switch::after {
+  transform: translateX(-18px);
+}
+
+.mat-active-label {
+  font-weight: 700;
+}
+
+.mat-active-toggle.is-on .mat-active-label { color: #15803d; }
+.mat-active-toggle.is-off .mat-active-label { color: #b91c1c; }
+
+.mat-barcodes-add-row,
+.mat-barcodes-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.mat-barcodes-add-row input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.mat-barcodes-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.mat-barcode-chip-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #99f6e4;
+  background: #ecfdf5;
+  color: #0f766e;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
 .list-item-actions .mat-barcode-scan-btn.has-barcode {
   border-color: #6ee7b7;
   background: #ecfdf5;

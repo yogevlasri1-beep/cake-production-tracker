@@ -5,10 +5,11 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=484';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=484';
+} from './runner.js?v=485';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=485';
 import {
-  addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
+  addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
+  findRawMaterialsByBarcode, getMaterialBarcodes,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   addRecipeVersion, getRecipe, listRecipeVersions,
   repairSplitDoubledRecipeVersionIngredients,
@@ -21,10 +22,10 @@ import {
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=484';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=484';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=484';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=484';
+} from '../js/kitchen-db.js?v=485';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=485';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=485';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=485';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -469,6 +470,29 @@ export async function runIntegrationTests() {
     assertOk(matPush, 'נוסף ל-syncQueue');
   });
 
+  await testAsync('addRawMaterial — ברקודים מרובים + פעיל כברירת מחדל', async () => {
+    await wait(100);
+    await resetDatabase();
+    await initDB();
+    const catId = await addSupplierCategory('חומרי גלם');
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      name: 'סוכר ברקודים',
+      unit: 'ק"ג',
+      unitPrice: 5,
+      barcodes: ['111111', '222222'],
+    });
+    const mat = await db.rawMaterials.get(matId);
+    assertEqual(mat.active, true);
+    assertEqual(mat.barcode, '111111');
+    assertEqual(getMaterialBarcodes(mat).join(','), '111111,222222');
+    const hit = await findRawMaterialsByBarcode('222222');
+    assertEqual(hit.length, 1);
+    assertEqual(hit[0].id, matId);
+    await updateRawMaterial(matId, { active: false });
+    assertEqual((await db.rawMaterials.get(matId)).active, false);
+  });
+
   await testAsync('coerceSupplierNumericFks + browse — חומר עם supplierId מחרוזת מופיע תחת הספק', async () => {
     await wait(100);
     await resetDatabase();
@@ -671,7 +695,8 @@ export async function runIntegrationTests() {
     const siblings = await getMaterialsWithSameName(matA);
     assertEqual(siblings.length, 2, 'שני ספקים לאותו חומר');
 
-    await setRawMaterialPrice(matA, 6.5, '2026-09-03');
+    const today = new Date().toISOString().slice(0, 10);
+    await setRawMaterialPrice(matA, 6.5, today);
     const histA = await getPriceHistory(matA);
     const histB = await getPriceHistory(matB);
     assertOk(histA.some((h) => Number(h.price) === 6.5), 'מחיר חדש בהיסטוריה של ספק א');

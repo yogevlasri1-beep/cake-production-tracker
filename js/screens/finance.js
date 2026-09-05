@@ -1,4 +1,4 @@
-import { escapeHtml, showToast, todayISO } from '../utils.js?v=484';
+import { escapeHtml, showToast, todayISO } from '../utils.js?v=485';
 import {
   FINANCE_CATEGORIES,
   FINANCE_CATEGORY_LABELS,
@@ -7,7 +7,7 @@ import {
   FINANCE_SOURCES,
   listFinanceAccountMap,
   requireManualPeriod,
-} from '../finance-db.js?v=484';
+} from '../finance-db.js?v=485';
 import {
   FINANCE_COLUMN_ROLES,
   FINANCE_COLUMN_ROLE_LABELS,
@@ -21,7 +21,7 @@ import {
   uniqueAccountsFromLines,
   mappingHasRequiredRoles,
   commitFinanceImport,
-} from '../finance-import.js?v=484';
+} from '../finance-import.js?v=485';
 
 export function financeMeta() {
   return { title: 'ייבוא כספים', subtitle: 'אשף ייבוא מחשבשבת ודוחות שכר' };

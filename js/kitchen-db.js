@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry } from './db.js?v=484';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry } from './db.js?v=485';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=484';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=484';
-import { logAuditEvent } from './audit.js?v=484';
-import { markMetaDeleted } from './sync/id-map.js?v=484';
+} from './validators.js?v=485';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=485';
+import { logAuditEvent } from './audit.js?v=485';
+import { markMetaDeleted } from './sync/id-map.js?v=485';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2548,10 +2548,12 @@ export async function getRecipeLinkedRawMaterialIds() {
   return ids;
 }
 
-/** מסמן חומרי גלם כפעילים אם הם במתכונים; אריזות וחומרי ניקיון תמיד פעילים */
+/**
+ * אריזות וחומרי ניקיון תמיד פעילים.
+ * חומר גלם — המתג במסך העריכה; לא דורסים לפי שימוש במתכונים.
+ */
 export async function syncRawMaterialsActiveFromRecipes() {
-  const [linkedIds, materials, categories] = await Promise.all([
-    getRecipeLinkedRawMaterialIds(),
+  const [materials, categories] = await Promise.all([
     db.rawMaterials.toArray(),
     getSupplierCategories(),
   ]);
@@ -2561,9 +2563,8 @@ export async function syncRawMaterialsActiveFromRecipes() {
   const updates = [];
   for (const m of materials) {
     const alwaysActive = alwaysActiveCatIds.has(Number(m.supplierCategoryId)) || !!m.packagingKind;
-    const shouldBeActive = alwaysActive || linkedIds.has(m.id);
-    if (m.active !== shouldBeActive) {
-      updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
+    if (alwaysActive && m.active !== true) {
+      updates.push(db.rawMaterials.update(m.id, { active: true }));
     }
   }
   if (updates.length) await Promise.all(updates);
@@ -4549,6 +4550,33 @@ export function sanitizeBarcode(value) {
   return s.slice(0, 64);
 }
 
+const MAX_MATERIAL_BARCODES = 16;
+
+/** רשימת ברקודים לחומר — ייחודיים, עד 16 */
+export function sanitizeMaterialBarcodes(raw) {
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const code = sanitizeBarcode(item);
+    if (!code) continue;
+    const key = code.toLocaleLowerCase('he');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(code);
+    if (out.length >= MAX_MATERIAL_BARCODES) break;
+  }
+  return out;
+}
+
+/** ברקוד ראשי + barcodes[] — תאימות לאחור */
+export function getMaterialBarcodes(material) {
+  return sanitizeMaterialBarcodes([
+    material?.barcode,
+    ...(Array.isArray(material?.barcodes) ? material.barcodes : []),
+  ]);
+}
+
 /** מק״ט / קוד פריט ספק — מחרוזת קצרה או null */
 export function sanitizeSku(value) {
   const s = String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -4575,14 +4603,10 @@ export async function findRawMaterialsByBarcode(barcode, { excludeId = null } = 
   const code = sanitizeBarcode(barcode);
   if (!code) return [];
   const exclude = excludeId ? Number(excludeId) : null;
-  let rows = [];
-  try {
-    rows = await db.rawMaterials.where('barcode').equals(code).toArray();
-  } catch {
-    rows = (await db.rawMaterials.toArray()).filter((m) => sanitizeBarcode(m.barcode) === code);
-  }
-  if (exclude) rows = rows.filter((m) => Number(m.id) !== exclude);
-  return rows;
+  const key = code.toLocaleLowerCase('he');
+  const rows = (await db.rawMaterials.toArray()).filter((m) =>
+    getMaterialBarcodes(m).some((c) => c.toLocaleLowerCase('he') === key));
+  return exclude ? rows.filter((m) => Number(m.id) !== exclude) : rows;
 }
 
 /**
@@ -4607,9 +4631,11 @@ export async function addRawMaterial({
   synonyms,
   allergens,
   barcode,
+  barcodes,
   sku,
   notes,
   minOrderQty,
+  active,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -4631,8 +4657,8 @@ export async function addRawMaterial({
     },
     { categoryIsPackaging: isPack },
   );
-  const code = sanitizeBarcode(barcode);
-  if (code) {
+  const codes = sanitizeMaterialBarcodes([barcode, ...(Array.isArray(barcodes) ? barcodes : [])]);
+  for (const code of codes) {
     const conflicts = await findRawMaterialsByBarcode(code);
     if (conflicts.length) {
       throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
@@ -4651,12 +4677,13 @@ export async function addRawMaterial({
     isFree: !simplePricing && !!isFree,
     synonyms: sanitizeMaterialSynonyms(synonyms),
     allergens: sanitizeProductAllergenIds(allergens),
-    barcode: code,
+    barcode: codes[0] || null,
+    barcodes: codes,
     sku: sanitizeSku(sku),
     notes: sanitizeMaterialNotes(notes),
     minOrderQty: sanitizeMinOrderQty(minOrderQty),
     ...packaging,
-    active: simplePricing,
+    active: simplePricing ? true : active !== false,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {
@@ -4695,16 +4722,35 @@ export async function updateRawMaterial(id, patch) {
   if ('isFree' in data) data.isFree = !!data.isFree;
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
   if ('allergens' in data) data.allergens = sanitizeProductAllergenIds(data.allergens);
-  if ('barcode' in data) {
-    const code = sanitizeBarcode(data.barcode);
-    if (code) {
-      const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
-      if (conflicts.length) {
-        throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+  if ('barcodes' in data || 'barcode' in data) {
+    const current = await db.rawMaterials.get(mid);
+    if ('barcodes' in data) {
+      const only = sanitizeMaterialBarcodes(data.barcodes);
+      for (const code of only) {
+        const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
+        if (conflicts.length) {
+          throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+        }
+      }
+      data.barcodes = only;
+      data.barcode = only[0] || null;
+    } else {
+      const code = sanitizeBarcode(data.barcode);
+      if (!code) {
+        data.barcode = null;
+        data.barcodes = [];
+      } else {
+        const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
+        if (conflicts.length) {
+          throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+        }
+        const next = sanitizeMaterialBarcodes([...(current ? getMaterialBarcodes(current) : []), code]);
+        data.barcode = next[0] || null;
+        data.barcodes = next;
       }
     }
-    data.barcode = code;
   }
+  if ('active' in data) data.active = !!data.active;
   if ('sku' in data) data.sku = sanitizeSku(data.sku);
   if ('notes' in data) data.notes = sanitizeMaterialNotes(data.notes);
   if ('minOrderQty' in data) data.minOrderQty = sanitizeMinOrderQty(data.minOrderQty);
@@ -4938,8 +4984,7 @@ export function materialMatchesSearch(material, query, { supplierName = '' } = {
   if (!q) return true;
   const name = String(material?.name || '').toLocaleLowerCase('he');
   if (name.includes(q)) return true;
-  const code = String(material?.barcode || '').toLocaleLowerCase('he');
-  if (code && code.includes(q)) return true;
+  if (getMaterialBarcodes(material).some((c) => c.toLocaleLowerCase('he').includes(q))) return true;
   const sku = String(material?.sku || '').toLocaleLowerCase('he');
   if (sku && sku.includes(q)) return true;
   const notes = String(material?.notes || '').toLocaleLowerCase('he');
@@ -5283,9 +5328,13 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
     const from = (others || []).find((o) => o.supplierCategoryId) || fieldSources.find((o) => o.supplierCategoryId);
     if (from) patch.supplierCategoryId = from.supplierCategoryId;
   }
-  if (!sanitizeBarcode(keep.barcode)) {
-    const from = fieldSources.find((o) => sanitizeBarcode(o.barcode));
-    if (from) patch.barcode = sanitizeBarcode(from.barcode);
+  if (!getMaterialBarcodes(keep).length) {
+    const from = fieldSources.find((o) => getMaterialBarcodes(o).length);
+    if (from) {
+      const codes = getMaterialBarcodes(from);
+      patch.barcode = codes[0] || null;
+      patch.barcodes = codes;
+    }
   }
   if (!sanitizeSku(keep.sku)) {
     const from = fieldSources.find((o) => sanitizeSku(o.sku));
