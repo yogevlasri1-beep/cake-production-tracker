@@ -5,10 +5,11 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=478';
-import { db, initDB, addCategory, addProduct } from '../js/db.js?v=478';
+} from './runner.js?v=487';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=487';
 import {
-  addSupplierCategory, addSupplier, addRawMaterial, getRawMaterials,
+  addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
+  findRawMaterialsByBarcode, getMaterialBarcodes,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   addRecipeVersion, getRecipe, listRecipeVersions,
   repairSplitDoubledRecipeVersionIngredients,
@@ -16,12 +17,16 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
+  computeProductionMaterialUsage, addProductRecipeComponent,
+  computePortionMaterialUsage, collectPortionRecordsInRange, computeHomeMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
-  getSuppliers,
-} from '../js/kitchen-db.js?v=478';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=478';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=478';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=478';
+  getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
+  getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
+  assignMaterialToSupplier, findRawMaterialBySupplierAndName,
+} from '../js/kitchen-db.js?v=487';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=487';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=487';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=487';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -333,6 +338,220 @@ export async function runIntegrationTests() {
     },
   );
 
+  await testAsync(
+    'computeProductionMaterialUsage — יום לפי מתכון, חודש מסכם ימים, פחת לא נספר',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות שימוש');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגת שימוש' });
+      const recCatId = await addRecipeCategory('מתכוני שימוש');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגת שימוש',
+        linkedProductId: productId,
+        portionWeightGrams: 100,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח שימוש', quantity: 1000, unitKind: 'g' });
+
+      await addProductionEntry({ date: '2026-08-02', productId, quantity: 20 });
+      await addProductionEntry({ date: '2026-08-15', productId, quantity: 20 });
+      await addProductionEntry({ date: '2026-08-15', productId, quantity: 10, isWaste: true });
+
+      const dayEntries = await db.productionEntries.where('date').equals('2026-08-02').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח שימוש');
+      assertOk(dayFlour, 'נמצא קמח ביום');
+      // 20 יחידות / 10 יחידות-לאצווה = 2 אצוות; 2 * 1000 גרם = 2 ק"ג
+      assertEqual(dayFlour.totalQty, 2, 'קמח יומי: 2 ק"ג');
+      assertEqual(dayFlour.unitKind, 'kg');
+
+      const monthEntries = await db.productionEntries
+        .where('date')
+        .between('2026-08-01', '2026-08-31', true, true)
+        .toArray();
+      const monthUsage = await computeProductionMaterialUsage(monthEntries);
+      const monthFlour = monthUsage.items.find((n) => n.name === 'קמח שימוש');
+      assertOk(monthFlour, 'נמצא קמח בחודש');
+      // 40 יחידות ייצור (בלי פחת) = 4 אצוות * 1000 גרם = 4 ק"ג
+      assertEqual(monthFlour.totalQty, 4, 'קמח חודשי: 4 ק"ג מכל הימים, בלי פחת');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — הרכב באצווה מלאה לא מכפיל אצווה × יחידות',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות הרכב');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגת הרכב' });
+      const recCatId = await addRecipeCategory('מתכוני הרכב');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגת הרכב',
+        linkedProductId: productId,
+        portionWeightGrams: 100,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח הרכב', quantity: 1000, unitKind: 'g' });
+      await addProductRecipeComponent({
+        productId,
+        recipeId,
+        weightGrams: 1000,
+      });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 20 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח הרכב');
+      assertOk(dayFlour, 'נמצא קמח');
+      // 20 יחידות × 100 גרם = 2 ק"ג, לא 20 × 1000 גרם
+      assertEqual(dayFlour.totalQty, 2, 'קמח יומי לפי יחידת חלוקה, לא אצווה מלאה');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — רישום בק"ג מקפיץ למתכון לפי משקל ולא לפי יחידות',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('בצקים בקילו');
+      const productId = await addProduct({
+        categoryId: prodCatId,
+        name: 'בצק פריך',
+        priceUnit: 'kg',
+      });
+      const recCatId = await addRecipeCategory('מתכוני בצק');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'בצק פריך',
+        linkedProductId: productId,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח בצק', quantity: 5, unitKind: 'kg' });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 2 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח בצק');
+      assertOk(dayFlour, 'נמצא קמח');
+      // 2 ק"ג ייצור מתוך אצווה 5 ק"ג → 2 ק"ג קמח, לא 10
+      assertEqual(dayFlour.totalQty, 2, 'קמח לפי משקל הייצור בק"ג');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — בלי יחידת חלוקה לא מכפיל אצווה במספר מוצרים',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות בלי חלוקה');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגה בלי חלוקה' });
+      const recCatId = await addRecipeCategory('מתכונים בלי חלוקה');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגה בלי חלוקה',
+        linkedProductId: productId,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח בלי חלוקה', quantity: 1000, unitKind: 'g' });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 20 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      assertEqual(dayUsage.items.length, 0, 'אין שימוש מנופח בלי יחידת חלוקה');
+      assertEqual(dayUsage.skippedProducts.length, 1, 'המוצר מסומן כלא ניתן לחשב');
+    },
+  );
+
+  await testAsync(
+    'computePortionMaterialUsage — כמות מנות × כמויות המתכון',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const recCatId = await addRecipeCategory('מתכוני מנות בית');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'בצק מנות',
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח מנות', quantity: 10, unitKind: 'kg' });
+      await addRecipeIngredient(recipeId, { name: 'מים מנות', quantity: 6, unitKind: 'l' });
+
+      const usage = await computePortionMaterialUsage([
+        { name: 'בצק מנות', count: 2.5, sourceRecipeId: recipeId },
+      ]);
+      const flour = usage.items.find((n) => n.name === 'קמח מנות');
+      const water = usage.items.find((n) => n.name === 'מים מנות');
+      assertOk(flour, 'נמצא קמח');
+      assertOk(water, 'נמצאו מים');
+      assertEqual(flour.totalQty, 25, '2.5 מנות × 10 ק"ג קמח');
+      assertEqual(water.totalQty, 15, '2.5 מנות × 6 ליטר מים');
+      assertEqual(water.unitKind, 'l');
+    },
+  );
+
+  await testAsync(
+    'computeHomeMaterialUsage — רק מנות בתאריך, לא רשומות מיום אחר',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const recCatId = await addRecipeCategory('מתכוני סינון תאריך');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'קרם סינון',
+      });
+      await addRecipeIngredient(recipeId, { name: 'סוכר סינון', quantity: 4, unitKind: 'kg' });
+
+      const runId = await db.productionRuns.add({
+        date: '2026-09-06',
+        status: 'completed',
+        runPortionLogs: [{
+          id: 1,
+          name: 'קרם אתמול',
+          count: 1,
+          date: '2026-09-06',
+          sourceRecipeId: recipeId,
+        }],
+      });
+      await db.runStepStates.add({
+        runId,
+        stepIndex: 0,
+        tracksPortions: true,
+        portionCount: 3,
+        portionBatches: [{
+          name: 'קרם היום',
+          count: 3,
+          date: '2026-09-07',
+          sourceRecipeId: recipeId,
+        }],
+      });
+
+      const dayRecords = await collectPortionRecordsInRange('2026-09-07', '2026-09-07');
+      assertEqual(dayRecords.length, 1, 'רק מנת היום');
+      assertEqual(dayRecords[0].count, 3);
+
+      const dayUsage = await computeHomeMaterialUsage({ from: '2026-09-07', to: '2026-09-07' });
+      const sugar = dayUsage.items.find((n) => n.name === 'סוכר סינון');
+      assertOk(sugar, 'נמצא סוכר');
+      assertEqual(sugar.totalQty, 12, '3 מנות × 4 ק"ג, בלי מנת אתמול');
+    },
+  );
+
   
   await testAsync('repairOrphanSupplierCategoryLinks — ספק יתום חוזר לחומ״ג', async () => {
     await wait(100);
@@ -423,6 +642,29 @@ export async function runIntegrationTests() {
     assertOk(matPush, 'נוסף ל-syncQueue');
   });
 
+  await testAsync('addRawMaterial — ברקודים מרובים + פעיל כברירת מחדל', async () => {
+    await wait(100);
+    await resetDatabase();
+    await initDB();
+    const catId = await addSupplierCategory('חומרי גלם');
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      name: 'סוכר ברקודים',
+      unit: 'ק"ג',
+      unitPrice: 5,
+      barcodes: ['111111', '222222'],
+    });
+    const mat = await db.rawMaterials.get(matId);
+    assertEqual(mat.active, true);
+    assertEqual(mat.barcode, '111111');
+    assertEqual(getMaterialBarcodes(mat).join(','), '111111,222222');
+    const hit = await findRawMaterialsByBarcode('222222');
+    assertEqual(hit.length, 1);
+    assertEqual(hit[0].id, matId);
+    await updateRawMaterial(matId, { active: false });
+    assertEqual((await db.rawMaterials.get(matId)).active, false);
+  });
+
   await testAsync('coerceSupplierNumericFks + browse — חומר עם supplierId מחרוזת מופיע תחת הספק', async () => {
     await wait(100);
     await resetDatabase();
@@ -477,7 +719,7 @@ export async function runIntegrationTests() {
     await db.rawMaterialPriceHistory.add({
       rawMaterialId: matId,
       price: 9.5,
-      effectiveDate: '2026-08-15',
+      effectiveDate: '2099-12-31',
       createdAt: new Date().toISOString(),
     });
     const n = await reconcileRawMaterialPricesFromHistory();
@@ -593,6 +835,109 @@ export async function runIntegrationTests() {
       repairedV2.ingredients.map((i) => i.name).sort().join(','),
       ['קמח', 'סוכר'].sort().join(','),
     );
+  });
+
+  await testAsync('setRawMaterialPrice — עדכון נשמר בהיסטוריה של אותו ספק בלבד', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק א' });
+    const supB = await addSupplier({ categoryId: catId, name: 'ספק ב' });
+    const pkgGrams = packageWeightGramsFromKg(1);
+    const matA = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supA,
+      name: 'קמח לחם',
+      unit: 'ק"ג',
+      unitPrice: 4,
+      packageWeightGrams: pkgGrams,
+    });
+    const matB = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supB,
+      name: 'קמח לחם',
+      unit: 'ק"ג',
+      unitPrice: 5,
+      packageWeightGrams: pkgGrams,
+    });
+
+    const siblings = await getMaterialsWithSameName(matA);
+    assertEqual(siblings.length, 2, 'שני ספקים לאותו חומר');
+
+    const today = new Date().toISOString().slice(0, 10);
+    await setRawMaterialPrice(matA, 6.5, today);
+    const histA = await getPriceHistory(matA);
+    const histB = await getPriceHistory(matB);
+    assertOk(histA.some((h) => Number(h.price) === 6.5), 'מחיר חדש בהיסטוריה של ספק א');
+    assertEqual(histB.some((h) => Number(h.price) === 6.5), false, 'ספק ב לא קיבל את העדכון');
+
+    const afterA = await db.rawMaterials.get(matA);
+    assertEqual(Number(afterA.unitPrice), 6.5);
+    const afterB = await db.rawMaterials.get(matB);
+    assertEqual(Number(afterB.unitPrice), 5);
+
+    const combined = await getCombinedPriceHistory(matA);
+    assertOk(combined.some((h) => h.supplierName === 'ספק א' && Number(h.price) === 6.5));
+    assertOk(combined.some((h) => h.supplierName === 'ספק ב'));
+    assertEqual(computePricePerKg(6.5, pkgGrams), 6.5);
+
+    await setRawMaterialRecipeDefault(matB, true);
+    const aAfterDefault = await db.rawMaterials.get(matA);
+    const bAfterDefault = await db.rawMaterials.get(matB);
+    assertEqual(!!aAfterDefault.isRecipeDefault, false);
+    assertEqual(!!bAfterDefault.isRecipeDefault, true);
+
+    await deleteRawMaterial(matA);
+    const left = await getMaterialsWithSameName(matB);
+    assertEqual(left.length, 1);
+    assertEqual(Number(left[0].id), Number(matB));
+  });
+
+  await testAsync('assignMaterialToSupplier — מוסיף ספק שני עם מחיר להיסטוריה', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק א' });
+    const supB = await addSupplier({ categoryId: catId, name: 'ספק ב' });
+    const pkgGrams = packageWeightGramsFromKg(1);
+    const matA = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supA,
+      name: 'סוכר לבן',
+      unit: 'ק"ג',
+      unitPrice: 4,
+      packageWeightGrams: pkgGrams,
+    });
+
+    const idB = await assignMaterialToSupplier({
+      name: 'סוכר לבן',
+      supplierCategoryId: catId,
+      supplierId: supB,
+      unitPrice: 7.25,
+      packageWeightGrams: pkgGrams,
+      unit: 'ק"ג',
+    });
+    assertOk(idB, 'נוצרה הצעה לספק ב');
+    assertEqual(Number(idB) === Number(matA), false, 'הצעה נפרדת');
+
+    const siblings = await getMaterialsWithSameName(matA);
+    assertEqual(siblings.length, 2, 'שני ספקים לאותו חומר');
+    const found = await findRawMaterialBySupplierAndName(supB, 'סוכר לבן');
+    assertEqual(Number(found?.id), Number(idB));
+
+    const histB = await getPriceHistory(idB);
+    assertOk(histB.some((h) => Number(h.price) === 7.25), 'מחיר חדש בהיסטוריה של ספק ב');
+    const histA = await getPriceHistory(matA);
+    assertEqual(histA.some((h) => Number(h.price) === 7.25), false, 'ספק א לא קיבל את המחיר החדש');
+
+    const combined = await getCombinedPriceHistory(matA);
+    assertOk(combined.some((h) => h.supplierName === 'ספק ב' && Number(h.price) === 7.25));
   });
 
 await flushTests();

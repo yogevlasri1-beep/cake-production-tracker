@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables } from './db.js?v=478';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=487';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=478';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=478';
-import { logAuditEvent } from './audit.js?v=478';
-import { markMetaDeleted } from './sync/id-map.js?v=478';
+} from './validators.js?v=487';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=487';
+import { logAuditEvent } from './audit.js?v=487';
+import { markMetaDeleted } from './sync/id-map.js?v=487';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2025,6 +2025,85 @@ export function formatKgWeight(kg) {
   return `${Math.round(kg * 1000)} גרם`;
 }
 
+/** תצוגת כמות חומר גלם בשימוש — ק"ג/גרם או ליטר */
+export function formatMaterialUsageQty(qty, unitKind) {
+  const n = Number(qty);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (unitKind === 'l') return `${formatDecimal(n)} ליטר`;
+  return formatKgWeight(n) || `${formatDecimal(n)} ק"ג`;
+}
+
+function materialUsageDimension(unitKind) {
+  return unitKind === 'l' ? 'l' : 'kg';
+}
+
+function canonicalMaterialUsageQty(qty, unitKind) {
+  const n = Number(qty);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (unitKind === 'g') return n / 1000;
+  return n;
+}
+
+/** מאחד שורת חומר גלם למפת שימוש (גרם+ק"ג לאותו חומר) */
+export function addMaterialUsageToMap(map, line, ctx = null) {
+  if (!map) return null;
+  const rawQty = line?.scaledQuantity != null ? line.scaledQuantity : line?.quantity;
+  const unitKind = line?.unitKind || normalizeRecipeUnitKind(line?.unit);
+  const qty = roundQty(canonicalMaterialUsageQty(rawQty, unitKind));
+  if (!(qty > 0)) return null;
+
+  const resolved = ctx ? resolveRecipeIngredientMaterial(line, ctx) : { mat: null };
+  const mat = resolved?.mat || null;
+  const name = mat?.name || line?.name || 'חומר גלם';
+  const rawMaterialId = mat?.id || (line?.rawMaterialId ? Number(line.rawMaterialId) : null);
+  const dim = materialUsageDimension(unitKind);
+  const key = rawMaterialId
+    ? `id:${rawMaterialId}:${dim}`
+    : `name:${normalizeMaterialKey(name)}:${dim}`;
+
+  const prev = map.get(key);
+  if (prev) {
+    prev.totalQty = roundQty(prev.totalQty + qty);
+    return prev;
+  }
+
+  const supplierCategoryId = mat?.supplierCategoryId || line?.supplierCategoryId || 0;
+  const row = {
+    key,
+    rawMaterialId: rawMaterialId || null,
+    name,
+    unitKind: dim,
+    unit: dim === 'l' ? 'ליטר' : 'ק"ג',
+    totalQty: qty,
+    supplierCategoryId,
+    supplierCategoryName: line?.supplierCategoryName || 'ללא קטגוריה',
+  };
+  map.set(key, row);
+  return row;
+}
+
+export function groupMaterialUsageByCategory(items) {
+  const byCategory = new Map();
+  for (const item of items || []) {
+    const ck = item.supplierCategoryId || 0;
+    if (!byCategory.has(ck)) {
+      byCategory.set(ck, {
+        categoryId: ck,
+        categoryName: item.supplierCategoryName || 'ללא קטגוריה',
+        items: [],
+      });
+    }
+    byCategory.get(ck).items.push(item);
+  }
+  const categories = [...byCategory.values()].sort(
+    (a, b) => a.categoryName.localeCompare(b.categoryName, 'he'),
+  );
+  for (const cat of categories) {
+    cat.items.sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  }
+  return categories;
+}
+
 /** תצוגת משקל יחידת חלוקה — ק"ג מעל 1 ק"ג, אחרת גרם */
 export function formatSubdivisionWeight(grams) {
   const g = Number(grams) || 0;
@@ -2469,10 +2548,12 @@ export async function getRecipeLinkedRawMaterialIds() {
   return ids;
 }
 
-/** מסמן חומרי גלם כפעילים אם הם במתכונים; אריזות וחומרי ניקיון תמיד פעילים */
+/**
+ * אריזות וחומרי ניקיון תמיד פעילים.
+ * חומר גלם — המתג במסך העריכה; לא דורסים לפי שימוש במתכונים.
+ */
 export async function syncRawMaterialsActiveFromRecipes() {
-  const [linkedIds, materials, categories] = await Promise.all([
-    getRecipeLinkedRawMaterialIds(),
+  const [materials, categories] = await Promise.all([
     db.rawMaterials.toArray(),
     getSupplierCategories(),
   ]);
@@ -2482,9 +2563,8 @@ export async function syncRawMaterialsActiveFromRecipes() {
   const updates = [];
   for (const m of materials) {
     const alwaysActive = alwaysActiveCatIds.has(Number(m.supplierCategoryId)) || !!m.packagingKind;
-    const shouldBeActive = alwaysActive || linkedIds.has(m.id);
-    if (m.active !== shouldBeActive) {
-      updates.push(db.rawMaterials.update(m.id, { active: shouldBeActive }));
+    if (alwaysActive && m.active !== true) {
+      updates.push(db.rawMaterials.update(m.id, { active: true }));
     }
   }
   if (updates.length) await Promise.all(updates);
@@ -3069,6 +3149,43 @@ export async function syncProductCostFromRecipe(recipeId) {
 export function recipeTotalWeightGrams(ingredients, { useScaled = false } = {}) {
   const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, { useScaled });
   return Math.round((totalKg + totalLiters) * 1000);
+}
+
+/** משקל הרכב ששווה לאצווה השלמה (ברירת המחדל במסך המוצר), לא כמות ליחידה */
+export function isFullRecipeCompositionWeight(weightGrams, recipeTotalG) {
+  const w = Number(weightGrams);
+  const total = Number(recipeTotalG);
+  if (!(w > 0) || !(total > 0)) return false;
+  const tol = Math.max(2, total * 0.02);
+  return Math.abs(w - total) <= tol;
+}
+
+/**
+ * משקל המתכון ליחידת מוצר אחת (גרם) בחישוב שימוש בחומרי גלם.
+ * משקל הרכב מותאם אישית גובר; ברירת מחדל של אצווה שלמה עוברת ליחידת חלוקה
+ * או למשקל יחידת המוצר — כדי לא להכפיל אצווה × מספר עוגות.
+ */
+export function resolveRecipeUsagePerUnitGrams({
+  weightGrams,
+  recipeTotalG,
+  portionWeightGrams,
+  productUnitWeightKg = 0,
+  soleComponent = false,
+} = {}) {
+  const stored = Number(weightGrams);
+  const total = Number(recipeTotalG) || 0;
+  const portionG = Number(portionWeightGrams) || 0;
+  const productUnitG = soleComponent && Number(productUnitWeightKg) > 0
+    ? Number(productUnitWeightKg) * 1000
+    : 0;
+  const hasStored = Number.isFinite(stored) && stored > 0;
+  const fullBatch = !hasStored || isFullRecipeCompositionWeight(stored, total);
+
+  if (hasStored && !fullBatch) return stored;
+  if (portionG > 0) return portionG;
+  if (productUnitG > 0) return productUnitG;
+  if (hasStored) return stored;
+  return total > 0 ? total : 0;
 }
 
 /** קנה מידה לרכיבי מתכון לפי משקל יעד בגרמים */
@@ -4470,6 +4587,33 @@ export function sanitizeBarcode(value) {
   return s.slice(0, 64);
 }
 
+const MAX_MATERIAL_BARCODES = 16;
+
+/** רשימת ברקודים לחומר — ייחודיים, עד 16 */
+export function sanitizeMaterialBarcodes(raw) {
+  const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const code = sanitizeBarcode(item);
+    if (!code) continue;
+    const key = code.toLocaleLowerCase('he');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(code);
+    if (out.length >= MAX_MATERIAL_BARCODES) break;
+  }
+  return out;
+}
+
+/** ברקוד ראשי + barcodes[] — תאימות לאחור */
+export function getMaterialBarcodes(material) {
+  return sanitizeMaterialBarcodes([
+    material?.barcode,
+    ...(Array.isArray(material?.barcodes) ? material.barcodes : []),
+  ]);
+}
+
 /** מק״ט / קוד פריט ספק — מחרוזת קצרה או null */
 export function sanitizeSku(value) {
   const s = String(value ?? '').trim().replace(/\s+/g, ' ');
@@ -4496,14 +4640,10 @@ export async function findRawMaterialsByBarcode(barcode, { excludeId = null } = 
   const code = sanitizeBarcode(barcode);
   if (!code) return [];
   const exclude = excludeId ? Number(excludeId) : null;
-  let rows = [];
-  try {
-    rows = await db.rawMaterials.where('barcode').equals(code).toArray();
-  } catch {
-    rows = (await db.rawMaterials.toArray()).filter((m) => sanitizeBarcode(m.barcode) === code);
-  }
-  if (exclude) rows = rows.filter((m) => Number(m.id) !== exclude);
-  return rows;
+  const key = code.toLocaleLowerCase('he');
+  const rows = (await db.rawMaterials.toArray()).filter((m) =>
+    getMaterialBarcodes(m).some((c) => c.toLocaleLowerCase('he') === key));
+  return exclude ? rows.filter((m) => Number(m.id) !== exclude) : rows;
 }
 
 /**
@@ -4528,9 +4668,11 @@ export async function addRawMaterial({
   synonyms,
   allergens,
   barcode,
+  barcodes,
   sku,
   notes,
   minOrderQty,
+  active,
 }) {
   const cid = sanitizeProductId(supplierCategoryId);
   const trimmed = sanitizeName(name, 80);
@@ -4552,8 +4694,8 @@ export async function addRawMaterial({
     },
     { categoryIsPackaging: isPack },
   );
-  const code = sanitizeBarcode(barcode);
-  if (code) {
+  const codes = sanitizeMaterialBarcodes([barcode, ...(Array.isArray(barcodes) ? barcodes : [])]);
+  for (const code of codes) {
     const conflicts = await findRawMaterialsByBarcode(code);
     if (conflicts.length) {
       throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
@@ -4572,12 +4714,13 @@ export async function addRawMaterial({
     isFree: !simplePricing && !!isFree,
     synonyms: sanitizeMaterialSynonyms(synonyms),
     allergens: sanitizeProductAllergenIds(allergens),
-    barcode: code,
+    barcode: codes[0] || null,
+    barcodes: codes,
     sku: sanitizeSku(sku),
     notes: sanitizeMaterialNotes(notes),
     minOrderQty: sanitizeMinOrderQty(minOrderQty),
     ...packaging,
-    active: simplePricing,
+    active: simplePricing ? true : active !== false,
     sortOrder: maxOrder + 1,
   });
   if (price > 0) {
@@ -4616,16 +4759,35 @@ export async function updateRawMaterial(id, patch) {
   if ('isFree' in data) data.isFree = !!data.isFree;
   if ('synonyms' in data) data.synonyms = sanitizeMaterialSynonyms(data.synonyms);
   if ('allergens' in data) data.allergens = sanitizeProductAllergenIds(data.allergens);
-  if ('barcode' in data) {
-    const code = sanitizeBarcode(data.barcode);
-    if (code) {
-      const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
-      if (conflicts.length) {
-        throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+  if ('barcodes' in data || 'barcode' in data) {
+    const current = await db.rawMaterials.get(mid);
+    if ('barcodes' in data) {
+      const only = sanitizeMaterialBarcodes(data.barcodes);
+      for (const code of only) {
+        const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
+        if (conflicts.length) {
+          throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+        }
+      }
+      data.barcodes = only;
+      data.barcode = only[0] || null;
+    } else {
+      const code = sanitizeBarcode(data.barcode);
+      if (!code) {
+        data.barcode = null;
+        data.barcodes = [];
+      } else {
+        const conflicts = await findRawMaterialsByBarcode(code, { excludeId: mid });
+        if (conflicts.length) {
+          throw new ValidationError(`הברקוד כבר משויך ל«${conflicts[0].name}»`);
+        }
+        const next = sanitizeMaterialBarcodes([...(current ? getMaterialBarcodes(current) : []), code]);
+        data.barcode = next[0] || null;
+        data.barcodes = next;
       }
     }
-    data.barcode = code;
   }
+  if ('active' in data) data.active = !!data.active;
   if ('sku' in data) data.sku = sanitizeSku(data.sku);
   if ('notes' in data) data.notes = sanitizeMaterialNotes(data.notes);
   if ('minOrderQty' in data) data.minOrderQty = sanitizeMinOrderQty(data.minOrderQty);
@@ -4859,8 +5021,7 @@ export function materialMatchesSearch(material, query, { supplierName = '' } = {
   if (!q) return true;
   const name = String(material?.name || '').toLocaleLowerCase('he');
   if (name.includes(q)) return true;
-  const code = String(material?.barcode || '').toLocaleLowerCase('he');
-  if (code && code.includes(q)) return true;
+  if (getMaterialBarcodes(material).some((c) => c.toLocaleLowerCase('he').includes(q))) return true;
   const sku = String(material?.sku || '').toLocaleLowerCase('he');
   if (sku && sku.includes(q)) return true;
   const notes = String(material?.notes || '').toLocaleLowerCase('he');
@@ -5204,9 +5365,13 @@ export function materialFieldFillPatch(keep, others, { preserveCrossSupplierOffe
     const from = (others || []).find((o) => o.supplierCategoryId) || fieldSources.find((o) => o.supplierCategoryId);
     if (from) patch.supplierCategoryId = from.supplierCategoryId;
   }
-  if (!sanitizeBarcode(keep.barcode)) {
-    const from = fieldSources.find((o) => sanitizeBarcode(o.barcode));
-    if (from) patch.barcode = sanitizeBarcode(from.barcode);
+  if (!getMaterialBarcodes(keep).length) {
+    const from = fieldSources.find((o) => getMaterialBarcodes(o).length);
+    if (from) {
+      const codes = getMaterialBarcodes(from);
+      patch.barcode = codes[0] || null;
+      patch.barcodes = codes;
+    }
   }
   if (!sanitizeSku(keep.sku)) {
     const from = fieldSources.find((o) => sanitizeSku(o.sku));
@@ -6170,6 +6335,360 @@ export async function computeWeeklyMaterialNeeds(weekStart) {
     cat.items.sort((a, b) => a.name.localeCompare(b.name, 'he'));
   }
   return { plan, categories, allNeeds: [...needsMap.values()] };
+}
+
+async function loadCostingIngredientsCached(recipe, cache) {
+  if (!recipe?.id) return recipe?.ingredients || [];
+  const key = Number(recipe.id);
+  if (cache.costing.has(key)) return cache.costing.get(key);
+  const ings = await getRecipeCostingIngredients(recipe);
+  cache.costing.set(key, ings);
+  return ings;
+}
+
+async function collectProductUsageIngredients(productId, qty, cache, product = null) {
+  const lines = [];
+  const pid = Number(productId);
+  if (!pid || !(qty > 0)) return lines;
+  const usesKg = productRecordUsesKg(product);
+
+  let recipeComps = cache.recipeComps.get(pid);
+  if (recipeComps === undefined) {
+    recipeComps = await getProductRecipeComponents(pid);
+    cache.recipeComps.set(pid, recipeComps);
+  }
+  let portionComps = cache.portionComps.get(pid);
+  if (portionComps === undefined) {
+    portionComps = await getProductPortionComponents(pid);
+    cache.portionComps.set(pid, portionComps);
+  }
+
+  if (recipeComps.length || portionComps.length) {
+    const soleComponent = (recipeComps.length + portionComps.length) === 1;
+    const prepared = [];
+    let perUnitTotalG = 0;
+
+    for (const comp of recipeComps) {
+      let recipe = cache.recipes.get(Number(comp.recipeId));
+      if (recipe === undefined) {
+        recipe = await getRecipe(comp.recipeId);
+        cache.recipes.set(Number(comp.recipeId), recipe || null);
+      }
+      if (!recipe) continue;
+      const ings = await loadCostingIngredientsCached(recipe, cache);
+      if (!ings.length) continue;
+      const recipeTotalG = recipeTotalWeightGrams(ings);
+      const perUnitG = resolveRecipeUsagePerUnitGrams({
+        weightGrams: comp.weightGrams,
+        recipeTotalG,
+        portionWeightGrams: recipe.portionWeightGrams,
+        productUnitWeightKg: product?.unitWeightKg,
+        soleComponent,
+      });
+      if (!(perUnitG > 0)) continue;
+      prepared.push({ kind: 'recipe', ings, perUnitG, recipeTotalG });
+      perUnitTotalG += perUnitG;
+    }
+    for (const comp of portionComps) {
+      const mat = cache.matById.get(Number(comp.rawMaterialId));
+      const grams = comp.weightGrams != null && comp.weightGrams > 0
+        ? Number(comp.weightGrams)
+        : (portionMaterialDefaultWeightGrams(mat) || 0);
+      if (!(grams > 0)) continue;
+      prepared.push({
+        kind: 'portion',
+        mat,
+        rawMaterialId: Number(comp.rawMaterialId) || null,
+        perUnitG: grams,
+      });
+      perUnitTotalG += grams;
+    }
+
+    if (!prepared.length || !(perUnitTotalG > 0)) return lines;
+    const targetTotalG = usesKg ? (qty * 1000) : (perUnitTotalG * qty);
+    const factor = targetTotalG / perUnitTotalG;
+
+    for (const item of prepared) {
+      const targetG = item.perUnitG * factor;
+      if (item.kind === 'recipe') {
+        if (targetG > 0 && item.recipeTotalG > 0) {
+          lines.push(...scaleIngredientsToTargetGrams(item.ings, targetG));
+        }
+        continue;
+      }
+      lines.push({
+        name: item.mat?.name || 'מנה',
+        rawMaterialId: item.rawMaterialId,
+        quantity: targetG / 1000,
+        scaledQuantity: roundQty(targetG / 1000),
+        unitKind: 'kg',
+        unit: 'ק"ג',
+      });
+    }
+    return lines;
+  }
+
+  let recipe = cache.recipeByProduct.get(pid);
+  if (recipe === undefined) {
+    recipe = await getRecipeForProduct(pid);
+    cache.recipeByProduct.set(pid, recipe || null);
+  }
+  if (!recipe) return lines;
+  const ings = await loadCostingIngredientsCached(recipe, cache);
+  if (!ings.length) return lines;
+
+  if (usesKg) {
+    const targetG = qty * 1000;
+    const recipeTotalG = recipeTotalWeightGrams(ings);
+    if (targetG > 0 && recipeTotalG > 0) {
+      return scaleIngredientsToTargetGrams(ings, targetG);
+    }
+    return lines;
+  }
+
+  const ratio = recipeScaleRatioForProductCount(recipe, ings, qty);
+  if (ratio != null) {
+    for (const ing of ings) {
+      lines.push({
+        ...ing,
+        scaledQuantity: roundQty(Number(ing.quantity) * ratio),
+      });
+    }
+    return lines;
+  }
+
+  const unitKg = Number(product?.unitWeightKg);
+  if (unitKg > 0) {
+    const targetG = unitKg * 1000 * qty;
+    const recipeTotalG = recipeTotalWeightGrams(ings);
+    if (targetG > 0 && recipeTotalG > 0) {
+      return scaleIngredientsToTargetGrams(ings, targetG);
+    }
+  }
+
+  // בלי יחידת חלוקה / משקל יחידה — לא מכפילים אצווה במספר מוצרים
+  return lines;
+}
+
+/**
+ * כמויות חומרי גלם לפי רישומי ייצור בפועל (יום / חודש במסך הבית).
+ * הרכב מוצר אם קיים, אחרת מתכון מקושר.
+ * כמות ביחידות מוקפצת לפי יחידת חלוקה / משקל יחידה — לא אצווה × מספר עוגות.
+ * רישום בק"ג מקפיץ את המתכון למשקל הייצור.
+ */
+export async function computeProductionMaterialUsage(entries, {
+  products = null,
+  categories = null,
+} = {}) {
+  const productList = products || await db.products.toArray();
+  const categoryList = categories || await db.categories.toArray();
+  const productMap = new Map(productList.map((p) => [Number(p.id), p]));
+  const categoryMap = new Map(categoryList.map((c) => [Number(c.id), c]));
+
+  const qtyByProduct = new Map();
+  for (const entry of entries || []) {
+    const product = productMap.get(Number(entry.productId));
+    const category = product ? categoryMap.get(Number(product.categoryId)) : null;
+    if (isWasteProductionEntry(entry, product, category)) continue;
+    const qty = Number(entry.quantity);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    if (!product) continue;
+    const pid = Number(product.id);
+    qtyByProduct.set(pid, roundQty((qtyByProduct.get(pid) || 0) + qty));
+  }
+
+  const [materials, supplierCats] = await Promise.all([
+    getRawMaterials(),
+    getSupplierCategories(),
+  ]);
+  const matById = new Map(materials.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(materials);
+  const supplierCatById = new Map(supplierCats.map((c) => [c.id, c]));
+  const ctx = { matById, byNameKey };
+  const cache = {
+    matById,
+    recipes: new Map(),
+    recipeByProduct: new Map(),
+    recipeComps: new Map(),
+    portionComps: new Map(),
+    costing: new Map(),
+  };
+
+  const usageMap = new Map();
+  const skippedProducts = [];
+
+  for (const [pid, qty] of qtyByProduct) {
+    const product = productMap.get(pid);
+    const lines = await collectProductUsageIngredients(pid, qty, cache, product);
+    if (!lines.length) {
+      skippedProducts.push({ id: pid, name: product?.name || 'מוצר' });
+      continue;
+    }
+    for (const line of lines) {
+      const row = addMaterialUsageToMap(usageMap, line, ctx);
+      if (!row) continue;
+      const mat = row.rawMaterialId ? matById.get(row.rawMaterialId) : null;
+      const catId = mat?.supplierCategoryId || 0;
+      row.supplierCategoryId = catId;
+      row.supplierCategoryName = supplierCatById.get(catId)?.name || 'ללא קטגוריה';
+    }
+  }
+
+  const items = [...usageMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  return {
+    items,
+    categories: groupMaterialUsageByCategory(items),
+    skippedProducts,
+  };
+}
+
+function isoDateInRange(date, from, to) {
+  const d = String(date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+}
+
+function pushPortionUsageRecord(records, entry) {
+  const count = Number(entry?.count);
+  if (!(count > 0)) return;
+  records.push({
+    date: String(entry.date || '').slice(0, 10),
+    name: entry.name || 'מנה',
+    count,
+    presetId: entry.presetId ? Number(entry.presetId) : null,
+    sourceRecipeId: entry.sourceRecipeId ? Number(entry.sourceRecipeId) : null,
+    sourceRawMaterialId: entry.sourceRawMaterialId ? Number(entry.sourceRawMaterialId) : null,
+    weight: entry.weight != null ? Number(entry.weight) : null,
+  });
+}
+
+/** רשומות מנות שתועדו בתאריכים — שלבי תזרים + יומן מנות של התהליך */
+export async function collectPortionRecordsInRange(from, to) {
+  const [runs, steps] = await Promise.all([
+    db.productionRuns.toArray(),
+    db.runStepStates.toArray(),
+  ]);
+  const records = [];
+  for (const step of steps) {
+    if (!step.tracksPortions) continue;
+    for (const batch of getStepPortionBatches(step)) {
+      if (!isoDateInRange(batch.date, from, to)) continue;
+      pushPortionUsageRecord(records, batch);
+    }
+  }
+  for (const run of runs) {
+    for (const log of getRunPortionLogs(run)) {
+      if (!isoDateInRange(log.date, from, to)) continue;
+      pushPortionUsageRecord(records, log);
+    }
+  }
+  return records;
+}
+
+async function collectPortionUsageIngredients(rec, cache) {
+  const count = Number(rec?.count);
+  if (!(count > 0)) return [];
+
+  let recipeId = Number(rec.sourceRecipeId) || 0;
+  let rawMaterialId = Number(rec.sourceRawMaterialId) || 0;
+  let weightKg = rec.weight != null ? Number(rec.weight) : null;
+
+  if (rec.presetId && !recipeId && !rawMaterialId) {
+    const pid = Number(rec.presetId);
+    let preset = cache.presets.get(pid);
+    if (preset === undefined) {
+      preset = await db.groupPortionPresets.get(pid) || null;
+      cache.presets.set(pid, preset);
+    }
+    if (preset) {
+      recipeId = Number(preset.sourceRecipeId) || 0;
+      rawMaterialId = Number(preset.sourceRawMaterialId) || 0;
+      if (!(weightKg > 0) && preset.weight != null) weightKg = Number(preset.weight);
+    }
+  }
+
+  if (recipeId) {
+    let recipe = cache.recipes.get(recipeId);
+    if (recipe === undefined) {
+      recipe = await getRecipe(recipeId);
+      cache.recipes.set(recipeId, recipe || null);
+    }
+    if (!recipe) return [];
+    const ings = await loadCostingIngredientsCached(recipe, cache);
+    return ings.map((ing) => ({
+      ...ing,
+      scaledQuantity: roundQty(Number(ing.quantity) * count),
+    }));
+  }
+
+  if (rawMaterialId && weightKg > 0) {
+    const mat = cache.matById.get(rawMaterialId);
+    return [{
+      name: mat?.name || rec.name || 'מנה',
+      rawMaterialId,
+      quantity: weightKg * count,
+      scaledQuantity: roundQty(weightKg * count),
+      unitKind: 'kg',
+      unit: 'ק"ג',
+    }];
+  }
+
+  return [];
+}
+
+/**
+ * חומרי גלם לפי מנות שתועדו: כמות המנות × כמויות המתכון למנה אחת.
+ */
+export async function computePortionMaterialUsage(records) {
+  const [materials, supplierCats] = await Promise.all([
+    getRawMaterials(),
+    getSupplierCategories(),
+  ]);
+  const matById = new Map(materials.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(materials);
+  const supplierCatById = new Map(supplierCats.map((c) => [c.id, c]));
+  const ctx = { matById, byNameKey };
+  const cache = {
+    matById,
+    recipes: new Map(),
+    costing: new Map(),
+    presets: new Map(),
+  };
+
+  const usageMap = new Map();
+  const skippedPortions = [];
+
+  for (const rec of records || []) {
+    const lines = await collectPortionUsageIngredients(rec, cache);
+    if (!lines.length) {
+      skippedPortions.push({ name: rec?.name || 'מנה' });
+      continue;
+    }
+    for (const line of lines) {
+      const row = addMaterialUsageToMap(usageMap, line, ctx);
+      if (!row) continue;
+      const mat = row.rawMaterialId ? matById.get(row.rawMaterialId) : null;
+      const catId = mat?.supplierCategoryId || 0;
+      row.supplierCategoryId = catId;
+      row.supplierCategoryName = supplierCatById.get(catId)?.name || 'ללא קטגוריה';
+    }
+  }
+
+  const items = [...usageMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  return {
+    items,
+    categories: groupMaterialUsageByCategory(items),
+    skippedPortions,
+    skippedProducts: skippedPortions,
+  };
+}
+
+/** שימוש יומי/חודשי במסך הבית — לפי תיעוד מנות, לא לפי יחידות מוצר */
+export async function computeHomeMaterialUsage({ from, to } = {}) {
+  const records = await collectPortionRecordsInRange(from, to);
+  return computePortionMaterialUsage(records);
 }
 
 export function formatWhatsAppOrderText({ weekStart, categories }) {

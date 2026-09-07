@@ -1,9 +1,9 @@
 /** ייצוא כל טבלאות הנתונים לקובץ Excel (גיליון לכל טבלה) */
 
-import { exportAllData } from './db.js?v=478';
-import { APP_VERSION } from './version.js?v=478';
-import { loadXLSX } from './xlsx-loader.js?v=478';
-import { downloadBlob, toastAfterDownload } from './download.js?v=478';
+import { exportAllData } from './db.js?v=487';
+import { APP_VERSION } from './version.js?v=487';
+import { loadXLSX } from './xlsx-loader.js?v=487';
+import { downloadBlob, toastAfterDownload } from './download.js?v=487';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_CELL_CHARS = 32000;
@@ -88,6 +88,9 @@ export const DATA_TABLE_LABELS = {
   inventoryBalances: 'יתרות מלאי',
   inventoryMovements: 'תנועות מלאי',
   activeLots: 'לוטים פעילים',
+  financeAccountMap: 'סיווג חשבונות כספים',
+  financeImports: 'ייבוא כספים',
+  financeLines: 'שורות כספים',
   settings: 'הגדרות',
 };
 

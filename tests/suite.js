@@ -1,16 +1,16 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=478';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=487';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=478';
+} from '../js/validators.js?v=487';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
   isWasteProductionRecord, metricsProductionValueBreakdown, productLineValue,
-} from '../js/calc.js?v=478';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=478';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=478';
+} from '../js/calc.js?v=487';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=487';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary } from '../js/backup.js?v=487';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -18,36 +18,68 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=478';
-import { isAutoBackupDue } from '../js/backup-service.js?v=478';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair } from '../js/kitchen-db.js?v=478';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=478';
-import { supplierCategoryRoleKey, classifyLiveSyncError } from '../js/supabase-sync.js?v=478';
+} from '../js/supabase-backup.js?v=487';
+import { isAutoBackupDue } from '../js/backup-service.js?v=487';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sanitizeBarcode, sanitizeMaterialBarcodes, getMaterialBarcodes, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair, addMaterialUsageToMap, formatMaterialUsageQty, groupMaterialUsageByCategory, isFullRecipeCompositionWeight, resolveRecipeUsagePerUnitGrams } from '../js/kitchen-db.js?v=487';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=487';
+import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi } from '../js/supabase-sync.js?v=487';
+import {
+  AUTH_RECONNECT_MESSAGE,
+  jwtExpiryMs,
+  sessionNeedsRefresh,
+  isTransientAuthError,
+} from '../js/auth.js?v=487';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=478';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=478';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange, buildPnlDailyRows, sumProcessSummaryQty } from '../js/screens/reports.js?v=478';
-import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber, isProductWasteCategory, isWasteProductionEntry, computeRunMetrics, PRODUCT_WASTE_CATEGORY_NAME } from '../js/db.js?v=478';
-import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel, buildHaccpTeamRoleCoverage } from '../js/haccp-db.js?v=478';
-import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=478';
-import { WORKSPACES } from '../js/workspaces.js?v=478';
-import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=478';
-import { sanitizeAuditPayload, auditActionLabel, auditEntityLabel, formatAuditSnapshotSummary } from '../js/audit.js?v=478';
+} from '../js/supplier-import.js?v=487';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=487';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange, buildPnlDailyRows, sumProcessSummaryQty } from '../js/screens/reports.js?v=487';
+import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber, isProductWasteCategory, isWasteProductionEntry, computeRunMetrics, PRODUCT_WASTE_CATEGORY_NAME } from '../js/db.js?v=487';
+import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel, buildHaccpTeamRoleCoverage } from '../js/haccp-db.js?v=487';
+import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=487';
+import { WORKSPACES } from '../js/workspaces.js?v=487';
+import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=487';
+import { sanitizeAuditPayload, auditActionLabel, auditEntityLabel, formatAuditSnapshotSummary } from '../js/audit.js?v=487';
 import {
   serializeCell, rowsToAoa, uniqueSheetName, listDataTables, buildDataTablesWorkbookSpec, DATA_TABLE_LABELS,
-} from '../js/data-tables-export.js?v=478';
-import { resolveDownloadFilename } from '../js/download.js?v=478';
+} from '../js/data-tables-export.js?v=487';
+import { resolveDownloadFilename } from '../js/download.js?v=487';
 import {
   allowedWorkspaces, canAccessWorkspace, canAccessScreen, canAccessHaccpStep, canAccessRecipeTab, canAccessBackupFull, canManageAccounts,
   canEditRecipes, canManageFlows, canAdjustInventory,
   sanitizeWorkspaceAccess, defaultWorkspacesForRole, workspaceLabel,
-} from '../js/permissions.js?v=478';
-import { lotTraceEmptyHint } from '../js/lot-trace.js?v=478';
+} from '../js/permissions.js?v=487';
+import { lotTraceEmptyHint } from '../js/lot-trace.js?v=487';
+import {
+  signedAmountForCategory,
+  requireManualPeriod,
+  assertImportLineBudget,
+  backupHasFinanceTables,
+  parseFinanceAmount,
+  incomeTotal,
+  expenseTotal,
+  profitTotal,
+  confirmFinanceRestoreWipe,
+  FINANCE_BACKUP_KEYS,
+  FINANCE_IMPORT_HARD_MAX_LINES,
+  FINANCE_CATEGORIES,
+  FINANCE_RESTORE_WIPE_QUESTION,
+} from '../js/finance-db.js?v=487';
+import {
+  detectCsvEncoding,
+  parseCsvText,
+  guessColumnMapping,
+  extractMappedLines,
+  uniqueAccountsFromLines,
+  mappingHasRequiredRoles,
+  mergeColumnMappingByReportType,
+  FINANCE_COLUMN_ROLES,
+  FINANCE_ENCODINGS,
+} from '../js/finance-import.js?v=487';
 
 export async function runAllTests() {
   /* validators */
@@ -232,6 +264,59 @@ export async function runAllTests() {
     const scaled = scaleIngredientsToTargetGrams(ingredients, targetG);
     assertApprox(recipeTotalWeightGrams(scaled, { useScaled: true }), targetG);
     assertApprox(scaled[0].scaledQuantity, 50 * (targetG / 70000));
+  });
+
+  test('addMaterialUsageToMap — combines grams and kg of the same material', () => {
+    const map = new Map();
+    addMaterialUsageToMap(map, { name: 'קמח', quantity: 500, unitKind: 'g', rawMaterialId: 7 });
+    addMaterialUsageToMap(map, { name: 'קמח', scaledQuantity: 2, unitKind: 'kg', rawMaterialId: 7 });
+    const row = map.get('id:7:kg');
+    assertOk(row);
+    assertApprox(row.totalQty, 2.5);
+    assertEqual(row.unitKind, 'kg');
+    assertEqual(formatMaterialUsageQty(row.totalQty, row.unitKind), '2.5 ק"ג');
+  });
+
+  test('addMaterialUsageToMap — liters stay separate from weight', () => {
+    const map = new Map();
+    addMaterialUsageToMap(map, { name: 'מים', quantity: 2, unitKind: 'l' });
+    addMaterialUsageToMap(map, { name: 'מים', quantity: 1, unitKind: 'kg' });
+    assertEqual(map.size, 2);
+    const water = [...map.values()].find((r) => r.unitKind === 'l');
+    assertEqual(formatMaterialUsageQty(water.totalQty, 'l'), '2 ליטר');
+  });
+
+  test('groupMaterialUsageByCategory — sorts categories and items in Hebrew', () => {
+    const grouped = groupMaterialUsageByCategory([
+      { name: 'סוכר', supplierCategoryId: 2, supplierCategoryName: 'יבשים', totalQty: 1, unitKind: 'kg' },
+      { name: 'קמח', supplierCategoryId: 2, supplierCategoryName: 'יבשים', totalQty: 3, unitKind: 'kg' },
+      { name: 'חלב', supplierCategoryId: 1, supplierCategoryName: 'חלב', totalQty: 4, unitKind: 'l' },
+    ]);
+    assertEqual(grouped.length, 2);
+    assertEqual(grouped[0].categoryName, 'חלב');
+    assertEqual(grouped[1].items[0].name, 'סוכר');
+    assertEqual(grouped[1].items[1].name, 'קמח');
+  });
+
+  test('resolveRecipeUsagePerUnitGrams — אצווה כברירת מחדל → יחידת חלוקה', () => {
+    assertOk(isFullRecipeCompositionWeight(70000, 70000));
+    assertOk(!isFullRecipeCompositionWeight(3000, 70000));
+    assertEqual(resolveRecipeUsagePerUnitGrams({
+      weightGrams: 70000,
+      recipeTotalG: 70000,
+      portionWeightGrams: 3000,
+    }), 3000);
+    assertEqual(resolveRecipeUsagePerUnitGrams({
+      weightGrams: 480,
+      recipeTotalG: 70000,
+      portionWeightGrams: 3000,
+    }), 480);
+    assertEqual(resolveRecipeUsagePerUnitGrams({
+      recipeTotalG: 70000,
+      portionWeightGrams: 0,
+      productUnitWeightKg: 3,
+      soleComponent: true,
+    }), 3000);
   });
 
   test('recipeScaleRatioForProductCount — 70kg / 3kg unit, target 10 units', () => {
@@ -648,6 +733,43 @@ export async function runAllTests() {
     assertOk(classifyLiveSyncError('Supabase: weird').message);
   });
 
+  test('classifyLiveSyncError — 401 ו-jwt expired הם התחברות מחדש, לא RLS', () => {
+    const rlsMsg = classifyLiveSyncError('row-level security').message;
+    assertEqual(classifyLiveSyncError('JWT expired').kind, 'auth');
+    assertEqual(classifyLiveSyncError('JWT expired').message, AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('Supabase sync: 401').kind, 'auth');
+    assertEqual(classifyLiveSyncError('Supabase sync: 401').message, AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('invalid JWT').kind, 'auth');
+    assertEqual(classifyLiveSyncError('PGRST301').kind, 'auth');
+    assertEqual(classifyLiveSyncError('new row violates row-level security policy').kind, 'rls');
+    assertOk(classifyLiveSyncError('JWT expired').message !== rlsMsg);
+    assertOk(!String(classifyLiveSyncError('JWT expired').message).includes('אישור מנהל'));
+    assertEqual(formatLiveSyncErrorForUi({ lastErrorKind: 'auth', lastError: 'JWT expired' }), AUTH_RECONNECT_MESSAGE);
+    assertEqual(classifyLiveSyncError('אין חיבור').kind, 'network');
+    assertOk(!String(classifyLiveSyncError('Failed to fetch').message).includes('אישור מנהל'));
+  });
+
+  test('sessionNeedsRefresh — קורא exp מה-JWT ולא רק expires_at מקומי', () => {
+    const encode = (obj) => {
+      const json = JSON.stringify(obj);
+      return btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    const jwt = (exp) => `${encode({ alg: 'none' })}.${encode({ exp })}.sig`;
+    const now = 1_700_000_000_000;
+    const futureLocal = now + 3_600_000;
+    assertEqual(sessionNeedsRefresh({
+      access_token: jwt(Math.floor((now - 120_000) / 1000)),
+      expires_at: futureLocal,
+    }, now), true);
+    assertEqual(sessionNeedsRefresh({
+      access_token: jwt(Math.floor((now + 3_600_000) / 1000)),
+      expires_at: futureLocal,
+    }, now), false);
+    assertOk(jwtExpiryMs(jwt(1_700_000_123)) === 1_700_000_123_000);
+    assertEqual(isTransientAuthError({ kind: 'network', message: 'Failed to fetch' }), true);
+    assertEqual(isTransientAuthError({ kind: 'revoked', message: AUTH_RECONNECT_MESSAGE }), false);
+  });
+
   test('applyImportPriceBasis — מחיר לק"ג הופך למחיר אריזה', () => {
     const entries = [
       { materialName: 'מלח', price: 1.8, packageWeightGrams: 12000 },
@@ -780,6 +902,17 @@ export async function runAllTests() {
     assertOk(materialMatchesSearch(mat, 'שק'));
     assertOk(materialMatchesSearch(mat, '729'));
     assertOk(!materialMatchesSearch(mat, 'סוכר'));
+  });
+
+  test('sanitizeMaterialBarcodes / getMaterialBarcodes — כמה ברקודים לחומר', () => {
+    assertEqual(sanitizeBarcode('  7290001  '), '7290001');
+    const codes = sanitizeMaterialBarcodes(['7290001', '7290001', '  7290002 ', '', '7290002']);
+    assertEqual(codes.join(','), '7290001,7290002');
+    const mat = { barcode: '111', barcodes: ['222', '111', '333'] };
+    assertEqual(getMaterialBarcodes(mat).join(','), '111,222,333');
+    const extra = { name: 'קמח', barcode: '111', barcodes: ['999888'] };
+    assertOk(materialMatchesSearch(extra, '999'));
+    assertOk(!materialMatchesSearch(extra, '8888'));
   });
 
   test('materialFieldFillPatch — ממלא מק״ט/הערות/MOQ חסרים', () => {
@@ -1292,8 +1425,8 @@ export async function runAllTests() {
   test('permissions — allowedWorkspaces לפי תפקיד + עמדת חשבונות', () => {
     assertEqual(allowedWorkspaces('production').sort().join(','), 'haccp,lots,productCatalog,production,recipes');
     assertEqual(allowedWorkspaces('quality').sort().join(','), 'haccp,inventory,lots,productCatalog,production,recipes,suppliers');
-    assertEqual(allowedWorkspaces('manager').sort().join(','), 'accounts,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
-    assertEqual(allowedWorkspaces('admin').sort().join(','), 'accounts,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
+    assertEqual(allowedWorkspaces('manager').sort().join(','), 'accounts,finance,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
+    assertEqual(allowedWorkspaces('admin').sort().join(','), 'accounts,finance,haccp,inventory,lots,manager,productCatalog,production,recipes,suppliers');
     assertEqual(allowedWorkspaces('unknown-role').sort().join(','), 'haccp,lots,productCatalog,production,recipes');
   });
 
@@ -1324,16 +1457,19 @@ export async function runAllTests() {
     assertOk(!canAccessWorkspace('production', 'suppliers'));
     assertOk(!canAccessWorkspace('production', 'manager'));
     assertOk(!canAccessWorkspace('production', 'accounts'));
+    assertOk(!canAccessWorkspace('production', 'finance'));
 
     assertOk(canAccessWorkspace('quality', 'suppliers'));
     assertOk(canAccessWorkspace('quality', 'lots'));
     assertOk(canAccessWorkspace('quality', 'inventory'));
     assertOk(!canAccessWorkspace('quality', 'manager'));
     assertOk(!canAccessWorkspace('quality', 'accounts'));
+    assertOk(!canAccessWorkspace('quality', 'finance'));
 
     assertOk(canAccessWorkspace('manager', 'manager'));
     assertOk(canAccessWorkspace('manager', 'suppliers'));
     assertOk(canAccessWorkspace('manager', 'accounts'));
+    assertOk(canAccessWorkspace('manager', 'finance'));
     assertOk(canAccessWorkspace('manager', 'lots'));
     assertOk(canAccessWorkspace('manager', 'inventory'));
     assertOk(canAccessWorkspace('admin', 'accounts'));
@@ -1353,6 +1489,9 @@ export async function runAllTests() {
     assertEqual(WORKSPACES.lots?.label, 'מעקב אצוות');
     assertEqual(WORKSPACES.inventory?.defaultScreen, 'inventory');
     assertEqual(WORKSPACES.inventory?.label, 'מלאי');
+    assertEqual(WORKSPACES.finance?.defaultScreen, 'finance');
+    assertEqual(WORKSPACES.finance?.label, 'כספים');
+    assertEqual(workspaceLabel('finance'), 'כספים');
   });
 
   test('lotTraceEmptyHint — טקסט הדרכה', () => {
@@ -1367,7 +1506,7 @@ export async function runAllTests() {
   });
 
   test('inventoryMovementKindLabel', async () => {
-    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=478');
+    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=487');
     assertEqual(inventoryMovementKindLabel('receive'), 'קבלה');
     assertEqual(inventoryMovementKindLabel('issue'), 'ניפוק');
     assertEqual(inventoryMovementKindLabel('set'), 'הגדרה');
@@ -1380,7 +1519,7 @@ export async function runAllTests() {
   });
 
   test('receiveShortageToInventory — דורש מזהה', async () => {
-    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=478');
+    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=487');
     let threw = false;
     try {
       await receiveShortageToInventory(null);
@@ -1392,7 +1531,7 @@ export async function runAllTests() {
   });
 
   test('previewProductionStockIssue — דורש מספר מנות', async () => {
-    const { previewProductionStockIssue, formatProductionIssueConfirm } = await import('../js/inventory-db.js?v=478');
+    const { previewProductionStockIssue, formatProductionIssueConfirm } = await import('../js/inventory-db.js?v=487');
     let threw = false;
     try {
       await previewProductionStockIssue({ portionCount: 0 });
@@ -1541,7 +1680,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — כלי בניית תכנית מיוצאים', async () => {
-    const mod = await import('../js/haccp-db.js?v=478');
+    const mod = await import('../js/haccp-db.js?v=487');
     assertOk(typeof mod.buildHaccpPlanDraft === 'function');
     assertOk(typeof mod.getHaccpPlanReadiness === 'function');
     assertOk(typeof mod.cloneHaccpPlan === 'function');
@@ -1568,7 +1707,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — תבניות מאפייה לפי סוג', async () => {
-    const mod = await import('../js/haccp-db.js?v=478');
+    const mod = await import('../js/haccp-db.js?v=487');
     const ids = mod.HACCP_BAKERY_TEMPLATES.map((t) => t.id).sort().join(',');
     assertEqual(ids, 'cakes,creams,doughs,general');
     for (const t of mod.HACCP_BAKERY_TEMPLATES) {
@@ -1581,7 +1720,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — דשבורד חריגות מסנן וממיין', async () => {
-    const mod = await import('../js/haccp-db.js?v=478');
+    const mod = await import('../js/haccp-db.js?v=487');
     const now = Date.parse('2026-08-06T12:00:00');
     const dash = mod.buildHaccpDeviationDashboard([
       {
@@ -1621,7 +1760,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — אשף נועל שלבים לפי מוכנות', async () => {
-    const mod = await import('../js/haccp-db.js?v=478');
+    const mod = await import('../js/haccp-db.js?v=487');
     const emptyReady = {
       items: mod.HACCP_WIZARD_STEPS.map((stepId) => ({
         stepId,
@@ -2151,7 +2290,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=478');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=487');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });
@@ -2578,6 +2717,116 @@ export async function runAllTests() {
     assertEqual(productSheet.aoa[1][1], 'פרג 30');
     assertEqual(listDataTables({}).length, Object.keys(DATA_TABLE_LABELS).length);
     assertOk(specs.length === Object.keys(DATA_TABLE_LABELS).length + 1);
+  });
+
+  test('finance — כלל סימן: הקטגוריה קובעת כיוון, לא מוחקת סימן', () => {
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, '1,234.50'), 1234.5);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.income, -1200), -1200);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.materials, 80), -80);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.ignore, 10), null);
+    assertEqual(parseFinanceAmount('1.234,56'), 1234.56);
+  });
+
+  test('finance — שורת זיכוי מקטינה הוצאות ולא מתהפכת לערך מוחלט', () => {
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.materials, -5000), 5000);
+    assertEqual(signedAmountForCategory(FINANCE_CATEGORIES.payroll, '-90,5'), 90.5);
+    const lines = [
+      { category: FINANCE_CATEGORIES.income, amount: 10000 },
+      { category: FINANCE_CATEGORIES.materials, amount: -8000 },
+      { category: FINANCE_CATEGORIES.materials, amount: 5000 },
+    ];
+    assertEqual(incomeTotal(lines), 10000);
+    assertEqual(expenseTotal(lines), 3000);
+    assertEqual(profitTotal(lines), 7000);
+  });
+
+  test('finance — תקופה רק מבורר ידני, לא מקובץ', () => {
+    const period = requireManualPeriod('2026-07-01', '2026-07-31');
+    assertEqual(period.periodStart, '2026-07-01');
+    assertEqual(period.periodEnd, '2026-07-31');
+    let threw = false;
+    try { requireManualPeriod('', '2026-07-31'); } catch { threw = true; }
+    assertEqual(threw, true);
+    threw = false;
+    try { requireManualPeriod('2026-08-01', '2026-07-31'); } catch { threw = true; }
+    assertEqual(threw, true);
+  });
+
+  test('finance — ייבוא ברמת מאזן בוחן, לא תנועות', () => {
+    assertEqual(assertImportLineBudget(300), 300);
+    let threw = false;
+    try { assertImportLineBudget(FINANCE_IMPORT_HARD_MAX_LINES + 1); } catch { threw = true; }
+    assertEqual(threw, true);
+  });
+
+  test('finance — גיבוי JSON חייב לכלול את שלוש הטבלאות', () => {
+    const enrichedMissing = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+    });
+    assertEqual(enrichedMissing.__financeBackupPresent, false);
+    assertEqual(Array.isArray(enrichedMissing.financeAccountMap), true);
+    assertEqual(Array.isArray(enrichedMissing.financeImports), true);
+    assertEqual(Array.isArray(enrichedMissing.financeLines), true);
+    assertEqual(backupHasFinanceTables(enrichedMissing), false);
+    const enrichedTwice = enrichBackupData(enrichedMissing);
+    assertEqual(enrichedTwice.__financeBackupPresent, false);
+    assertEqual(backupHasFinanceTables(enrichedTwice), false);
+
+    const enrichedPresent = enrichBackupData({
+      categories: [{ id: 1, name: 'א' }],
+      products: [],
+      productionEntries: [],
+      targets: [],
+      processLogs: [],
+      activityPresets: [],
+      financeAccountMap: [{ id: 1, accountCode: '6000', category: 'materials' }],
+      financeImports: [{ id: 1, reportType: 'trial_balance' }],
+      financeLines: [{ id: 1, importId: 1, amount: -10 }],
+    });
+    assertEqual(enrichedPresent.__financeBackupPresent, true);
+    assertEqual(backupHasFinanceTables(enrichedPresent), true);
+    assertEqual(enrichedPresent.financeLines.length, 1);
+    const counts = summarizeBackupData(enrichedPresent);
+    assertEqual(counts.financeAccountMap, 1);
+    assertEqual(counts.financeImports, 1);
+    assertEqual(counts.financeLines, 1);
+    assertOk(formatBackupSummary(counts).includes('שורות כספים'));
+    assertEqual(FINANCE_BACKUP_KEYS.join(','), 'financeAccountMap,financeImports,financeLines');
+    assertEqual(DATA_TABLE_LABELS.financeLines, 'שורות כספים');
+    assertEqual(COLLECTION_TABLE.financeLines, undefined);
+    assertEqual(SYNC_ORDER.includes('financeLines'), false);
+    assertEqual(SYNC_ORDER.includes('financeImports'), false);
+    assertEqual(SYNC_ORDER.includes('financeAccountMap'), false);
+  });
+
+  test('finance — שחזור גיבוי ישן שואל ולא חוסם אוטומטית', () => {
+    assertOk(FINANCE_RESTORE_WIPE_QUESTION.includes('לא מכיל נתוני כספים'));
+    assertEqual(confirmFinanceRestoreWipe(() => true), true);
+    assertEqual(confirmFinanceRestoreWipe(() => false), false);
+  });
+
+  test('finance — אשף: קידוד, מיפוי עמודות וחילוץ שורות', () => {
+    const winBytes = new Uint8Array([0xE0, 0xE1, 0xE2, 0x2C, 0x31]);
+    assertEqual(detectCsvEncoding(winBytes), FINANCE_ENCODINGS.windows1255);
+    const utfBytes = new TextEncoder().encode('קוד,סכום\n6000,10');
+    assertEqual(detectCsvEncoding(utfBytes), FINANCE_ENCODINGS.utf8);
+
+    const rows = parseCsvText('קוד חשבון,שם,סכום\n6000,קמח,8000\n6000,קמח,-5000\n');
+    const mapping = guessColumnMapping(rows[0]);
+    assertEqual(mapping[0], FINANCE_COLUMN_ROLES.accountCode);
+    assertEqual(mapping[2], FINANCE_COLUMN_ROLES.amount);
+    assertEqual(mappingHasRequiredRoles(mapping), true);
+    const lines = extractMappedLines(rows, 1, mapping);
+    assertEqual(lines.length, 2);
+    assertEqual(lines[0].accountCode, '6000');
+    assertEqual(uniqueAccountsFromLines(lines).length, 1);
+    const merged = mergeColumnMappingByReportType({}, 'trial_balance', mapping);
+    assertEqual(merged.trial_balance[0], FINANCE_COLUMN_ROLES.accountCode);
   });
 
   test('sync — recipeVersions באוסף וטביעת אצבע כוללת גרסה', () => {
