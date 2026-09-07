@@ -17,7 +17,7 @@ import {
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
-  computeProductionMaterialUsage,
+  computeProductionMaterialUsage, addProductRecipeComponent,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
@@ -377,6 +377,98 @@ export async function runIntegrationTests() {
       assertOk(monthFlour, 'נמצא קמח בחודש');
       // 40 יחידות ייצור (בלי פחת) = 4 אצוות * 1000 גרם = 4 ק"ג
       assertEqual(monthFlour.totalQty, 4, 'קמח חודשי: 4 ק"ג מכל הימים, בלי פחת');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — הרכב באצווה מלאה לא מכפיל אצווה × יחידות',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות הרכב');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגת הרכב' });
+      const recCatId = await addRecipeCategory('מתכוני הרכב');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגת הרכב',
+        linkedProductId: productId,
+        portionWeightGrams: 100,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח הרכב', quantity: 1000, unitKind: 'g' });
+      await addProductRecipeComponent({
+        productId,
+        recipeId,
+        weightGrams: 1000,
+      });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 20 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח הרכב');
+      assertOk(dayFlour, 'נמצא קמח');
+      // 20 יחידות × 100 גרם = 2 ק"ג, לא 20 × 1000 גרם
+      assertEqual(dayFlour.totalQty, 2, 'קמח יומי לפי יחידת חלוקה, לא אצווה מלאה');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — רישום בק"ג מקפיץ למתכון לפי משקל ולא לפי יחידות',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('בצקים בקילו');
+      const productId = await addProduct({
+        categoryId: prodCatId,
+        name: 'בצק פריך',
+        priceUnit: 'kg',
+      });
+      const recCatId = await addRecipeCategory('מתכוני בצק');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'בצק פריך',
+        linkedProductId: productId,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח בצק', quantity: 5, unitKind: 'kg' });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 2 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      const dayFlour = dayUsage.items.find((n) => n.name === 'קמח בצק');
+      assertOk(dayFlour, 'נמצא קמח');
+      // 2 ק"ג ייצור מתוך אצווה 5 ק"ג → 2 ק"ג קמח, לא 10
+      assertEqual(dayFlour.totalQty, 2, 'קמח לפי משקל הייצור בק"ג');
+    },
+  );
+
+  await testAsync(
+    'computeProductionMaterialUsage — בלי יחידת חלוקה לא מכפיל אצווה במספר מוצרים',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const prodCatId = await addCategory('עוגות בלי חלוקה');
+      const productId = await addProduct({ categoryId: prodCatId, name: 'עוגה בלי חלוקה' });
+      const recCatId = await addRecipeCategory('מתכונים בלי חלוקה');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'עוגה בלי חלוקה',
+        linkedProductId: productId,
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח בלי חלוקה', quantity: 1000, unitKind: 'g' });
+
+      await addProductionEntry({ date: '2026-09-07', productId, quantity: 20 });
+      const dayEntries = await db.productionEntries.where('date').equals('2026-09-07').toArray();
+      const dayUsage = await computeProductionMaterialUsage(dayEntries);
+      assertEqual(dayUsage.items.length, 0, 'אין שימוש מנופח בלי יחידת חלוקה');
+      assertEqual(dayUsage.skippedProducts.length, 1, 'המוצר מסומן כלא ניתן לחשב');
     },
   );
 

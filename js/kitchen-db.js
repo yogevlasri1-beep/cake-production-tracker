@@ -3,7 +3,7 @@ import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
 } from './validators.js?v=485';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal } from './utils.js?v=485';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=485';
 import { logAuditEvent } from './audit.js?v=485';
 import { markMetaDeleted } from './sync/id-map.js?v=485';
 
@@ -3149,6 +3149,43 @@ export async function syncProductCostFromRecipe(recipeId) {
 export function recipeTotalWeightGrams(ingredients, { useScaled = false } = {}) {
   const { totalKg, totalLiters } = computeRecipeIngredientsTotal(ingredients, { useScaled });
   return Math.round((totalKg + totalLiters) * 1000);
+}
+
+/** משקל הרכב ששווה לאצווה השלמה (ברירת המחדל במסך המוצר), לא כמות ליחידה */
+export function isFullRecipeCompositionWeight(weightGrams, recipeTotalG) {
+  const w = Number(weightGrams);
+  const total = Number(recipeTotalG);
+  if (!(w > 0) || !(total > 0)) return false;
+  const tol = Math.max(2, total * 0.02);
+  return Math.abs(w - total) <= tol;
+}
+
+/**
+ * משקל המתכון ליחידת מוצר אחת (גרם) בחישוב שימוש בחומרי גלם.
+ * משקל הרכב מותאם אישית גובר; ברירת מחדל של אצווה שלמה עוברת ליחידת חלוקה
+ * או למשקל יחידת המוצר — כדי לא להכפיל אצווה × מספר עוגות.
+ */
+export function resolveRecipeUsagePerUnitGrams({
+  weightGrams,
+  recipeTotalG,
+  portionWeightGrams,
+  productUnitWeightKg = 0,
+  soleComponent = false,
+} = {}) {
+  const stored = Number(weightGrams);
+  const total = Number(recipeTotalG) || 0;
+  const portionG = Number(portionWeightGrams) || 0;
+  const productUnitG = soleComponent && Number(productUnitWeightKg) > 0
+    ? Number(productUnitWeightKg) * 1000
+    : 0;
+  const hasStored = Number.isFinite(stored) && stored > 0;
+  const fullBatch = !hasStored || isFullRecipeCompositionWeight(stored, total);
+
+  if (hasStored && !fullBatch) return stored;
+  if (portionG > 0) return portionG;
+  if (productUnitG > 0) return productUnitG;
+  if (hasStored) return stored;
+  return total > 0 ? total : 0;
 }
 
 /** קנה מידה לרכיבי מתכון לפי משקל יעד בגרמים */
@@ -6309,10 +6346,11 @@ async function loadCostingIngredientsCached(recipe, cache) {
   return ings;
 }
 
-async function collectProductUsageIngredients(productId, qty, cache) {
+async function collectProductUsageIngredients(productId, qty, cache, product = null) {
   const lines = [];
   const pid = Number(productId);
   if (!pid || !(qty > 0)) return lines;
+  const usesKg = productRecordUsesKg(product);
 
   let recipeComps = cache.recipeComps.get(pid);
   if (recipeComps === undefined) {
@@ -6326,6 +6364,10 @@ async function collectProductUsageIngredients(productId, qty, cache) {
   }
 
   if (recipeComps.length || portionComps.length) {
+    const soleComponent = (recipeComps.length + portionComps.length) === 1;
+    const prepared = [];
+    let perUnitTotalG = 0;
+
     for (const comp of recipeComps) {
       let recipe = cache.recipes.get(Number(comp.recipeId));
       if (recipe === undefined) {
@@ -6336,15 +6378,16 @@ async function collectProductUsageIngredients(productId, qty, cache) {
       const ings = await loadCostingIngredientsCached(recipe, cache);
       if (!ings.length) continue;
       const recipeTotalG = recipeTotalWeightGrams(ings);
-      const perUnitG = comp.weightGrams != null && comp.weightGrams > 0 ? comp.weightGrams : recipeTotalG;
-      const targetG = perUnitG * qty;
-      const scaled = targetG > 0 && recipeTotalG > 0
-        ? scaleIngredientsToTargetGrams(ings, targetG)
-        : ings.map((ing) => ({
-          ...ing,
-          scaledQuantity: roundQty(Number(ing.quantity) * qty),
-        }));
-      lines.push(...scaled);
+      const perUnitG = resolveRecipeUsagePerUnitGrams({
+        weightGrams: comp.weightGrams,
+        recipeTotalG,
+        portionWeightGrams: recipe.portionWeightGrams,
+        productUnitWeightKg: product?.unitWeightKg,
+        soleComponent,
+      });
+      if (!(perUnitG > 0)) continue;
+      prepared.push({ kind: 'recipe', ings, perUnitG, recipeTotalG });
+      perUnitTotalG += perUnitG;
     }
     for (const comp of portionComps) {
       const mat = cache.matById.get(Number(comp.rawMaterialId));
@@ -6352,11 +6395,32 @@ async function collectProductUsageIngredients(productId, qty, cache) {
         ? Number(comp.weightGrams)
         : (portionMaterialDefaultWeightGrams(mat) || 0);
       if (!(grams > 0)) continue;
-      lines.push({
-        name: mat?.name || 'מנה',
+      prepared.push({
+        kind: 'portion',
+        mat,
         rawMaterialId: Number(comp.rawMaterialId) || null,
-        quantity: (grams / 1000) * qty,
-        scaledQuantity: roundQty((grams / 1000) * qty),
+        perUnitG: grams,
+      });
+      perUnitTotalG += grams;
+    }
+
+    if (!prepared.length || !(perUnitTotalG > 0)) return lines;
+    const targetTotalG = usesKg ? (qty * 1000) : (perUnitTotalG * qty);
+    const factor = targetTotalG / perUnitTotalG;
+
+    for (const item of prepared) {
+      const targetG = item.perUnitG * factor;
+      if (item.kind === 'recipe') {
+        if (targetG > 0 && item.recipeTotalG > 0) {
+          lines.push(...scaleIngredientsToTargetGrams(item.ings, targetG));
+        }
+        continue;
+      }
+      lines.push({
+        name: item.mat?.name || 'מנה',
+        rawMaterialId: item.rawMaterialId,
+        quantity: targetG / 1000,
+        scaledQuantity: roundQty(targetG / 1000),
         unitKind: 'kg',
         unit: 'ק"ג',
       });
@@ -6372,20 +6436,45 @@ async function collectProductUsageIngredients(productId, qty, cache) {
   if (!recipe) return lines;
   const ings = await loadCostingIngredientsCached(recipe, cache);
   if (!ings.length) return lines;
-  const ratio = recipeScaleRatioForProductCount(recipe, ings, qty);
-  const multiplier = ratio != null ? ratio : qty;
-  for (const ing of ings) {
-    lines.push({
-      ...ing,
-      scaledQuantity: roundQty(Number(ing.quantity) * multiplier),
-    });
+
+  if (usesKg) {
+    const targetG = qty * 1000;
+    const recipeTotalG = recipeTotalWeightGrams(ings);
+    if (targetG > 0 && recipeTotalG > 0) {
+      return scaleIngredientsToTargetGrams(ings, targetG);
+    }
+    return lines;
   }
+
+  const ratio = recipeScaleRatioForProductCount(recipe, ings, qty);
+  if (ratio != null) {
+    for (const ing of ings) {
+      lines.push({
+        ...ing,
+        scaledQuantity: roundQty(Number(ing.quantity) * ratio),
+      });
+    }
+    return lines;
+  }
+
+  const unitKg = Number(product?.unitWeightKg);
+  if (unitKg > 0) {
+    const targetG = unitKg * 1000 * qty;
+    const recipeTotalG = recipeTotalWeightGrams(ings);
+    if (targetG > 0 && recipeTotalG > 0) {
+      return scaleIngredientsToTargetGrams(ings, targetG);
+    }
+  }
+
+  // בלי יחידת חלוקה / משקל יחידה — לא מכפילים אצווה במספר מוצרים
   return lines;
 }
 
 /**
  * כמויות חומרי גלם לפי רישומי ייצור בפועל (יום / חודש במסך הבית).
- * הרכב מוצר אם קיים, אחרת מתכון מקושר — כמו ניפוק מלאי מרישום ייצור.
+ * הרכב מוצר אם קיים, אחרת מתכון מקושר.
+ * כמות ביחידות מוקפצת לפי יחידת חלוקה / משקל יחידה — לא אצווה × מספר עוגות.
+ * רישום בק"ג מקפיץ את המתכון למשקל הייצור.
  */
 export async function computeProductionMaterialUsage(entries, {
   products = null,
@@ -6430,7 +6519,7 @@ export async function computeProductionMaterialUsage(entries, {
 
   for (const [pid, qty] of qtyByProduct) {
     const product = productMap.get(pid);
-    const lines = await collectProductUsageIngredients(pid, qty, cache);
+    const lines = await collectProductUsageIngredients(pid, qty, cache, product);
     if (!lines.length) {
       skippedProducts.push({ id: pid, name: product?.name || 'מוצר' });
       continue;

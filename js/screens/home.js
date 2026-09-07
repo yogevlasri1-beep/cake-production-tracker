@@ -482,7 +482,7 @@ function buildMaterialsUsageSection(usage, { isDay, periodLabel }) {
 
   if (!items.length) {
     const skipHint = skipped.length
-      ? `יש ייצור בלי מתכון/הרכב (${skipped.slice(0, 3).map((p) => escapeHtml(p.name)).join(', ')}${skipped.length > 3 ? '…' : ''})`
+      ? `יש ייצור שאי אפשר לחשב ממנו חומרים (${skipped.slice(0, 3).map((p) => escapeHtml(p.name)).join(', ')}${skipped.length > 3 ? '…' : ''})`
       : 'אין רישומי ייצור עם מתכון או הרכב מוצר בתקופה זו';
     return `
       <div class="section-header home-section-header">
@@ -514,7 +514,7 @@ function buildMaterialsUsageSection(usage, { isDay, periodLabel }) {
       </ul>`;
 
   const skipNote = skipped.length
-    ? `<p class="home-materials-hint">לא נכללו ${skipped.length} מוצרים בלי מתכון או הרכב</p>`
+    ? `<p class="home-materials-hint">לא נכללו ${skipped.length} מוצרים — חסר מתכון, הרכב או יחידת חלוקה</p>`
     : '';
 
   return `
