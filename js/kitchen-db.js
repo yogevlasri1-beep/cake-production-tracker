@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=486';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=487';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=486';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=486';
-import { logAuditEvent } from './audit.js?v=486';
-import { markMetaDeleted } from './sync/id-map.js?v=486';
+} from './validators.js?v=487';
+import { weekStartISO, todayISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=487';
+import { logAuditEvent } from './audit.js?v=487';
+import { markMetaDeleted } from './sync/id-map.js?v=487';
 
 const DEFAULT_RECIPE_YIELD = 1;
 

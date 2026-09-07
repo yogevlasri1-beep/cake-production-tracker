@@ -4,9 +4,9 @@ import {
   escapeHtml,
   formatMoney,
   productPriceUnitLabel,
-} from './utils.js?v=486';
-import { isProductInCatalog } from './db.js?v=486';
-import { productAllergenLabel } from './kitchen-db.js?v=486';
+} from './utils.js?v=487';
+import { isProductInCatalog } from './db.js?v=487';
+import { productAllergenLabel } from './kitchen-db.js?v=487';
 
 export { isProductInCatalog };
 

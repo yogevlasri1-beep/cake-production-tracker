@@ -10,33 +10,33 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=486';
+} from '../db.js?v=487';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=486';
+} from '../utils.js?v=487';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=486';
-import { openModal, closeModal } from '../modal.js?v=486';
+} from '../export.js?v=487';
+import { openModal, closeModal } from '../modal.js?v=487';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=486';
-import { isSheetsConfigured } from '../google-sheets.js?v=486';
+} from '../sheets-flow.js?v=487';
+import { isSheetsConfigured } from '../google-sheets.js?v=487';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
   productUnitCost, productLineValue, entryQuantityForProduct,
   metricsProductionValueBreakdown,
-} from '../calc.js?v=486';
-import { defaultColorForIndex } from '../chart.js?v=486';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=486';
+} from '../calc.js?v=487';
+import { defaultColorForIndex } from '../chart.js?v=487';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=487';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=486';
+} from '../purchasing-db.js?v=487';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };

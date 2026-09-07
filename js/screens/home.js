@@ -3,27 +3,27 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=486';
+} from '../db.js?v=487';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=486';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=486';
+} from '../utils.js?v=487';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=487';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=486';
-import { requestAutoBackupNow } from '../backup-service.js?v=486';
+} from '../calc.js?v=487';
+import { requestAutoBackupNow } from '../backup-service.js?v=487';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=486';
+} from '../kitchen-db.js?v=487';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=486';
+} from '../order-reminder.js?v=487';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -720,7 +720,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigate } = await import('../app.js?v=486');
+    const { navigate } = await import('../app.js?v=487');
     navigate('suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -747,7 +747,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=486');
+    const { navigate } = await import('../app.js?v=487');
     navigate('process');
   };
 
@@ -772,7 +772,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=486');
+    const { navigate } = await import('../app.js?v=487');
     navigate('backup');
   });
 
