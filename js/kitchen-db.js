@@ -1,4 +1,4 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry } from './db.js?v=486';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=486';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
@@ -6540,6 +6540,155 @@ export async function computeProductionMaterialUsage(entries, {
     categories: groupMaterialUsageByCategory(items),
     skippedProducts,
   };
+}
+
+function isoDateInRange(date, from, to) {
+  const d = String(date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+}
+
+function pushPortionUsageRecord(records, entry) {
+  const count = Number(entry?.count);
+  if (!(count > 0)) return;
+  records.push({
+    date: String(entry.date || '').slice(0, 10),
+    name: entry.name || 'מנה',
+    count,
+    presetId: entry.presetId ? Number(entry.presetId) : null,
+    sourceRecipeId: entry.sourceRecipeId ? Number(entry.sourceRecipeId) : null,
+    sourceRawMaterialId: entry.sourceRawMaterialId ? Number(entry.sourceRawMaterialId) : null,
+    weight: entry.weight != null ? Number(entry.weight) : null,
+  });
+}
+
+/** רשומות מנות שתועדו בתאריכים — שלבי תזרים + יומן מנות של התהליך */
+export async function collectPortionRecordsInRange(from, to) {
+  const [runs, steps] = await Promise.all([
+    db.productionRuns.toArray(),
+    db.runStepStates.toArray(),
+  ]);
+  const records = [];
+  for (const step of steps) {
+    if (!step.tracksPortions) continue;
+    for (const batch of getStepPortionBatches(step)) {
+      if (!isoDateInRange(batch.date, from, to)) continue;
+      pushPortionUsageRecord(records, batch);
+    }
+  }
+  for (const run of runs) {
+    for (const log of getRunPortionLogs(run)) {
+      if (!isoDateInRange(log.date, from, to)) continue;
+      pushPortionUsageRecord(records, log);
+    }
+  }
+  return records;
+}
+
+async function collectPortionUsageIngredients(rec, cache) {
+  const count = Number(rec?.count);
+  if (!(count > 0)) return [];
+
+  let recipeId = Number(rec.sourceRecipeId) || 0;
+  let rawMaterialId = Number(rec.sourceRawMaterialId) || 0;
+  let weightKg = rec.weight != null ? Number(rec.weight) : null;
+
+  if (rec.presetId && !recipeId && !rawMaterialId) {
+    const pid = Number(rec.presetId);
+    let preset = cache.presets.get(pid);
+    if (preset === undefined) {
+      preset = await db.groupPortionPresets.get(pid) || null;
+      cache.presets.set(pid, preset);
+    }
+    if (preset) {
+      recipeId = Number(preset.sourceRecipeId) || 0;
+      rawMaterialId = Number(preset.sourceRawMaterialId) || 0;
+      if (!(weightKg > 0) && preset.weight != null) weightKg = Number(preset.weight);
+    }
+  }
+
+  if (recipeId) {
+    let recipe = cache.recipes.get(recipeId);
+    if (recipe === undefined) {
+      recipe = await getRecipe(recipeId);
+      cache.recipes.set(recipeId, recipe || null);
+    }
+    if (!recipe) return [];
+    const ings = await loadCostingIngredientsCached(recipe, cache);
+    return ings.map((ing) => ({
+      ...ing,
+      scaledQuantity: roundQty(Number(ing.quantity) * count),
+    }));
+  }
+
+  if (rawMaterialId && weightKg > 0) {
+    const mat = cache.matById.get(rawMaterialId);
+    return [{
+      name: mat?.name || rec.name || 'מנה',
+      rawMaterialId,
+      quantity: weightKg * count,
+      scaledQuantity: roundQty(weightKg * count),
+      unitKind: 'kg',
+      unit: 'ק"ג',
+    }];
+  }
+
+  return [];
+}
+
+/**
+ * חומרי גלם לפי מנות שתועדו: כמות המנות × כמויות המתכון למנה אחת.
+ */
+export async function computePortionMaterialUsage(records) {
+  const [materials, supplierCats] = await Promise.all([
+    getRawMaterials(),
+    getSupplierCategories(),
+  ]);
+  const matById = new Map(materials.map((m) => [m.id, m]));
+  const byNameKey = buildMaterialsByNameKey(materials);
+  const supplierCatById = new Map(supplierCats.map((c) => [c.id, c]));
+  const ctx = { matById, byNameKey };
+  const cache = {
+    matById,
+    recipes: new Map(),
+    costing: new Map(),
+    presets: new Map(),
+  };
+
+  const usageMap = new Map();
+  const skippedPortions = [];
+
+  for (const rec of records || []) {
+    const lines = await collectPortionUsageIngredients(rec, cache);
+    if (!lines.length) {
+      skippedPortions.push({ name: rec?.name || 'מנה' });
+      continue;
+    }
+    for (const line of lines) {
+      const row = addMaterialUsageToMap(usageMap, line, ctx);
+      if (!row) continue;
+      const mat = row.rawMaterialId ? matById.get(row.rawMaterialId) : null;
+      const catId = mat?.supplierCategoryId || 0;
+      row.supplierCategoryId = catId;
+      row.supplierCategoryName = supplierCatById.get(catId)?.name || 'ללא קטגוריה';
+    }
+  }
+
+  const items = [...usageMap.values()].sort((a, b) => a.name.localeCompare(b.name, 'he'));
+  return {
+    items,
+    categories: groupMaterialUsageByCategory(items),
+    skippedPortions,
+    skippedProducts: skippedPortions,
+  };
+}
+
+/** שימוש יומי/חודשי במסך הבית — לפי תיעוד מנות, לא לפי יחידות מוצר */
+export async function computeHomeMaterialUsage({ from, to } = {}) {
+  const records = await collectPortionRecordsInRange(from, to);
+  return computePortionMaterialUsage(records);
 }
 
 export function formatWhatsAppOrderText({ weekStart, categories }) {

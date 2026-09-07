@@ -16,7 +16,7 @@ import {
 } from '../calc.js?v=486';
 import { requestAutoBackupNow } from '../backup-service.js?v=486';
 import {
-  computeProductionMaterialUsage,
+  computeHomeMaterialUsage,
   formatMaterialUsageQty,
 } from '../kitchen-db.js?v=486';
 import {
@@ -473,17 +473,26 @@ function buildProcessSection(processLogs, catMap, viewMode, periodLabel) {
     <div class="card process-card">${body}</div>`;
 }
 
+function monthDateRange(selectedMonth) {
+  const from = `${selectedMonth.iso}-01`;
+  const last = new Date(selectedMonth.year, selectedMonth.month, 0).getDate();
+  const to = `${selectedMonth.iso}-${String(last).padStart(2, '0')}`;
+  return { from, to };
+}
+
 function buildMaterialsUsageSection(usage, { isDay, periodLabel }) {
   const title = isDay ? 'חומרי גלם בשימוש · יומי' : 'חומרי גלם בשימוש · חודשי';
-  const qtyHint = isDay ? 'הכמות ששימשה ביום זה' : 'סה"כ הכמות ששימשה בחודש זה';
+  const qtyHint = isDay
+    ? 'לפי המנות שתועדו ביום זה × כמויות המתכון'
+    : 'לפי המנות שתועדו בחודש זה × כמויות המתכון';
   const items = usage?.items || [];
   const categories = usage?.categories || [];
-  const skipped = usage?.skippedProducts || [];
+  const skipped = usage?.skippedPortions || usage?.skippedProducts || [];
 
   if (!items.length) {
     const skipHint = skipped.length
-      ? `יש ייצור שאי אפשר לחשב ממנו חומרים (${skipped.slice(0, 3).map((p) => escapeHtml(p.name)).join(', ')}${skipped.length > 3 ? '…' : ''})`
-      : 'אין רישומי ייצור עם מתכון או הרכב מוצר בתקופה זו';
+      ? `יש מנות בלי מתכון מקושר (${skipped.slice(0, 3).map((p) => escapeHtml(p.name)).join(', ')}${skipped.length > 3 ? '…' : ''})`
+      : 'אין תיעוד מנות עם מתכון בתקופה זו';
     return `
       <div class="section-header home-section-header">
         <h2>${title}</h2>
@@ -514,7 +523,7 @@ function buildMaterialsUsageSection(usage, { isDay, periodLabel }) {
       </ul>`;
 
   const skipNote = skipped.length
-    ? `<p class="home-materials-hint">לא נכללו ${skipped.length} מוצרים — חסר מתכון, הרכב או יחידת חלוקה</p>`
+    ? `<p class="home-materials-hint">לא נכללו ${skipped.length} מנות בלי מתכון מקושר</p>`
     : '';
 
   return `
@@ -589,9 +598,12 @@ export async function renderHome(container) {
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
   const activeProducts = allProducts.filter((p) => p.active);
+  const usageRange = isDay
+    ? { from: selectedDay, to: selectedDay }
+    : monthDateRange(selectedMonth);
   const [totals, materialUsage] = await Promise.all([
     getProductionTotals(entries, productMap),
-    computeProductionMaterialUsage(entries, { products: allProducts, categories }),
+    computeHomeMaterialUsage(usageRange),
   ]);
 
   const totalTarget = await getTarget('total', null, targetPeriod);

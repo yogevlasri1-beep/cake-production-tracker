@@ -18,6 +18,7 @@ import {
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
   computeProductionMaterialUsage, addProductRecipeComponent,
+  computePortionMaterialUsage, collectPortionRecordsInRange, computeHomeMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
@@ -469,6 +470,85 @@ export async function runIntegrationTests() {
       const dayUsage = await computeProductionMaterialUsage(dayEntries);
       assertEqual(dayUsage.items.length, 0, 'אין שימוש מנופח בלי יחידת חלוקה');
       assertEqual(dayUsage.skippedProducts.length, 1, 'המוצר מסומן כלא ניתן לחשב');
+    },
+  );
+
+  await testAsync(
+    'computePortionMaterialUsage — כמות מנות × כמויות המתכון',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const recCatId = await addRecipeCategory('מתכוני מנות בית');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'בצק מנות',
+      });
+      await addRecipeIngredient(recipeId, { name: 'קמח מנות', quantity: 10, unitKind: 'kg' });
+      await addRecipeIngredient(recipeId, { name: 'מים מנות', quantity: 6, unitKind: 'l' });
+
+      const usage = await computePortionMaterialUsage([
+        { name: 'בצק מנות', count: 2.5, sourceRecipeId: recipeId },
+      ]);
+      const flour = usage.items.find((n) => n.name === 'קמח מנות');
+      const water = usage.items.find((n) => n.name === 'מים מנות');
+      assertOk(flour, 'נמצא קמח');
+      assertOk(water, 'נמצאו מים');
+      assertEqual(flour.totalQty, 25, '2.5 מנות × 10 ק"ג קמח');
+      assertEqual(water.totalQty, 15, '2.5 מנות × 6 ליטר מים');
+      assertEqual(water.unitKind, 'l');
+    },
+  );
+
+  await testAsync(
+    'computeHomeMaterialUsage — רק מנות בתאריך, לא רשומות מיום אחר',
+    async () => {
+      await wait(100);
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+
+      const recCatId = await addRecipeCategory('מתכוני סינון תאריך');
+      const recipeId = await addRecipe({
+        categoryId: recCatId,
+        name: 'קרם סינון',
+      });
+      await addRecipeIngredient(recipeId, { name: 'סוכר סינון', quantity: 4, unitKind: 'kg' });
+
+      const runId = await db.productionRuns.add({
+        date: '2026-09-06',
+        status: 'completed',
+        runPortionLogs: [{
+          id: 1,
+          name: 'קרם אתמול',
+          count: 1,
+          date: '2026-09-06',
+          sourceRecipeId: recipeId,
+        }],
+      });
+      await db.runStepStates.add({
+        runId,
+        stepIndex: 0,
+        tracksPortions: true,
+        portionCount: 3,
+        portionBatches: [{
+          name: 'קרם היום',
+          count: 3,
+          date: '2026-09-07',
+          sourceRecipeId: recipeId,
+        }],
+      });
+
+      const dayRecords = await collectPortionRecordsInRange('2026-09-07', '2026-09-07');
+      assertEqual(dayRecords.length, 1, 'רק מנת היום');
+      assertEqual(dayRecords[0].count, 3);
+
+      const dayUsage = await computeHomeMaterialUsage({ from: '2026-09-07', to: '2026-09-07' });
+      const sugar = dayUsage.items.find((n) => n.name === 'סוכר סינון');
+      assertOk(sugar, 'נמצא סוכר');
+      assertEqual(sugar.totalQty, 12, '3 מנות × 4 ק"ג, בלי מנת אתמול');
     },
   );
 
