@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=489';
+import { db, getSetting, setSetting } from './db.js?v=490';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=489';
+} from './supabase-backup.js?v=490';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=489';
+} from './sync/collections.js?v=490';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,14 +35,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=489';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=489';
+} from './sync/id-map.js?v=490';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=490';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=489';
+} from './auth.js?v=490';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -198,7 +198,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=489');
+    const { showToast } = await import('./utils.js?v=490');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1712,6 +1712,51 @@ async function seedOrphanLocalRows() {
     }
   }
   return { seeded };
+}
+
+export function isCloudWipeAllowed(live) {
+  return live?.enabled === false;
+}
+
+/** מוחק את כל שורות הסנכרון של המטבח בענן. לא נוגע ב-Dexie המקומי. */
+export async function wipeKitchenCloudTables() {
+  const live = await getLiveSyncSettings();
+  if (!isCloudWipeAllowed(live)) return { ok: false, reason: 'live-sync-on', deletedTables: 0 };
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
+  const kitchenId = KITCHEN_ID;
+  const tables = [...new Set(Object.values(COLLECTION_TABLE))];
+  let deletedTables = 0;
+  const errors = [];
+  for (const table of tables) {
+    try {
+      await supabaseFetch(cfg, `/${table}?kitchen_id=eq.${encodeURIComponent(kitchenId)}`, {
+        method: 'DELETE',
+        headers: { Prefer: 'return=minimal' },
+      });
+      deletedTables += 1;
+    } catch (err) {
+      const msg = String(err.message || err);
+      if (/does not exist|schema cache|PGRST205|404/i.test(msg)) continue;
+      errors.push(`${table}: ${msg}`);
+    }
+  }
+  let remaining = 0;
+  for (const table of ['sync_products', 'sync_raw_materials', 'sync_suppliers']) {
+    try {
+      const rows = await supabaseFetch(
+        cfg,
+        `/${table}?kitchen_id=eq.${encodeURIComponent(kitchenId)}&select=id&limit=1`,
+      );
+      if (Array.isArray(rows) && rows.length) remaining += 1;
+    } catch { /* ignore missing tables */ }
+  }
+  return {
+    ok: errors.length === 0 && remaining === 0,
+    deletedTables,
+    errors,
+    remaining,
+  };
 }
 
 export async function stopLiveSync() {
