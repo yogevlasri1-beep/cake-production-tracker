@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=491';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=492';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=491';
-import { weekStartISO, todayISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=491';
-import { logAuditEvent } from './audit.js?v=491';
-import { markMetaDeleted } from './sync/id-map.js?v=491';
+} from './validators.js?v=492';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=492';
+import { logAuditEvent } from './audit.js?v=492';
+import { markMetaDeleted } from './sync/id-map.js?v=492';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4722,6 +4722,8 @@ export async function addRawMaterial({
     ...packaging,
     active: simplePricing ? true : active !== false,
     sortOrder: maxOrder + 1,
+    createdAt: localDateTimeISO(),
+    updatedAt: localDateTimeISO(),
   });
   if (price > 0) {
     await db.rawMaterialPriceHistory.add({
@@ -4809,6 +4811,7 @@ export async function updateRawMaterial(id, patch) {
     );
     Object.assign(data, packaging);
   }
+  data.updatedAt = localDateTimeISO();
   if (Object.keys(data).length) {
     await db.rawMaterials.update(mid, data);
     if ('name' in data) await syncRawMaterialsActiveFromRecipes();
@@ -5894,8 +5897,53 @@ export async function getPriceHistory(rawMaterialId) {
 async function syncRawMaterialLatestPrice(rawMaterialId) {
   const history = await getPriceHistory(rawMaterialId);
   if (!history.length) return;
-  await db.rawMaterials.update(rawMaterialId, { unitPrice: history[0].price });
+  await db.rawMaterials.update(rawMaterialId, {
+    unitPrice: history[0].price,
+    updatedAt: localDateTimeISO(),
+  });
   await syncRecipesAffectedByMaterial(rawMaterialId);
+}
+
+/** תאריך-שעה האחרון שבו החומר עודכן — לשורה הקטנה במסך ספקים */
+export function materialLastUpdatedAt(m) {
+  if (!m) return null;
+  let best = null;
+  let bestMs = -1;
+  for (const raw of [m.updatedAt, m.priceUpdatedAt, m.lastUpdatedAt, m.createdAt]) {
+    if (!raw) continue;
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms) || ms <= bestMs) continue;
+    best = String(raw);
+    bestMs = ms;
+  }
+  return best;
+}
+
+export async function stampMaterialsLastUpdated(materials) {
+  if (!materials?.length) return materials;
+  const [history, metas] = await Promise.all([
+    db.rawMaterialPriceHistory ? db.rawMaterialPriceHistory.toArray() : [],
+    db.syncMeta ? db.syncMeta.where('collection').equals('rawMaterials').toArray() : [],
+  ]);
+  const latestHist = new Map();
+  for (const h of history) {
+    const id = Number(h.rawMaterialId);
+    const ts = h.createdAt || (h.effectiveDate ? `${h.effectiveDate}T00:00:00` : null);
+    if (!id || !ts) continue;
+    const prev = latestHist.get(id);
+    if (!prev || String(ts) > String(prev)) latestHist.set(id, ts);
+  }
+  const metaByKey = new Map();
+  for (const meta of metas) {
+    if (meta?.updatedAt) metaByKey.set(String(meta.localKey), meta.updatedAt);
+  }
+  for (const m of materials) {
+    m.lastUpdatedAt = materialLastUpdatedAt({
+      ...m,
+      lastUpdatedAt: latestHist.get(Number(m.id)) || metaByKey.get(String(m.id)) || m.lastUpdatedAt || null,
+    });
+  }
+  return materials;
 }
 
 export async function addRawMaterialPriceEntry(rawMaterialId, { price, effectiveDate } = {}, { skipDuplicate } = {}) {
@@ -5961,6 +6009,7 @@ export async function getSuppliersBrowseLayout() {
     getSuppliers(),
     db.rawMaterials.toArray(),
   ]);
+  await stampMaterialsLastUpdated(materials);
   const catIds = new Set(categories.map((c) => Number(c.id)));
   const matsBySupplier = new Map();
   const unassignedByCat = new Map();

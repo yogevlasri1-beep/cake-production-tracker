@@ -6,6 +6,7 @@ import {
   getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
   getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
+  materialLastUpdatedAt, stampMaterialsLastUpdated,
   importSupplierExcelEntries,
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
@@ -30,19 +31,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=491';
-import { getProducts, getCategories } from '../db.js?v=491';
+} from '../kitchen-db.js?v=492';
+import { getProducts, getCategories } from '../db.js?v=492';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=491';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, todayISO } from '../utils.js?v=491';
-import { openModal, closeModal } from '../modal.js?v=491';
-import { requestAutoBackupNow } from '../backup-service.js?v=491';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=491';
-import { openBarcodeScanner } from '../barcode-scan.js?v=491';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=491';
+} from '../supplier-import.js?v=492';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO } from '../utils.js?v=492';
+import { openModal, closeModal } from '../modal.js?v=492';
+import { requestAutoBackupNow } from '../backup-service.js?v=492';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=492';
+import { openBarcodeScanner } from '../barcode-scan.js?v=492';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=492';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -50,7 +51,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=491';
+} from '../order-reminder.js?v=492';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -1356,6 +1357,16 @@ function renderBrowseCategoryBlock(cat, { search, expandedIds } = {}) {
     </div>`;
 }
 
+export function renderMaterialUpdatedAtHTML(m) {
+  const iso = materialLastUpdatedAt(m);
+  if (!iso) return '';
+  const raw = String(iso).trim();
+  const label = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? formatDate(raw)
+    : formatDateTime(raw);
+  return `<span class="mat-updated-at">עודכן ${escapeHtml(label)}</span>`;
+}
+
 function renderMaterialBarcodeMeta(m) {
   const codes = getMaterialBarcodes(m);
   if (!codes.length) return '';
@@ -1433,7 +1444,7 @@ function bindMaterialBarcodeFormField() {
   });
 }
 
-function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
+export function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
   const isActive = forceActive || m.active === true;
   const rowClass = isActive ? 'browse-material-row--active' : 'browse-material-row--inactive';
   const defaultBadge = m.isRecipeDefault
@@ -1447,6 +1458,7 @@ function renderBrowseMaterialRow(m, { forceActive = false } = {}) {
           <button type="button" class="browse-material-row ${rowClass}" data-material-id="${m.id}">
             <span class="browse-mat-main">
               <span class="browse-mat-name">${escapeHtml(m.name)}${defaultBadge}</span>
+              ${renderMaterialUpdatedAtHTML(m)}
               <span class="browse-mat-price">${formatMaterialPriceMeta(m)}</span>
               ${sku ? `<span class="browse-mat-sku" title="מק״ט">מק״ט ${escapeHtml(sku)}</span>` : ''}
               ${packMeta ? `<span class="browse-mat-pack">${packMeta}</span>` : ''}
@@ -2088,6 +2100,7 @@ async function renderEditSections(host, container, categories, selectedMatCat) {
     getRawMaterials(Number(selectedMatCat)),
     getSuppliers(),
   ]);
+  await stampMaterialsLastUpdated(materials);
   const catMap = new Map(categories.map((c) => [Number(c.id), c.name]));
   const supMap = new Map(allSuppliers.map((s) => [Number(s.id), s.name]));
   const suppliersByCat = new Map(categories.map((c) => [Number(c.id), []]));
@@ -2288,6 +2301,7 @@ function renderEditMaterialsListHTML(filtered, allMaterials, supMap, selectedMat
         <span class="material-order-num">${(orderIdx >= 0 ? orderIdx : i) + 1}</span>
         <button type="button" class="list-item-info edit-mat-open" data-id="${m.id}" style="flex:1;border:none;background:none;text-align:right;padding:0;cursor:pointer;min-width:0">
           <div class="list-item-name">${escapeHtml(m.name)}${m.isRecipeDefault ? ' <span class="recipe-default-badge">★ ברירת מחדל</span>' : ''}</div>
+          ${renderMaterialUpdatedAtHTML(m)}
           <div class="list-item-meta">
             ${formatMaterialPriceMeta(m)}
             ${m.supplierId ? ` · ${escapeHtml(supMap.get(Number(m.supplierId)) || '')}` : ''}
@@ -3665,7 +3679,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=491');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=492');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3687,7 +3701,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=491');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=492');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3705,7 +3719,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=491');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=492');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);

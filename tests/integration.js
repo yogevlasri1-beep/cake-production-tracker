@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=491';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=491';
+} from './runner.js?v=492';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=492';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -21,12 +21,13 @@ import {
   computePortionMaterialUsage, collectPortionRecordsInRange, computeHomeMaterialUsage,
   getSuppliersBrowseLayout, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory,
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
+  materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=491';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=491';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=491';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=491';
+} from '../js/kitchen-db.js?v=492';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=492';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=492';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=492';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -975,6 +976,34 @@ export async function runIntegrationTests() {
     assertOk(matPush, 'עדכון חומר (update) נכנס ל-syncQueue');
     const histPush = queue.find((q) => q.collection === 'rawMaterialPriceHistory' && q.type === 'upsert');
     assertOk(histPush, 'היסטוריית מחיר נכנסה ל-syncQueue');
+  });
+
+  await testAsync('add/updateRawMaterial — נשמר updatedAt ומופיע בפריסת ספקים', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supId = await addSupplier({ categoryId: catId, name: 'פוליבה' });
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supId,
+      name: 'א.קרם פטיסייר',
+      unit: 'ק"ג',
+      unitPrice: 10,
+    });
+    const created = await db.rawMaterials.get(matId);
+    assertOk(created.updatedAt, 'חומר חדש מקבל updatedAt');
+    await updateRawMaterial(matId, { unitPrice: 17 });
+    const after = await db.rawMaterials.get(matId);
+    assertOk(after.updatedAt, 'עדכון חומר שומר updatedAt');
+    assertEqual(Number(after.unitPrice), 17);
+
+    const layout = await getSuppliersBrowseLayout();
+    const listed = (layout.allMaterials || []).find((m) => Number(m.id) === Number(matId));
+    assertOk(listed, 'החומר בפריסת ספקים');
+    assertOk(materialLastUpdatedAt(listed), 'יש תאריך עדכון לתצוגה');
   });
 
 await flushTests();
