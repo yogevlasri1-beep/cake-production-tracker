@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=487';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=487';
+} from './runner.js?v=488';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=488';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -23,10 +23,10 @@ import {
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=487';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=487';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=487';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=487';
+} from '../js/kitchen-db.js?v=488';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=488';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=488';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=488';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });

@@ -1,4 +1,4 @@
-import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=487';
+import { sanitizeQuantity, sanitizePortionSize, roundMoney } from './validators.js?v=488';
 
 export { roundMoney };
 

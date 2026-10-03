@@ -1,7 +1,7 @@
-import { parseImportFile, previewText } from './import.js?v=487';
-import { importProductionRows } from './db.js?v=487';
-import { showToast, escapeHtml } from './utils.js?v=487';
-import { openModal, closeModal } from './modal.js?v=487';
+import { parseImportFile, previewText } from './import.js?v=488';
+import { importProductionRows } from './db.js?v=488';
+import { showToast, escapeHtml } from './utils.js?v=488';
+import { openModal, closeModal } from './modal.js?v=488';
 
 export async function openProductionImportModal(file, { onComplete }) {
   const parsed = await parseImportFile(file);
