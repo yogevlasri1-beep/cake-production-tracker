@@ -1,9 +1,9 @@
 /** ייצוא כל טבלאות הנתונים לקובץ Excel (גיליון לכל טבלה) */
 
-import { exportAllData } from './db.js?v=490';
-import { APP_VERSION } from './version.js?v=490';
-import { loadXLSX } from './xlsx-loader.js?v=490';
-import { downloadBlob, toastAfterDownload } from './download.js?v=490';
+import { exportAllData } from './db.js?v=491';
+import { APP_VERSION } from './version.js?v=491';
+import { loadXLSX } from './xlsx-loader.js?v=491';
+import { downloadBlob, toastAfterDownload } from './download.js?v=491';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_CELL_CHARS = 32000;

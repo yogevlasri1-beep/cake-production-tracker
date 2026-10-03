@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=490';
+import { db, getSetting, setSetting } from './db.js?v=491';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=490';
+} from './supabase-backup.js?v=491';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=490';
+} from './sync/collections.js?v=491';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,14 +35,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=490';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=490';
+} from './sync/id-map.js?v=491';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=491';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=490';
+} from './auth.js?v=491';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -198,7 +198,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=490');
+    const { showToast } = await import('./utils.js?v=491');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1488,6 +1488,17 @@ export function installLiveSyncMiddleware() {
                         type: 'upsert',
                         collection: tableName,
                         localKey: localKeyOf(tableName, v),
+                      });
+                    }
+                  } else if (req.type === 'update') {
+                    // table.update() / Collection.modify() — used by updateRawMaterial
+                    // and most in-place edits. add/put alone miss these, so price/supplier
+                    // saves stayed local and lastPushAt never moved.
+                    for (const k of req.keys || []) {
+                      queueSyncOp({
+                        type: 'upsert',
+                        collection: tableName,
+                        localKey: localKeyOf(tableName, k),
                       });
                     }
                   } else if (req.type === 'delete') {

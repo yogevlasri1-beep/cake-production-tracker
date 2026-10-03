@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=490';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=490';
+} from './runner.js?v=491';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=491';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -23,10 +23,10 @@ import {
   getSuppliers, setRawMaterialPrice, getPriceHistory, getCombinedPriceHistory,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=490';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=490';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=490';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=490';
+} from '../js/kitchen-db.js?v=491';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=491';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=491';
+import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=491';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -938,6 +938,43 @@ export async function runIntegrationTests() {
 
     const combined = await getCombinedPriceHistory(matA);
     assertOk(combined.some((h) => h.supplierName === 'ספק ב' && Number(h.price) === 7.25));
+  });
+
+  await testAsync('updateRawMaterial — שינוי ספק ומחיר נכנס ל-syncQueue', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק א' });
+    const supB = await addSupplier({ categoryId: catId, name: 'פוליבה' });
+    const matId = await addRawMaterial({
+      supplierCategoryId: catId,
+      supplierId: supA,
+      name: 'א.קרם פטיסייר',
+      unit: 'ק"ג',
+      unitPrice: 10,
+    });
+    await wait(80);
+    await db.syncQueue.clear();
+
+    await updateRawMaterial(matId, { supplierId: supB, unitPrice: 17 });
+    await wait(80);
+
+    const after = await db.rawMaterials.get(matId);
+    assertEqual(Number(after.supplierId), Number(supB), 'ספק עודכן מקומית');
+    assertEqual(Number(after.unitPrice), 17, 'מחיר עודכן מקומית');
+
+    const queue = await db.syncQueue.toArray();
+    const matPush = queue.find((q) => (
+      q.collection === 'rawMaterials'
+      && String(q.localKey) === String(matId)
+      && q.type === 'upsert'
+    ));
+    assertOk(matPush, 'עדכון חומר (update) נכנס ל-syncQueue');
+    const histPush = queue.find((q) => q.collection === 'rawMaterialPriceHistory' && q.type === 'upsert');
+    assertOk(histPush, 'היסטוריית מחיר נכנסה ל-syncQueue');
   });
 
 await flushTests();
