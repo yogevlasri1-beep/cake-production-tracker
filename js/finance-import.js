@@ -2,8 +2,8 @@
  * אשף ייבוא כספים — פענוח קובץ ומיפוי עמודות.
  * לא מפענח פורמט קשיח של חשבשבת. התקופה לא נגזרת מהקובץ.
  */
-import { getSetting, setSetting, ValidationError } from './db.js?v=488';
-import { loadXLSX } from './xlsx-loader.js?v=488';
+import { getSetting, setSetting, ValidationError } from './db.js?v=489';
+import { loadXLSX } from './xlsx-loader.js?v=489';
 import {
   FINANCE_REPORT_TYPES,
   parseFinanceAmount,
@@ -13,7 +13,7 @@ import {
   replaceFinanceImportBatch,
   signedAmountForCategory,
   isIgnoredCategory,
-} from './finance-db.js?v=488';
+} from './finance-db.js?v=489';
 
 export const FINANCE_COLUMN_ROLES = {
   accountCode: 'accountCode',

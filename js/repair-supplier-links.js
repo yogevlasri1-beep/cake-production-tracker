@@ -10,7 +10,7 @@ export function hasNumericSupplierId(value) {
   return Number.isFinite(n) && n > 0 && String(n) === String(value).trim();
 }
 
-/** שם מנורמל → ספק + קטגוריה. 14 שמות עם כמה ספקים לא כאן בכוונה. */
+/** שם מנורמל → ספק + קטגוריה. ממרח בטעם שוקולד הריק לא כאן — יש שורה מקושרת. */
 export const UNAMBIGUOUS_SUPPLIER_LINKS = {
   'תמצית לימון': { supplierId: 53, supplierCategoryId: 26, supplierName: 'בדור' },
   'ביצים מעורב': { supplierId: 46, supplierCategoryId: 26, supplierName: 'ביצי צאם' },
@@ -91,6 +91,19 @@ export const UNAMBIGUOUS_SUPPLIER_LINKS = {
   'תפוחים': { supplierId: 44, supplierCategoryId: 26, supplierName: 'פלחפוח' },
   'סולת': { supplierId: 51, supplierCategoryId: 26, supplierName: 'שטיבל' },
   'קמח מלא': { supplierId: 51, supplierCategoryId: 26, supplierName: 'שטיבל' },
+  'גלוטן': { supplierId: 39, supplierCategoryId: 26, supplierName: 'פוליבה' },
+  'מחית אוכמניות': { supplierId: 40, supplierCategoryId: 26, supplierName: 'השלושה' },
+  'מחית דובדבן': { supplierId: 40, supplierCategoryId: 26, supplierName: 'השלושה' },
+  'מחית תפוחים': { supplierId: 39, supplierCategoryId: 26, supplierName: 'פוליבה' },
+  'מלח': { supplierId: 40, supplierCategoryId: 26, supplierName: 'השלושה' },
+  'ממרח חלבה': { supplierId: 43, supplierCategoryId: 26, supplierName: 'לויאני' },
+  'פרג': { supplierId: 52, supplierCategoryId: 26, supplierName: 'א.ג.מ סחר מזון' },
+  'צימוק לבן': { supplierId: 43, supplierCategoryId: 26, supplierName: 'לויאני' },
+  'שומן קוקוס': { supplierId: 40, supplierCategoryId: 26, supplierName: 'השלושה' },
+  'שומשום': { supplierId: 43, supplierCategoryId: 26, supplierName: 'לויאני' },
+  'שמן סויה': { supplierId: 43, supplierCategoryId: 26, supplierName: 'לויאני' },
+  'שמן סויה 16 ק"ג': { supplierId: 41, supplierCategoryId: 26, supplierName: 'מזרחי' },
+  'שמרים יבשים': { supplierId: 43, supplierCategoryId: 26, supplierName: 'לויאני' },
 };
 
 export function planSupplierLinkRepair(materials, suppliers) {
