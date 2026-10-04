@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=492';
+import { db, getSetting, setSetting } from './db.js?v=493';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=492';
+} from './supabase-backup.js?v=493';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=492';
+} from './sync/collections.js?v=493';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,14 +35,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=492';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=492';
+} from './sync/id-map.js?v=493';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=493';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=492';
+} from './auth.js?v=493';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -143,8 +143,10 @@ const DEDUPE_VERSION = 18;
  * v8: after cloud SQL cleanup of seed categories — full re-pull + material cross-category dedupe.
  * v9: merge «חומרי גלם»/«חומרי גלם יבשים» + re-pull after unique packaging/cleaning indexes.
  * v10: coerce string FKs + reconcile unitPrice from price history after pull.
+ * v11: paginate pulls — PostgREST silently capped each table at 1000 rows, so a
+ * new computer could keep lastPullAt and never receive the rest of the catalog.
  */
-const REPAIR_VERSION = 10;
+const REPAIR_VERSION = 11;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -198,7 +200,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=492');
+    const { showToast } = await import('./utils.js?v=493');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1238,25 +1240,37 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
   return true;
 }
 
+/** PostgREST default max-rows is 1000; without paging a new device never sees the rest. */
+export const PULL_PAGE_SIZE = 1000;
+
+export function buildCollectionPullPath(collection, { since = null, offset = 0, limit = PULL_PAGE_SIZE } = {}) {
+  const table = tableOf(collection);
+  const safeLimit = Math.max(1, Number(limit) || PULL_PAGE_SIZE);
+  const safeOffset = Math.max(0, Number(offset) || 0);
+  let path = `/${table}?kitchen_id=eq.${encodeURIComponent(KITCHEN_ID)}&select=*&order=updated_at.asc,id.asc&limit=${safeLimit}&offset=${safeOffset}`;
+  if (since) path += `&updated_at=gt.${encodeURIComponent(since)}`;
+  return path;
+}
+
 export async function pullCollection(collection, { since, deferred } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return 0;
-  const table = tableOf(collection);
-  let path = `/${table}?kitchen_id=eq.${encodeURIComponent(KITCHEN_ID)}&select=*&order=updated_at.asc`;
-  if (since) {
-    path += `&updated_at=gt.${encodeURIComponent(since)}`;
-  }
-  const rows = await supabaseFetch(cfg, path);
-  if (!Array.isArray(rows) || !rows.length) return 0;
   const deviceId = await getOrCreateDeviceId();
   let applied = 0;
-  for (const row of rows) {
-    const ok = await applyRemoteRow(collection, row, deviceId);
-    if (ok === 'defer') {
-      if (deferred) deferred.push({ collection, row });
-      continue;
+  let offset = 0;
+  while (offset <= 200000) {
+    const rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, offset }));
+    if (!Array.isArray(rows) || !rows.length) break;
+    for (const row of rows) {
+      const ok = await applyRemoteRow(collection, row, deviceId);
+      if (ok === 'defer') {
+        if (deferred) deferred.push({ collection, row });
+        continue;
+      }
+      if (ok) applied++;
     }
-    if (ok) applied++;
+    if (rows.length < PULL_PAGE_SIZE) break;
+    offset += rows.length;
   }
   return applied;
 }

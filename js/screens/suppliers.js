@@ -31,19 +31,19 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=492';
-import { getProducts, getCategories } from '../db.js?v=492';
+} from '../kitchen-db.js?v=493';
+import { getProducts, getCategories } from '../db.js?v=493';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=492';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO } from '../utils.js?v=492';
-import { openModal, closeModal } from '../modal.js?v=492';
-import { requestAutoBackupNow } from '../backup-service.js?v=492';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=492';
-import { openBarcodeScanner } from '../barcode-scan.js?v=492';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=492';
+} from '../supplier-import.js?v=493';
+import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO } from '../utils.js?v=493';
+import { openModal, closeModal } from '../modal.js?v=493';
+import { requestAutoBackupNow } from '../backup-service.js?v=493';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=493';
+import { openBarcodeScanner } from '../barcode-scan.js?v=493';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=493';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -51,7 +51,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=492';
+} from '../order-reminder.js?v=493';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -3679,7 +3679,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=492');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=493');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3701,7 +3701,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=492');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=493');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3719,7 +3719,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=492');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=493');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
