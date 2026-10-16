@@ -6441,6 +6441,68 @@ table.report-table tfoot td {
   text-align: center;
 }
 
+.date-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.date-input-row input[type="date"],
+.date-input-row input[type="month"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-date-field .date-input-row {
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+.date-today-btn {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface, #fff);
+  color: var(--primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.date-today-btn:hover {
+  background: var(--primary-soft);
+  border-color: #93c5fd;
+}
+
+.date-today-btn:active {
+  transform: scale(0.96);
+}
+
+.date-today-btn-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.date-input-row--compact {
+  gap: 6px;
+}
+
+.date-input-row--compact .date-today-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.date-input-row--compact .date-today-btn-icon {
+  width: 12px;
+  height: 12px;
+}
+
 /* ── בית: כותרות ממורכזות (מאוזן מול כפתור התפריט) ── */
 .app-header--centered .app-header-row {
   position: relative;

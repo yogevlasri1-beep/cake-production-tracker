@@ -1,4 +1,4 @@
-import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=493';
+import { pct, pctDisplay, progressClass, progressBadge } from './calc.js?v=494';
 
 export function formatDate(iso) {
   if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return '—';
@@ -295,6 +295,39 @@ export function monthLabel(year, month) {
 export function todayISO() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** כפתור עגול קטן — מחזיר את שדה התאריך להיום */
+export function todayDateButtonHTML() {
+  return `<button type="button" class="date-today-btn" title="היום" aria-label="היום">
+    <svg class="date-today-btn-icon" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"></circle>
+      <circle cx="12" cy="12" r="3.2" fill="currentColor"></circle>
+    </svg>
+  </button>`;
+}
+
+export function wrapDateInputWithToday(inputHtml, { compact = false } = {}) {
+  return `<div class="date-input-row${compact ? ' date-input-row--compact' : ''}">${inputHtml}${todayDateButtonHTML()}</div>`;
+}
+
+export function bindTodayDateButtons(root) {
+  const scope = root || document;
+  scope.querySelectorAll('.date-today-btn').forEach((btn) => {
+    if (btn.dataset.todayBound === '1') return;
+    btn.dataset.todayBound = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = btn.closest('.date-input-row')?.querySelector('input[type="date"], input[type="month"]');
+      if (!input || input.disabled) return;
+      const next = input.type === 'month' ? todayISO().slice(0, 7) : todayISO();
+      if (input.value === next) return;
+      input.value = next;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
 }
 
 /** תחילת שבוע (יום ראשון) לפי ISO date */

@@ -3,27 +3,28 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=493';
+} from '../db.js?v=494';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
+  wrapDateInputWithToday, bindTodayDateButtons,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=493';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=493';
+} from '../utils.js?v=494';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=494';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=493';
-import { requestAutoBackupNow } from '../backup-service.js?v=493';
+} from '../calc.js?v=494';
+import { requestAutoBackupNow } from '../backup-service.js?v=494';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=493';
+} from '../kitchen-db.js?v=494';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=493';
+} from '../order-reminder.js?v=494';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -636,7 +637,7 @@ export async function renderHome(container) {
       </div>
       <div class="form-group home-date-field">
         <label for="home-date">${isDay ? 'תאריך' : 'חודש'}</label>
-        <input type="${isDay ? 'date' : 'month'}" id="home-date" value="${dateInputValue}">
+        ${wrapDateInputWithToday(`<input type="${isDay ? 'date' : 'month'}" id="home-date" value="${dateInputValue}">`)}
       </div>
     </div>
 
@@ -720,7 +721,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigate } = await import('../app.js?v=493');
+    const { navigate } = await import('../app.js?v=494');
     navigate('suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -747,7 +748,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=493');
+    const { navigate } = await import('../app.js?v=494');
     navigate('process');
   };
 
@@ -772,7 +773,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=493');
+    const { navigate } = await import('../app.js?v=494');
     navigate('backup');
   });
 
@@ -789,6 +790,7 @@ export async function renderHome(container) {
     });
   });
 
+  bindTodayDateButtons(container);
   document.getElementById('home-date').addEventListener('change', (e) => {
     if (isDay) {
       container.dataset.homeDay = e.target.value;

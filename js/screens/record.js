@@ -2,11 +2,11 @@ import {
   getProducts, getCategories, getEntriesForDate,
   addProductionEntry, updateProductionEntry, deleteProductionEntry,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-} from '../db.js?v=493';
-import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal } from '../utils.js?v=493';
-import { openModal, closeModal } from '../modal.js?v=493';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=493';
-import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=493';
+} from '../db.js?v=494';
+import { todayISO, formatDate, showToast, escapeHtml, productUnitLabel, formatProductQuantity, productRecordUsesKg, formatDecimal, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=494';
+import { openModal, closeModal } from '../modal.js?v=494';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=494';
+import { getRecipeForProduct, recipeScaleRatioForProductCount } from '../kitchen-db.js?v=494';
 
 async function offerInventoryIssueForRecord({ productId, quantity, productName }) {
   try {
@@ -17,7 +17,7 @@ async function offerInventoryIssueForRecord({ productId, quantity, productName }
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=493');
+    } = await import('../inventory-db.js?v=494');
 
     const qty = Number(quantity);
     if (!Number.isFinite(qty) || qty <= 0) return;
@@ -77,7 +77,7 @@ export async function renderRecord(container) {
       <form id="record-form">
         <div class="form-group">
           <label for="record-date">תאריך</label>
-          <input type="date" id="record-date" value="${date}" required>
+          ${wrapDateInputWithToday(`<input type="date" id="record-date" value="${date}" required>`)}
         </div>
         <div class="form-group">
           <label for="record-category">קטגוריה</label>
@@ -150,6 +150,7 @@ export async function renderRecord(container) {
       </button>
     </details>`;
 
+  bindTodayDateButtons(container);
   document.getElementById('record-date').addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
     renderRecord(container);

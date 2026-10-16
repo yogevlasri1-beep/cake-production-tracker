@@ -29,10 +29,10 @@ import {
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-} from '../db.js?v=493';
+} from '../db.js?v=494';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=493').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=494').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -75,7 +75,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=493');
+    } = await import('../inventory-db.js?v=494');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -116,7 +116,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=493');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=494');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -142,7 +142,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=493');
+    } = await import('../inventory-db.js?v=494');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -171,15 +171,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney } from '../utils.js?v=493';
-import { metricsProductionValueBreakdown } from '../calc.js?v=493';
-import { openModal, closeModal } from '../modal.js?v=493';
-import { requestAutoBackupNow } from '../backup-service.js?v=493';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=493';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=493';
-import { materialMatchesSearch } from '../kitchen-db.js?v=493';
-import { getCurrentUserRole } from '../auth.js?v=493';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=493';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=494';
+import { metricsProductionValueBreakdown } from '../calc.js?v=494';
+import { openModal, closeModal } from '../modal.js?v=494';
+import { requestAutoBackupNow } from '../backup-service.js?v=494';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=494';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=494';
+import { materialMatchesSearch } from '../kitchen-db.js?v=494';
+import { getCurrentUserRole } from '../auth.js?v=494';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=494';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -878,10 +878,10 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
                   × <input type="number" class="flow-portion-batch-count-input" min="0.1" step="0.1" inputmode="decimal"
                     value="${b.count}" data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="מספר מנות">
                 </label>
-                <label class="flow-portion-batch-date-edit">
-                  <input type="date" class="flow-portion-batch-date-input" value="${b.date || ''}"
-                    data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="תאריך">
-                </label>
+                <div class="flow-portion-batch-date-edit">
+                  ${wrapDateInputWithToday(`<input type="date" class="flow-portion-batch-date-input" value="${b.date || ''}"
+                    data-step="${stepIndex}" data-batch="${batchIndex}" aria-label="תאריך">`, { compact: true })}
+                </div>
                 <button type="button" class="btn btn-danger btn-sm flow-portion-batch-del" data-step="${stepIndex}" data-batch="${batchIndex}" title="הסר">🗑</button>
               ` : `
                 <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
@@ -922,7 +922,7 @@ function stepPortionBatchesHTML(step, stepIndex, { canAdd = false, canEdit = fal
           </div>
           <div class="form-group" style="margin-bottom:8px">
             <label>תאריך</label>
-            <input type="date" class="flow-portion-add-date" value="${todayISO()}">
+            ${wrapDateInputWithToday(`<input type="date" class="flow-portion-add-date" value="${todayISO()}">`)}
           </div>
           <button type="button" class="btn btn-primary btn-sm flow-portion-add-save" data-step="${stepIndex}" style="width:100%">
             שמור מנות
@@ -1245,7 +1245,7 @@ function stepProductionPanelHTML({
         <form class="flow-production-form" data-step="${stepIndex}">
           <div class="form-group">
             <label for="step-${stepIndex}-prod-date">תאריך</label>
-            <input type="date" id="step-${stepIndex}-prod-date" class="flow-prod-date" value="${prodDate}" required>
+            ${wrapDateInputWithToday(`<input type="date" id="step-${stepIndex}-prod-date" class="flow-prod-date" value="${prodDate}" required>`)}
           </div>
           ${multiProducts ? `
             ${scopedCategories.length > 1 ? `
@@ -2051,8 +2051,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=493');
-    const { db } = await import('../db.js?v=493');
+    const { getRecipe } = await import('../kitchen-db.js?v=494');
+    const { db } = await import('../db.js?v=494');
     const blocks = [];
 
     for (const row of rows) {
@@ -2774,10 +2774,10 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
               × <input type="number" class="run-portion-log-count" min="0.1" step="0.1" inputmode="decimal"
                 value="${b.count}" data-log-id="${b.id}" aria-label="מספר מנות">
             </label>
-            <label class="flow-portion-batch-date-edit">
-              <input type="date" class="run-portion-log-date" value="${b.date || ''}"
-                data-log-id="${b.id}" aria-label="תאריך">
-            </label>
+            <div class="flow-portion-batch-date-edit">
+              ${wrapDateInputWithToday(`<input type="date" class="run-portion-log-date" value="${b.date || ''}"
+                data-log-id="${b.id}" aria-label="תאריך">`, { compact: true })}
+            </div>
             <button type="button" class="btn btn-danger btn-sm run-portion-log-del" data-log-id="${b.id}" title="הסר">🗑</button>
           ` : `
             <span class="flow-portion-batch-count">× ${formatPortionCount(b.count)}</span>
@@ -2812,7 +2812,7 @@ function renderRunPortionsSectionHTML(run, presets = [], { canEdit = false, mate
       </div>
       <div class="form-group" style="margin-bottom:8px">
         <label for="run-portion-add-date">תאריך</label>
-        <input type="date" id="run-portion-add-date" value="${todayISO()}">
+        ${wrapDateInputWithToday(`<input type="date" id="run-portion-add-date" value="${todayISO()}">`)}
       </div>
       <button type="button" class="btn btn-primary btn-sm" id="run-portion-add-save" style="width:100%">שמור מנה</button>
     </div>` : '';
@@ -2991,7 +2991,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=493');
+    const kitchen = await import('../kitchen-db.js?v=494');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3915,6 +3915,7 @@ async function renderRunView(container, runId, ctx) {
   bindRunMetricsDetailClicks(container, run, { productMap, catMap });
 
   bindRunProductionPanels(container, run, productionCtx);
+  bindTodayDateButtons(container);
 }
 
 function syncFlowProdQtyField(panel, productMap) {
