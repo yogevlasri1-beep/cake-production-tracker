@@ -5454,7 +5454,7 @@ export async function renderProcess(container) {
     <div class="card">
       <div class="form-group" style="margin-bottom:0">
         <label for="flow-date">תאריך</label>
-        <input type="date" id="flow-date" value="${date}">
+        ${wrapDateInputWithToday(`<input type="date" id="flow-date" value="${date}">`)}
       </div>
     </div>
 
@@ -5522,6 +5522,7 @@ export async function renderProcess(container) {
     });
   });
 
+  bindTodayDateButtons(container);
   document.getElementById('flow-date')?.addEventListener('change', (e) => {
     container.dataset.selectedDate = e.target.value;
     renderProcess(container);

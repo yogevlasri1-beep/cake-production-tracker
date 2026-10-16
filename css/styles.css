@@ -3121,9 +3121,14 @@ body.flow-checklist-drag-active {
   border-top: 1px solid var(--border, #e2e8f0);
 }
 
+.flow-portion-batch-date-edit .date-input-row {
+  min-width: 0;
+}
+
 .flow-portion-batch-date-edit input {
   font-size: 0.85rem;
   padding: 4px 6px;
+  min-width: 8.5rem;
 }
 
 .flow-run-header-actions {
