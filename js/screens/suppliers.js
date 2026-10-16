@@ -5,6 +5,7 @@ import {
   findRawMaterialBySupplierAndName,
   computeHomeMaterialUsage, formatMaterialUsageQty, formatKgWeight,
   buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText,
+  listSupplierWhatsAppContacts, buildWhatsAppSendUrl,
   setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
   materialLastUpdatedAt, stampMaterialsLastUpdated,
@@ -32,22 +33,22 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=496';
-import { getProducts, getCategories } from '../db.js?v=496';
+} from '../kitchen-db.js?v=497';
+import { getProducts, getCategories } from '../db.js?v=497';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=496';
+} from '../supplier-import.js?v=497';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=496';
-import { openModal, closeModal } from '../modal.js?v=496';
-import { requestAutoBackupNow } from '../backup-service.js?v=496';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=496';
-import { openBarcodeScanner } from '../barcode-scan.js?v=496';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=496';
+} from '../utils.js?v=497';
+import { openModal, closeModal } from '../modal.js?v=497';
+import { requestAutoBackupNow } from '../backup-service.js?v=497';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=497';
+import { openBarcodeScanner } from '../barcode-scan.js?v=497';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=497';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -55,11 +56,14 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=496';
+} from '../order-reminder.js?v=497';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
 const CLEANING_CAT_SEEDED_KEY = 'yitzurCleaningCatSeeded';
+const ORDER_WA_DEFAULT_KEY = 'yitzurOrderWhatsAppDefault';
+
+const WHATSAPP_ICON_SVG = `<svg class="order-wa-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.15 6.4 2.15 11.83c0 1.93.57 3.72 1.56 5.23L2 22l5.09-1.66a10 10 0 0 0 4.95 1.26h.01c5.46 0 9.89-4.4 9.89-9.83 0-2.62-1.03-5.09-2.9-6.95A9.94 9.94 0 0 0 12.04 2m0 17.96h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.02.99.98-2.9-.19-.3a8.1 8.1 0 0 1-1.26-4.36c0-4.5 3.69-8.16 8.23-8.16 2.2 0 4.26.85 5.81 2.4a8.1 8.1 0 0 1 2.41 5.78c0 4.5-3.69 8.16-8.22 8.16m4.52-6.11c-.25-.12-1.46-.72-1.69-.8-.22-.08-.39-.12-.55.12-.16.25-.63.8-.78.97-.14.16-.29.18-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.16.04-.31-.02-.43-.06-.12-.55-1.33-.76-1.82-.2-.48-.4-.41-.55-.42h-.47c-.16 0-.43.06-.66.31-.22.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.56.12.16 1.75 2.67 4.24 3.74 1.49.64 1.86.7 2.53.59.41-.06 1.46-.6 1.67-1.17.2-.58.2-1.07.14-1.17-.06-.1-.22-.16-.47-.28"/></svg>`;
 
 export const SUPPLIER_TABS = {
   catalog: { id: 'catalog', label: 'מחסן', subtitle: 'רשימת חומרי גלם כללית, שיוך לספקים' },
@@ -3679,7 +3683,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=496');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=497');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3701,7 +3705,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=496');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=497');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3719,7 +3723,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=496');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=497');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -3776,7 +3780,7 @@ function orderUsageRange(period, dateIso) {
   };
 }
 
-function renderOrderUsageCard(row, stockQty) {
+function orderUsageCellValues(row, stockQty) {
   const weight = formatMaterialUsageQty(row.totalQty, row.unitKind)
     || (row.totalQty != null ? `${formatDecimal(row.totalQty)}` : '—');
   const packSize = row.packKg != null
@@ -3789,35 +3793,141 @@ function renderOrderUsageCard(row, stockQty) {
   const stock = stockQty != null
     ? (row.unitKind === 'l' ? `${formatDecimal(stockQty)} ל'` : (formatKgWeight(stockQty) || `${formatDecimal(stockQty)}`))
     : '—';
+  const supplier = `${row.defaultSupplierId ? '★ ' : ''}${row.defaultSupplierName || 'ללא ספק'}`;
+  return { weight, packSize, packUnits, cost, stock, supplier };
+}
+
+function renderOrderUsageTableRow(row, stockQty) {
+  const cells = orderUsageCellValues(row, stockQty);
   return `
-    <article class="order-usage-card">
-      <div class="order-usage-card-top">
-        <div class="order-usage-name">${escapeHtml(row.name)}</div>
-        <div class="order-usage-supplier">${row.defaultSupplierId ? '★ ' : ''}${escapeHtml(row.defaultSupplierName)}</div>
-      </div>
-      <div class="order-usage-grid">
-        <div class="order-usage-cell">
-          <span>משקל</span>
-          <strong>${escapeHtml(weight)}</strong>
-        </div>
-        <div class="order-usage-cell">
-          <span>יח' אריזה</span>
-          <strong>${escapeHtml(packUnits)}</strong>
-        </div>
-        <div class="order-usage-cell">
-          <span>אריזה</span>
-          <strong>${escapeHtml(packSize)}</strong>
-        </div>
-        <div class="order-usage-cell">
-          <span>עלות משוערת</span>
-          <strong>${escapeHtml(cost)}</strong>
-        </div>
-        <div class="order-usage-cell">
-          <span>מלאי</span>
-          <strong>${escapeHtml(stock)}</strong>
-        </div>
-      </div>
-    </article>`;
+    <tr>
+      <th scope="row">${escapeHtml(row.name || '—')}</th>
+      <td class="order-usage-num">${escapeHtml(cells.weight)}</td>
+      <td class="order-usage-num">${escapeHtml(cells.packUnits)}</td>
+      <td class="order-usage-num">${escapeHtml(cells.packSize)}</td>
+      <td>${escapeHtml(cells.supplier)}</td>
+      <td class="order-usage-num">${escapeHtml(cells.cost)}</td>
+      <td class="order-usage-num">${escapeHtml(cells.stock)}</td>
+    </tr>`;
+}
+
+function getOrderWhatsAppDefault() {
+  try {
+    return JSON.parse(localStorage.getItem(ORDER_WA_DEFAULT_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function setOrderWhatsAppDefault(contact) {
+  try {
+    if (!contact) localStorage.removeItem(ORDER_WA_DEFAULT_KEY);
+    else localStorage.setItem(ORDER_WA_DEFAULT_KEY, JSON.stringify(contact));
+  } catch { /* ignore */ }
+}
+
+function pickSuggestedOrderContact(contacts, supplierFilter) {
+  const saved = getOrderWhatsAppDefault();
+  const bySupplier = (id) => contacts.find((c) => Number(c.supplierId) === Number(id));
+  if (supplierFilter) {
+    const filtered = bySupplier(supplierFilter);
+    if (filtered) return filtered;
+  }
+  if (saved?.supplierId) {
+    const match = bySupplier(saved.supplierId);
+    if (match) return match;
+  }
+  if (saved?.normalized) {
+    const match = contacts.find((c) => c.normalized === saved.normalized);
+    if (match) return match;
+  }
+  return contacts[0] || null;
+}
+
+async function copyOrderWhatsAppText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.getElementById('wa-order-text');
+      if (!ta) return false;
+      ta.hidden = false;
+      ta.select();
+      document.execCommand('copy');
+      ta.hidden = true;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function openWhatsAppUrl(url) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function sendOrderWhatsApp(contact, text, { saveDefault = false } = {}) {
+  if (saveDefault && contact) setOrderWhatsAppDefault(contact);
+  await copyOrderWhatsAppText(text);
+  openWhatsAppUrl(buildWhatsAppSendUrl(contact?.normalized || contact?.phone || '', text));
+  showToast(contact?.name ? `נפתח וואטסאפ ל${contact.name}` : 'נפתח וואטסאפ לבחירת איש קשר');
+}
+
+function openOrderWhatsAppPicker({ text, contacts, suggested }) {
+  const suggestedId = suggested?.supplierId ? String(suggested.supplierId) : '';
+  const contactButtons = contacts.length
+    ? contacts.map((c) => `
+        <button type="button" class="order-wa-contact ${String(c.supplierId) === suggestedId ? 'is-suggested' : ''}"
+          data-wa-supplier="${c.supplierId || ''}" data-wa-phone="${escapeHtml(c.normalized)}">
+          <span class="order-wa-contact-name">${escapeHtml(c.name)}${String(c.supplierId) === suggestedId ? ' · מומלץ' : ''}</span>
+          <span class="order-wa-contact-phone">${escapeHtml(c.phone)}</span>
+        </button>`).join('')
+    : '<p class="form-hint">אין לספקים מספר וואטסאפ — הוסיפו בעריכת ספק, או בחרו איש קשר ידנית.</p>';
+
+  openModal({
+    title: 'שליחה בוואטסאפ',
+    bodyHTML: `
+      <p class="form-hint" style="margin-bottom:10px">בחרו למי לשלוח את רשימת ההזמנה. אפשר גם לבחור איש קשר ידנית בוואטסאפ.</p>
+      ${suggested ? `
+        <button type="button" class="btn btn-primary" id="order-wa-suggested" style="width:100%;margin-bottom:10px">
+          ${WHATSAPP_ICON_SVG} שלח ל${escapeHtml(suggested.name)}
+        </button>` : ''}
+      <div class="order-wa-contact-list">${contactButtons}</div>
+      <p class="form-hint" style="margin-top:10px">לחיצה על ספק שומרת אותו כברירת מחדל להזמנות הבאות.</p>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary" id="order-wa-manual">בחירה ידנית</button>
+      <button type="button" class="btn btn-secondary" id="order-wa-copy">העתק הודעה</button>
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>`,
+  });
+
+  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  document.getElementById('order-wa-suggested')?.addEventListener('click', async () => {
+    closeModal();
+    await sendOrderWhatsApp(suggested, text, { saveDefault: true });
+  });
+  document.getElementById('order-wa-manual')?.addEventListener('click', async () => {
+    closeModal();
+    await sendOrderWhatsApp(null, text);
+  });
+  document.getElementById('order-wa-copy')?.addEventListener('click', async () => {
+    const ok = await copyOrderWhatsAppText(text);
+    showToast(ok ? 'ההודעה הועתקה ✓' : 'לא ניתן להעתיק');
+  });
+  document.querySelectorAll('[data-wa-phone]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const contact = contacts.find((c) => String(c.supplierId) === String(btn.dataset.waSupplier))
+        || { name: btn.querySelector('.order-wa-contact-name')?.textContent, normalized: btn.dataset.waPhone };
+      closeModal();
+      await sendOrderWhatsApp(contact, text, { saveDefault: true });
+    });
+  });
 }
 
 async function renderOrderTab(body, container) {
@@ -3838,7 +3948,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=496');
+    const inv = await import('../inventory-db.js?v=497');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];
@@ -3872,7 +3982,13 @@ async function renderOrderTab(body, container) {
   const totalPacks = filtered.reduce((s, r) => s + (Number(r.packUnits) || 0), 0);
   const totalCost = filtered.reduce((s, r) => s + (Number(r.estimatedCost) || 0), 0);
   const missingPack = filtered.filter((r) => r.packUnits == null).length;
-  const waText = formatWhatsAppUsageOrderText({ periodLabel: range.label, rows: filtered });
+  const waText = formatWhatsAppUsageOrderText({
+    periodLabel: range.label,
+    rows: filtered,
+    greeting: period,
+  });
+  const waContacts = listSupplierWhatsAppContacts(suppliers);
+  const suggestedContact = pickSuggestedOrderContact(waContacts, supplierFilter);
   const supplierOptions = suppliers
     .slice()
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
@@ -3915,26 +4031,57 @@ async function renderOrderTab(body, container) {
       <p class="form-hint" style="margin:10px 0 0">${escapeHtml(range.label)}${missingPack ? ` · ל-${missingPack} חומרים אין כמות אריזה` : ''}</p>
     </div>
 
-    ${filtered.length === 0
-    ? `<div class="card"><p class="form-hint" style="text-align:center;padding:12px">
+    <div class="card order-usage-table-card">
+      <div class="order-usage-table-toolbar">
+        <div class="card-title" style="margin:0">רשימת הזמנה</div>
+        <button type="button" class="order-wa-btn" id="order-wa-send" aria-label="שלח בוואטסאפ" title="שלח בוואטסאפ" ${filtered.length ? '' : 'disabled'}>
+          ${WHATSAPP_ICON_SVG}
+        </button>
+      </div>
+      ${filtered.length === 0
+    ? `<p class="form-hint" style="text-align:center;padding:12px 0 0">
         ${rows.length ? 'אין חומרים לספק שנבחר' : 'אין שימוש מתועד בתקופה זו — תעד מנות בתזרים'}
-      </p></div>`
-    : `<div class="order-usage-list">
-        ${filtered.map((row) => renderOrderUsageCard(row, stockOf(row))).join('')}
+      </p>`
+    : `<div class="order-usage-table-wrap">
+        <table class="order-usage-table">
+          <thead>
+            <tr>
+              <th>חומר גלם</th>
+              <th>משקל</th>
+              <th>יח' אריזה</th>
+              <th>אריזה</th>
+              <th>ספק ברירת מחדל</th>
+              <th>עלות משוערת</th>
+              <th>מלאי</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered.map((row) => renderOrderUsageTableRow(row, stockOf(row))).join('')}
+          </tbody>
+          <tfoot>
+            <tr>
+              <th>סה"כ</th>
+              <td>${escapeHtml(formatKgWeight(totalKg) || '—')}</td>
+              <td>${totalPacks ? formatDecimal(totalPacks) : '—'}</td>
+              <td></td>
+              <td></td>
+              <td>${totalCost ? formatMoney(totalCost) : '—'}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
       </div>`}
-
-    <div class="card">
-      <button type="button" class="btn btn-primary" id="copy-wa-order" style="width:100%">📋 העתק רשימה לוואטסאפ</button>
       <textarea id="wa-order-text" class="wa-order-text" rows="6" readonly hidden>${escapeHtml(waText)}</textarea>
-      <details class="order-usage-reminder-details">
-        <summary>יום תזכורת בבית</summary>
-        <div class="form-group" style="margin-top:10px;margin-bottom:0">
-          <label for="order-reminder-day">יום תזכורת</label>
-          <select id="order-reminder-day">${weekdayOptions}</select>
-          <p class="form-hint">כרגע: ${orderReminderWeekdayLabel(reminderDay)}. מופיע ביום שנבחר וביום שאחריו אם יש שימוש השבוע.</p>
-        </div>
-      </details>
-    </div>`;
+    </div>
+
+    <details class="order-usage-reminder-details">
+      <summary>יום תזכורת בבית</summary>
+      <div class="form-group" style="margin-top:10px;margin-bottom:0">
+        <label for="order-reminder-day">יום תזכורת</label>
+        <select id="order-reminder-day">${weekdayOptions}</select>
+        <p class="form-hint">כרגע: ${orderReminderWeekdayLabel(reminderDay)}. מופיע ביום שנבחר וביום שאחריו אם יש שימוש השבוע.</p>
+      </div>
+    </details>`;
 
   bindTodayDateButtons(body);
 
@@ -3966,19 +4113,18 @@ async function renderOrderTab(body, container) {
     document.getElementById('order-reminder-banner')?.remove();
   });
   body.querySelector('[data-order-reminder-go]')?.addEventListener('click', () => {
-    document.querySelector('.order-usage-list, .order-usage-summary-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.querySelector('.order-usage-table-card, .order-usage-summary-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
-  document.getElementById('copy-wa-order')?.addEventListener('click', async () => {
-    const ta = document.getElementById('wa-order-text');
-    try {
-      await navigator.clipboard.writeText(ta.value);
-      showToast('הועתק ✓');
-    } catch {
-      ta.hidden = false;
-      ta.select();
-      document.execCommand('copy');
-      showToast('הועתק ✓');
+  document.getElementById('order-wa-send')?.addEventListener('click', () => {
+    if (!filtered.length) {
+      showToast('אין רשימה לשליחה');
+      return;
     }
+    openOrderWhatsAppPicker({
+      text: waText,
+      contacts: waContacts,
+      suggested: suggestedContact,
+    });
   });
 }

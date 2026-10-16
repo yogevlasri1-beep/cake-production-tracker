@@ -1289,54 +1289,142 @@ body {
   font-size: 1rem;
 }
 
-.order-usage-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 12px;
+.order-usage-table-card {
+  padding-bottom: 10px;
 }
 
-.order-usage-card {
-  background: var(--surface, #fff);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
-}
-
-.order-usage-card-top {
+.order-usage-table-toolbar {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  align-items: baseline;
+  gap: 10px;
   margin-bottom: 10px;
 }
 
-.order-usage-name {
-  font-weight: 700;
-  font-size: 0.95rem;
-}
-
-.order-usage-supplier {
-  font-size: 0.8rem;
-  color: var(--text-muted);
-  text-align: left;
+.order-wa-btn {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  background: #25d366;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  box-shadow: 0 2px 8px rgba(37, 211, 102, 0.35);
   flex-shrink: 0;
 }
 
-.order-usage-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 10px;
+.order-wa-btn:disabled {
+  opacity: 0.45;
+  box-shadow: none;
 }
 
-.order-usage-cell span {
+.order-wa-btn .order-wa-icon,
+.order-wa-icon {
+  width: 22px;
+  height: 22px;
   display: block;
-  font-size: 0.72rem;
-  color: var(--text-muted);
 }
 
-.order-usage-cell strong {
-  font-size: 0.9rem;
+.order-usage-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -4px;
+  padding: 0 4px;
+}
+
+.order-usage-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.order-usage-table th,
+.order-usage-table td {
+  padding: 8px 10px;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.order-usage-table thead th {
+  font-weight: 700;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  background: var(--primary-soft, #eef4ff);
+}
+
+.order-usage-table tbody th {
+  font-weight: 700;
+  background: var(--surface, #fff);
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  min-width: 7.5rem;
+  box-shadow: -4px 0 8px -6px rgba(15, 23, 42, 0.18);
+}
+
+.order-usage-table .order-usage-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.order-usage-table tfoot th,
+.order-usage-table tfoot td {
+  font-weight: 700;
+  background: #f8fafc;
+  border-bottom: 0;
+}
+
+.order-wa-contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow: auto;
+}
+
+.order-wa-contact {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  text-align: right;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.order-wa-contact.is-suggested {
+  border-color: #25d366;
+  background: #f0fdf4;
+}
+
+.order-wa-contact-name {
+  font-weight: 700;
+}
+
+.order-wa-contact-phone {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  direction: ltr;
+}
+
+#order-wa-suggested {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#order-wa-suggested .order-wa-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .order-usage-reminder-details {

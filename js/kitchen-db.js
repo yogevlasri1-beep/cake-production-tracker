@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=496';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=497';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=496';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=496';
-import { logAuditEvent } from './audit.js?v=496';
-import { markMetaDeleted } from './sync/id-map.js?v=496';
+} from './validators.js?v=497';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=497';
+import { logAuditEvent } from './audit.js?v=497';
+import { markMetaDeleted } from './sync/id-map.js?v=497';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4614,24 +4614,64 @@ export function buildSupplierUsageOrderRows(usageItems, { materials = [], suppli
   }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
 }
 
-export function formatWhatsAppUsageOrderText({ periodLabel, rows } = {}) {
-  const lines = [`📋 שימוש בחומרי גלם — ${periodLabel || ''}`, ''];
+export function formatWhatsAppUsageOrderText({ periodLabel, rows, greeting } = {}) {
+  const greetLine = greeting === 'month' ? 'חודש טוב.' : 'שבוע טוב.';
+  const lines = [
+    'שלום רב,',
+    greetLine,
+    '',
+    `להלן הזמנת חומרי הגלם לתקופה ${periodLabel || ''}.`,
+    'אבקש להכין את ההזמנה לפי הרשימה הבאה:',
+    '',
+  ];
   if (!rows?.length) {
-    lines.push('אין שימוש מתועד בתקופה זו.');
-    return lines.join('\n').trim();
-  }
-  for (const row of rows) {
-    const qty = formatMaterialUsageQty(row.totalQty, row.unitKind) || `${row.totalQty}`;
-    const packs = row.packUnits != null ? ` · ${formatDecimal(row.packUnits)} יח'` : '';
-    const packSize = row.packKg != null ? ` (אריזה ${formatDecimal(row.packKg)} ק"ג)` : '';
-    const sup = row.defaultSupplierName && row.defaultSupplierName !== 'ללא ספק'
-      ? ` · ${row.defaultSupplierName}`
-      : '';
-    lines.push(`• ${row.name}: ${qty}${packs}${packSize}${sup}`);
+    lines.push('אין פריטים להזמנה בתקופה זו.');
+  } else {
+    for (const row of rows) {
+      const qty = formatMaterialUsageQty(row.totalQty, row.unitKind) || `${row.totalQty}`;
+      const packs = row.packUnits != null ? ` · ${formatDecimal(row.packUnits)} יח'` : '';
+      const packSize = row.packKg != null ? ` (אריזה ${formatDecimal(row.packKg)} ק"ג)` : '';
+      lines.push(`• ${row.name}: ${qty}${packs}${packSize}`);
+    }
   }
   lines.push('');
-  lines.push('_נוצר מאפליקציית מעקב יצור_');
+  lines.push('תודה רבה על השירות ועל הטיפול המהיר.');
+  lines.push('אשמח לאישור קבלת ההזמנה.');
+  lines.push('בברכה.');
   return lines.join('\n').trim();
+}
+
+/** טלפון ישראלי לוואטסאפ: 050-1234567 → 972501234567 */
+export function normalizeWhatsAppPhone(raw) {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('972')) return digits;
+  if (digits.startsWith('0') && digits.length >= 9) return `972${digits.slice(1)}`;
+  if (digits.length === 9) return `972${digits}`;
+  return digits;
+}
+
+export function buildWhatsAppSendUrl(phone, text) {
+  const msg = encodeURIComponent(text || '');
+  const num = normalizeWhatsAppPhone(phone);
+  return num ? `https://wa.me/${num}?text=${msg}` : `https://wa.me/?text=${msg}`;
+}
+
+export function listSupplierWhatsAppContacts(suppliers = []) {
+  return (suppliers || [])
+    .map((s) => {
+      const phone = String(s.whatsapp || s.phone || '').trim();
+      const normalized = normalizeWhatsAppPhone(phone);
+      if (!normalized) return null;
+      return {
+        supplierId: Number(s.id) || null,
+        name: s.name || 'ספק',
+        phone,
+        normalized,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name), 'he'));
 }
 
 export function packageWeightGramsFromKg(packageWeightKg) {
