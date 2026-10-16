@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=499';
+import { db, getSetting, setSetting } from './db.js?v=500';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=499';
+} from './supabase-backup.js?v=500';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=499';
+} from './sync/collections.js?v=500';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -35,14 +35,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=499';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=499';
+} from './sync/id-map.js?v=500';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=500';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=499';
+} from './auth.js?v=500';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -145,8 +145,10 @@ const DEDUPE_VERSION = 18;
  * v10: coerce string FKs + reconcile unitPrice from price history after pull.
  * v11: paginate pulls — PostgREST silently capped each table at 1000 rows, so a
  * new computer could keep lastPullAt and never receive the rest of the catalog.
+ * v12: timestamps and the pull cursor now follow the server clock. Rows that an
+ * earlier device-clock mismatch made other devices skip are recovered by one full pull.
  */
-const REPAIR_VERSION = 11;
+const REPAIR_VERSION = 12;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -200,7 +202,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=499');
+    const { showToast } = await import('./utils.js?v=500');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -227,6 +229,36 @@ export function isApplyingRemoteSync() {
   return applyingRemote;
 }
 
+/**
+ * Server clock minus device clock, measured from the Date header of every Supabase
+ * response. updated_at and the pull cursor used to come from each device's own
+ * clock: a computer running a few minutes fast asked the cloud only for rows
+ * "newer than its future", and one running slow wrote rows that other devices had
+ * already skipped past — either way changes silently never arrived.
+ */
+let serverClockOffsetMs = 0;
+let serverClockMeasured = false;
+/** Date has 1-second resolution plus request latency; smaller drift is noise. */
+const CLOCK_SKEW_IGNORE_MS = 3000;
+
+export function noteServerClock(serverDateHeader, localNowMs = Date.now()) {
+  const serverMs = serverDateHeader ? Date.parse(serverDateHeader) : NaN;
+  if (!Number.isFinite(serverMs)) return serverClockOffsetMs;
+  const offset = serverMs - localNowMs;
+  serverClockOffsetMs = Math.abs(offset) < CLOCK_SKEW_IGNORE_MS ? 0 : offset;
+  serverClockMeasured = true;
+  return serverClockOffsetMs;
+}
+
+export function getServerClockOffsetMs() {
+  return serverClockOffsetMs;
+}
+
+/** "Now" on the server's clock — every timestamp written to the cloud uses this. */
+export function syncNowISO() {
+  return new Date(Date.now() + serverClockOffsetMs).toISOString();
+}
+
 async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {}, allowAuthRetry = true } = {}) {
   if (authHalted) {
     throw new Error(AUTH_RECONNECT_MESSAGE);
@@ -241,6 +273,7 @@ async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {}, al
     }),
     body: body != null ? JSON.stringify(body) : undefined,
   });
+  try { noteServerClock(res.headers?.get?.('Date')); } catch { /* ignore */ }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -361,14 +394,16 @@ async function readLocalRecord(collection, localKey) {
   return table.get(id);
 }
 
-async function pushUpsert(cfg, collection, localKey, deviceId) {
+/** Cloud row for the current local state, or null when the local row is gone. */
+async function buildUpsertCloudRow(collection, localKey, deviceId) {
   const row = await readLocalRecord(collection, localKey);
-  if (!row) return;
-  const updatedAt = new Date().toISOString();
+  if (!row) return null;
+  const updatedAt = syncNowISO();
   const syncId = await ensureSyncId(collection, localKey, { updatedAt });
+  if (!syncId) return null;
   const payload = await remapFksToSyncIds(collection, row);
   if (collection === 'settings') payload.key = row.key;
-  const cloudRow = {
+  return {
     id: syncId,
     kitchen_id: KITCHEN_ID || BACKUP_SCOPE_ID,
     payload,
@@ -376,37 +411,87 @@ async function pushUpsert(cfg, collection, localKey, deviceId) {
     deleted_at: null,
     device_id: deviceId,
   };
-  const table = tableOf(collection);
-  await supabaseFetch(cfg, `/${table}?on_conflict=id`, {
+}
+
+async function buildDeleteCloudRow(collection, localKey, deviceId) {
+  const updatedAt = syncNowISO();
+  let syncId = await markMetaDeleted(collection, localKey, updatedAt);
+  if (!syncId) syncId = await ensureSyncId(collection, localKey, { updatedAt });
+  if (!syncId) return null;
+  return {
+    id: syncId,
+    kitchen_id: KITCHEN_ID || BACKUP_SCOPE_ID,
+    payload: {},
+    updated_at: updatedAt,
+    deleted_at: updatedAt,
+    device_id: deviceId,
+  };
+}
+
+async function postCloudRows(cfg, collection, body) {
+  await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
     method: 'POST',
-    headers: {
-      Prefer: 'resolution=merge-duplicates,return=minimal',
-    },
-    body: cloudRow,
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body,
   });
-  await upsertMeta({ collection, localKey, syncId, updatedAt, deletedAt: null });
+}
+
+async function pushUpsert(cfg, collection, localKey, deviceId) {
+  const cloudRow = await buildUpsertCloudRow(collection, localKey, deviceId);
+  if (!cloudRow) return;
+  await postCloudRows(cfg, collection, cloudRow);
+  await upsertMeta({ collection, localKey, syncId: cloudRow.id, updatedAt: cloudRow.updated_at, deletedAt: null });
 }
 
 async function pushDelete(cfg, collection, localKey, deviceId) {
-  const updatedAt = new Date().toISOString();
-  let syncId = await markMetaDeleted(collection, localKey, updatedAt);
-  if (!syncId) syncId = await ensureSyncId(collection, localKey, { updatedAt });
-  const table = tableOf(collection);
-  await supabaseFetch(cfg, `/${table}?on_conflict=id`, {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: {
-      id: syncId,
-      kitchen_id: KITCHEN_ID,
-      payload: {},
-      updated_at: updatedAt,
-      deleted_at: updatedAt,
-      device_id: deviceId,
-    },
-  });
+  const cloudRow = await buildDeleteCloudRow(collection, localKey, deviceId);
+  if (!cloudRow) return;
+  await postCloudRows(cfg, collection, cloudRow);
 }
 
-export async function flushSyncQueue() {
+/** Rows per batched POST when flushing the queue. */
+const PUSH_BATCH_SIZE = 200;
+
+/**
+ * Only the newest queued op per row matters: the push always sends the row's
+ * current local state. Returns the ops to send (oldest first) and the stale ones.
+ */
+export function collapseQueueItems(items) {
+  const latestByRow = new Map();
+  for (const item of items) latestByRow.set(`${item.collection}\u0000${item.localKey}`, item);
+  const keep = new Set(latestByRow.values());
+  return {
+    latest: items.filter((item) => keep.has(item)),
+    superseded: items.filter((item) => !keep.has(item)),
+  };
+}
+
+function isWholeFlushError(err) {
+  if (authHalted) return true;
+  const kind = classifyLiveSyncError(err).kind;
+  return kind === 'network' || kind === 'auth';
+}
+
+let flushInFlight = null;
+let flushAgain = false;
+
+export function flushSyncQueue() {
+  if (flushInFlight) {
+    // A write landed while a flush was running: run once more right after it.
+    flushAgain = true;
+    return flushInFlight;
+  }
+  flushInFlight = runFlush().finally(() => {
+    flushInFlight = null;
+    if (flushAgain) {
+      flushAgain = false;
+      scheduleFlush();
+    }
+  });
+  return flushInFlight;
+}
+
+async function runFlush() {
   if (authHalted) return { flushed: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { flushed: 0 };
@@ -418,25 +503,97 @@ export async function flushSyncQueue() {
   // approved account rejected by RLS) must not permanently strand that one write —
   // it used to be marked 'error' and never picked up again, silently dropping it
   // while the rest of the queue kept flushing normally.
-  const pending = await db.syncQueue.where('status').anyOf('pending', 'error').sortBy('createdAt');
+  const queued = await db.syncQueue.where('status').anyOf('pending', 'error').sortBy('createdAt');
+  const { latest, superseded } = collapseQueueItems(queued);
+  if (superseded.length) {
+    await db.syncQueue.bulkUpdate(superseded.map((item) => ({ key: item.id, changes: { status: 'done' } })));
+  }
+
+  // Group by collection: one POST carries up to PUSH_BATCH_SIZE rows instead of
+  // one request per change.
+  const byCollection = new Map();
+  for (const item of latest) {
+    if (!byCollection.has(item.collection)) byCollection.set(item.collection, []);
+    byCollection.get(item.collection).push(item);
+  }
+
   let flushed = 0;
   let lastErr = null;
-  for (const item of pending) {
-    try {
-      if (item.type === 'delete') {
-        await pushDelete(cfg, item.collection, item.localKey, deviceId);
-      } else {
-        await pushUpsert(cfg, item.collection, item.localKey, deviceId);
+  let halted = false;
+  const markError = async (items, message) => {
+    if (!items.length) return;
+    await db.syncQueue.bulkUpdate(items.map((item) => ({ key: item.id, changes: { status: 'error', error: message } })));
+  };
+
+  for (const [collection, items] of byCollection) {
+    for (let i = 0; i < items.length; i += PUSH_BATCH_SIZE) {
+      const chunk = items.slice(i, i + PUSH_BATCH_SIZE);
+      if (halted) {
+        await markError(chunk, lastErr);
+        continue;
       }
-      await db.syncQueue.update(item.id, { status: 'done' });
-      flushed++;
-    } catch (err) {
-      lastErr = String(err.message || err);
-      await db.syncQueue.update(item.id, { status: 'error', error: lastErr });
-      // Keep trying the remaining queued rows — one bad/rejected row (e.g. an
-      // unapproved account hitting RLS) should not block unrelated writes behind it.
+      const prepared = [];
+      const nothingToSend = [];
+      for (const item of chunk) {
+        try {
+          const cloudRow = item.type === 'delete'
+            ? await buildDeleteCloudRow(collection, item.localKey, deviceId)
+            : await buildUpsertCloudRow(collection, item.localKey, deviceId);
+          if (cloudRow) prepared.push({ item, cloudRow });
+          else nothingToSend.push(item);
+        } catch (err) {
+          lastErr = String(err.message || err);
+          await markError([item], lastErr);
+        }
+      }
+      if (nothingToSend.length) {
+        await db.syncQueue.bulkUpdate(nothingToSend.map((item) => ({ key: item.id, changes: { status: 'done' } })));
+      }
+      if (!prepared.length) continue;
+
+      const confirm = async (entries) => {
+        for (const { item, cloudRow } of entries) {
+          if (item.type !== 'delete') {
+            await upsertMeta({
+              collection, localKey: item.localKey, syncId: cloudRow.id, updatedAt: cloudRow.updated_at, deletedAt: null,
+            });
+          }
+        }
+        await db.syncQueue.bulkUpdate(entries.map(({ item }) => ({ key: item.id, changes: { status: 'done' } })));
+        flushed += entries.length;
+      };
+
+      try {
+        await postCloudRows(cfg, collection, prepared.map((p) => p.cloudRow));
+        await confirm(prepared);
+      } catch (err) {
+        lastErr = String(err.message || err);
+        if (isWholeFlushError(err) || prepared.length === 1) {
+          await markError(prepared.map((p) => p.item), lastErr);
+          if (isWholeFlushError(err)) halted = true;
+          continue;
+        }
+        // One bad/rejected row must not block unrelated writes in the same batch:
+        // retry one by one so only the failing row stays in the queue.
+        for (let j = 0; j < prepared.length; j++) {
+          const entry = prepared[j];
+          try {
+            await postCloudRows(cfg, collection, entry.cloudRow);
+            await confirm([entry]);
+          } catch (rowErr) {
+            lastErr = String(rowErr.message || rowErr);
+            if (isWholeFlushError(rowErr)) {
+              halted = true;
+              await markError(prepared.slice(j).map((p) => p.item), lastErr);
+              break;
+            }
+            await markError([entry.item], lastErr);
+          }
+        }
+      }
     }
   }
+
   await db.syncQueue.where('status').equals('done').delete();
   const pendingCount = await countQueueBacklog();
   const classified = lastErr ? classifyLiveSyncError(lastErr) : { kind: null, message: null };
@@ -497,7 +654,7 @@ async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
   if (!syncId) return;
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return;
-  const updatedAt = new Date().toISOString();
+  const updatedAt = syncNowISO();
   const table = tableOf(collection);
   try {
     await supabaseFetch(cfg, `/${table}?on_conflict=id`, {
@@ -517,17 +674,69 @@ async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
   }
 }
 
+/**
+ * Fingerprint index per collection, alive only for the duration of one pull.
+ * Without it every new cloud row re-read and re-fingerprinted the whole local
+ * table — quadratic, so the first pull on a new computer could take many minutes.
+ * Any local write the index cannot follow drops that collection's entry.
+ */
+let fpCache = null;
+
+function invalidateFingerprintCache(collection) {
+  if (fpCache) fpCache.delete(collection);
+}
+
+function fpIndexAdd(index, collection, row) {
+  const strict = rowFingerprint(collection, row);
+  if (strict) {
+    if (!index.strict.has(strict)) index.strict.set(strict, []);
+    index.strict.get(strict).push(row);
+  }
+  if (LOOSE_MATCH_COLLECTIONS.has(collection)) {
+    const loose = rowDedupeFingerprint(collection, row);
+    if (loose) {
+      if (!index.loose.has(loose)) index.loose.set(loose, []);
+      index.loose.get(loose).push(row);
+    }
+  }
+}
+
+async function fingerprintIndexFor(collection) {
+  if (!fpCache) return null;
+  let index = fpCache.get(collection);
+  if (!index) {
+    index = { strict: new Map(), loose: new Map() };
+    for (const row of await db[collection].toArray()) fpIndexAdd(index, collection, row);
+    fpCache.set(collection, index);
+  }
+  return index;
+}
+
+function fingerprintCacheAdd(collection, row) {
+  const index = fpCache?.get(collection);
+  if (index) fpIndexAdd(index, collection, row);
+}
+
 export async function findLocalByFingerprint(collection, row, { syncId = null } = {}) {
   if (!row || !db[collection]) return null;
   const strictFp = rowFingerprint(collection, row);
   const looseFp = LOOSE_MATCH_COLLECTIONS.has(collection) ? rowDedupeFingerprint(collection, row) : '';
   if (!strictFp && !looseFp) return null;
-  const rows = await db[collection].toArray();
-  const strictMatches = [];
-  const looseMatches = [];
-  for (const r of rows) {
-    if (strictFp && rowFingerprint(collection, r) === strictFp) strictMatches.push(r);
-    else if (looseFp && looseFp !== strictFp && rowDedupeFingerprint(collection, r) === looseFp) looseMatches.push(r);
+  let strictMatches = [];
+  let looseMatches = [];
+  const index = await fingerprintIndexFor(collection);
+  if (index) {
+    strictMatches = strictFp ? [...(index.strict.get(strictFp) || [])] : [];
+    if (looseFp && looseFp !== strictFp) {
+      const strictIds = new Set(strictMatches.map((r) => r.id));
+      looseMatches = (index.loose.get(looseFp) || []).filter((r) => !strictIds.has(r.id));
+    }
+  } else {
+    const rows = await db[collection].toArray();
+    for (const r of rows) {
+      if (strictFp && rowFingerprint(collection, r) === strictFp) strictMatches.push(r);
+      else if (looseFp && looseFp !== strictFp && rowDedupeFingerprint(collection, r) === looseFp) looseMatches.push(r);
+    }
   }
   for (const candidate of [...strictMatches, ...looseMatches]) {
     const meta = await getMetaByLocal(collection, candidate.id);
@@ -1024,6 +1233,7 @@ async function mergeChecklistTaskInto(keepId, dropId) {
 async function deleteLocalDuplicateRow(collection, row) {
   const dropKey = localKeyOf(collection, row);
   const dropMeta = await getMetaByLocal(collection, dropKey);
+  invalidateFingerprintCache(collection);
   applyingRemote = true;
   try {
     await db[collection].delete(row.id);
@@ -1031,7 +1241,7 @@ async function deleteLocalDuplicateRow(collection, row) {
     applyingRemote = false;
   }
   if (dropMeta?.syncId) {
-    await markMetaDeleted(collection, dropKey, new Date().toISOString());
+    await markMetaDeleted(collection, dropKey, syncNowISO());
     await enqueue({ type: 'delete', collection, localKey: dropKey });
   } else {
     await db.syncMeta.where('[collection+localKey]').equals([collection, dropKey]).delete();
@@ -1079,7 +1289,7 @@ async function dedupeFlowChecklistLinksByName() {
   return removed;
 }
 
-async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false } = {}) {
+async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false, skipUnchanged = false } = {}) {
   if (!cloudRow?.id) return false;
 
   const syncId = cloudRow.id;
@@ -1110,6 +1320,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
             await retargetLocalForeignKeys('supplierCategories', dropId, survivor.id);
           }
         }
+        invalidateFingerprintCache(collection);
         applyingRemote = true;
         try {
           if (collection === 'settings') await db.settings.delete(existingMeta.localKey);
@@ -1141,18 +1352,28 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     return false;
   }
 
-  // Pending local delete not yet flushed — don't undo a merge mid-sync.
+  // Incremental pulls overlap the previous window, and every push comes back as
+  // an echo: a row this device already holds at exactly this version is a no-op.
+  // (Full pulls still re-apply, that is how repair passes restore bad local FKs.)
+  if (skipUnchanged && existingMeta && !existingMeta.deletedAt
+      && existingMeta.syncId === syncId
+      && Date.parse(existingMeta.updatedAt) === Date.parse(remoteUpdated)) {
+    return false;
+  }
+
+  // Local change not yet flushed (delete or edit) — it is newer than this cloud
+  // row and will win once pushed. Applying the cloud row first used to overwrite
+  // the unsent edit, and the queued push then re-uploaded the old values.
   if (existingMeta) {
-    const pendingDelete = await db.syncQueue
+    const pendingLocal = await db.syncQueue
       .where('status')
-      .equals('pending')
+      .anyOf('pending', 'error')
       .filter((op) => (
-        op.type === 'delete'
-        && op.collection === collection
+        op.collection === collection
         && String(op.localKey) === String(existingMeta.localKey)
       ))
       .first();
-    if (pendingDelete) return false;
+    if (pendingLocal) return false;
   }
 
   const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});
@@ -1203,6 +1424,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     }
   }
 
+  if (existingMeta) invalidateFingerprintCache(collection);
   applyingRemote = true;
   try {
     if (existingMeta) {
@@ -1227,6 +1449,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     } else {
       const { id: _drop, ...rest } = payload;
       const newId = await db[collection].add(rest);
+      fingerprintCacheAdd(collection, { ...rest, id: newId });
       await upsertMeta({
         collection,
         localKey: String(newId),
@@ -1243,26 +1466,59 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
 /** PostgREST default max-rows is 1000; without paging a new device never sees the rest. */
 export const PULL_PAGE_SIZE = 1000;
 
-export function buildCollectionPullPath(collection, { since = null, offset = 0, limit = PULL_PAGE_SIZE } = {}) {
+/**
+ * Incremental pulls re-read this much before the last cursor. A row is stamped
+ * just before its POST commits, so a pull running at that moment can miss it
+ * while already moving the cursor past it; the overlap picks such rows up on the
+ * next tick (rows already held are skipped cheaply, see skipUnchanged).
+ */
+export const PULL_OVERLAP_MS = 2 * 60 * 1000;
+
+/**
+ * `after` = last row of the previous page (keyset paging). Offset paging skipped
+ * a row whenever another device edited an earlier row mid-pull — the edited row
+ * moves to the end and everything behind it shifts one place back.
+ */
+export function buildCollectionPullPath(collection, {
+  since = null, after = null, offset = 0, limit = PULL_PAGE_SIZE,
+} = {}) {
   const table = tableOf(collection);
   const safeLimit = Math.max(1, Number(limit) || PULL_PAGE_SIZE);
-  const safeOffset = Math.max(0, Number(offset) || 0);
-  let path = `/${table}?kitchen_id=eq.${encodeURIComponent(KITCHEN_ID)}&select=*&order=updated_at.asc,id.asc&limit=${safeLimit}&offset=${safeOffset}`;
+  let path = `/${table}?kitchen_id=eq.${encodeURIComponent(KITCHEN_ID)}&select=*&order=updated_at.asc,id.asc&limit=${safeLimit}`;
+  if (after?.updatedAt && after?.id) {
+    const ts = String(after.updatedAt).replace(/"/g, '');
+    const id = String(after.id).replace(/[^0-9a-fA-F-]/g, '');
+    path += `&or=${encodeURIComponent(`(updated_at.gt."${ts}",and(updated_at.eq."${ts}",id.gt.${id}))`)}`;
+  } else {
+    path += `&offset=${Math.max(0, Number(offset) || 0)}`;
+  }
   if (since) path += `&updated_at=gt.${encodeURIComponent(since)}`;
   return path;
 }
 
-export async function pullCollection(collection, { since, deferred } = {}) {
+/** Cursor for an incremental pull: last pull minus the overlap window. */
+export function incrementalPullSince(lastPullAt, serverNowMs = Date.now() + serverClockOffsetMs) {
+  const last = lastPullAt ? Date.parse(lastPullAt) : NaN;
+  if (!Number.isFinite(last)) return null;
+  // A cursor in the future (saved while this device's clock ran fast) would hide
+  // every new row — fall back to a full pull once.
+  if (last > serverNowMs + 60 * 1000) return null;
+  return new Date(last - PULL_OVERLAP_MS).toISOString();
+}
+
+const PULL_MAX_PAGES = 500;
+
+export async function pullCollection(collection, { since, deferred, skipUnchanged = false } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return 0;
   const deviceId = await getOrCreateDeviceId();
   let applied = 0;
-  let offset = 0;
-  while (offset <= 200000) {
-    const rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, offset }));
+  let after = null;
+  for (let page = 0; page < PULL_MAX_PAGES; page++) {
+    const rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, after }));
     if (!Array.isArray(rows) || !rows.length) break;
     for (const row of rows) {
-      const ok = await applyRemoteRow(collection, row, deviceId);
+      const ok = await applyRemoteRow(collection, row, deviceId, { skipUnchanged });
       if (ok === 'defer') {
         if (deferred) deferred.push({ collection, row });
         continue;
@@ -1270,22 +1526,56 @@ export async function pullCollection(collection, { since, deferred } = {}) {
       if (ok) applied++;
     }
     if (rows.length < PULL_PAGE_SIZE) break;
-    offset += rows.length;
+    const last = rows[rows.length - 1];
+    after = { updatedAt: last.updated_at, id: last.id };
   }
   return applied;
 }
 
+async function ensureServerClock(cfg) {
+  if (serverClockMeasured) return;
+  try {
+    await supabaseFetch(cfg, '/sync_app_settings?select=id&limit=1');
+  } catch { /* the pull itself will surface real errors */ }
+}
+
+let pullInFlight = null;
+let pullInFlightFull = false;
+
+/**
+ * Serialised: the 15s timer, tab focus, «סנכרן עכשיו» and startup could run two
+ * pulls at once, and two pulls applying the same new cloud row both found no
+ * local match and both inserted it — a duplicate on the new computer.
+ */
 export async function pullAllCollections({ full = false } = {}) {
+  if (pullInFlight) {
+    if (!full || pullInFlightFull) return pullInFlight;
+    try { await pullInFlight; } catch { /* run the full pull anyway */ }
+    return pullAllCollections({ full });
+  }
+  pullInFlightFull = full;
+  pullInFlight = runPull({ full }).finally(() => { pullInFlight = null; });
+  return pullInFlight;
+}
+
+async function runPull({ full = false } = {}) {
   if (authHalted) return { applied: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { applied: 0 };
-  const since = full ? null : live.lastPullAt;
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) return { applied: 0 };
+  await ensureServerClock(cfg);
+  const since = full ? null : incrementalPullSince(live.lastPullAt);
+  const skipUnchanged = !!since;
   let applied = 0;
-  const pullStarted = new Date().toISOString();
+  // Cursor = pull start on the server clock. Converted at the end, with the
+  // offset measured by this pull's own responses.
+  const pullStartedLocalMs = Date.now();
   const deferred = [];
+  fpCache = new Map();
   try {
     for (const collection of orderedCollections()) {
-      applied += await pullCollection(collection, { since, deferred });
+      applied += await pullCollection(collection, { since, deferred, skipUnchanged });
     }
     // Second pass: rows whose parents were only created during this pull.
     if (deferred.length) {
@@ -1302,7 +1592,13 @@ export async function pullAllCollections({ full = false } = {}) {
         if (ok && ok !== 'defer') applied++;
       }
     }
-    await saveLiveSyncSettings({ lastPullAt: pullStarted, lastError: null, lastErrorKind: null });
+    fpCache = null;
+    await saveLiveSyncSettings({
+      lastPullAt: new Date(pullStartedLocalMs + serverClockOffsetMs).toISOString(),
+      lastError: null,
+      lastErrorKind: null,
+      clockSkewMs: serverClockOffsetMs,
+    });
     if (applied > 0) {
       try { await coerceSupplierNumericFks(); } catch { /* ignore */ }
       try { await reconcileRawMaterialPricesFromHistory(); } catch { /* ignore */ }
@@ -1314,6 +1610,8 @@ export async function pullAllCollections({ full = false } = {}) {
       lastErrorKind: classified.kind,
     });
     throw err;
+  } finally {
+    fpCache = null;
   }
   return { applied };
 }
@@ -1354,7 +1652,7 @@ async function runSeed({ force = false } = {}) {
     for (const row of rows) {
       const localKey = localKeyOf(collection, row);
       if (!localKey) continue;
-      const updatedAt = new Date().toISOString();
+      const updatedAt = syncNowISO();
       // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
       const syncId = await ensureSyncId(collection, localKey, { updatedAt });
       if (!syncId) continue;
@@ -1487,6 +1785,7 @@ export function installLiveSyncMiddleware() {
             mutate(req) {
               return table.mutate(req).then((res) => {
                 if (applyingRemote) return res;
+                invalidateFingerprintCache(tableName);
                 try {
                   if (req.type === 'add') {
                     for (const k of res.results || []) {
@@ -1571,6 +1870,7 @@ async function repushPolymorphicCollections() {
  * מוגבל בתדירות (ברירת מחדל כל 3 דקות) כדי לא להאט טעינה/רינדור.
  */
 let lastLightDedupeAt = 0;
+const HIDDEN_PULL_INTERVAL_MS = 2 * 60 * 1000;
 let lightDedupeInFlight = null;
 const LIGHT_DEDUPE_MIN_MS = 3 * 60 * 1000;
 
@@ -1625,10 +1925,18 @@ export async function startLiveSync() {
   if (!live.enabled) return;
 
   let pulledOk = false;
+  let fullPulledOk = false;
+  let lastHiddenPullAt = 0;
   const tick = async () => {
     if (authHalted) return;
     try {
       await flushSyncQueue();
+      // A hidden tab/window still polled ~80 tables every 15 seconds. In the
+      // background pull once a few minutes; returning to the window pulls at once.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        if (Date.now() - lastHiddenPullAt < HIDDEN_PULL_INTERVAL_MS) return;
+        lastHiddenPullAt = Date.now();
+      }
       const pulled = await pullAllCollections({ full: false });
       pulledOk = true;
       // ניקוי כבד רק כשיש עדכונים מהענן (ולא יותר מפעם ב־3 דקות)
@@ -1647,6 +1955,7 @@ export async function startLiveSync() {
     try {
       await flushSyncQueue();
       await pullAllCollections({ full: true });
+      fullPulledOk = true;
       await repushPolymorphicCollections();
       await dedupeSupplierWorkspaceLight({ force: true });
       await saveLiveSyncSettings({ repairVersion: REPAIR_VERSION });
@@ -1685,7 +1994,8 @@ export async function startLiveSync() {
       if (cloudHasData) {
         // Cloud already has data: pull+match by fingerprint. Do NOT re-seed everything
         // (that created duplicate UUID rows across devices).
-        await pullAllCollections({ full: true });
+        // A new computer has just done the full repair pull above; once is enough.
+        if (!fullPulledOk) await pullAllCollections({ full: true });
         // מחק ברירות-מחדל ריקות מקומיות לפני seedOrphan — אחרת הן נדחפות לענן ככפילות
         const pruned = await pruneUnsyncedEmptySeedSupplierCategories();
         if (pruned) console.info('live sync pruned empty seed supplier categories', pruned);

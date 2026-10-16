@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=499';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=499';
+} from './runner.js?v=500';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=500';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -24,10 +24,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=499';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=499';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=499';
-import { installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks } from '../js/supabase-sync.js?v=499';
+} from '../js/kitchen-db.js?v=500';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=500';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=500';
+import {
+  installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
+  flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
+} from '../js/supabase-sync.js?v=500';
+import { addCategoryGroup } from '../js/db.js?v=500';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -43,7 +47,71 @@ async function resetDatabase() {
   });
 }
 
+/**
+ * ענן מדומה ל-PostgREST (טבלאות sync_* בזיכרון) — מספיק לבדוק דחיפה/משיכה מקצה לקצה
+ * בלי לגעת ב-Supabase האמיתי. clockOffsetMs = שעון השרת פחות שעון המכשיר.
+ */
+function installMockCloud({ clockOffsetMs = 0 } = {}) {
+  const tables = new Map();
+  const posts = [];
+  const originalFetch = window.fetch;
+  const tableOf = (name) => {
+    if (!tables.has(name)) tables.set(name, new Map());
+    return tables.get(name);
+  };
+  const cloud = {
+    clockOffsetMs,
+    posts,
+    tableOf,
+    serverNowISO: () => new Date(Date.now() + cloud.clockOffsetMs).toISOString(),
+    restore: () => { window.fetch = originalFetch; },
+  };
+  window.fetch = async (input, opts = {}) => {
+    const url = new URL(typeof input === 'string' ? input : input.url);
+    if (!url.pathname.includes('/rest/v1/')) return originalFetch(input, opts);
+    const name = url.pathname.split('/').pop();
+    const table = tableOf(name);
+    const headers = new Headers({
+      Date: new Date(Date.now() + cloud.clockOffsetMs).toUTCString(),
+      'Content-Type': 'application/json',
+    });
+    const method = (opts.method || 'GET').toUpperCase();
+    if (method === 'POST') {
+      const body = JSON.parse(opts.body);
+      const rows = Array.isArray(body) ? body : [body];
+      posts.push({ table: name, count: rows.length });
+      for (const row of rows) table.set(row.id, { ...(table.get(row.id) || {}), ...row });
+      return new Response(null, { status: 201, headers });
+    }
+    let rows = [...table.values()];
+    const since = url.searchParams.get('updated_at');
+    if (since) rows = rows.filter((r) => Date.parse(r.updated_at) > Date.parse(since.replace(/^gt\./, '')));
+    const or = url.searchParams.get('or');
+    if (or) {
+      const m = or.match(/updated_at\.gt\."([^"]+)".*id\.gt\.([0-9a-fA-F-]+)/);
+      const t = Date.parse(m[1]);
+      rows = rows.filter((r) => Date.parse(r.updated_at) > t || (Date.parse(r.updated_at) === t && r.id > m[2]));
+    }
+    rows.sort((a, b) => Date.parse(a.updated_at) - Date.parse(b.updated_at) || (a.id < b.id ? -1 : 1));
+    const offset = Number(url.searchParams.get('offset') || 0);
+    const limit = Number(url.searchParams.get('limit') || 1000);
+    return new Response(JSON.stringify(rows.slice(offset, offset + limit)), { status: 200, headers });
+  };
+  return cloud;
+}
+
+/** בדיקות האינטגרציה לעולם לא פונות ל-Supabase האמיתי: כל קריאת REST נכשלת כ"אין רשת". */
+function installOfflineCloud() {
+  const originalFetch = window.fetch;
+  window.fetch = async (input, opts) => {
+    const url = String(typeof input === 'string' ? input : input?.url || '');
+    if (/\/rest\/v1\/|\/auth\/v1\//.test(url)) throw new TypeError('Failed to fetch');
+    return originalFetch(input, opts);
+  };
+}
+
 export async function runIntegrationTests() {
+  installOfflineCloud();
   await resetDatabase();
   // כמו באפליקציה עצמה (js/app.js): ה-middleware חייב להיות מותקן לפני פתיחת ה-DB.
   installLiveSyncMiddleware();
@@ -1004,6 +1072,68 @@ export async function runIntegrationTests() {
     const listed = (layout.allMaterials || []).find((m) => Number(m.id) === Number(matId));
     assertOk(listed, 'החומר בפריסת ספקים');
     assertOk(materialLastUpdatedAt(listed), 'יש תאריך עדכון לתצוגה');
+  });
+
+  await testAsync('סנכרון חי — דחיפה באצווה, משיכה עם שעון מכשיר מוקדם, בלי כפילויות', async () => {
+    await wait(500); // טיימרים של תור הסנכרון מבדיקות קודמות מסתיימים
+    const cloud = installMockCloud();
+    try {
+      await flushSyncQueue();
+      await db.syncQueue.clear();
+      await saveLiveSyncSettings({ enabled: true, lastPullAt: null, lastError: null });
+
+      // 1) שלוש קבוצות + שתי עריכות לאותה שורה → POST אחד עם 3 שורות
+      const ids = [];
+      for (const n of ['סנכ א', 'סנכ ב', 'סנכ ג']) ids.push(await addCategoryGroup(n));
+      await db.categoryGroups.update(ids[0], { name: 'סנכ א1' });
+      await db.categoryGroups.update(ids[0], { name: 'סנכ א2' });
+      await wait(60);
+      const pushed = await flushSyncQueue();
+      await flushSyncQueue();
+      const groupPosts = cloud.posts.filter((p) => p.table === 'sync_category_groups');
+      assertEqual(groupPosts.length, 1, 'בקשה אחת לטבלה');
+      assertEqual(groupPosts[0].count, 3, 'שורה אחת לכל קבוצה');
+      assertEqual(pushed.flushed, 3);
+      const cloudRows = [...cloud.tableOf('sync_category_groups').values()];
+      assertOk(cloudRows.some((r) => r.payload.name === 'סנכ א2'), 'הגרסה האחרונה בענן');
+      assertEqual(await db.syncQueue.where('status').anyOf('pending', 'error').count(), 0);
+
+      // 2) הד של הדחיפה לא נחשב כשינוי במשיכה מצטברת
+      await pullAllCollections({ full: true });
+      const echo = await pullAllCollections({ full: false });
+      assertEqual(echo.applied, 0, 'הד לא מוחל שוב');
+
+      // 3) שעון המכשיר מקדים ב-10 דקות: שורה ממכשיר אחר עדיין מגיעה
+      cloud.clockOffsetMs = -10 * 60 * 1000;
+      await pullAllCollections({ full: false });
+      assertOk(Math.abs(getServerClockOffsetMs() + 600000) <= 2000, 'היסט שעון נמדד');
+      const remoteId = crypto.randomUUID();
+      cloud.tableOf('sync_category_groups').set(remoteId, {
+        id: remoteId, kitchen_id: 'yitzur', payload: { name: 'ממכשיר אחר', sortOrder: 99 },
+        updated_at: cloud.serverNowISO(), deleted_at: null, device_id: 'other',
+      });
+      // שתי משיכות במקביל (טיימר + מיקוד חלון) — לא יוצרות כפילות
+      await Promise.all([pullAllCollections({ full: false }), pullAllCollections({ full: false })]);
+      const arrived = await db.categoryGroups.filter((g) => g.name === 'ממכשיר אחר').toArray();
+      assertEqual(arrived.length, 1, 'השורה מהמכשיר האחר הגיעה פעם אחת');
+
+      // 4) עריכה מקומית שעוד לא נדחפה לא נדרסת ע״י הענן
+      const meta = await getMetaByLocal('categoryGroups', String(ids[1]));
+      await db.categoryGroups.update(ids[1], { name: 'עריכה מקומית' });
+      await wait(30);
+      const row = cloud.tableOf('sync_category_groups').get(meta.syncId);
+      cloud.tableOf('sync_category_groups').set(meta.syncId, {
+        ...row, payload: { ...row.payload, name: 'ישן מהענן' }, updated_at: cloud.serverNowISO(),
+      });
+      await pullAllCollections({ full: true });
+      await flushSyncQueue();
+      assertEqual((await db.categoryGroups.get(ids[1])).name, 'עריכה מקומית');
+      assertEqual(cloud.tableOf('sync_category_groups').get(meta.syncId).payload.name, 'עריכה מקומית');
+    } finally {
+      cloud.restore();
+      noteServerClock(new Date().toUTCString());
+      await saveLiveSyncSettings({ lastPullAt: null });
+    }
   });
 
 await flushTests();
