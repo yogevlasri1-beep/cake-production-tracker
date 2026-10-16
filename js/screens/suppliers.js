@@ -3804,8 +3804,8 @@ function renderOrderUsageTableRow(row, stockQty) {
       <th scope="row">${escapeHtml(row.name || '—')}</th>
       <td class="order-usage-num">${escapeHtml(cells.weight)}</td>
       <td class="order-usage-num">${escapeHtml(cells.packUnits)}</td>
-      <td class="order-usage-num">${escapeHtml(cells.packSize)}</td>
       <td>${escapeHtml(cells.supplier)}</td>
+      <td class="order-usage-num">${escapeHtml(cells.packSize)}</td>
       <td class="order-usage-num">${escapeHtml(cells.cost)}</td>
       <td class="order-usage-num">${escapeHtml(cells.stock)}</td>
     </tr>`;
@@ -3841,7 +3841,7 @@ function pickSuggestedOrderContact(contacts, supplierFilter) {
     const match = contacts.find((c) => c.normalized === saved.normalized);
     if (match) return match;
   }
-  return contacts[0] || null;
+  return null;
 }
 
 async function copyOrderWhatsAppText(text) {
@@ -3873,28 +3873,49 @@ function openWhatsAppUrl(url) {
   a.remove();
 }
 
-async function sendOrderWhatsApp(contact, text, { saveDefault = false } = {}) {
+function rowsForWhatsAppContact(rows, contact) {
+  if (!contact?.supplierId) return rows;
+  const id = Number(contact.supplierId);
+  return (rows || []).filter((row) => Number(row.defaultSupplierId) === id
+    || (row.supplierIds || []).includes(id));
+}
+
+function buildOrderWhatsAppText(rows, { period, periodLabel } = {}) {
+  return formatWhatsAppUsageOrderText({
+    periodLabel,
+    rows,
+    greeting: period,
+  });
+}
+
+async function sendOrderWhatsApp(contact, { rows, period, periodLabel, saveDefault = false } = {}) {
+  const sendRows = rowsForWhatsAppContact(rows, contact);
+  const text = buildOrderWhatsAppText(sendRows, { period, periodLabel });
   if (saveDefault && contact) setOrderWhatsAppDefault(contact);
   await copyOrderWhatsAppText(text);
   openWhatsAppUrl(buildWhatsAppSendUrl(contact?.normalized || contact?.phone || '', text));
   showToast(contact?.name ? `נפתח וואטסאפ ל${contact.name}` : 'נפתח וואטסאפ לבחירת איש קשר');
 }
 
-function openOrderWhatsAppPicker({ text, contacts, suggested }) {
+function openOrderWhatsAppPicker({ rows, period, periodLabel, contacts, suggested }) {
+  const visibleText = buildOrderWhatsAppText(rows, { period, periodLabel });
   const suggestedId = suggested?.supplierId ? String(suggested.supplierId) : '';
   const contactButtons = contacts.length
-    ? contacts.map((c) => `
+    ? contacts.map((c) => {
+      const count = rowsForWhatsAppContact(rows, c).length;
+      return `
         <button type="button" class="order-wa-contact ${String(c.supplierId) === suggestedId ? 'is-suggested' : ''}"
           data-wa-supplier="${c.supplierId || ''}" data-wa-phone="${escapeHtml(c.normalized)}">
           <span class="order-wa-contact-name">${escapeHtml(c.name)}${String(c.supplierId) === suggestedId ? ' · מומלץ' : ''}</span>
-          <span class="order-wa-contact-phone">${escapeHtml(c.phone)}</span>
-        </button>`).join('')
+          <span class="order-wa-contact-phone">${escapeHtml(c.phone)}${count ? ` · ${count} פריטים` : ''}</span>
+        </button>`;
+    }).join('')
     : '<p class="form-hint">אין לספקים מספר וואטסאפ — הוסיפו בעריכת ספק, או בחרו איש קשר ידנית.</p>';
 
   openModal({
     title: 'שליחה בוואטסאפ',
     bodyHTML: `
-      <p class="form-hint" style="margin-bottom:10px">בחרו למי לשלוח את רשימת ההזמנה. אפשר גם לבחור איש קשר ידנית בוואטסאפ.</p>
+      <p class="form-hint" style="margin-bottom:10px">בחרו למי לשלוח. לספק יישלחו רק החומרים שלו. אפשר גם לבחור איש קשר ידנית בוואטסאפ.</p>
       ${suggested ? `
         <button type="button" class="btn btn-primary" id="order-wa-suggested" style="width:100%;margin-bottom:10px">
           ${WHATSAPP_ICON_SVG} שלח ל${escapeHtml(suggested.name)}
@@ -3907,17 +3928,18 @@ function openOrderWhatsAppPicker({ text, contacts, suggested }) {
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>`,
   });
 
+  const payload = { rows, period, periodLabel };
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   document.getElementById('order-wa-suggested')?.addEventListener('click', async () => {
     closeModal();
-    await sendOrderWhatsApp(suggested, text, { saveDefault: true });
+    await sendOrderWhatsApp(suggested, { ...payload, saveDefault: true });
   });
   document.getElementById('order-wa-manual')?.addEventListener('click', async () => {
     closeModal();
-    await sendOrderWhatsApp(null, text);
+    await sendOrderWhatsApp(null, payload);
   });
   document.getElementById('order-wa-copy')?.addEventListener('click', async () => {
-    const ok = await copyOrderWhatsAppText(text);
+    const ok = await copyOrderWhatsAppText(visibleText);
     showToast(ok ? 'ההודעה הועתקה ✓' : 'לא ניתן להעתיק');
   });
   document.querySelectorAll('[data-wa-phone]').forEach((btn) => {
@@ -3925,7 +3947,7 @@ function openOrderWhatsAppPicker({ text, contacts, suggested }) {
       const contact = contacts.find((c) => String(c.supplierId) === String(btn.dataset.waSupplier))
         || { name: btn.querySelector('.order-wa-contact-name')?.textContent, normalized: btn.dataset.waPhone };
       closeModal();
-      await sendOrderWhatsApp(contact, text, { saveDefault: true });
+      await sendOrderWhatsApp(contact, { ...payload, saveDefault: true });
     });
   });
 }
@@ -4049,8 +4071,8 @@ async function renderOrderTab(body, container) {
               <th>חומר גלם</th>
               <th>משקל</th>
               <th>יח' אריזה</th>
-              <th>אריזה</th>
               <th>ספק ברירת מחדל</th>
+              <th>אריזה</th>
               <th>עלות משוערת</th>
               <th>מלאי</th>
             </tr>
@@ -4070,7 +4092,8 @@ async function renderOrderTab(body, container) {
             </tr>
           </tfoot>
         </table>
-      </div>`}
+      </div>
+      <p class="form-hint order-usage-table-hint">החליקו הצידה כדי לראות את כל העמודות</p>`}
       <textarea id="wa-order-text" class="wa-order-text" rows="6" readonly hidden>${escapeHtml(waText)}</textarea>
     </div>
 
@@ -4122,7 +4145,9 @@ async function renderOrderTab(body, container) {
       return;
     }
     openOrderWhatsAppPicker({
-      text: waText,
+      rows: filtered,
+      period,
+      periodLabel: range.label,
       contacts: waContacts,
       suggested: suggestedContact,
     });

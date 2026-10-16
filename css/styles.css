@@ -1337,18 +1337,22 @@ body {
 
 .order-usage-table {
   width: 100%;
-  min-width: 720px;
+  min-width: 680px;
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
 }
 
 .order-usage-table th,
 .order-usage-table td {
-  padding: 8px 10px;
+  padding: 7px 8px;
   text-align: right;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
   white-space: nowrap;
+}
+
+.order-usage-table-hint {
+  margin: 8px 0 0;
 }
 
 .order-usage-table thead th {
