@@ -33,22 +33,22 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=497';
-import { getProducts, getCategories } from '../db.js?v=497';
+} from '../kitchen-db.js?v=498';
+import { getProducts, getCategories } from '../db.js?v=498';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=497';
+} from '../supplier-import.js?v=498';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=497';
-import { openModal, closeModal } from '../modal.js?v=497';
-import { requestAutoBackupNow } from '../backup-service.js?v=497';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=497';
-import { openBarcodeScanner } from '../barcode-scan.js?v=497';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=497';
+} from '../utils.js?v=498';
+import { openModal, closeModal } from '../modal.js?v=498';
+import { requestAutoBackupNow } from '../backup-service.js?v=498';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=498';
+import { openBarcodeScanner } from '../barcode-scan.js?v=498';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=498';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -56,7 +56,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=497';
+} from '../order-reminder.js?v=498';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -2019,8 +2019,9 @@ async function openMaterialDetailModal(container, materialId) {
   bindAddSupplierOfferForm(container, mat, { simplePrice, currentId: mat.id });
   document.getElementById('mat-detail-edit')?.addEventListener('click', () => {
     closeModal();
-    switchSupplierTab('edit');
-    setTimeout(() => openEditMaterialModal(container, mat), 300);
+    const stayOnOrder = getSupplierTab(container) === 'order';
+    if (!stayOnOrder) switchSupplierTab('edit');
+    setTimeout(() => openEditMaterialModal(container, mat), stayOnOrder ? 50 : 300);
   });
   document.getElementById('mat-detail-delete')?.addEventListener('click', async () => {
     const supplierName = mat.supplierId ? (supMap.get(Number(mat.supplierId)) || '') : '';
@@ -3683,7 +3684,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=497');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=498');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3705,7 +3706,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=497');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=498');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3723,7 +3724,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=497');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=498');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -3799,9 +3800,13 @@ function orderUsageCellValues(row, stockQty) {
 
 function renderOrderUsageTableRow(row, stockQty) {
   const cells = orderUsageCellValues(row, stockQty);
+  const matId = Number(row.defaultMaterialId || row.rawMaterialId) || 0;
+  const name = escapeHtml(row.name || '—');
   return `
-    <tr>
-      <th scope="row">${escapeHtml(row.name || '—')}</th>
+    <tr ${matId ? `class="order-usage-row is-openable" data-order-material-id="${matId}" tabindex="0"` : ''}>
+      <th scope="row">${matId
+    ? `<button type="button" class="order-usage-open-mat">${name}</button>`
+    : name}</th>
       <td class="order-usage-num">${escapeHtml(cells.weight)}</td>
       <td class="order-usage-num">${escapeHtml(cells.packUnits)}</td>
       <td>${escapeHtml(cells.supplier)}</td>
@@ -3970,7 +3975,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=497');
+    const inv = await import('../inventory-db.js?v=498');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];
@@ -4093,7 +4098,7 @@ async function renderOrderTab(body, container) {
           </tfoot>
         </table>
       </div>
-      <p class="form-hint order-usage-table-hint">החליקו הצידה כדי לראות את כל העמודות</p>`}
+      <p class="form-hint order-usage-table-hint">לחצו על חומר גלם כדי לפתוח ולערוך אותו · החליקו הצידה לכל העמודות</p>`}
       <textarea id="wa-order-text" class="wa-order-text" rows="6" readonly hidden>${escapeHtml(waText)}</textarea>
     </div>
 
@@ -4137,6 +4142,17 @@ async function renderOrderTab(body, container) {
   });
   body.querySelector('[data-order-reminder-go]')?.addEventListener('click', () => {
     document.querySelector('.order-usage-table-card, .order-usage-summary-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  body.querySelectorAll('.order-usage-row[data-order-material-id]').forEach((row) => {
+    const open = () => openMaterialDetailModal(container, Number(row.dataset.orderMaterialId));
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open();
+      }
+    });
   });
 
   document.getElementById('order-wa-send')?.addEventListener('click', () => {
