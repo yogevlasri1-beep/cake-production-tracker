@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=498';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=499';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=498';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=498';
-import { logAuditEvent } from './audit.js?v=498';
-import { markMetaDeleted } from './sync/id-map.js?v=498';
+} from './validators.js?v=499';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=499';
+import { logAuditEvent } from './audit.js?v=499';
+import { markMetaDeleted } from './sync/id-map.js?v=499';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4557,12 +4557,12 @@ export function packageWeightKgFromGrams(packageWeightGrams) {
   return Math.round((grams / 1000) * 1000) / 1000;
 }
 
-/** כמה יחידות אריזה צריך לפי שימוש במשקל (100 ק"ג ÷ שק 25 ק"ג = 4) */
+/** כמה יחידות אריזה להזמין — עיגול כלפי מעלה (90 ק"ג ÷ שק 25 ק"ג = 4) */
 export function packUnitsFromUsageQty(qty, packageWeightGrams) {
   const packKg = packageWeightKgFromGrams(packageWeightGrams);
   const used = Number(qty);
   if (!(packKg > 0) || !(used > 0)) return null;
-  return Math.round((used / packKg) * 100) / 100;
+  return Math.ceil((used / packKg) - 1e-9);
 }
 
 /** ספק ברירת מחדל לחומר — סימון מתכון, אחרת ההצעה הראשונה עם ספק */
