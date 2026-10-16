@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=495';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=496';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=495';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=495';
-import { logAuditEvent } from './audit.js?v=495';
-import { markMetaDeleted } from './sync/id-map.js?v=495';
+} from './validators.js?v=496';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=496';
+import { logAuditEvent } from './audit.js?v=496';
+import { markMetaDeleted } from './sync/id-map.js?v=496';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -4555,6 +4555,83 @@ export function packageWeightKgFromGrams(packageWeightGrams) {
   const grams = sanitizePackageWeightGrams(packageWeightGrams);
   if (!grams) return null;
   return Math.round((grams / 1000) * 1000) / 1000;
+}
+
+/** כמה יחידות אריזה צריך לפי שימוש במשקל (100 ק"ג ÷ שק 25 ק"ג = 4) */
+export function packUnitsFromUsageQty(qty, packageWeightGrams) {
+  const packKg = packageWeightKgFromGrams(packageWeightGrams);
+  const used = Number(qty);
+  if (!(packKg > 0) || !(used > 0)) return null;
+  return Math.round((used / packKg) * 100) / 100;
+}
+
+/** ספק ברירת מחדל לחומר — סימון מתכון, אחרת ההצעה הראשונה עם ספק */
+export function pickDefaultSupplierOffer(offers) {
+  if (!offers?.length) return null;
+  return pickRecipeDefaultMaterial(offers)
+    || offers.find((o) => o.supplierId)
+    || offers[0]
+    || null;
+}
+
+/**
+ * שורות שימוש להזמנה: משקל, יח' אריזה, ספק ברירת מחדל, עלות משוערת.
+ */
+export function buildSupplierUsageOrderRows(usageItems, { materials = [], suppliers = [] } = {}) {
+  const byName = buildMaterialsByNameKey(materials);
+  const matById = new Map((materials || []).map((m) => [Number(m.id), m]));
+  const supMap = new Map((suppliers || []).map((s) => [Number(s.id), s]));
+
+  return (usageItems || []).map((item) => {
+    const mat = item.rawMaterialId ? matById.get(Number(item.rawMaterialId)) : null;
+    const key = normalizeMaterialKey(mat?.name || item.name || '');
+    const offers = (key && byName.get(key)) || (mat ? [mat] : []);
+    const defaultOffer = pickDefaultSupplierOffer(offers) || mat || null;
+    const packGrams = defaultOffer?.packageWeightGrams ?? mat?.packageWeightGrams ?? null;
+    const packKg = packageWeightKgFromGrams(packGrams);
+    const packUnits = packUnitsFromUsageQty(item.totalQty, packGrams);
+    const perKg = defaultOffer && item.unitKind !== 'l'
+      ? getMaterialEffectivePricePerKg(defaultOffer)
+      : null;
+    const estimatedCost = perKg != null && Number(item.totalQty) > 0
+      ? Math.round(perKg * Number(item.totalQty) * 100) / 100
+      : null;
+    const supplierIds = [...new Set(offers.map((o) => Number(o.supplierId)).filter(Boolean))];
+    const defaultSupplierId = defaultOffer?.supplierId ? Number(defaultOffer.supplierId) : null;
+    return {
+      ...item,
+      defaultMaterialId: defaultOffer?.id || mat?.id || null,
+      defaultSupplierId,
+      defaultSupplierName: defaultSupplierId
+        ? (supMap.get(defaultSupplierId)?.name || 'ספק')
+        : 'ללא ספק',
+      packKg,
+      packUnits,
+      estimatedCost,
+      supplierIds,
+      offerIds: offers.map((o) => Number(o.id)).filter(Boolean),
+    };
+  }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'));
+}
+
+export function formatWhatsAppUsageOrderText({ periodLabel, rows } = {}) {
+  const lines = [`📋 שימוש בחומרי גלם — ${periodLabel || ''}`, ''];
+  if (!rows?.length) {
+    lines.push('אין שימוש מתועד בתקופה זו.');
+    return lines.join('\n').trim();
+  }
+  for (const row of rows) {
+    const qty = formatMaterialUsageQty(row.totalQty, row.unitKind) || `${row.totalQty}`;
+    const packs = row.packUnits != null ? ` · ${formatDecimal(row.packUnits)} יח'` : '';
+    const packSize = row.packKg != null ? ` (אריזה ${formatDecimal(row.packKg)} ק"ג)` : '';
+    const sup = row.defaultSupplierName && row.defaultSupplierName !== 'ללא ספק'
+      ? ` · ${row.defaultSupplierName}`
+      : '';
+    lines.push(`• ${row.name}: ${qty}${packs}${packSize}${sup}`);
+  }
+  lines.push('');
+  lines.push('_נוצר מאפליקציית מעקב יצור_');
+  return lines.join('\n').trim();
 }
 
 export function packageWeightGramsFromKg(packageWeightKg) {

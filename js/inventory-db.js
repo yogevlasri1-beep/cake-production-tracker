@@ -1,4 +1,4 @@
-import { db, ValidationError } from './db.js?v=495';
+import { db, ValidationError } from './db.js?v=496';
 import {
   getRawMaterials,
   getSupplierCategories,
@@ -11,9 +11,9 @@ import {
   getPortionPresetIngredientsFormData,
   resolveRecipeIngredientMaterial,
   buildMaterialsByNameKey,
-} from './kitchen-db.js?v=495';
-import { localDateTimeISO, roundDecimal } from './utils.js?v=495';
-import { logAuditEvent } from './audit.js?v=495';
+} from './kitchen-db.js?v=496';
+import { localDateTimeISO, roundDecimal } from './utils.js?v=496';
+import { logAuditEvent } from './audit.js?v=496';
 
 function sanitizeStockQty(val, { allowNegative = false } = {}) {
   if (val === '' || val == null) return null;
@@ -25,7 +25,7 @@ function sanitizeStockQty(val, { allowNegative = false } = {}) {
 
 async function currentUserStamp() {
   try {
-    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=495');
+    const { getCurrentUserEmail, getCurrentUserDisplayName } = await import('./auth.js?v=496');
     return {
       userEmail: getCurrentUserEmail() || '',
       userName: getCurrentUserDisplayName() || '',

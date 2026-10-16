@@ -3,28 +3,28 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=495';
+} from '../db.js?v=496';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   wrapDateInputWithToday, bindTodayDateButtons,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=495';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=495';
+} from '../utils.js?v=496';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=496';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=495';
-import { requestAutoBackupNow } from '../backup-service.js?v=495';
+} from '../calc.js?v=496';
+import { requestAutoBackupNow } from '../backup-service.js?v=496';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=495';
+} from '../kitchen-db.js?v=496';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=495';
+} from '../order-reminder.js?v=496';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -721,8 +721,8 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigate } = await import('../app.js?v=495');
-    navigate('suppliers');
+    const { navigateToWorkspace } = await import('../app.js?v=496');
+    navigateToWorkspace('suppliers', 'suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
     dismissOrderReminderForCurrentWeek();
@@ -748,7 +748,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=495');
+    const { navigate } = await import('../app.js?v=496');
     navigate('process');
   };
 
@@ -773,7 +773,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=495');
+    const { navigate } = await import('../app.js?v=496');
     navigate('backup');
   });
 

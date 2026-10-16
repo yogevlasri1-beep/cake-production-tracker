@@ -3,8 +3,9 @@ import {
   addSupplier, updateSupplier, deleteSupplier,
   getRawMaterials, addRawMaterial, updateRawMaterial, deleteRawMaterial, findRawMaterialsByName, findRawMaterialsByBarcode,
   findRawMaterialBySupplierAndName,
-  getWeeklyPlan, setWeeklyPlanItem, computeWeeklyMaterialNeeds, formatWhatsAppOrderText,
-  getRecipeForProduct, setSupplierOrder, setRawMaterialOrder,
+  computeHomeMaterialUsage, formatMaterialUsageQty, formatKgWeight,
+  buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText,
+  setSupplierOrder, setRawMaterialOrder,
   getSuppliersBrowseLayout, getPriceHistory, setRawMaterialPrice, getMaterialsWithSameName,
   materialLastUpdatedAt, stampMaterialsLastUpdated,
   importSupplierExcelEntries,
@@ -31,19 +32,22 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=495';
-import { getProducts, getCategories } from '../db.js?v=495';
+} from '../kitchen-db.js?v=496';
+import { getProducts, getCategories } from '../db.js?v=496';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=495';
-import { escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO } from '../utils.js?v=495';
-import { openModal, closeModal } from '../modal.js?v=495';
-import { requestAutoBackupNow } from '../backup-service.js?v=495';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=495';
-import { openBarcodeScanner } from '../barcode-scan.js?v=495';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=495';
+} from '../supplier-import.js?v=496';
+import {
+  escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
+  monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
+} from '../utils.js?v=496';
+import { openModal, closeModal } from '../modal.js?v=496';
+import { requestAutoBackupNow } from '../backup-service.js?v=496';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=496';
+import { openBarcodeScanner } from '../barcode-scan.js?v=496';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=496';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -51,7 +55,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=495';
+} from '../order-reminder.js?v=496';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -61,7 +65,7 @@ export const SUPPLIER_TABS = {
   catalog: { id: 'catalog', label: 'מחסן', subtitle: 'רשימת חומרי גלם כללית, שיוך לספקים' },
   browse: { id: 'browse', label: 'ספקים', subtitle: 'רשימת ספקים, תמחור והיסטוריית מחירים' },
   edit: { id: 'edit', label: 'עריכה', subtitle: 'עריכת ספקים, חומרי גלם, מחירים וייבוא Excel' },
-  order: { id: 'order', label: 'הזמנה', subtitle: 'תוכנית שבועית ובניית הזמנה' },
+  order: { id: 'order', label: 'הזמנה', subtitle: 'שימוש בחומרי גלם לפי שבוע או חודש' },
   shortages: { id: 'shortages', label: 'חוסרים', subtitle: 'רשימת חוסרים לפי ספק עם כמות הזמנה' },
 };
 
@@ -132,7 +136,6 @@ export async function renderSuppliers(container) {
   syncSuppliersSubNav(tab);
   updateSuppliersHeader();
 
-  const weekStart = container.dataset.planWeek || weekStartISO();
   const selectedMatCat = container.dataset.matCat || '';
   const selectedSupCat = container.dataset.supCat || '';
 
@@ -159,10 +162,7 @@ export async function renderSuppliers(container) {
     }
   }
 
-  const [supCats, products] = await Promise.all([
-    getSupplierCategories(),
-    getProducts(true),
-  ]);
+  const supCats = await getSupplierCategories();
 
   if (!selectedMatCat && supCats.length) container.dataset.matCat = String(supCats[0].id);
   if (!selectedSupCat && supCats.length) container.dataset.supCat = String(supCats[0].id);
@@ -174,7 +174,7 @@ export async function renderSuppliers(container) {
   else if (tab === 'browse') await renderBrowseTab(body, container);
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat || container.dataset.matCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
-  else await renderOrderTab(body, container, products, weekStart);
+  else await renderOrderTab(body, container);
 
   const pendingMaterialId = consumePendingSupplierMaterial();
   if (pendingMaterialId) {
@@ -3679,7 +3679,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=495');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=496');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3701,7 +3701,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=495');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=496');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3719,7 +3719,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=495');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=496');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -3755,60 +3755,204 @@ async function renderShortagesTab(body, container) {
 
 /* ── הזמנה ── */
 
-async function renderOrderTab(body, container, products, weekStart) {
-  const plan = await getWeeklyPlan(weekStart);
-  const planMap = new Map(plan.items.map((i) => [i.productId, i.plannedPortions]));
-  const { categories } = await computeWeeklyMaterialNeeds(weekStart);
-  const text = formatWhatsAppOrderText({ weekStart, categories });
+function orderUsageRange(period, dateIso) {
+  const day = dateIso || todayISO();
+  if (period === 'month') {
+    const iso = day.slice(0, 7);
+    const [year, month] = iso.split('-').map(Number);
+    const last = new Date(year, month, 0).getDate();
+    return {
+      from: `${iso}-01`,
+      to: `${iso}-${String(last).padStart(2, '0')}`,
+      label: monthLabel(year, month),
+    };
+  }
+  const start = weekStartISO(day);
+  const end = addDaysISO(start, 6);
+  return {
+    from: start,
+    to: end,
+    label: `${formatDate(start)} – ${formatDate(end)}`,
+  };
+}
+
+function renderOrderUsageCard(row, stockQty) {
+  const weight = formatMaterialUsageQty(row.totalQty, row.unitKind)
+    || (row.totalQty != null ? `${formatDecimal(row.totalQty)}` : '—');
+  const packSize = row.packKg != null
+    ? `${formatDecimal(row.packKg)} ק"ג`
+    : 'לא הוגדר';
+  const packUnits = row.packUnits != null
+    ? `${formatDecimal(row.packUnits)} יח'`
+    : '—';
+  const cost = row.estimatedCost != null ? formatMoney(row.estimatedCost) : '—';
+  const stock = stockQty != null
+    ? (row.unitKind === 'l' ? `${formatDecimal(stockQty)} ל'` : (formatKgWeight(stockQty) || `${formatDecimal(stockQty)}`))
+    : '—';
+  return `
+    <article class="order-usage-card">
+      <div class="order-usage-card-top">
+        <div class="order-usage-name">${escapeHtml(row.name)}</div>
+        <div class="order-usage-supplier">${row.defaultSupplierId ? '★ ' : ''}${escapeHtml(row.defaultSupplierName)}</div>
+      </div>
+      <div class="order-usage-grid">
+        <div class="order-usage-cell">
+          <span>משקל</span>
+          <strong>${escapeHtml(weight)}</strong>
+        </div>
+        <div class="order-usage-cell">
+          <span>יח' אריזה</span>
+          <strong>${escapeHtml(packUnits)}</strong>
+        </div>
+        <div class="order-usage-cell">
+          <span>אריזה</span>
+          <strong>${escapeHtml(packSize)}</strong>
+        </div>
+        <div class="order-usage-cell">
+          <span>עלות משוערת</span>
+          <strong>${escapeHtml(cost)}</strong>
+        </div>
+        <div class="order-usage-cell">
+          <span>מלאי</span>
+          <strong>${escapeHtml(stock)}</strong>
+        </div>
+      </div>
+    </article>`;
+}
+
+async function renderOrderTab(body, container) {
+  const period = container.dataset.orderPeriod === 'month' ? 'month' : 'week';
+  const dateValue = container.dataset.orderDate || todayISO();
+  const supplierFilter = container.dataset.orderSupplier || '';
+  const range = orderUsageRange(period, dateValue);
   const reminder = await getOrderReminderInfo();
   const reminderDay = getOrderReminderWeekday();
   const weekdayOptions = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת']
     .map((label, i) => `<option value="${i}"${i === reminderDay ? ' selected' : ''}>${label}</option>`)
     .join('');
 
+  const [usage, materials, suppliers] = await Promise.all([
+    computeHomeMaterialUsage({ from: range.from, to: range.to }),
+    getRawMaterials(),
+    getSuppliers(),
+  ]);
+  let balances = [];
+  try {
+    const inv = await import('../inventory-db.js?v=496');
+    balances = await inv.getInventoryBalances();
+  } catch {
+    balances = [];
+  }
+  const balanceByMat = new Map(
+    (balances || []).map((b) => [Number(b.rawMaterialId), Number(b.qtyOnHand) || 0]),
+  );
+
+  const rows = buildSupplierUsageOrderRows(usage.items || [], { materials, suppliers });
+  const filtered = supplierFilter
+    ? rows.filter((row) => Number(row.defaultSupplierId) === Number(supplierFilter)
+      || (row.supplierIds || []).includes(Number(supplierFilter)))
+    : rows;
+
+  const stockOf = (row) => {
+    const ids = row.offerIds?.length ? row.offerIds : (row.defaultMaterialId ? [row.defaultMaterialId] : []);
+    let total = 0;
+    let found = false;
+    for (const id of ids) {
+      if (balanceByMat.has(Number(id))) {
+        total += balanceByMat.get(Number(id)) || 0;
+        found = true;
+      }
+    }
+    return found ? total : null;
+  };
+
+  const totalKg = filtered
+    .filter((r) => r.unitKind !== 'l')
+    .reduce((s, r) => s + (Number(r.totalQty) || 0), 0);
+  const totalPacks = filtered.reduce((s, r) => s + (Number(r.packUnits) || 0), 0);
+  const totalCost = filtered.reduce((s, r) => s + (Number(r.estimatedCost) || 0), 0);
+  const missingPack = filtered.filter((r) => r.packUnits == null).length;
+  const waText = formatWhatsAppUsageOrderText({ periodLabel: range.label, rows: filtered });
+  const supplierOptions = suppliers
+    .slice()
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he'))
+    .map((s) => `<option value="${s.id}"${String(s.id) === String(supplierFilter) ? ' selected' : ''}>${escapeHtml(s.name)}</option>`)
+    .join('');
+
+  const dateInput = period === 'month'
+    ? wrapDateInputWithToday(`<input type="month" id="order-usage-date" value="${dateValue.slice(0, 7)}">`)
+    : wrapDateInputWithToday(`<input type="date" id="order-usage-date" value="${weekStartISO(dateValue)}">`);
+
   body.innerHTML = `
     ${renderOrderReminderBannerHTML(reminder)}
-    <div class="card">
-      <div class="card-title">תחזית רכש שבועית</div>
-      <p class="form-hint" style="margin-bottom:10px">שבוע שמתחיל ב-${formatDate(weekStart)}</p>
-      <div class="form-group">
-        <label>תחילת שבוע</label>
-        <input type="date" id="plan-week" value="${weekStart}">
+    <div class="card order-usage-filter-card">
+      <div class="card-title">שימוש בחומרי גלם</div>
+      <p class="form-hint" style="margin-bottom:10px">לפי המנות שתועדו בתזרים × כמויות המתכון</p>
+      <div class="tabs home-view-tabs order-usage-period-tabs">
+        <button type="button" class="tab ${period === 'week' ? 'active' : ''}" data-order-period="week">שבוע</button>
+        <button type="button" class="tab ${period === 'month' ? 'active' : ''}" data-order-period="month">חודש</button>
       </div>
       <div class="form-group">
-        <label for="order-reminder-day">יום תזכורת להזמנה (במסך הבית)</label>
-        <select id="order-reminder-day">${weekdayOptions}</select>
-        <p class="form-hint">כרגע: ${orderReminderWeekdayLabel(reminderDay)}. התזכורת מופיעה ביום שנבחר וביום שאחריו אם יש פריטים בתוכנית.</p>
+        <label for="order-usage-date">${period === 'month' ? 'חודש' : 'שבוע (תחילת שבוע)'}</label>
+        ${dateInput}
       </div>
-      ${products.length === 0
-    ? '<p class="form-hint">אין מוצרים — הוסף במסך מוצרים</p>'
-    : products.slice(0, 40).map((p) => `
-        <div class="list-item plan-product-row">
-          <div class="list-item-info">
-            <div class="list-item-name">${escapeHtml(p.name)}</div>
-            <div class="list-item-meta plan-recipe-hint" data-pid="${p.id}">...</div>
-          </div>
-          <input type="number" class="plan-portions-input" data-pid="${p.id}" min="0" step="1"
-            value="${planMap.get(p.id) ?? ''}" placeholder="0">
-        </div>`).join('')}
+      <div class="form-group" style="margin-bottom:0">
+        <label for="order-usage-supplier">סינון לפי ספק</label>
+        <select id="order-usage-supplier">
+          <option value="">כל הספקים</option>
+          ${supplierOptions}
+        </select>
+      </div>
     </div>
+
+    <div class="card order-usage-summary-card">
+      <div class="order-usage-summary">
+        <div><span>חומרים</span><strong>${filtered.length}</strong></div>
+        <div><span>סה"כ משקל</span><strong>${escapeHtml(formatKgWeight(totalKg) || '—')}</strong></div>
+        <div><span>סה"כ יח' אריזה</span><strong>${totalPacks ? formatDecimal(totalPacks) : '—'}</strong></div>
+        <div><span>עלות משוערת</span><strong>${totalCost ? formatMoney(totalCost) : '—'}</strong></div>
+      </div>
+      <p class="form-hint" style="margin:10px 0 0">${escapeHtml(range.label)}${missingPack ? ` · ל-${missingPack} חומרים אין כמות אריזה` : ''}</p>
+    </div>
+
+    ${filtered.length === 0
+    ? `<div class="card"><p class="form-hint" style="text-align:center;padding:12px">
+        ${rows.length ? 'אין חומרים לספק שנבחר' : 'אין שימוש מתועד בתקופה זו — תעד מנות בתזרים'}
+      </p></div>`
+    : `<div class="order-usage-list">
+        ${filtered.map((row) => renderOrderUsageCard(row, stockOf(row))).join('')}
+      </div>`}
+
     <div class="card">
-      <div class="card-title">רשימת הזמנה</div>
-      ${categories.length === 0
-    ? '<p class="form-hint">מלא תוכנית שבועית וקשר מתכונים למוצרים</p>'
-    : categories.map((cat) => `
-        <div class="order-category-block">
-          <h3 class="order-category-title">${escapeHtml(cat.categoryName)}</h3>
-          <ul class="order-items-list">
-            ${cat.items.map((item) => `<li><strong>${escapeHtml(item.name)}</strong>: ${item.totalQty} ${escapeHtml(item.unit)}</li>`).join('')}
-          </ul>
-        </div>`).join('')}
-      <textarea id="wa-order-text" class="wa-order-text" rows="8" readonly>${escapeHtml(text)}</textarea>
-      <button type="button" class="btn btn-primary" id="copy-wa-order" style="width:100%;margin-top:8px">📋 העתק לוואטסאפ</button>
+      <button type="button" class="btn btn-primary" id="copy-wa-order" style="width:100%">📋 העתק רשימה לוואטסאפ</button>
+      <textarea id="wa-order-text" class="wa-order-text" rows="6" readonly hidden>${escapeHtml(waText)}</textarea>
+      <details class="order-usage-reminder-details">
+        <summary>יום תזכורת בבית</summary>
+        <div class="form-group" style="margin-top:10px;margin-bottom:0">
+          <label for="order-reminder-day">יום תזכורת</label>
+          <select id="order-reminder-day">${weekdayOptions}</select>
+          <p class="form-hint">כרגע: ${orderReminderWeekdayLabel(reminderDay)}. מופיע ביום שנבחר וביום שאחריו אם יש שימוש השבוע.</p>
+        </div>
+      </details>
     </div>`;
 
-  document.getElementById('plan-week')?.addEventListener('change', (e) => {
-    container.dataset.planWeek = e.target.value;
+  bindTodayDateButtons(body);
+
+  body.querySelectorAll('[data-order-period]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      container.dataset.orderPeriod = btn.dataset.orderPeriod;
+      renderSuppliers(container);
+    });
+  });
+
+  document.getElementById('order-usage-date')?.addEventListener('change', (e) => {
+    const val = e.target.value;
+    container.dataset.orderDate = val.length === 7 ? `${val}-01` : val;
+    renderSuppliers(container);
+  });
+
+  document.getElementById('order-usage-supplier')?.addEventListener('change', (e) => {
+    container.dataset.orderSupplier = e.target.value || '';
     renderSuppliers(container);
   });
 
@@ -3822,25 +3966,7 @@ async function renderOrderTab(body, container, products, weekStart) {
     document.getElementById('order-reminder-banner')?.remove();
   });
   body.querySelector('[data-order-reminder-go]')?.addEventListener('click', () => {
-    document.getElementById('wa-order-text')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
-
-  for (const el of body.querySelectorAll('.plan-recipe-hint')) {
-    const r = await getRecipeForProduct(Number(el.dataset.pid));
-    el.textContent = r ? `📒 ${r.name}` : '⚠️ אין מתכון';
-  }
-
-  body.querySelectorAll('.plan-portions-input').forEach((input) => {
-    input.addEventListener('change', async () => {
-      try {
-        await setWeeklyPlanItem(plan.id, Number(input.dataset.pid), input.value);
-        requestAutoBackupNow().catch(() => {});
-        showToast('נשמר ✓');
-        renderSuppliers(container);
-      } catch (e) {
-        showToast(e.message || 'שגיאה');
-      }
-    });
+    document.querySelector('.order-usage-list, .order-usage-summary-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   document.getElementById('copy-wa-order')?.addEventListener('click', async () => {
@@ -3849,6 +3975,7 @@ async function renderOrderTab(body, container, products, weekStart) {
       await navigator.clipboard.writeText(ta.value);
       showToast('הועתק ✓');
     } catch {
+      ta.hidden = false;
       ta.select();
       document.execCommand('copy');
       showToast('הועתק ✓');

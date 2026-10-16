@@ -2,8 +2,8 @@
  * תזכורת הזמנה שבועית — באנר במסך הבית / טאב הזמנה.
  * יום ברירת מחדל: ראשון (0). ניתן לשינוי ב-localStorage.
  */
-import { weekStartISO, todayISO } from './utils.js?v=495';
-import { computeWeeklyMaterialNeeds } from './kitchen-db.js?v=495';
+import { weekStartISO, todayISO, addDaysISO } from './utils.js?v=496';
+import { computeHomeMaterialUsage } from './kitchen-db.js?v=496';
 
 const REMINDER_DAY_KEY = 'yitzurOrderReminderWeekday'; // 0=ראשון … 6=שבת
 const DISMISS_KEY = 'yitzurOrderReminderDismissWeek';
@@ -51,13 +51,17 @@ export async function getOrderReminderInfo() {
   if (!isOrderReminderDayActive()) return null;
   try {
     const weekStart = currentWeekStart();
-    const { categories } = await computeWeeklyMaterialNeeds(weekStart);
-    const itemCount = (categories || []).reduce((n, c) => n + (c.items?.length || 0), 0);
+    const usage = await computeHomeMaterialUsage({
+      from: weekStart,
+      to: addDaysISO(weekStart, 6),
+    });
+    const itemCount = usage?.items?.length || 0;
     if (!itemCount) return null;
+    const categories = new Set((usage.items || []).map((i) => i.supplierCategoryId || 0));
     return {
       weekStart,
       itemCount,
-      categoryCount: categories.length,
+      categoryCount: categories.size,
       weekday: getOrderReminderWeekday(),
     };
   } catch {
@@ -78,7 +82,7 @@ export function renderOrderReminderBannerHTML(info) {
       <div class="order-reminder-banner-body">
         <strong>תזכורת הזמנה שבועית</strong>
         <p class="form-hint" style="margin:4px 0 0">
-          יש ${info.itemCount} פריטים להזמנה השבוע (${info.categoryCount} קטגוריות).
+          השבוע השתמשת ב-${info.itemCount} חומרי גלם (${info.categoryCount} קטגוריות).
           יום תזכורת: ${orderReminderWeekdayLabel(info.weekday)}.
         </p>
       </div>

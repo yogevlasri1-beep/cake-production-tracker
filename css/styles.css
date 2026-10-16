@@ -1269,6 +1269,86 @@ body {
   background: #f8fafc;
 }
 
+.order-usage-period-tabs {
+  margin-bottom: 12px;
+}
+
+.order-usage-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+
+.order-usage-summary span {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.order-usage-summary strong {
+  font-size: 1rem;
+}
+
+.order-usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.order-usage-card {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.order-usage-card-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.order-usage-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.order-usage-supplier {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-align: left;
+  flex-shrink: 0;
+}
+
+.order-usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 10px;
+}
+
+.order-usage-cell span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.order-usage-cell strong {
+  font-size: 0.9rem;
+}
+
+.order-usage-reminder-details {
+  margin-top: 12px;
+}
+
+.order-usage-reminder-details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
 .app-header h1 {
   font-size: 1.3rem;
   font-weight: 700;

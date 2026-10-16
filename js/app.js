@@ -1,14 +1,14 @@
-import { initDB, runDeferredDbMaintenance } from './db.js?v=495';
-import { renderHome, homeMeta } from './screens/home.js?v=495';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=495';
-import { initIOSInstallPrompt } from './ios-install.js?v=495';
-import { initNetworkCheck } from './network.js?v=495';
-import { registerServiceWorker } from './sw-register.js?v=495';
-import { APP_VERSION } from './version.js?v=495';
-import { showToast } from './utils.js?v=495';
-import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=495';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=495';
-import './modal.js?v=495';
+import { initDB, runDeferredDbMaintenance } from './db.js?v=496';
+import { renderHome, homeMeta } from './screens/home.js?v=496';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=496';
+import { initIOSInstallPrompt } from './ios-install.js?v=496';
+import { initNetworkCheck } from './network.js?v=496';
+import { registerServiceWorker } from './sw-register.js?v=496';
+import { APP_VERSION } from './version.js?v=496';
+import { showToast } from './utils.js?v=496';
+import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=496';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=496';
+import './modal.js?v=496';
 
 function lazyScreen(loader) {
   let resolved = null;
@@ -36,19 +36,19 @@ async function resolveScreen(entry) {
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
   process: lazyScreen(async () => {
-    const m = await import('./screens/process.js?v=495');
+    const m = await import('./screens/process.js?v=496');
     return { render: m.renderProcess, meta: m.processMeta };
   }),
   products: lazyScreen(async () => {
-    const m = await import('./screens/products.js?v=495');
+    const m = await import('./screens/products.js?v=496');
     return { render: m.renderProducts, meta: m.productsMeta };
   }),
   reports: lazyScreen(async () => {
-    const m = await import('./screens/reports.js?v=495');
+    const m = await import('./screens/reports.js?v=496');
     return { render: m.renderReports, meta: m.reportsMeta };
   }),
   backup: lazyScreen(async () => {
-    const m = await import('./screens/backup.js?v=495');
+    const m = await import('./screens/backup.js?v=496');
     return {
       render: (container) => m.renderBackup(container, { navigate, openFinance: openFinanceScreen }),
       meta: m.backupMeta,
@@ -60,55 +60,55 @@ const WORKSPACE_SCREENS = {
   production: PRODUCTION_SCREENS,
   suppliers: {
     suppliers: lazyScreen(async () => {
-      const m = await import('./screens/suppliers.js?v=495');
+      const m = await import('./screens/suppliers.js?v=496');
       return { render: m.renderSuppliers, meta: m.suppliersMeta };
     }),
   },
   recipes: {
     recipes: lazyScreen(async () => {
-      const m = await import('./screens/recipes.js?v=495');
+      const m = await import('./screens/recipes.js?v=496');
       return { render: m.renderRecipes, meta: m.recipesMeta };
     }),
   },
   manager: {
     manager: lazyScreen(async () => {
-      const m = await import('./screens/manager.js?v=495');
+      const m = await import('./screens/manager.js?v=496');
       return { render: m.renderManager, meta: m.managerMeta };
     }),
   },
   haccp: {
     haccp: lazyScreen(async () => {
-      const m = await import('./screens/haccp.js?v=495');
+      const m = await import('./screens/haccp.js?v=496');
       return { render: m.renderHaccp, meta: m.haccpMeta };
     }),
   },
   accounts: {
     accounts: lazyScreen(async () => {
-      const m = await import('./screens/accounts.js?v=495');
+      const m = await import('./screens/accounts.js?v=496');
       return { render: m.renderAccounts, meta: m.accountsMeta };
     }),
   },
   lots: {
     lots: lazyScreen(async () => {
-      const m = await import('./screens/lots.js?v=495');
+      const m = await import('./screens/lots.js?v=496');
       return { render: m.renderLots, meta: m.lotsMeta };
     }),
   },
   inventory: {
     inventory: lazyScreen(async () => {
-      const m = await import('./screens/inventory.js?v=495');
+      const m = await import('./screens/inventory.js?v=496');
       return { render: m.renderInventory, meta: m.inventoryMeta };
     }),
   },
   productCatalog: {
     productCatalog: lazyScreen(async () => {
-      const m = await import('./screens/product-catalog.js?v=495');
+      const m = await import('./screens/product-catalog.js?v=496');
       return { render: m.renderProductCatalog, meta: m.productCatalogMeta };
     }),
   },
   finance: {
     finance: lazyScreen(async () => {
-      const m = await import('./screens/finance.js?v=495');
+      const m = await import('./screens/finance.js?v=496');
       return {
         render: (container) => m.renderFinance(container, { navigate, openBackup: openBackupScreen }),
         meta: m.financeMeta,
@@ -122,12 +122,12 @@ let suppliersNavReady = false;
 
 async function ensureWorkspaceNav(workspaceId) {
   if (workspaceId === 'recipes' && !recipesNavReady) {
-    const { initRecipesSubNav } = await import('./screens/recipes.js?v=495');
+    const { initRecipesSubNav } = await import('./screens/recipes.js?v=496');
     initRecipesSubNav();
     recipesNavReady = true;
   }
   if (workspaceId === 'suppliers' && !suppliersNavReady) {
-    const { initSuppliersSubNav } = await import('./screens/suppliers.js?v=495');
+    const { initSuppliersSubNav } = await import('./screens/suppliers.js?v=496');
     initSuppliersSubNav();
     suppliersNavReady = true;
   }
@@ -135,8 +135,8 @@ async function ensureWorkspaceNav(workspaceId) {
 
 function prefetchCommonScreens() {
   const run = () => {
-    import('./screens/process.js?v=495').catch(() => {});
-    import('./screens/products.js?v=495').catch(() => {});
+    import('./screens/process.js?v=496').catch(() => {});
+    import('./screens/products.js?v=496').catch(() => {});
   };
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(run, { timeout: 2500 });
@@ -367,10 +367,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=495');
+  const { getValidSession } = await import('./auth.js?v=496');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=495');
+    const { renderLoginGate } = await import('./screens/login.js?v=496');
     renderLoginGate(() => startApp());
     return;
   }
@@ -385,11 +385,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=495');
+        const { forceAppUpdate } = await import('./sw-register.js?v=496');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=495').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=496').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -411,14 +411,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=495');
+    } = await import('./supabase-sync.js?v=496');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=495');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=496');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
