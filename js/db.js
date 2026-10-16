@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=494';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=494';
-import { defaultColorForIndex } from './chart.js?v=494';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=494';
-import { logAuditEvent } from './audit.js?v=494';
+} from './validators.js?v=495';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=495';
+import { defaultColorForIndex } from './chart.js?v=495';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=495';
+import { logAuditEvent } from './audit.js?v=495';
 
 export { ValidationError };
 
@@ -3573,6 +3573,10 @@ function compareProducts(a, b) {
 export async function initDB() {
   await db.open();
   await assertProductionDbReady();
+}
+
+/** תיקונים חד-פעמיים — אחרי שהמסך הראשון כבר מוצג */
+export async function runDeferredDbMaintenance() {
   try {
     const { ensurePurchaseCategories } = await import('./purchasing-db.js');
     await ensurePurchaseCategories();

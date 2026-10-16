@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '494';</script>
+  <script>window.__APP_BUILD__ = '495';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=494">
+  <link rel="stylesheet" href="css/styles.css?v=495">
   <script type="importmap">
   {
     "imports": {
@@ -346,6 +346,7 @@
         loadApp();
       }
 
+      finishBoot();
       fetch('./js/version.js?gate=' + Date.now(), { cache: 'no-store' })
         .then(function (res) { return res.ok ? res.text() : ''; })
         .then(function (text) {
@@ -355,11 +356,9 @@
             clearAllCaches().then(function () {
               location.replace(location.pathname + '?force-update=1&t=' + Date.now());
             });
-            return;
           }
-          finishBoot();
         })
-        .catch(function () { finishBoot(); });
+        .catch(function () { /* ignore */ });
     })();
 
     window.addEventListener('error', function (e) {
@@ -374,7 +373,6 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=494"></script>
-  <script src="js/vendor/xlsx.full.min.js?v=494"></script>
+  <script src="js/vendor/dexie.min.js?v=495"></script>
 </body>
 </html>

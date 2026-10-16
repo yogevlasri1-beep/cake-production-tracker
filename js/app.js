@@ -1,72 +1,149 @@
-import { initDB } from './db.js?v=494';
-import { renderHome, homeMeta } from './screens/home.js?v=494';
-import { renderProducts, productsMeta } from './screens/products.js?v=494';
-import { renderManager, managerMeta } from './screens/manager.js?v=494';
-import { renderProcess, processMeta } from './screens/process.js?v=494';
-import { renderReports, reportsMeta } from './screens/reports.js?v=494';
-import { renderBackup, backupMeta } from './screens/backup.js?v=494';
-import { renderFinance, financeMeta } from './screens/finance.js?v=494';
-import { renderRecipes, recipesMeta, initRecipesSubNav } from './screens/recipes.js?v=494';
-import { renderSuppliers, suppliersMeta, initSuppliersSubNav } from './screens/suppliers.js?v=494';
-import { renderHaccp, haccpMeta } from './screens/haccp.js?v=494';
-import { renderAccounts, accountsMeta } from './screens/accounts.js?v=494';
-import { renderLots, lotsMeta } from './screens/lots.js?v=494';
-import { renderInventory, inventoryMeta } from './screens/inventory.js?v=494';
-import { renderProductCatalog, productCatalogMeta } from './screens/product-catalog.js?v=494';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=494';
-import { initIOSInstallPrompt } from './ios-install.js?v=494';
-import { initNetworkCheck } from './network.js?v=494';
-import { registerServiceWorker } from './sw-register.js?v=494';
-import { APP_VERSION } from './version.js?v=494';
-import { showToast } from './utils.js?v=494';
-import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=494';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=494';
-import './modal.js?v=494';
+import { initDB, runDeferredDbMaintenance } from './db.js?v=495';
+import { renderHome, homeMeta } from './screens/home.js?v=495';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=495';
+import { initIOSInstallPrompt } from './ios-install.js?v=495';
+import { initNetworkCheck } from './network.js?v=495';
+import { registerServiceWorker } from './sw-register.js?v=495';
+import { APP_VERSION } from './version.js?v=495';
+import { showToast } from './utils.js?v=495';
+import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=495';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=495';
+import './modal.js?v=495';
+
+function lazyScreen(loader) {
+  let resolved = null;
+  let inflight = null;
+  return {
+    async resolve() {
+      if (resolved) return resolved;
+      if (!inflight) {
+        inflight = loader().then((mod) => {
+          resolved = mod;
+          return mod;
+        });
+      }
+      return inflight;
+    },
+  };
+}
+
+async function resolveScreen(entry) {
+  if (!entry) return null;
+  if (typeof entry.resolve === 'function') return entry.resolve();
+  return entry;
+}
 
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
-  process: { render: renderProcess, meta: processMeta },
-  products: { render: renderProducts, meta: productsMeta },
-  reports: { render: renderReports, meta: reportsMeta },
-  backup: {
-    render: (container) => renderBackup(container, { navigate, openFinance: openFinanceScreen }),
-    meta: backupMeta,
-  },
+  process: lazyScreen(async () => {
+    const m = await import('./screens/process.js?v=495');
+    return { render: m.renderProcess, meta: m.processMeta };
+  }),
+  products: lazyScreen(async () => {
+    const m = await import('./screens/products.js?v=495');
+    return { render: m.renderProducts, meta: m.productsMeta };
+  }),
+  reports: lazyScreen(async () => {
+    const m = await import('./screens/reports.js?v=495');
+    return { render: m.renderReports, meta: m.reportsMeta };
+  }),
+  backup: lazyScreen(async () => {
+    const m = await import('./screens/backup.js?v=495');
+    return {
+      render: (container) => m.renderBackup(container, { navigate, openFinance: openFinanceScreen }),
+      meta: m.backupMeta,
+    };
+  }),
 };
 
 const WORKSPACE_SCREENS = {
   production: PRODUCTION_SCREENS,
   suppliers: {
-    suppliers: { render: renderSuppliers, meta: suppliersMeta },
+    suppliers: lazyScreen(async () => {
+      const m = await import('./screens/suppliers.js?v=495');
+      return { render: m.renderSuppliers, meta: m.suppliersMeta };
+    }),
   },
   recipes: {
-    recipes: { render: renderRecipes, meta: recipesMeta },
+    recipes: lazyScreen(async () => {
+      const m = await import('./screens/recipes.js?v=495');
+      return { render: m.renderRecipes, meta: m.recipesMeta };
+    }),
   },
   manager: {
-    manager: { render: renderManager, meta: managerMeta },
+    manager: lazyScreen(async () => {
+      const m = await import('./screens/manager.js?v=495');
+      return { render: m.renderManager, meta: m.managerMeta };
+    }),
   },
   haccp: {
-    haccp: { render: renderHaccp, meta: haccpMeta },
+    haccp: lazyScreen(async () => {
+      const m = await import('./screens/haccp.js?v=495');
+      return { render: m.renderHaccp, meta: m.haccpMeta };
+    }),
   },
   accounts: {
-    accounts: { render: renderAccounts, meta: accountsMeta },
+    accounts: lazyScreen(async () => {
+      const m = await import('./screens/accounts.js?v=495');
+      return { render: m.renderAccounts, meta: m.accountsMeta };
+    }),
   },
   lots: {
-    lots: { render: renderLots, meta: lotsMeta },
+    lots: lazyScreen(async () => {
+      const m = await import('./screens/lots.js?v=495');
+      return { render: m.renderLots, meta: m.lotsMeta };
+    }),
   },
   inventory: {
-    inventory: { render: renderInventory, meta: inventoryMeta },
+    inventory: lazyScreen(async () => {
+      const m = await import('./screens/inventory.js?v=495');
+      return { render: m.renderInventory, meta: m.inventoryMeta };
+    }),
   },
   productCatalog: {
-    productCatalog: { render: renderProductCatalog, meta: productCatalogMeta },
+    productCatalog: lazyScreen(async () => {
+      const m = await import('./screens/product-catalog.js?v=495');
+      return { render: m.renderProductCatalog, meta: m.productCatalogMeta };
+    }),
   },
   finance: {
-    finance: {
-      render: (container) => renderFinance(container, { navigate, openBackup: openBackupScreen }),
-      meta: financeMeta,
-    },
+    finance: lazyScreen(async () => {
+      const m = await import('./screens/finance.js?v=495');
+      return {
+        render: (container) => m.renderFinance(container, { navigate, openBackup: openBackupScreen }),
+        meta: m.financeMeta,
+      };
+    }),
   },
 };
+
+let recipesNavReady = false;
+let suppliersNavReady = false;
+
+async function ensureWorkspaceNav(workspaceId) {
+  if (workspaceId === 'recipes' && !recipesNavReady) {
+    const { initRecipesSubNav } = await import('./screens/recipes.js?v=495');
+    initRecipesSubNav();
+    recipesNavReady = true;
+  }
+  if (workspaceId === 'suppliers' && !suppliersNavReady) {
+    const { initSuppliersSubNav } = await import('./screens/suppliers.js?v=495');
+    initSuppliersSubNav();
+    suppliersNavReady = true;
+  }
+}
+
+function prefetchCommonScreens() {
+  const run = () => {
+    import('./screens/process.js?v=495').catch(() => {});
+    import('./screens/products.js?v=495').catch(() => {});
+  };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(run, { timeout: 2500 });
+  } else {
+    setTimeout(run, 1200);
+  }
+}
 
 let currentWorkspace = getSavedWorkspace();
 let currentScreen = 'home';
@@ -236,6 +313,7 @@ async function navigate(screen) {
     return;
   }
   currentScreen = screen;
+  await ensureWorkspaceNav(currentWorkspace);
 
   const main = document.getElementById('main-content');
   const header = document.querySelector('.app-header');
@@ -259,13 +337,15 @@ async function navigate(screen) {
     });
   }
 
-  const metaFn = SCREENS[screen].meta;
+  main.innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-muted)">טוען...</p>';
+  const entry = await resolveScreen(SCREENS[screen]);
+  if (!entry) return;
+  const metaFn = entry.meta;
   const { title, subtitle } = typeof metaFn === 'function' ? metaFn() : (metaFn || {});
   document.getElementById('page-title').textContent = title;
   document.getElementById('page-subtitle').textContent = subtitle || '';
 
-  main.innerHTML = '<p style="text-align:center;padding:40px;color:var(--text-muted)">טוען...</p>';
-  await SCREENS[screen].render(main);
+  await entry.render(main);
 }
 
 document.querySelectorAll('.nav-btn').forEach((btn) => {
@@ -287,10 +367,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=494');
+  const { getValidSession } = await import('./auth.js?v=495');
   const session = await getValidSession();
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=494');
+    const { renderLoginGate } = await import('./screens/login.js?v=495');
     renderLoginGate(() => startApp());
     return;
   }
@@ -305,11 +385,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=494');
+        const { forceAppUpdate } = await import('./sw-register.js?v=495');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=494').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=495').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -320,8 +400,6 @@ async function startApp() {
     }
 
     initWorkspaceMenu();
-    initRecipesSubNav();
-    initSuppliersSubNav();
     applyRolePermissionsToMenu();
     if (!canAccessWorkspace(getCurrentUserRole(), currentWorkspace, getCurrentWorkspaceAccess())) {
       currentWorkspace = 'production';
@@ -333,14 +411,14 @@ async function startApp() {
       installLiveSyncMiddleware,
       startLiveSync,
       ensureLiveSyncDefaults,
-    } = await import('./supabase-sync.js?v=494');
+    } = await import('./supabase-sync.js?v=495');
     // Dexie middleware must be registered before db.open()
     installLiveSyncMiddleware();
 
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=494');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=495');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 
@@ -357,8 +435,9 @@ async function startApp() {
     await navigate(ws.defaultScreen);
     initIOSInstallPrompt();
     initNetworkCheck();
-
-    await registerServiceWorker();
+    prefetchCommonScreens();
+    runDeferredDbMaintenance().catch((err) => console.warn('db maintenance', err));
+    registerServiceWorker().catch((err) => console.warn('sw register', err));
   } catch (err) {
     console.error(err);
     const standalone = window.matchMedia('(display-mode: standalone)').matches
