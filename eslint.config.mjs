@@ -35,6 +35,7 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
+      'no-useless-assignment': 'off',
       eqeqeq: ['error', 'smart'],
       'no-unused-vars': 'warn',
       'no-empty': 'warn',
