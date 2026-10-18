@@ -27,6 +27,8 @@ import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp
 import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=500';
 import { canAccessBackupFull } from '../permissions.js?v=500';
 import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=500';
+import { getSetting } from '../db.js?v=500';
+import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent } from '../sync/cloud-first.js?v=500';
 import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=500';
 
 function formatWhen(iso) {
@@ -312,6 +314,26 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
         <input type="file" id="backup-restore-file" accept=".json,application/json">
       </label>`;
 
+  setBackupSectionOpen('cloud-cutover', true);
+  const cutoverMarker = await getSetting(CLOUD_CUTOVER_KEY);
+  const cutoverDoneHere = liveSync?.cutoverDevice === true;
+  const cutoverDoneElsewhere = cloudCutoverMarkerPresent(cutoverMarker) && !cutoverDoneHere;
+  const cutoverStatus = cutoverDoneHere
+    ? 'הנתונים של המכשיר הזה כבר עלו לענן. אל תלחץ שוב.'
+    : cutoverDoneElsewhere
+      ? 'הענן כבר עודכן ממכשיר אחר. המכשיר הזה רק מקבל נתונים.'
+      : '';
+  const cloudCutoverBody = `
+      <p class="form-hint" style="margin-bottom:10px;line-height:1.5">
+        זה הצעד החד-פעמי. רק במכשיר שעליו שמרת את הגיבוי.
+        לפני הלחיצה סגור את האפליקציה בכל שאר המכשירים, ואל תפתח אותם עד שההעלאה נגמרת.
+        ההעלאה יכולה לקחת כמה דקות. אל תסגור את האפליקציה באמצע.
+      </p>
+      <button type="button" class="btn btn-primary" id="cloud-cutover-btn" style="width:100%" ${supabaseConfigured && !cutoverDoneHere && !cutoverDoneElsewhere ? '' : 'disabled'}>
+        העלה את הנתונים של המכשיר הזה לענן
+      </button>
+      <p class="form-hint" id="cloud-cutover-status" style="margin-top:8px;line-height:1.5">${escapeHtml(cutoverStatus)}</p>`;
+
   const ls = liveSync || {};
   const liveSyncOn = ls.enabled !== false;
   const liveSyncBody = `
@@ -401,6 +423,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       <p class="form-hint" id="wipe-cloud-status" style="margin-top:8px;line-height:1.5"></p>
     `)}
     ${backupSectionHTML('tables', '📊 הורדת טבלאות Excel', tablesBody)}
+    ${backupSectionHTML('cloud-cutover', '☁️ העברת הנתונים לענן', cloudCutoverBody)}
     ${backupSectionHTML('live-sync', '🔄 סנכרון חי בין מכשירים', liveSyncBody, { extraClass: 'backup-live-sync-card' })}
     ${backupSectionHTML('supabase', '☁️ גיבוי JSON בענן — Supabase', supabaseBody, { extraClass: 'backup-supabase-card' })}
     ${backupSectionHTML('auto', '⏱ גיבוי אוטומטי', autoBody)}
@@ -645,6 +668,35 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       showToast(err.message || 'שגיאה בבדיקת אות');
       if (status) status.textContent = `שגיאה: ${err.message || err}`;
     } finally {
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  document.getElementById('cloud-cutover-btn')?.addEventListener('click', async () => {
+    if (!confirm('זה המכשיר שעליו שמרת את הגיבוי?\n\nסגור את האפליקציה בכל שאר המכשירים לפני שממשיכים.')) return;
+    if (!confirm('להעלות עכשיו את הנתונים של המכשיר הזה לענן?\n\nפעם אחת. שדה ריק לא מוחק מחיר או ספק.\nאל תסגור את האפליקציה עד שמופיע שההעלאה נגמרה.')) return;
+    const btn = document.getElementById('cloud-cutover-btn');
+    const status = document.getElementById('cloud-cutover-status');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'מעלה... אל תסגור'; }
+    try {
+      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=500');
+      const result = await pushCutoverSnapshot({ confirm: true });
+      if (!result?.pushed) {
+        const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
+        if (status) status.textContent = why;
+        showToast(why);
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+        return;
+      }
+      const done = `הועלו ${result.seeded || 0} רשומות. בדוק ספקים, מתכון אחד, וייצור של היום. אל תפתח מכשיר אחר בינתיים.`;
+      if (status) status.textContent = done;
+      showToast('הנתונים עלו לענן');
+      renderBackup(container, { navigate });
+    } catch (err) {
+      const why = err?.message || 'ההעלאה נעצרה. אפשר ללחוץ שוב, בלי לסגור את האפליקציה.';
+      if (status) status.textContent = why;
+      showToast(why);
       if (btn) { btn.disabled = false; btn.textContent = label; }
     }
   });

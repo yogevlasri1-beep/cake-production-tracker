@@ -79,6 +79,23 @@ export function cutoverRowUpdatedAt(collection, rowUpdatedAt, now) {
   return now || null;
 }
 
+/** סימן בענן שההעלאה החד-פעמית הסתיימה. מסונכרן, בניגוד לדגל המקומי. */
+export const CLOUD_CUTOVER_KEY = 'cloudCutover';
+
+export function cloudCutoverMarkerPresent(value) {
+  return !!(value && typeof value === 'object' && value.at);
+}
+
+/**
+ * מכשיר שאינו מכשיר הגיבוי עובר למשיכה בלבד אחרי שהסימן הופיע.
+ * מכשיר הגיבוי לא משנה את הדגלים מכאן.
+ */
+export function planAdoptCloudFirst({ cutoverDevice, cloudFirst, markerPresent } = {}) {
+  if (cutoverDevice === true) return { adopt: false, reason: 'cutover-device' };
+  if (markerPresent === true && cloudFirst !== true) return { adopt: true, reason: 'marker' };
+  return { adopt: false, reason: cloudFirst === true ? 'already-on' : 'waiting' };
+}
+
 function isEmptyValue(value) {
   return value == null || value === '';
 }

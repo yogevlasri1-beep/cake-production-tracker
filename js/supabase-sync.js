@@ -29,9 +29,13 @@ import {
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
+  CLOUD_CUTOVER_KEY,
+  cloudCutoverMarkerPresent,
   cutoverRowUpdatedAt,
   isCloudFirstEnabled,
+  isCutoverDevice,
   localDatabaseHasRecords,
+  planAdoptCloudFirst,
   planCutoverSnapshot,
 } from './sync/cloud-first.js?v=500';
 import {
@@ -1765,10 +1769,11 @@ async function runSeed({ force = false } = {}) {
 const CUTOVER_COUNT_TABLES = ['products', 'rawMaterials', 'recipes', 'productionRuns'];
 
 /**
- * העלאה חד-פעמית מיום המעבר. לא נקראת בהפעלה ולא מכפתור.
+ * העלאה חד-פעמית. רצה רק מכפתור, עם confirm.
  * בלי confirm לא משנה הגדרות ולא שולחת כלום.
  * לא מוחקת את מפת המזהים — מזהה חדש היה משכפל שורות שכבר בענן.
- * ההגדרה נשמרת רק על המכשיר הזה (liveSync לא מסונכרן).
+ * הדגל המקומי נשאר על המכשיר הזה. הסימן cloudCutover כן עולה לענן,
+ * כדי שמכשיר אחר יעבור למשיכה בלבד.
  */
 export async function pushCutoverSnapshot({ confirm = false } = {}) {
   const counts = {};
@@ -1795,7 +1800,56 @@ export async function pushCutoverSnapshot({ confirm = false } = {}) {
     };
   }
   await saveLiveSyncSettings({ seedDone: true });
-  return { pushed: true, seeded: result?.seeded || 0, blockers: [] };
+  let markerSynced = false;
+  try {
+    const deviceId = await getOrCreateDeviceId();
+    await setSetting(CLOUD_CUTOVER_KEY, { at: new Date().toISOString(), deviceId });
+    await enqueueUpsert('settings', CLOUD_CUTOVER_KEY);
+    await flushSyncQueue();
+    markerSynced = true;
+  } catch (err) {
+    console.warn('cutover marker', err);
+  }
+  return { pushed: true, seeded: result?.seeded || 0, blockers: [], markerSynced };
+}
+
+async function readCloudCutoverMarker() {
+  const local = await getSetting(CLOUD_CUTOVER_KEY);
+  if (cloudCutoverMarkerPresent(local)) return local;
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) return null;
+  const rows = await supabaseFetch(
+    cfg,
+    `/sync_app_settings?select=payload,deleted_at&payload->>key=eq.${encodeURIComponent(CLOUD_CUTOVER_KEY)}&limit=5`,
+  );
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((row) => !row.deleted_at && cloudCutoverMarkerPresent(row?.payload?.value));
+  return hit ? hit.payload.value : null;
+}
+
+/** לפני כל דחיפה: אם המעבר כבר בוצע במכשיר אחר, המכשיר הזה רק מושך. */
+async function adoptCloudFirstFromMarker() {
+  const live = await getLiveSyncSettings();
+  const planPreview = planAdoptCloudFirst({
+    cutoverDevice: isCutoverDevice(live),
+    cloudFirst: isCloudFirstEnabled(live),
+    markerPresent: false,
+  });
+  if (planPreview.reason === 'cutover-device' || planPreview.reason === 'already-on') return;
+  let marker = null;
+  try {
+    marker = await readCloudCutoverMarker();
+  } catch (err) {
+    console.warn('cloud cutover marker', err);
+    return;
+  }
+  const plan = planAdoptCloudFirst({
+    cutoverDevice: isCutoverDevice(live),
+    cloudFirst: isCloudFirstEnabled(live),
+    markerPresent: cloudCutoverMarkerPresent(marker),
+  });
+  if (!plan.adopt) return;
+  await saveLiveSyncSettings({ cloudFirst: true, cutoverDevice: false });
 }
 
 /**
@@ -2032,8 +2086,10 @@ export async function startLiveSync() {
   }
   installLiveSyncMiddleware();
 
-  const live = await getLiveSyncSettings();
+  let live = await getLiveSyncSettings();
   if (!live.enabled) return;
+  await adoptCloudFirstFromMarker();
+  live = await getLiveSyncSettings();
 
   let pulledOk = false;
   let fullPulledOk = false;

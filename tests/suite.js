@@ -30,7 +30,7 @@ import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFi
 import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=500';
 import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=500';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=500';
-import { applyCloudFirstToCloudRow, canUploadLocalDatabase, cutoverRowUpdatedAt, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, planCloudFirstCutover, planCutoverSnapshot, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
+import { applyCloudFirstToCloudRow, canUploadLocalDatabase, CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, cutoverRowUpdatedAt, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, planAdoptCloudFirst, planCloudFirstCutover, planCutoverSnapshot, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=500';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -3032,6 +3032,12 @@ export async function runAllTests() {
     assertEqual(cutoverRowUpdatedAt('rawMaterials', null, now), now);
     assertEqual(cutoverRowUpdatedAt('productionEntries', null, now), null);
     assertEqual(cutoverRowUpdatedAt('productionEntries', '2026-10-01T00:00:00.000Z', now), '2026-10-01T00:00:00.000Z');
+    assertEqual(CLOUD_CUTOVER_KEY, 'cloudCutover');
+    assertEqual(cloudCutoverMarkerPresent(null), false);
+    assertEqual(cloudCutoverMarkerPresent({ at: now }), true);
+    assertEqual(planAdoptCloudFirst({ cutoverDevice: false, cloudFirst: false, markerPresent: true }).adopt, true);
+    assertEqual(planAdoptCloudFirst({ cutoverDevice: true, cloudFirst: true, markerPresent: true }).adopt, false);
+    assertEqual(planAdoptCloudFirst({ cutoverDevice: false, cloudFirst: false, markerPresent: false }).adopt, false);
   });
 
   test('ענן כמקור — שדה ריק לא מוחק ספק, ומכשיר ישן לא דורס מנה', () => {
