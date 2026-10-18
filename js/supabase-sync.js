@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=503';
+import { db, getSetting, setSetting } from './db.js?v=504';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=503';
+} from './supabase-backup.js?v=504';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=503';
+} from './sync/collections.js?v=504';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -35,12 +35,17 @@ import {
   isCloudFirstEnabled,
   isCutoverDevice,
   localDatabaseHasRecords,
+  pickProductionProductId,
   planAdoptCloudFirst,
+  planAppendOnlyPush,
   planCloudJoin,
   planCutoverSnapshot,
+  planProductionHistoryPull,
   planProductionHistoryUpload,
   PRODUCTION_HISTORY_COLLECTIONS,
-} from './sync/cloud-first.js?v=503';
+  PRODUCTION_HISTORY_REV_KEY,
+  productionHistoryMarkerAt,
+} from './sync/cloud-first.js?v=504';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -50,14 +55,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=503';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=503';
+} from './sync/id-map.js?v=504';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=504';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=503';
+} from './auth.js?v=504';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -220,7 +225,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=503');
+    const { showToast } = await import('./utils.js?v=504');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -465,17 +470,44 @@ async function fetchRemoteCloudRow(cfg, collection, id) {
   return Array.isArray(rows) ? (rows[0] || null) : null;
 }
 
-async function postCloudRows(cfg, collection, body) {
+async function postCloudRows(cfg, collection, body, { replace = false, skippedIds = null } = {}) {
+  const rowsIn = Array.isArray(body) ? body : (body ? [body] : []);
+  if (replace) {
+    if (!rowsIn.length) return 0;
+    await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: rowsIn,
+    });
+    return rowsIn.length;
+  }
   let payload = body;
-  if ((await cloudFirstFlags()).on) {
-    const rows = Array.isArray(body) ? body : [body];
+  const flags = await cloudFirstFlags();
+  if (flags.on) {
+    const rows = rowsIn;
     const sending = [];
     for (const row of rows) {
-      if (!row || row.deleted_at) {
-        if (row) sending.push(row);
+      if (!row) continue;
+      if (row.deleted_at) {
+        const gate = planAppendOnlyPush({
+          collection,
+          cutoverDevice: flags.cutover,
+          remoteExists: true,
+        });
+        if (gate.send) sending.push(row);
+        else if (skippedIds) skippedIds.add(row.id);
         continue;
       }
       const remote = await fetchRemoteCloudRow(cfg, collection, row.id);
+      const gate = planAppendOnlyPush({
+        collection,
+        cutoverDevice: flags.cutover,
+        remoteExists: !!(remote && !remote.deleted_at),
+      });
+      if (!gate.send) {
+        if (skippedIds) skippedIds.add(row.id);
+        continue;
+      }
       const localRow = (!row.updated_at && (!remote || remote.deleted_at))
         ? { ...row, updated_at: syncNowISO() }
         : row;
@@ -502,7 +534,8 @@ async function postCloudRows(cfg, collection, body) {
 async function pushUpsert(cfg, collection, localKey, deviceId) {
   const cloudRow = await buildUpsertCloudRow(collection, localKey, deviceId);
   if (!cloudRow) return;
-  await postCloudRows(cfg, collection, cloudRow);
+  const sent = await postCloudRows(cfg, collection, cloudRow);
+  if (!sent) return;
   await upsertMeta({ collection, localKey, syncId: cloudRow.id, updatedAt: cloudRow.updated_at, deletedAt: null });
 }
 
@@ -627,8 +660,14 @@ async function runFlush() {
       };
 
       try {
-        await postCloudRows(cfg, collection, prepared.map((p) => p.cloudRow));
-        await confirm(prepared);
+        const skippedIds = new Set();
+        await postCloudRows(cfg, collection, prepared.map((p) => p.cloudRow), { skippedIds });
+        const skipped = prepared.filter((entry) => skippedIds.has(entry.cloudRow.id));
+        const sentEntries = prepared.filter((entry) => !skippedIds.has(entry.cloudRow.id));
+        if (skipped.length) {
+          await db.syncQueue.bulkUpdate(skipped.map(({ item }) => ({ key: item.id, changes: { status: 'done' } })));
+        }
+        if (sentEntries.length) await confirm(sentEntries);
       } catch (err) {
         lastErr = String(err.message || err);
         if (isWholeFlushError(err) || prepared.length === 1) {
@@ -641,8 +680,9 @@ async function runFlush() {
         for (let j = 0; j < prepared.length; j++) {
           const entry = prepared[j];
           try {
-            await postCloudRows(cfg, collection, entry.cloudRow);
-            await confirm([entry]);
+            const sent = await postCloudRows(cfg, collection, entry.cloudRow);
+            if (sent) await confirm([entry]);
+            else await db.syncQueue.update(entry.item.id, { status: 'done' });
           } catch (rowErr) {
             lastErr = String(rowErr.message || rowErr);
             if (isWholeFlushError(rowErr)) {
@@ -744,6 +784,44 @@ async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
  * Any local write the index cannot follow drops that collection's entry.
  */
 let fpCache = null;
+/** במהלך משיכת תיעוד: מזהי הענן שנראו, כדי למחוק במחשב שורות שלא קיימות באייפון. */
+let collectProductionEntryIds = null;
+let productionProductCache = null;
+
+function clearProductionProductCache() {
+  productionProductCache = null;
+}
+
+async function productionProductsForRelink() {
+  if (productionProductCache) return productionProductCache;
+  const [products, categories] = await Promise.all([
+    db.products.toArray(),
+    db.categories.toArray(),
+  ]);
+  const catName = new Map(categories.map((category) => [Number(category.id), category.name || '']));
+  productionProductCache = products.map((product) => ({
+    id: product.id,
+    name: product.name || '',
+    categoryName: catName.get(Number(product.categoryId)) || '',
+  }));
+  return productionProductCache;
+}
+
+/** שם המוצר מהאייפון גובר על מספר מקומי שלא תואם. */
+async function relinkProductionEntryProduct(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const products = await productionProductsForRelink();
+  const nextId = pickProductionProductId(products, {
+    productId: payload.productId,
+    productName: payload.productName,
+    categoryName: payload.categoryName,
+  });
+  if (nextId == null || nextId === '') return false;
+  const product = products.find((item) => String(item.id) === String(nextId) || Number(item.id) === Number(nextId));
+  if (!product) return false;
+  payload.productId = product.id;
+  return true;
+}
 
 function invalidateFingerprintCache(collection) {
   if (fpCache) fpCache.delete(collection);
@@ -1361,6 +1439,9 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   if (!cloudRow?.id) return false;
 
   const syncId = cloudRow.id;
+  if (collectProductionEntryIds && collection === 'productionEntries' && !cloudRow.deleted_at) {
+    collectProductionEntryIds.add(syncId);
+  }
   const remoteUpdated = cloudRow.updated_at;
   let existingMeta = await getMetaBySyncId(syncId);
 
@@ -1445,6 +1526,14 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   }
 
   const { payload, unresolved } = await remapFksToLocalIds(collection, cloudRow.payload || {});
+
+  if (collection === 'productionEntries') {
+    const linked = await relinkProductionEntryProduct(payload);
+    if (linked) {
+      const idx = unresolved.indexOf('productId');
+      if (idx >= 0) unresolved.splice(idx, 1);
+    }
+  }
 
   if (unresolved.length && !allowUnresolvedFks) return 'defer';
 
@@ -1656,6 +1745,7 @@ async function runPull({ full = false, preferRemote = false } = {}) {
   // offset measured by this pull's own responses.
   const pullStartedLocalMs = Date.now();
   fpCache = new Map();
+  clearProductionProductCache();
   try {
     for (const collection of orderedCollections()) {
       applied += await pullCollection(collection, pullOpts);
@@ -1676,6 +1766,7 @@ async function runPull({ full = false, preferRemote = false } = {}) {
       }
     }
     fpCache = null;
+    clearProductionProductCache();
     await saveLiveSyncSettings({
       lastPullAt: new Date(pullStartedLocalMs + serverClockOffsetMs).toISOString(),
       lastError: null,
@@ -1685,6 +1776,7 @@ async function runPull({ full = false, preferRemote = false } = {}) {
     if (applied > 0) {
       try { await coerceSupplierNumericFks(); } catch { /* ignore */ }
       try { await reconcileRawMaterialPricesFromHistory(); } catch { /* ignore */ }
+      if (!collectProductionEntryIds) emitStatus({ applied });
     }
   } catch (err) {
     const classified = classifyLiveSyncError(err);
@@ -1695,6 +1787,7 @@ async function runPull({ full = false, preferRemote = false } = {}) {
     throw err;
   } finally {
     fpCache = null;
+    clearProductionProductCache();
   }
   return { applied };
 }
@@ -1838,7 +1931,7 @@ export async function pushCutoverSnapshot({ confirm = false } = {}) {
 
 /**
  * מעלה רק תיעוד ייצור ממכשיר הגיבוי.
- * החותמת היא עכשיו, כדי שמנות בלי תאריך עדכון לא יידלגו.
+ * הפעם השורה מהאייפון מחליפה את מה שבענן, גם אם לענן יש חותמת חדשה יותר.
  * לא מוחק את מפת המזהים ולא רץ על מחשב אחר.
  */
 export async function pushProductionHistoryFromCutover({ confirm = false } = {}) {
@@ -1849,13 +1942,32 @@ export async function pushProductionHistoryFromCutover({ confirm = false } = {})
     cutoverDevice: live.cutoverDevice === true,
     online,
   });
-  if (!plan.ready) return { pushed: false, seeded: 0, blockers: plan.blockers };
+  if (!plan.ready) return { pushed: false, seeded: 0, entries: 0, blockers: plan.blockers };
   if (!isCloudFirstEnabled(live)) await saveLiveSyncSettings({ cloudFirst: true });
-  const result = await seedNamedCollections(PRODUCTION_HISTORY_COLLECTIONS, { stampNow: true });
-  return { pushed: true, seeded: result.seeded || 0, blockers: [] };
+  const result = await seedNamedCollections(PRODUCTION_HISTORY_COLLECTIONS, { stampNow: true, replace: true });
+  const entries = result.counts?.productionEntries || 0;
+  try {
+    await setSetting(PRODUCTION_HISTORY_REV_KEY, { at: new Date().toISOString(), entries });
+    await enqueueUpsert('settings', PRODUCTION_HISTORY_REV_KEY);
+    await flushSyncQueue();
+  } catch (err) {
+    console.warn('production history marker', err);
+  }
+  return { pushed: true, seeded: result.seeded || 0, entries, blockers: [] };
 }
 
-async function seedNamedCollections(names, { stampNow = false } = {}) {
+async function productionEntryLabels(row) {
+  const product = row?.productId != null ? await db.products.get(Number(row.productId)) : null;
+  if (!product) return row;
+  const category = product.categoryId != null ? await db.categories.get(Number(product.categoryId)) : null;
+  return {
+    ...row,
+    productName: product.name || '',
+    categoryName: category?.name || '',
+  };
+}
+
+async function seedNamedCollections(names, { stampNow = false, replace = false } = {}) {
   const live = await getLiveSyncSettings();
   const cloudFirst = isCloudFirstEnabled(live);
   const cfg = await getSupabaseBackupConfig();
@@ -1864,6 +1976,7 @@ async function seedNamedCollections(names, { stampNow = false } = {}) {
   const deviceId = await getOrCreateDeviceId();
   const kitchenId = KITCHEN_ID || BACKUP_SCOPE_ID;
   let seeded = 0;
+  const counts = {};
 
   for (const collection of orderedCollections()) {
     if (!wanted.has(collection)) continue;
@@ -1882,7 +1995,8 @@ async function seedNamedCollections(names, { stampNow = false } = {}) {
           : syncNowISO());
       const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
       if (!syncId) continue;
-      const payload = await remapFksToSyncIds(collection, row);
+      const source = collection === 'productionEntries' ? await productionEntryLabels(row) : row;
+      const payload = await remapFksToSyncIds(collection, source);
       cloudRows.push({
         id: syncId,
         kitchen_id: kitchenId,
@@ -1896,15 +2010,19 @@ async function seedNamedCollections(names, { stampNow = false } = {}) {
     const tableName = tableOf(collection);
     for (let i = 0; i < cloudRows.length; i += SEED_CHUNK_SIZE) {
       const chunk = cloudRows.slice(i, i + SEED_CHUNK_SIZE);
-      if (cloudFirst) seeded += await postCloudRows(cfg, collection, chunk);
-      else {
+      const sent = (replace || cloudFirst)
+        ? await postCloudRows(cfg, collection, chunk, { replace })
+        : null;
+      if (sent == null) {
         await supabaseFetch(cfg, `/${tableName}?on_conflict=id`, {
           method: 'POST',
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
           body: chunk,
         });
-        seeded += chunk.length;
       }
+      const n = sent == null ? chunk.length : sent;
+      seeded += n;
+      counts[collection] = (counts[collection] || 0) + n;
     }
   }
   await saveLiveSyncSettings({
@@ -1912,7 +2030,7 @@ async function seedNamedCollections(names, { stampNow = false } = {}) {
     lastError: null,
     lastErrorKind: null,
   });
-  return { seeded };
+  return { seeded, counts };
 }
 
 async function readCloudCutoverMarker() {
@@ -1970,6 +2088,76 @@ export async function ensureCloudJoinPull() {
   await pullAllCollections({ full: true, preferRemote: true });
   await saveLiveSyncSettings({ cloudJoinPullDone: true, seedDone: true });
   return { joined: true };
+}
+
+async function readProductionHistoryMarker() {
+  const local = await getSetting(PRODUCTION_HISTORY_REV_KEY);
+  if (productionHistoryMarkerAt(local)) return local;
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) return null;
+  const rows = await supabaseFetch(
+    cfg,
+    `/sync_app_settings?select=payload,deleted_at&payload->>key=eq.${encodeURIComponent(PRODUCTION_HISTORY_REV_KEY)}&limit=5`,
+  );
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((row) => !row.deleted_at && productionHistoryMarkerAt(row?.payload?.value));
+  return hit ? hit.payload.value : null;
+}
+
+/**
+ * אחרי שהאייפון החליף את תיעוד הייצור, המחשב מושך הכל מחדש
+ * ומוחק שורות מקומיות שלא קיימות בענן — כדי שלא ייספרו פעמיים.
+ */
+export async function ensureProductionHistoryPull() {
+  const live = await getLiveSyncSettings();
+  let marker = null;
+  try {
+    marker = await readProductionHistoryMarker();
+  } catch (err) {
+    console.warn('production history marker', err);
+    return { pulled: false };
+  }
+  const markerAt = productionHistoryMarkerAt(marker);
+  const plan = planProductionHistoryPull({
+    cloudFirst: isCloudFirstEnabled(live),
+    cutoverDevice: isCutoverDevice(live),
+    markerAt,
+    pulledAt: live.productionHistoryPulledAt || '',
+    entries: marker?.entries,
+  });
+  if (!plan.pullFull) return { pulled: false };
+  collectProductionEntryIds = new Set();
+  try {
+    const pullResult = await pullAllCollections({ full: true, preferRemote: true });
+    await purgeProductionEntriesNotInCloud(collectProductionEntryIds);
+    await saveLiveSyncSettings({ productionHistoryPulledAt: markerAt });
+    emitStatus({ applied: pullResult?.applied || 1 });
+    return { pulled: true, pullResult };
+  } finally {
+    collectProductionEntryIds = null;
+  }
+}
+
+async function purgeProductionEntriesNotInCloud(seen) {
+  if (!seen || seen.size === 0) return 0;
+  const entries = await db.productionEntries.toArray();
+  const drop = [];
+  for (const entry of entries) {
+    const meta = await getMetaByLocal('productionEntries', entry.id);
+    if (meta?.syncId && seen.has(meta.syncId)) continue;
+    drop.push(entry);
+  }
+  if (!drop.length) return 0;
+  applyingRemote = true;
+  try {
+    for (const entry of drop) {
+      await db.productionEntries.delete(entry.id);
+      await db.syncMeta.where('[collection+localKey]').equals(['productionEntries', String(entry.id)]).delete();
+    }
+  } finally {
+    applyingRemote = false;
+  }
+  return drop.length;
 }
 
 /**
@@ -2211,6 +2399,12 @@ export async function startLiveSync() {
   await adoptCloudFirstFromMarker();
   live = await getLiveSyncSettings();
   await ensureCloudJoinPull();
+  live = await getLiveSyncSettings();
+  try {
+    await ensureProductionHistoryPull();
+  } catch (err) {
+    console.warn('production history pull', err);
+  }
   live = await getLiveSyncSettings();
 
   let pulledOk = false;

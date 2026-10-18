@@ -98,6 +98,68 @@ export function planProductionHistoryUpload({ confirm, cutoverDevice, online } =
   return { ready: blockers.length === 0, blockers };
 }
 
+/** סימן שהאייפון החליף את תיעוד הייצור בענן. המחשב מושך מחדש כשהזמן משתנה. */
+export const PRODUCTION_HISTORY_REV_KEY = 'productionHistoryRev';
+
+export function productionHistoryMarkerAt(value) {
+  const at = value && typeof value === 'object' ? value.at : '';
+  return typeof at === 'string' && at ? at : '';
+}
+
+/**
+ * מחשב שכבר סיים את המשיכה הראשונה לא רואה תיעוד שעודכן אחר כך
+ * אם הסמן שלו כבר עבר את זמן ההעלאה. לכן מושכים שוב כשיש סימן חדש.
+ * מכשיר הגיבוי לא מושך כאן — אצלו הנתונים כבר מקומיים.
+ */
+export function planProductionHistoryPull({ cloudFirst, cutoverDevice, markerAt, pulledAt, entries } = {}) {
+  if (cloudFirst !== true || cutoverDevice === true) return { pullFull: false };
+  if (!(Number(entries) > 0) || !markerAt) return { pullFull: false };
+  if (markerAt === pulledAt) return { pullFull: false };
+  return { pullFull: true };
+}
+
+/**
+ * מחשב לא דורס שורת ייצור שכבר בענן. שורה חדשה (אין בענן) עדיין נשלחת.
+ * ההעלאה המפורשת מהאייפון (replace) מחליפה את השורה כמו שהיא.
+ */
+export function planAppendOnlyPush({ collection, cutoverDevice, remoteExists, replace } = {}) {
+  if (replace === true) return { send: true, reason: 'replace' };
+  if (!PRODUCTION_HISTORY_COLLECTIONS.includes(collection)) return { send: true, reason: 'catalog' };
+  if (cutoverDevice !== true && remoteExists === true) return { send: false, reason: 'reader-keeps-cloud' };
+  return { send: true, reason: 'ok' };
+}
+
+function normLabel(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('he');
+}
+
+function sameRecordId(a, b) {
+  if (a == null || b == null || a === '' || b === '') return false;
+  if (String(a) === String(b)) return true;
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
+/**
+ * מקשר שורת ייצור למוצר המקומי לפי שם, כשמזהה המספר מהאייפון
+ * לא תואם את המספר במחשב.
+ * שם אחד ברור מנצח. שני מוצרים באותו שם בלי קטגוריה מתאימה — לא מנחשים.
+ */
+export function pickProductionProductId(products, { productId, productName, categoryName } = {}) {
+  const list = Array.isArray(products) ? products : [];
+  const byId = list.find((product) => sameRecordId(product?.id, productId)) || null;
+  const name = normLabel(productName);
+  if (!name) return byId ? byId.id : (productId ?? null);
+  if (byId && normLabel(byId.name) === name) return byId.id;
+  const named = list.filter((product) => normLabel(product?.name) === name);
+  const cat = normLabel(categoryName);
+  const inCat = cat ? named.filter((product) => normLabel(product?.categoryName) === cat) : [];
+  if (inCat.length === 1) return inCat[0].id;
+  if (named.length === 1) return named[0].id;
+  return byId ? byId.id : (productId ?? null);
+}
+
 /** סימן בענן שההעלאה החד-פעמית הסתיימה. מסונכרן, בניגוד לדגל המקומי. */
 export const CLOUD_CUTOVER_KEY = 'cloudCutover';
 
