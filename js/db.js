@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=504';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=504';
-import { defaultColorForIndex } from './chart.js?v=504';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=504';
-import { logAuditEvent } from './audit.js?v=504';
+} from './validators.js?v=505';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=505';
+import { defaultColorForIndex } from './chart.js?v=505';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=505';
+import { logAuditEvent } from './audit.js?v=505';
 
 export { ValidationError };
 
@@ -5009,7 +5009,7 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
     }
   }
 
-  const record = { date, productId: pid, quantity: qty, isWaste: waste };
+  const record = { date, productId: pid, quantity: qty, isWaste: waste, updatedAt: new Date().toISOString() };
   const rid = sanitizeProductId(runId);
   if (rid) record.runId = rid;
   if (stepIndex != null && !Number.isNaN(Number(stepIndex))) record.stepIndex = Number(stepIndex);
@@ -5033,6 +5033,7 @@ export async function updateProductionEntry(id, data) {
   if ('date' in patch && !isValidISODate(patch.date)) {
     throw new ValidationError('תאריך לא תקין');
   }
+  patch.updatedAt = new Date().toISOString();
   return db.productionEntries.update(id, patch);
 }
 

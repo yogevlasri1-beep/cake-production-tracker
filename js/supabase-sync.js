@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=504';
+import { db, getSetting, setSetting } from './db.js?v=505';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=504';
+} from './supabase-backup.js?v=505';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=504';
+} from './sync/collections.js?v=505';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -45,7 +45,7 @@ import {
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=504';
+} from './sync/cloud-first.js?v=505';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -55,14 +55,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=504';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=504';
+} from './sync/id-map.js?v=505';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=505';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=504';
+} from './auth.js?v=505';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -225,7 +225,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=504');
+    const { showToast } = await import('./utils.js?v=505');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -508,7 +508,8 @@ async function postCloudRows(cfg, collection, body, { replace = false, skippedId
         if (skippedIds) skippedIds.add(row.id);
         continue;
       }
-      const localRow = (!row.updated_at && (!remote || remote.deleted_at))
+      // מכשיר הגיבוי: שורה בלי חותמת עדיין נשלחת. מחשב לא נכנס לכאן לשורה שכבר בענן.
+      const localRow = (!row.updated_at && (flags.cutover || !remote || remote.deleted_at))
         ? { ...row, updated_at: syncNowISO() }
         : row;
       const decided = applyCloudFirstToCloudRow(collection, localRow, remote);
@@ -808,6 +809,23 @@ async function productionProductsForRelink() {
 }
 
 /** שם המוצר מהאייפון גובר על מספר מקומי שלא תואם. */
+async function productionEntryNeedsCloudAgain(existingMeta) {
+  const local = await readLocalRecord('productionEntries', existingMeta.localKey);
+  if (!local) return true;
+  const products = await productionProductsForRelink();
+  const linked = products.find((product) => (
+    String(product.id) === String(local.productId) || Number(product.id) === Number(local.productId)
+  ));
+  if (!linked) return true;
+  if (!local.productName) return false;
+  const picked = pickProductionProductId(products, {
+    productId: local.productId,
+    productName: local.productName,
+    categoryName: local.categoryName,
+  });
+  return String(picked) !== String(local.productId);
+}
+
 async function relinkProductionEntryProduct(payload) {
   if (!payload || typeof payload !== 'object') return false;
   const products = await productionProductsForRelink();
@@ -1489,12 +1507,18 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
     return true;
   }
 
-  if (!preferRemote && existingMeta?.deletedAt) {
+  // שורה שנשמרה בלי מוצר לא נספרת במסך החודש. מושכים אותה שוב גם אם החותמת זהה.
+  const relinkAgain = collection === 'productionEntries'
+    && existingMeta
+    && !cloudRow.deleted_at
+    && await productionEntryNeedsCloudAgain(existingMeta);
+
+  if (!relinkAgain && !preferRemote && existingMeta?.deletedAt) {
     // Tombstone local — never resurrect from cloud until a newer non-deleted remote wins.
     if (!shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) return false;
   }
 
-  if (!preferRemote && existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
+  if (!relinkAgain && !preferRemote && existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
     // Local mapping is newer (or equal). If the row is still here, keep it.
     // If the row is missing, it was deleted locally — do NOT recreate from older cloud data
     // (this used to revive materials right after merge/absorb).
@@ -1504,7 +1528,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   // Incremental pulls overlap the previous window, and every push comes back as
   // an echo: a row this device already holds at exactly this version is a no-op.
   // (Full pulls still re-apply, that is how repair passes restore bad local FKs.)
-  if (skipUnchanged && existingMeta && !existingMeta.deletedAt
+  if (!relinkAgain && skipUnchanged && existingMeta && !existingMeta.deletedAt
       && existingMeta.syncId === syncId
       && Date.parse(existingMeta.updatedAt) === Date.parse(remoteUpdated)) {
     return false;
@@ -1513,7 +1537,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   // Local change not yet flushed (delete or edit) — it is newer than this cloud
   // row and will win once pushed. Applying the cloud row first used to overwrite
   // the unsent edit, and the queued push then re-uploaded the old values.
-  if (!preferRemote && existingMeta) {
+  if (!relinkAgain && !preferRemote && existingMeta) {
     const pendingLocal = await db.syncQueue
       .where('status')
       .anyOf('pending', 'error')
@@ -1685,7 +1709,17 @@ export async function pullCollection(collection, {
   let applied = 0;
   let after = null;
   for (let page = 0; page < PULL_MAX_PAGES; page++) {
-    const rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, after }));
+    let rows;
+    try {
+      rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, after }));
+    } catch (err) {
+      if (!after) throw err;
+      // עמוד המשך לפי מזהה נכשל — ממשיכים לפי מיקום כדי לא לאבד את שורות הייצור החדשות.
+      rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, {
+        since,
+        offset: page * PULL_PAGE_SIZE,
+      }));
+    }
     if (!Array.isArray(rows) || !rows.length) break;
     for (const row of rows) {
       const ok = await applyRemoteRow(collection, row, deviceId, { skipUnchanged, preferRemote, protectCloud });
@@ -1747,8 +1781,14 @@ async function runPull({ full = false, preferRemote = false } = {}) {
   fpCache = new Map();
   clearProductionProductCache();
   try {
+    let pullError = null;
     for (const collection of orderedCollections()) {
-      applied += await pullCollection(collection, pullOpts);
+      try {
+        applied += await pullCollection(collection, pullOpts);
+      } catch (err) {
+        pullError = err;
+        console.warn('live sync pull', collection, err);
+      }
     }
     // Second pass: rows whose parents were only created during this pull.
     if (deferred.length) {
@@ -1767,12 +1807,20 @@ async function runPull({ full = false, preferRemote = false } = {}) {
     }
     fpCache = null;
     clearProductionProductCache();
-    await saveLiveSyncSettings({
-      lastPullAt: new Date(pullStartedLocalMs + serverClockOffsetMs).toISOString(),
-      lastError: null,
-      lastErrorKind: null,
-      clockSkewMs: serverClockOffsetMs,
-    });
+    if (pullError) {
+      const classified = classifyLiveSyncError(pullError);
+      await saveLiveSyncSettings({
+        lastError: classified.message || String(pullError.message || pullError),
+        lastErrorKind: classified.kind,
+      });
+    } else {
+      await saveLiveSyncSettings({
+        lastPullAt: new Date(pullStartedLocalMs + serverClockOffsetMs).toISOString(),
+        lastError: null,
+        lastErrorKind: null,
+        clockSkewMs: serverClockOffsetMs,
+      });
+    }
     if (applied > 0) {
       try { await coerceSupplierNumericFks(); } catch { /* ignore */ }
       try { await reconcileRawMaterialPricesFromHistory(); } catch { /* ignore */ }
@@ -2128,14 +2176,51 @@ export async function ensureProductionHistoryPull() {
   if (!plan.pullFull) return { pulled: false };
   collectProductionEntryIds = new Set();
   try {
-    const pullResult = await pullAllCollections({ full: true, preferRemote: true });
+    // רק קטגוריות, מוצרים ושורות ייצור. משיכה של כל הטבלאות נעצרת
+    // אם טבלה אחרת נכשלת, ושורות הייצור (בסוף הרשימה) לא מגיעות למחשב.
+    const pullResult = await pullProductionEntriesForMonth({ preferRemote: true, protectCloud: true });
     await purgeProductionEntriesNotInCloud(collectProductionEntryIds);
-    await saveLiveSyncSettings({ productionHistoryPulledAt: markerAt });
+    await saveLiveSyncSettings({ productionHistoryPulledAt: markerAt || 'local-repair' });
     emitStatus({ applied: pullResult?.applied || 1 });
     return { pulled: true, pullResult };
   } finally {
     collectProductionEntryIds = null;
   }
+}
+
+async function pullProductionEntriesForMonth({ preferRemote = true, protectCloud = true } = {}) {
+  const deferred = [];
+  const opts = { since: null, deferred, skipUnchanged: false, preferRemote, protectCloud };
+  let applied = 0;
+  fpCache = new Map();
+  clearProductionProductCache();
+  try {
+    for (const collection of ['categories', 'products']) {
+      try {
+        applied += await pullCollection(collection, opts);
+      } catch (err) {
+        console.warn('live sync pull', collection, err);
+      }
+    }
+    applied += await pullCollection('productionEntries', opts);
+    const deviceId = await getOrCreateDeviceId();
+    const stillDeferred = [];
+    for (const item of deferred) {
+      const ok = await applyRemoteRow(item.collection, item.row, deviceId, { preferRemote, protectCloud });
+      if (ok === 'defer') stillDeferred.push(item);
+      else if (ok) applied++;
+    }
+    for (const item of stillDeferred) {
+      const ok = await applyRemoteRow(item.collection, item.row, deviceId, {
+        allowUnresolvedFks: true, preferRemote, protectCloud,
+      });
+      if (ok && ok !== 'defer') applied++;
+    }
+  } finally {
+    fpCache = null;
+    clearProductionProductCache();
+  }
+  return { applied };
 }
 
 async function purgeProductionEntriesNotInCloud(seen) {

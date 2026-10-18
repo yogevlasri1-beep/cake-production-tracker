@@ -113,9 +113,10 @@ export function productionHistoryMarkerAt(value) {
  */
 export function planProductionHistoryPull({ cloudFirst, cutoverDevice, markerAt, pulledAt, entries } = {}) {
   if (cloudFirst !== true || cutoverDevice === true) return { pullFull: false };
-  if (!(Number(entries) > 0) || !markerAt) return { pullFull: false };
-  if (markerAt === pulledAt) return { pullFull: false };
-  return { pullFull: true };
+  // פעם ראשונה במחשב: למשוך את שורות הייצור גם אם הסימן עוד לא נקרא.
+  if (!pulledAt) return { pullFull: true };
+  if (markerAt && markerAt !== pulledAt && Number(entries) > 0) return { pullFull: true };
+  return { pullFull: false };
 }
 
 /**
@@ -196,10 +197,10 @@ function isEmptyValue(value) {
  * שדה ריק מהמכשיר לא מוחק ערך שכבר שמור בענן.
  * בשאר השדות, החותמת החדשה יותר מנצחת.
  */
-export function mergeCatalogRecord(remote, incoming, { remoteUpdatedAt, incomingUpdatedAt } = {}) {
+export function mergeCatalogRecord(remote, incoming, { remoteUpdatedAt, incomingUpdatedAt, incomingWins = false } = {}) {
   const base = remote && typeof remote === 'object' ? { ...remote } : {};
   const next = incoming && typeof incoming === 'object' ? incoming : {};
-  const incomingNewer = Date.parse(incomingUpdatedAt) > Date.parse(remoteUpdatedAt);
+  const incomingNewer = incomingWins || Date.parse(incomingUpdatedAt) > Date.parse(remoteUpdatedAt);
   const merged = { ...base };
 
   for (const [key, value] of Object.entries(next)) {
@@ -231,8 +232,21 @@ export function planCloudFirstWrite({
   }
 
   if (isAppendOnlyCollection(collection) && remoteExists) {
-    const incomingNewer = Date.parse(incomingUpdatedAt) > Date.parse(remoteUpdatedAt);
-    if (!incomingNewer) {
+    const incomingMs = Date.parse(incomingUpdatedAt);
+    const remoteMs = Date.parse(remoteUpdatedAt);
+    // בלי חותמת זו לא "שורה ישנה". רישום ייצור נשמר בלי updatedAt, ואסור לדלג עליו.
+    if (!Number.isFinite(incomingMs)) {
+      return {
+        action: 'merge',
+        reason: 'append-only-unstamped',
+        row: mergeCatalogRecord(remote, incoming, {
+          remoteUpdatedAt,
+          incomingUpdatedAt: remoteUpdatedAt,
+          incomingWins: true,
+        }),
+      };
+    }
+    if (Number.isFinite(remoteMs) && incomingMs <= remoteMs) {
       return { action: 'keep-remote', reason: 'append-only-older' };
     }
   }
