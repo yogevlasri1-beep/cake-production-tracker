@@ -30,7 +30,7 @@ import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFi
 import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=500';
 import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=500';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=500';
-import { canUploadLocalDatabase, mergeCatalogRecord, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
+import { applyCloudFirstToCloudRow, canUploadLocalDatabase, isCloudFirstEnabled, mergeCatalogRecord, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=500';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -3035,6 +3035,39 @@ export async function runAllTests() {
 
     const offline = planCloudFirstWrite({ online: false, collection: 'rawMaterials' });
     assertEqual(offline.action, 'queue');
+    assertEqual(isCloudFirstEnabled({}), false);
+    assertEqual(isCloudFirstEnabled({ cloudFirst: true }), true);
+  });
+
+  test('ענן כמקור — שליחה לא מוחקת ספק מלא ולא דורסת מנה חדשה', () => {
+    const local = {
+      id: 'abc',
+      payload: { name: 'קמח', supplierId: null },
+      updated_at: '2026-10-18T11:00:00.000Z',
+    };
+    const remote = {
+      id: 'abc',
+      payload: { name: 'קמח', supplierId: 'sup-11' },
+      updated_at: '2026-10-18T10:00:00.000Z',
+    };
+    const merged = applyCloudFirstToCloudRow('rawMaterials', local, remote);
+    assertEqual(merged.send, true);
+    assertEqual(merged.cloudRow.payload.supplierId, 'sup-11');
+
+    const older = applyCloudFirstToCloudRow('productionEntries', {
+      id: 'row',
+      payload: { quantity: 1 },
+      updated_at: '2026-10-18T09:00:00.000Z',
+    }, {
+      id: 'row',
+      payload: { quantity: 4 },
+      updated_at: '2026-10-18T12:00:00.000Z',
+    });
+    assertEqual(older.send, false);
+
+    const fresh = applyCloudFirstToCloudRow('rawMaterials', local, null);
+    assertEqual(fresh.send, true);
+    assertEqual(fresh.cloudRow.payload.supplierId, null);
   });
 
   test('שעון שרת — היסט נמדד מכותרת Date ומתוקן בחותמות', () => {

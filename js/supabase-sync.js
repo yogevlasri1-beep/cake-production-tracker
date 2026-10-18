@@ -27,6 +27,11 @@ import {
   supplierCategoryCanonicalName,
 } from './sync/collections.js?v=500';
 import {
+  applyCloudFirstToCloudRow,
+  canUploadLocalDatabase,
+  isCloudFirstEnabled,
+} from './sync/cloud-first.js?v=500';
+import {
   ensureSyncId,
   getMetaByLocal,
   getMetaBySyncId,
@@ -47,6 +52,9 @@ import {
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
   enabled: true,
+  /** כבוי עד יום המעבר. כשדולק — הענן מנצח, ומכשיר ריק לא מעלה. */
+  cloudFirst: false,
+  cutoverDevice: false,
   lastPullAt: null,
   lastPushAt: null,
   lastError: null,
@@ -428,11 +436,46 @@ async function buildDeleteCloudRow(collection, localKey, deviceId) {
   };
 }
 
+async function cloudFirstFlags() {
+  try {
+    const live = await getLiveSyncSettings();
+    return { on: isCloudFirstEnabled(live), cutover: live?.cutoverDevice === true };
+  } catch {
+    return { on: false, cutover: false };
+  }
+}
+
+async function fetchRemoteCloudRow(cfg, collection, id) {
+  const safeId = String(id || '').replace(/[^0-9a-fA-F-]/g, '');
+  if (!safeId) return null;
+  const rows = await supabaseFetch(
+    cfg,
+    `/${tableOf(collection)}?id=eq.${safeId}&select=id,payload,updated_at,deleted_at&limit=1`,
+  );
+  return Array.isArray(rows) ? (rows[0] || null) : null;
+}
+
 async function postCloudRows(cfg, collection, body) {
+  let payload = body;
+  if ((await cloudFirstFlags()).on) {
+    const rows = Array.isArray(body) ? body : [body];
+    const sending = [];
+    for (const row of rows) {
+      if (!row || row.deleted_at) {
+        if (row) sending.push(row);
+        continue;
+      }
+      const remote = await fetchRemoteCloudRow(cfg, collection, row.id);
+      const decided = applyCloudFirstToCloudRow(collection, row, remote);
+      if (decided.send && decided.cloudRow) sending.push(decided.cloudRow);
+    }
+    if (!sending.length) return;
+    payload = Array.isArray(body) ? sending : sending[0];
+  }
   await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body,
+    body: payload,
   });
 }
 
@@ -1638,6 +1681,14 @@ async function runSeed({ force = false } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
 
+  if (isCloudFirstEnabled(live)) {
+    const sample = await supabaseFetch(cfg, '/sync_products?select=id&limit=1');
+    const cloudHasData = Array.isArray(sample) && sample.length > 0;
+    if (!canUploadLocalDatabase({ cloudHasData, isCutoverDevice: live.cutoverDevice === true })) {
+      return { seeded: 0, skipped: true, reason: 'cloud-first' };
+    }
+  }
+
   const deviceId = await getOrCreateDeviceId();
   const kitchenId = KITCHEN_ID || BACKUP_SCOPE_ID;
   let seeded = 0;
@@ -1875,6 +1926,8 @@ let lightDedupeInFlight = null;
 const LIGHT_DEDUPE_MIN_MS = 3 * 60 * 1000;
 
 export async function dedupeSupplierWorkspaceLight({ force = false } = {}) {
+  const live = await getLiveSyncSettings().catch(() => null);
+  if (isCloudFirstEnabled(live)) return { removed: 0, repaired: 0, skipped: true };
   const now = Date.now();
   if (!force && now - lastLightDedupeAt < LIGHT_DEDUPE_MIN_MS) {
     return { removed: 0, repaired: 0, skipped: true };
@@ -1940,7 +1993,7 @@ export async function startLiveSync() {
       const pulled = await pullAllCollections({ full: false });
       pulledOk = true;
       // ניקוי כבד רק כשיש עדכונים מהענן (ולא יותר מפעם ב־3 דקות)
-      if ((pulled?.applied || 0) > 0) {
+      if ((pulled?.applied || 0) > 0 && !isCloudFirstEnabled(await getLiveSyncSettings())) {
         await dedupeSupplierWorkspaceLight();
       }
     } catch (err) {
@@ -1951,7 +2004,7 @@ export async function startLiveSync() {
   // One-time per repair version: re-pull everything so foreign keys that an
   // earlier bug nulled out locally are restored from the (correct) cloud rows.
   // v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
-  if ((live.repairVersion || 0) < REPAIR_VERSION) {
+  if (!isCloudFirstEnabled(live) && (live.repairVersion || 0) < REPAIR_VERSION) {
     try {
       await flushSyncQueue();
       await pullAllCollections({ full: true });
@@ -1971,7 +2024,7 @@ export async function startLiveSync() {
   // old pull-before-seed bug (v2 also covers production runs / step states).
   // Runs only AFTER a successful pull so cloud-side dedupe deletions land
   // first; otherwise this device could tombstone the copy the cloud kept.
-  if (pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
+  if (!isCloudFirstEnabled(live) && pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
     try {
       const pruned = await pruneUnsyncedEmptySeedSupplierCategories();
       if (pruned) console.info('live sync pruned empty seed supplier categories', pruned);
@@ -2029,6 +2082,10 @@ export async function startLiveSync() {
 
 /** Push only local rows that are not yet linked to a cloud syncId. */
 async function seedOrphanLocalRows() {
+  const live = await getLiveSyncSettings();
+  if (isCloudFirstEnabled(live) && live.cutoverDevice !== true) {
+    return { seeded: 0, skipped: true, reason: 'cloud-first' };
+  }
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return { seeded: 0 };
   const deviceId = await getOrCreateDeviceId();
