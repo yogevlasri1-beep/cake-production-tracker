@@ -23,6 +23,14 @@ export function isCloudFirstEnabled(live) {
   return live?.cloudFirst === true;
 }
 
+/**
+ * הסנכרון החי דלוק בכל המכשירים. כיבוי שנשמר במחשב לא נשאר.
+ * חסימת משתמש נעשית בעמדת חשבונות, לא מכאן.
+ */
+export function planLiveSyncAlwaysOn(enabled) {
+  return { enabled: true, restore: enabled !== true };
+}
+
 export function isCutoverDevice(live) {
   return live?.cutoverDevice === true;
 }

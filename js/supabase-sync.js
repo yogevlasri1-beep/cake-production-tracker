@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=506';
+import { db, getSetting, setSetting } from './db.js?v=507';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=506';
+} from './supabase-backup.js?v=507';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=506';
+} from './sync/collections.js?v=507';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -34,6 +34,7 @@ import {
   cutoverRowUpdatedAt,
   isCloudFirstEnabled,
   isCutoverDevice,
+  planLiveSyncAlwaysOn,
   localDatabaseHasRecords,
   entriesWithLocalProducts,
   pickProductionProductId,
@@ -48,7 +49,7 @@ import {
   PRODUCTION_HISTORY_REV_KEY,
   PRODUCTION_PULL_VERSION,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=506';
+} from './sync/cloud-first.js?v=507';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -58,14 +59,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=506';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=506';
+} from './sync/id-map.js?v=507';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=507';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=506';
+} from './auth.js?v=507';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -228,7 +229,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=506');
+    const { showToast } = await import('./utils.js?v=507');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2757,13 +2758,10 @@ export async function stopLiveSync() {
 }
 
 export async function setLiveSyncEnabled(enabled) {
-  await saveLiveSyncSettings({ enabled: !!enabled });
-  if (enabled) {
-    started = false;
-    await startLiveSync();
-  } else {
-    await stopLiveSync();
-  }
+  const plan = planLiveSyncAlwaysOn(enabled);
+  await saveLiveSyncSettings({ enabled: plan.enabled });
+  started = false;
+  await startLiveSync();
 }
 
 export async function getLiveSyncStatus() {
@@ -2790,7 +2788,8 @@ export async function ensureLiveSyncDefaults() {
     await saveSupabaseBackupConfig({ liveSyncEnabled: true });
   }
   const live = await getLiveSyncSettings();
-  if (live.enabled == null) {
+  const plan = planLiveSyncAlwaysOn(live.enabled);
+  if (plan.restore) {
     await saveLiveSyncSettings({ enabled: true });
   }
   return getLiveSyncStatus();
