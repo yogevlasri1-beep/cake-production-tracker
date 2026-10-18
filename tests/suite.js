@@ -30,6 +30,7 @@ import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFi
 import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=500';
 import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=500';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=500';
+import { canUploadLocalDatabase, mergeCatalogRecord, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=500';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -3007,6 +3008,33 @@ export async function runAllTests() {
     );
     // נשמר כששעון המכשיר הקדים בשעה — לא לבקש "רק מה שאחרי העתיד"
     assertEqual(incrementalPullSince('2026-10-16T13:00:00.000Z', now), null);
+  });
+
+  test('ענן כמקור — מכשיר ריק לא מעלה אם בענן יש נתונים', () => {
+    assertEqual(canUploadLocalDatabase({ cloudHasData: true, isCutoverDevice: true }), false);
+    assertEqual(canUploadLocalDatabase({ cloudHasData: false, isCutoverDevice: false }), false);
+    assertEqual(canUploadLocalDatabase({ cloudHasData: false, isCutoverDevice: true }), true);
+  });
+
+  test('ענן כמקור — שדה ריק לא מוחק ספק, ומכשיר ישן לא דורס מנה', () => {
+    const merged = mergeCatalogRecord(
+      { name: 'קמח', supplierId: 11, packageWeightGrams: 25000 },
+      { name: 'קמח', supplierId: null, packageWeightGrams: 25000 },
+      { remoteUpdatedAt: '2026-10-18T10:00:00.000Z', incomingUpdatedAt: '2026-10-18T11:00:00.000Z' },
+    );
+    assertEqual(merged.supplierId, 11);
+
+    const olderPortion = planCloudFirstWrite({
+      online: true,
+      collection: 'productionEntries',
+      remoteExists: true,
+      remoteUpdatedAt: '2026-10-18T12:00:00.000Z',
+      incomingUpdatedAt: '2026-10-18T09:00:00.000Z',
+    });
+    assertEqual(olderPortion.action, 'keep-remote');
+
+    const offline = planCloudFirstWrite({ online: false, collection: 'rawMaterials' });
+    assertEqual(offline.action, 'queue');
   });
 
   test('שעון שרת — היסט נמדד מכותרת Date ומתוקן בחותמות', () => {
