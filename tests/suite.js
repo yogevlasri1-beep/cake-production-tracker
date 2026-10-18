@@ -30,7 +30,7 @@ import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFi
 import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=502';
 import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=502';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=502';
-import { applyCloudFirstToCloudRow, canUploadLocalDatabase, CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, cutoverRowUpdatedAt, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, planAdoptCloudFirst, planCloudFirstCutover, planCloudJoin, planCutoverSnapshot, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=502';
+import { applyCloudFirstToCloudRow, canUploadLocalDatabase, CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, cutoverRowUpdatedAt, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, planAdoptCloudFirst, planCloudFirstCutover, planCloudJoin, planCutoverSnapshot, planCloudFirstWrite, planProductionHistoryUpload, PRODUCTION_HISTORY_COLLECTIONS } from '../js/sync/cloud-first.js?v=502';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=502';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -3044,6 +3044,11 @@ export async function runAllTests() {
     assertEqual(planCloudJoin({ cloudFirst: true, cutoverDevice: true, joinPullDone: false }).pullFull, false);
     assertEqual(planCloudJoin({ cloudFirst: true, cutoverDevice: false, joinPullDone: true }).pullFull, false);
     assertEqual(planCloudJoin({ cloudFirst: false, cutoverDevice: false, joinPullDone: false }).pullFull, false);
+    assertEqual(PRODUCTION_HISTORY_COLLECTIONS.includes('productionEntries'), true);
+    const history = planProductionHistoryUpload({ confirm: true, cutoverDevice: true, online: true });
+    assertEqual(history.ready, true);
+    assertEqual(planProductionHistoryUpload({ confirm: true, cutoverDevice: false, online: true }).ready, false);
+    assertEqual(planProductionHistoryUpload({ confirm: false, cutoverDevice: true, online: true }).ready, false);
   });
 
   test('ענן כמקור — שדה ריק לא מוחק ספק, ומכשיר ישן לא דורס מנה', () => {

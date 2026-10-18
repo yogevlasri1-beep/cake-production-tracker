@@ -319,9 +319,9 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
   const cutoverDoneHere = liveSync?.cutoverDevice === true;
   const cutoverDoneElsewhere = cloudCutoverMarkerPresent(cutoverMarker) && !cutoverDoneHere;
   const cutoverStatus = cutoverDoneHere
-    ? 'הנתונים של המכשיר הזה כבר עלו לענן. אל תלחץ שוב.'
+    ? 'הספקים והמתכונים כבר עלו. אם תיעוד הייצור במחשב לא תואם, לחץ על הכפתור השני. רק באייפון הזה.'
     : cutoverDoneElsewhere
-      ? 'הענן כבר עודכן ממכשיר אחר. המכשיר הזה רק מקבל נתונים.'
+      ? 'הענן כבר עודכן מהאייפון. המחשב רק מקבל נתונים.'
       : '';
   const cloudCutoverBody = `
       <p class="form-hint" style="margin-bottom:10px;line-height:1.5">
@@ -332,6 +332,12 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       <button type="button" class="btn btn-primary" id="cloud-cutover-btn" style="width:100%" ${supabaseConfigured && !cutoverDoneHere && !cutoverDoneElsewhere ? '' : 'disabled'}>
         העלה את הנתונים של המכשיר הזה לענן
       </button>
+      ${cutoverDoneHere ? `
+        <button type="button" class="btn btn-primary" id="cloud-production-btn" style="width:100%;margin-top:8px" ${supabaseConfigured ? '' : 'disabled'}>
+          העלה שוב את תיעוד הייצור
+        </button>
+        <p class="form-hint" style="margin-top:6px;line-height:1.5">רק מנות, ריצות ותיעוד תהליכים. לא נוגע בספקים ובמתכונים.</p>
+      ` : ''}
       <p class="form-hint" id="cloud-cutover-status" style="margin-top:8px;line-height:1.5">${escapeHtml(cutoverStatus)}</p>`;
 
   const ls = liveSync || {};
@@ -699,6 +705,33 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       renderBackup(container, { navigate });
     } catch (err) {
       const why = err?.message || 'ההעלאה נעצרה. אפשר ללחוץ שוב, בלי לסגור את האפליקציה.';
+      if (status) status.textContent = why;
+      showToast(why);
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  document.getElementById('cloud-production-btn')?.addEventListener('click', async () => {
+    if (!confirm('להעלות מהאייפון הזה את תיעוד הייצור לענן?\n\nספקים ומתכונים לא משתנים.\nאל תסגור את האפליקציה עד שמופיע שההעלאה נגמרה.')) return;
+    const btn = document.getElementById('cloud-production-btn');
+    const status = document.getElementById('cloud-cutover-status');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'מעלה תיעוד... אל תסגור'; }
+    try {
+      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=502');
+      const result = await pushProductionHistoryFromCutover({ confirm: true });
+      if (!result?.pushed) {
+        const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
+        if (status) status.textContent = why;
+        showToast(why);
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+        return;
+      }
+      const done = `תיעוד הייצור עלה (${result.seeded || 0} רשומות). עכשיו במחשב רענן את הדף וחכה שהתיעוד יופיע.`;
+      if (status) status.textContent = done;
+      showToast('תיעוד הייצור עלה');
+    } catch (err) {
+      const why = err?.message || 'ההעלאה נעצרה. אפשר ללחוץ שוב.';
       if (status) status.textContent = why;
       showToast(why);
       if (btn) { btn.disabled = false; btn.textContent = label; }

@@ -38,6 +38,8 @@ import {
   planAdoptCloudFirst,
   planCloudJoin,
   planCutoverSnapshot,
+  planProductionHistoryUpload,
+  PRODUCTION_HISTORY_COLLECTIONS,
 } from './sync/cloud-first.js?v=502';
 import {
   ensureSyncId,
@@ -1832,6 +1834,85 @@ export async function pushCutoverSnapshot({ confirm = false } = {}) {
     console.warn('cutover marker', err);
   }
   return { pushed: true, seeded: result?.seeded || 0, blockers: [], markerSynced };
+}
+
+/**
+ * מעלה רק תיעוד ייצור ממכשיר הגיבוי.
+ * החותמת היא עכשיו, כדי שמנות בלי תאריך עדכון לא יידלגו.
+ * לא מוחק את מפת המזהים ולא רץ על מחשב אחר.
+ */
+export async function pushProductionHistoryFromCutover({ confirm = false } = {}) {
+  const live = await getLiveSyncSettings();
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const plan = planProductionHistoryUpload({
+    confirm: confirm === true,
+    cutoverDevice: live.cutoverDevice === true,
+    online,
+  });
+  if (!plan.ready) return { pushed: false, seeded: 0, blockers: plan.blockers };
+  if (!isCloudFirstEnabled(live)) await saveLiveSyncSettings({ cloudFirst: true });
+  const result = await seedNamedCollections(PRODUCTION_HISTORY_COLLECTIONS, { stampNow: true });
+  return { pushed: true, seeded: result.seeded || 0, blockers: [] };
+}
+
+async function seedNamedCollections(names, { stampNow = false } = {}) {
+  const live = await getLiveSyncSettings();
+  const cloudFirst = isCloudFirstEnabled(live);
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
+  const wanted = new Set(names);
+  const deviceId = await getOrCreateDeviceId();
+  const kitchenId = KITCHEN_ID || BACKUP_SCOPE_ID;
+  let seeded = 0;
+
+  for (const collection of orderedCollections()) {
+    if (!wanted.has(collection)) continue;
+    const table = db[collection];
+    if (!table) continue;
+    const rows = await table.toArray();
+    if (!rows.length) continue;
+    const cloudRows = [];
+    for (const row of rows) {
+      const localKey = localKeyOf(collection, row);
+      if (!localKey) continue;
+      const updatedAt = stampNow
+        ? syncNowISO()
+        : (cloudFirst
+          ? cutoverRowUpdatedAt(collection, row.updatedAt || row.updated_at || null, syncNowISO())
+          : syncNowISO());
+      const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
+      if (!syncId) continue;
+      const payload = await remapFksToSyncIds(collection, row);
+      cloudRows.push({
+        id: syncId,
+        kitchen_id: kitchenId,
+        payload,
+        updated_at: updatedAt,
+        deleted_at: null,
+        device_id: deviceId,
+      });
+    }
+    if (!cloudRows.length) continue;
+    const tableName = tableOf(collection);
+    for (let i = 0; i < cloudRows.length; i += SEED_CHUNK_SIZE) {
+      const chunk = cloudRows.slice(i, i + SEED_CHUNK_SIZE);
+      if (cloudFirst) seeded += await postCloudRows(cfg, collection, chunk);
+      else {
+        await supabaseFetch(cfg, `/${tableName}?on_conflict=id`, {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: chunk,
+        });
+        seeded += chunk.length;
+      }
+    }
+  }
+  await saveLiveSyncSettings({
+    lastPushAt: new Date().toISOString(),
+    lastError: null,
+    lastErrorKind: null,
+  });
+  return { seeded };
 }
 
 async function readCloudCutoverMarker() {

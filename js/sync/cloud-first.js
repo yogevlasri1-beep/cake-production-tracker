@@ -79,6 +79,25 @@ export function cutoverRowUpdatedAt(collection, rowUpdatedAt, now) {
   return now || null;
 }
 
+/** תיעוד הייצור שהעלאה הראשונה דילגה עליו כי לא הייתה לו חותמת. */
+export const PRODUCTION_HISTORY_COLLECTIONS = [
+  'productionRuns',
+  'runStepStates',
+  'runPreparationChecks',
+  'runCleaningChecks',
+  'productionEntries',
+  'processLogs',
+];
+
+/** רק מכשיר הגיבוי, ורק אחרי אישור. לא רץ לבד. */
+export function planProductionHistoryUpload({ confirm, cutoverDevice, online } = {}) {
+  const blockers = [];
+  if (confirm !== true) blockers.push('לא אושר');
+  if (cutoverDevice !== true) blockers.push('זה לא מכשיר הגיבוי');
+  if (online !== true) blockers.push('אין חיבור');
+  return { ready: blockers.length === 0, blockers };
+}
+
 /** סימן בענן שההעלאה החד-פעמית הסתיימה. מסונכרן, בניגוד לדגל המקומי. */
 export const CLOUD_CUTOVER_KEY = 'cloudCutover';
 
