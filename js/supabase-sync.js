@@ -36,6 +36,7 @@ import {
   isCutoverDevice,
   localDatabaseHasRecords,
   planAdoptCloudFirst,
+  planCloudJoin,
   planCutoverSnapshot,
 } from './sync/cloud-first.js?v=501';
 import {
@@ -1349,7 +1350,12 @@ async function dedupeFlowChecklistLinksByName() {
   return removed;
 }
 
-async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedFks = false, skipUnchanged = false } = {}) {
+async function applyRemoteRow(collection, cloudRow, deviceId, {
+  allowUnresolvedFks = false,
+  skipUnchanged = false,
+  preferRemote = false,
+  protectCloud = false,
+} = {}) {
   if (!cloudRow?.id) return false;
 
   const syncId = cloudRow.id;
@@ -1400,12 +1406,12 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     return true;
   }
 
-  if (existingMeta?.deletedAt) {
+  if (!preferRemote && existingMeta?.deletedAt) {
     // Tombstone local — never resurrect from cloud until a newer non-deleted remote wins.
     if (!shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) return false;
   }
 
-  if (existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
+  if (!preferRemote && existingMeta && !shouldApplyRemote(existingMeta.updatedAt, remoteUpdated)) {
     // Local mapping is newer (or equal). If the row is still here, keep it.
     // If the row is missing, it was deleted locally — do NOT recreate from older cloud data
     // (this used to revive materials right after merge/absorb).
@@ -1424,7 +1430,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
   // Local change not yet flushed (delete or edit) — it is newer than this cloud
   // row and will win once pushed. Applying the cloud row first used to overwrite
   // the unsent edit, and the queued push then re-uploaded the old values.
-  if (existingMeta) {
+  if (!preferRemote && existingMeta) {
     const pendingLocal = await db.syncQueue
       .where('status')
       .anyOf('pending', 'error')
@@ -1467,13 +1473,24 @@ async function applyRemoteRow(collection, cloudRow, deviceId, { allowUnresolvedF
     const match = await findLocalByFingerprint(collection, payload, { syncId });
     if (match) {
       if (match.__cloudDuplicateOf) {
-        // Same logical category/material already linked to another cloud UUID.
-        // Soft-delete the incoming cloud row so pull stops recreating local chips.
-        await tombstoneCloudDuplicate(collection, syncId, deviceId);
-        if (collection === 'rawMaterials') {
-          await mergeRawMaterialPriceInto(match, payload);
+        // מכשיר קורא לא מוחק שורה בענן. במשיכה הראשונה הענן מעדכן את העותק המקומי.
+        if (protectCloud && !preferRemote) return true;
+        if (protectCloud && preferRemote) {
+          existingMeta = {
+            collection,
+            localKey: String(match.id),
+            syncId,
+            updatedAt: remoteUpdated,
+          };
+        } else {
+          // Same logical category/material already linked to another cloud UUID.
+          // Soft-delete the incoming cloud row so pull stops recreating local chips.
+          await tombstoneCloudDuplicate(collection, syncId, deviceId);
+          if (collection === 'rawMaterials') {
+            await mergeRawMaterialPriceInto(match, payload);
+          }
+          return true;
         }
-        return true;
       }
       existingMeta = {
         collection,
@@ -1568,7 +1585,9 @@ export function incrementalPullSince(lastPullAt, serverNowMs = Date.now() + serv
 
 const PULL_MAX_PAGES = 500;
 
-export async function pullCollection(collection, { since, deferred, skipUnchanged = false } = {}) {
+export async function pullCollection(collection, {
+  since, deferred, skipUnchanged = false, preferRemote = false, protectCloud = false,
+} = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return 0;
   const deviceId = await getOrCreateDeviceId();
@@ -1578,7 +1597,7 @@ export async function pullCollection(collection, { since, deferred, skipUnchange
     const rows = await supabaseFetch(cfg, buildCollectionPullPath(collection, { since, after }));
     if (!Array.isArray(rows) || !rows.length) break;
     for (const row of rows) {
-      const ok = await applyRemoteRow(collection, row, deviceId, { skipUnchanged });
+      const ok = await applyRemoteRow(collection, row, deviceId, { skipUnchanged, preferRemote, protectCloud });
       if (ok === 'defer') {
         if (deferred) deferred.push({ collection, row });
         continue;
@@ -1607,18 +1626,18 @@ let pullInFlightFull = false;
  * pulls at once, and two pulls applying the same new cloud row both found no
  * local match and both inserted it — a duplicate on the new computer.
  */
-export async function pullAllCollections({ full = false } = {}) {
+export async function pullAllCollections({ full = false, preferRemote = false } = {}) {
   if (pullInFlight) {
     if (!full || pullInFlightFull) return pullInFlight;
     try { await pullInFlight; } catch { /* run the full pull anyway */ }
-    return pullAllCollections({ full });
+    return pullAllCollections({ full, preferRemote });
   }
   pullInFlightFull = full;
-  pullInFlight = runPull({ full }).finally(() => { pullInFlight = null; });
+  pullInFlight = runPull({ full, preferRemote }).finally(() => { pullInFlight = null; });
   return pullInFlight;
 }
 
-async function runPull({ full = false } = {}) {
+async function runPull({ full = false, preferRemote = false } = {}) {
   if (authHalted) return { applied: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { applied: 0 };
@@ -1627,28 +1646,30 @@ async function runPull({ full = false } = {}) {
   await ensureServerClock(cfg);
   const since = full ? null : incrementalPullSince(live.lastPullAt);
   const skipUnchanged = !!since;
+  const protectCloud = isCloudFirstEnabled(live) && !isCutoverDevice(live);
+  const deferred = [];
+  const pullOpts = { since, deferred, skipUnchanged, preferRemote, protectCloud };
   let applied = 0;
   // Cursor = pull start on the server clock. Converted at the end, with the
   // offset measured by this pull's own responses.
   const pullStartedLocalMs = Date.now();
-  const deferred = [];
   fpCache = new Map();
   try {
     for (const collection of orderedCollections()) {
-      applied += await pullCollection(collection, { since, deferred, skipUnchanged });
+      applied += await pullCollection(collection, pullOpts);
     }
     // Second pass: rows whose parents were only created during this pull.
     if (deferred.length) {
       const deviceId = await getOrCreateDeviceId();
       const stillDeferred = [];
       for (const { collection, row } of deferred) {
-        const ok = await applyRemoteRow(collection, row, deviceId);
+        const ok = await applyRemoteRow(collection, row, deviceId, { preferRemote, protectCloud });
         if (ok === 'defer') stillDeferred.push({ collection, row });
         else if (ok) applied++;
       }
       // Anything still unresolved is applied without touching its dangling FKs.
       for (const { collection, row } of stillDeferred) {
-        const ok = await applyRemoteRow(collection, row, deviceId, { allowUnresolvedFks: true });
+        const ok = await applyRemoteRow(collection, row, deviceId, { allowUnresolvedFks: true, preferRemote, protectCloud });
         if (ok && ok !== 'defer') applied++;
       }
     }
@@ -1850,6 +1871,24 @@ async function adoptCloudFirstFromMarker() {
   });
   if (!plan.adopt) return;
   await saveLiveSyncSettings({ cloudFirst: true, cutoverDevice: false });
+}
+
+/** מחשב או טלפון אחר: מושך את כל הענן פעם אחת, בלי לשלוח את מה שכבר היה עליו. */
+export async function ensureCloudJoinPull() {
+  const live = await getLiveSyncSettings();
+  const plan = planCloudJoin({
+    cloudFirst: isCloudFirstEnabled(live),
+    cutoverDevice: isCutoverDevice(live),
+    joinPullDone: live.cloudJoinPullDone === true,
+  });
+  if (!plan.pullFull) return { joined: false };
+  if (plan.dropQueue) {
+    await db.syncQueue.clear();
+    await saveLiveSyncSettings({ pendingCount: 0 });
+  }
+  await pullAllCollections({ full: true, preferRemote: true });
+  await saveLiveSyncSettings({ cloudJoinPullDone: true, seedDone: true });
+  return { joined: true };
 }
 
 /**
@@ -2089,6 +2128,8 @@ export async function startLiveSync() {
   let live = await getLiveSyncSettings();
   if (!live.enabled) return;
   await adoptCloudFirstFromMarker();
+  live = await getLiveSyncSettings();
+  await ensureCloudJoinPull();
   live = await getLiveSyncSettings();
 
   let pulledOk = false;

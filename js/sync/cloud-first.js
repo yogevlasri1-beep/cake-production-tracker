@@ -96,6 +96,17 @@ export function planAdoptCloudFirst({ cutoverDevice, cloudFirst, markerPresent }
   return { adopt: false, reason: cloudFirst === true ? 'already-on' : 'waiting' };
 }
 
+/**
+ * מכשיר שנפתח אחרי המעבר מוריד את כל הענן פעם אחת, ולא שולח את העותק הישן שלו.
+ * מכשיר הגיבוי לא נכנס לכאן.
+ */
+export function planCloudJoin({ cloudFirst, cutoverDevice, joinPullDone } = {}) {
+  if (cloudFirst !== true || cutoverDevice === true || joinPullDone === true) {
+    return { pullFull: false, dropQueue: false };
+  }
+  return { pullFull: true, dropQueue: true };
+}
+
 function isEmptyValue(value) {
   return value == null || value === '';
 }

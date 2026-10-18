@@ -602,9 +602,13 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מסנכרן...'; }
     try {
-      const { flushSyncQueue, pullAllCollections } = await import('../supabase-sync.js?v=501');
-      const pushed = await flushSyncQueue();
+      const { flushSyncQueue, pullAllCollections, getLiveSyncSettings, ensureCloudJoinPull } = await import('../supabase-sync.js?v=501');
+      const live = await getLiveSyncSettings();
+      const reader = live.cloudFirst === true && live.cutoverDevice !== true;
+      if (reader) await ensureCloudJoinPull();
+      const pushed = reader ? { flushed: 0 } : await flushSyncQueue();
       const pulled = await pullAllCollections({ full: true });
+      if (reader) await flushSyncQueue();
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
       renderBackup(container, { navigate });
     } catch (err) {
