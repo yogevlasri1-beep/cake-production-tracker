@@ -28,12 +28,55 @@ export function isCutoverDevice(live) {
 }
 
 /**
- * מכשיר ריק לא מעלה כלום אם בענן כבר יש נתונים.
- * העלאה מלאה מותרת רק במכשיר המעבר, ורק כשהענן עדיין ריק.
+ * רק מכשיר הגיבוי מעלה את המסד, גם אם בענן כבר יש נתונים.
+ * כל מכשיר אחר לא מעלה — גם כשהענן ריק.
  */
-export function canUploadLocalDatabase({ cloudHasData, isCutoverDevice } = {}) {
-  if (cloudHasData) return false;
+export function canUploadLocalDatabase({ isCutoverDevice } = {}) {
   return isCutoverDevice === true;
+}
+
+/**
+ * מעבר לא רץ לבד. צריך אישור שזה מכשיר הגיבוי, חיבור, ונתונים עליו.
+ */
+export function planCloudFirstCutover({ confirmed, online, hasLocalData } = {}) {
+  const blockers = [];
+  if (confirmed !== true) blockers.push('לא אושר שזה מכשיר הגיבוי');
+  if (online !== true) blockers.push('אין חיבור');
+  if (hasLocalData !== true) blockers.push('אין נתונים על המכשיר');
+  return { ready: blockers.length === 0, blockers };
+}
+
+const LOCAL_DATA_COLLECTIONS = ['products', 'rawMaterials', 'recipes', 'productionRuns'];
+
+/** יש על המכשיר משהו שאפשר להעלות: מוצרים, חומרים, מתכונים או ריצות ייצור. */
+export function localDatabaseHasRecords(counts = {}) {
+  return LOCAL_DATA_COLLECTIONS.some((name) => Number(counts?.[name]) > 0);
+}
+
+/**
+ * תוכנית ההעלאה החד-פעמית. לא מדליקה כלום ולא שולחת כלום.
+ * setFlags ו-push נדלקים רק כשכל התנאים מתקיימים.
+ */
+export function planCutoverSnapshot({ confirm, online, hasLocalData } = {}) {
+  const plan = planCloudFirstCutover({
+    confirmed: confirm === true,
+    online: online === true,
+    hasLocalData: hasLocalData === true,
+  });
+  if (!plan.ready) {
+    return { action: 'stop', setFlags: false, push: false, blockers: plan.blockers };
+  }
+  return { action: 'push', setFlags: true, push: true, blockers: [] };
+}
+
+/**
+ * חותמת להעלאה החד-פעמית.
+ * קטלוג: עכשיו, כדי שהמכשיר ימלא את הענן, ושדה ריק עדיין לא מוחק ערך.
+ * אירוע (מנה, תנועת מלאי): רק חותמת שכבר על הרשומה. בלי חותמת — לא מעמידים פנים שהיא חדשה.
+ */
+export function cutoverRowUpdatedAt(collection, rowUpdatedAt, now) {
+  if (isAppendOnlyCollection(collection)) return rowUpdatedAt || null;
+  return now || null;
 }
 
 function isEmptyValue(value) {

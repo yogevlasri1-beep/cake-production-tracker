@@ -29,7 +29,10 @@ import {
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
+  cutoverRowUpdatedAt,
   isCloudFirstEnabled,
+  localDatabaseHasRecords,
+  planCutoverSnapshot,
 } from './sync/cloud-first.js?v=500';
 import {
   ensureSyncId,
@@ -466,17 +469,27 @@ async function postCloudRows(cfg, collection, body) {
         continue;
       }
       const remote = await fetchRemoteCloudRow(cfg, collection, row.id);
-      const decided = applyCloudFirstToCloudRow(collection, row, remote);
+      const localRow = (!row.updated_at && (!remote || remote.deleted_at))
+        ? { ...row, updated_at: syncNowISO() }
+        : row;
+      const decided = applyCloudFirstToCloudRow(collection, localRow, remote);
       if (decided.send && decided.cloudRow) sending.push(decided.cloudRow);
     }
-    if (!sending.length) return;
+    if (!sending.length) return 0;
     payload = Array.isArray(body) ? sending : sending[0];
+    await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+      body: payload,
+    });
+    return sending.length;
   }
   await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: payload,
   });
+  return Array.isArray(body) ? body.length : (body ? 1 : 0);
 }
 
 async function pushUpsert(cfg, collection, localKey, deviceId) {
@@ -1681,7 +1694,8 @@ async function runSeed({ force = false } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
 
-  if (isCloudFirstEnabled(live)) {
+  const cloudFirst = isCloudFirstEnabled(live);
+  if (cloudFirst) {
     const sample = await supabaseFetch(cfg, '/sync_products?select=id&limit=1');
     const cloudHasData = Array.isArray(sample) && sample.length > 0;
     if (!canUploadLocalDatabase({ cloudHasData, isCutoverDevice: live.cutoverDevice === true })) {
@@ -1703,9 +1717,12 @@ async function runSeed({ force = false } = {}) {
     for (const row of rows) {
       const localKey = localKeyOf(collection, row);
       if (!localKey) continue;
-      const updatedAt = syncNowISO();
+      const updatedAt = cloudFirst
+        ? cutoverRowUpdatedAt(collection, row.updatedAt || row.updated_at || null, syncNowISO())
+        : syncNowISO();
       // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
-      const syncId = await ensureSyncId(collection, localKey, { updatedAt });
+      // לא מוחקים את המפה: מזהה חדש על שורה שכבר בענן היה משכפל אותה.
+      const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
       if (!syncId) continue;
       const payload = await remapFksToSyncIds(collection, row);
       if (collection === 'settings') payload.key = row.key;
@@ -1723,12 +1740,17 @@ async function runSeed({ force = false } = {}) {
     const tableName = tableOf(collection);
     for (let i = 0; i < cloudRows.length; i += SEED_CHUNK_SIZE) {
       const chunk = cloudRows.slice(i, i + SEED_CHUNK_SIZE);
-      await supabaseFetch(cfg, `/${tableName}?on_conflict=id`, {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: chunk,
-      });
-      seeded += chunk.length;
+      if (cloudFirst) {
+        // מיזוג מול מה שכבר בענן: שדה ריק לא מוחק, ואירוע ישן לא דורס מנה חדשה.
+        seeded += await postCloudRows(cfg, collection, chunk);
+      } else {
+        await supabaseFetch(cfg, `/${tableName}?on_conflict=id`, {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: chunk,
+        });
+        seeded += chunk.length;
+      }
     }
   }
 
@@ -1738,6 +1760,42 @@ async function runSeed({ force = false } = {}) {
     lastErrorKind: null,
   });
   return { seeded };
+}
+
+const CUTOVER_COUNT_TABLES = ['products', 'rawMaterials', 'recipes', 'productionRuns'];
+
+/**
+ * העלאה חד-פעמית מיום המעבר. לא נקראת בהפעלה ולא מכפתור.
+ * בלי confirm לא משנה הגדרות ולא שולחת כלום.
+ * לא מוחקת את מפת המזהים — מזהה חדש היה משכפל שורות שכבר בענן.
+ * ההגדרה נשמרת רק על המכשיר הזה (liveSync לא מסונכרן).
+ */
+export async function pushCutoverSnapshot({ confirm = false } = {}) {
+  const counts = {};
+  for (const name of CUTOVER_COUNT_TABLES) {
+    const table = db[name];
+    counts[name] = table && typeof table.count === 'function' ? await table.count() : 0;
+  }
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const plan = planCutoverSnapshot({
+    confirm: confirm === true,
+    online,
+    hasLocalData: localDatabaseHasRecords(counts),
+  });
+  if (!plan.push) {
+    return { pushed: false, seeded: 0, blockers: plan.blockers };
+  }
+  await saveLiveSyncSettings({ cloudFirst: true, cutoverDevice: true });
+  const result = await seedLocalDataToSupabase({ force: true });
+  if (result?.skipped) {
+    return {
+      pushed: false,
+      seeded: 0,
+      blockers: [result.reason === 'cloud-first' ? 'המכשיר הזה לא הוגדר כמכשיר הגיבוי' : 'ההעלאה דולגה'],
+    };
+  }
+  await saveLiveSyncSettings({ seedDone: true });
+  return { pushed: true, seeded: result?.seeded || 0, blockers: [] };
 }
 
 /**
@@ -2039,6 +2097,7 @@ export async function startLiveSync() {
     }
   }
 
+  // לא קוראים כאן ל-pushCutoverSnapshot. המעבר רץ רק בקריאה מפורשת עם confirm.
   if (!live.seedDone) {
     try {
       const cfg = await getSupabaseBackupConfig();

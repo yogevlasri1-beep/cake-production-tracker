@@ -30,7 +30,7 @@ import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFi
 import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=500';
 import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=500';
 import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, POLYMORPHIC_FKS } from '../js/sync/collections.js?v=500';
-import { applyCloudFirstToCloudRow, canUploadLocalDatabase, isCloudFirstEnabled, mergeCatalogRecord, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
+import { applyCloudFirstToCloudRow, canUploadLocalDatabase, cutoverRowUpdatedAt, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, planCloudFirstCutover, planCutoverSnapshot, planCloudFirstWrite } from '../js/sync/cloud-first.js?v=500';
 import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=500';
 import {
   AUTH_RECONNECT_MESSAGE,
@@ -3010,10 +3010,28 @@ export async function runAllTests() {
     assertEqual(incrementalPullSince('2026-10-16T13:00:00.000Z', now), null);
   });
 
-  test('ענן כמקור — מכשיר ריק לא מעלה אם בענן יש נתונים', () => {
-    assertEqual(canUploadLocalDatabase({ cloudHasData: true, isCutoverDevice: true }), false);
+  test('ענן כמקור — רק מכשיר הגיבוי מעלה', () => {
+    assertEqual(canUploadLocalDatabase({ cloudHasData: true, isCutoverDevice: true }), true);
+    assertEqual(canUploadLocalDatabase({ cloudHasData: true, isCutoverDevice: false }), false);
     assertEqual(canUploadLocalDatabase({ cloudHasData: false, isCutoverDevice: false }), false);
-    assertEqual(canUploadLocalDatabase({ cloudHasData: false, isCutoverDevice: true }), true);
+    const blocked = planCloudFirstCutover({ confirmed: false, online: true, hasLocalData: true });
+    assertEqual(blocked.ready, false);
+    const ready = planCloudFirstCutover({ confirmed: true, online: true, hasLocalData: true });
+    assertEqual(ready.ready, true);
+    assertEqual(ready.blockers.length, 0);
+    assertEqual(localDatabaseHasRecords({ products: 0, rawMaterials: 2 }), true);
+    assertEqual(localDatabaseHasRecords({ products: 0, recipes: 0 }), false);
+    const stopped = planCutoverSnapshot({ confirm: false, online: true, hasLocalData: true });
+    assertEqual(stopped.action, 'stop');
+    assertEqual(stopped.push, false);
+    assertEqual(stopped.setFlags, false);
+    const go = planCutoverSnapshot({ confirm: true, online: true, hasLocalData: true });
+    assertEqual(go.action, 'push');
+    assertEqual(go.push, true);
+    const now = '2026-10-18T12:00:00.000Z';
+    assertEqual(cutoverRowUpdatedAt('rawMaterials', null, now), now);
+    assertEqual(cutoverRowUpdatedAt('productionEntries', null, now), null);
+    assertEqual(cutoverRowUpdatedAt('productionEntries', '2026-10-01T00:00:00.000Z', now), '2026-10-01T00:00:00.000Z');
   });
 
   test('ענן כמקור — שדה ריק לא מוחק ספק, ומכשיר ישן לא דורס מנה', () => {
