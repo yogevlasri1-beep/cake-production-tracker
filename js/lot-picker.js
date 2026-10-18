@@ -1,5 +1,5 @@
-import { escapeHtml, formatDecimal } from './utils.js?v=502';
-import { openBarcodeScanner } from './barcode-scan.js?v=502';
+import { escapeHtml, formatDecimal } from './utils.js?v=503';
+import { openBarcodeScanner } from './barcode-scan.js?v=503';
 
 let uid = 0;
 
@@ -35,7 +35,7 @@ export async function bindLotPickerFields(root) {
     .map((w) => (w.dataset.rawMaterialId ? Number(w.dataset.rawMaterialId) : null))
     .filter(Boolean);
   if (materialIds.length) {
-    ({ listActiveLots } = await import('./inventory-db.js?v=502'));
+    ({ listActiveLots } = await import('./inventory-db.js?v=503'));
   }
 
   for (const wrap of wrappers) {
