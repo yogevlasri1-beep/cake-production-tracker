@@ -101,6 +101,12 @@ export function planProductionHistoryUpload({ confirm, cutoverDevice, online } =
 /** סימן שהאייפון החליף את תיעוד הייצור בענן. המחשב מושך מחדש כשהזמן משתנה. */
 export const PRODUCTION_HISTORY_REV_KEY = 'productionHistoryRev';
 
+/**
+ * דור של משיכת התיעוד. מחשב שמשך בגרסה ישנה שמר את זמן הסימן
+ * ודילג על המשיכה החדשה — לכן מעלים את המספר כדי למשוך פעם נוספת.
+ */
+export const PRODUCTION_PULL_VERSION = 2;
+
 export function productionHistoryMarkerAt(value) {
   const at = value && typeof value === 'object' ? value.at : '';
   return typeof at === 'string' && at ? at : '';
@@ -108,15 +114,39 @@ export function productionHistoryMarkerAt(value) {
 
 /**
  * מחשב שכבר סיים את המשיכה הראשונה לא רואה תיעוד שעודכן אחר כך
- * אם הסמן שלו כבר עבר את זמן ההעלאה. לכן מושכים שוב כשיש סימן חדש.
+ * אם הסמן שלו כבר עבר את זמן ההעלאה. לכן מושכים שוב כשיש סימן חדש,
+ * או כשדור המשיכה על המכשיר ישן מהדור שבקוד.
  * מכשיר הגיבוי לא מושך כאן — אצלו הנתונים כבר מקומיים.
  */
-export function planProductionHistoryPull({ cloudFirst, cutoverDevice, markerAt, pulledAt, entries } = {}) {
+export function planProductionHistoryPull({
+  cloudFirst,
+  cutoverDevice,
+  markerAt,
+  pulledAt,
+  entries,
+  pullVersion = 0,
+  neededVersion = 0,
+} = {}) {
   if (cloudFirst !== true || cutoverDevice === true) return { pullFull: false };
+  if (Number(neededVersion) > 0 && (Number(pullVersion) || 0) < Number(neededVersion)) {
+    return { pullFull: true };
+  }
   // פעם ראשונה במחשב: למשוך את שורות הייצור גם אם הסימן עוד לא נקרא.
   if (!pulledAt) return { pullFull: true };
   if (markerAt && markerAt !== pulledAt && Number(entries) > 0) return { pullFull: true };
   return { pullFull: false };
+}
+
+/**
+ * מחשב שסומן בטעות כמכשיר הגיבוי לא מושך תיעוד.
+ * אם סימן המעבר בענן שייך למכשיר אחר — מכבים כאן את דגל הגיבוי.
+ * בלי מזהה בסימן לא מנחשים.
+ */
+export function planDemoteForeignCutover({ cutoverDevice, localDeviceId, markerDeviceId } = {}) {
+  if (cutoverDevice !== true) return { demote: false, reason: 'not-cutover' };
+  if (!markerDeviceId || !localDeviceId) return { demote: false, reason: 'no-device' };
+  if (String(localDeviceId) === String(markerDeviceId)) return { demote: false, reason: 'this-device' };
+  return { demote: true, reason: 'other-device' };
 }
 
 /**
@@ -131,7 +161,11 @@ export function planAppendOnlyPush({ collection, cutoverDevice, remoteExists, re
 }
 
 function normLabel(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().toLocaleLowerCase('he');
+  return String(value || '')
+    .replace(/["'״׳“”‘’]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('he');
 }
 
 function sameRecordId(a, b) {
@@ -159,6 +193,25 @@ export function pickProductionProductId(products, { productId, productName, cate
   if (inCat.length === 1) return inCat[0].id;
   if (named.length === 1) return named[0].id;
   return byId ? byId.id : (productId ?? null);
+}
+
+/**
+ * שורת ייצור עם שם מוצר נספרת גם אם המזהה שעליה הוא מספר ממכשיר אחר.
+ * בלי שם, או בלי מוצר מקומי אחד ברור — השורה נשארת כמו שהיא.
+ */
+export function entriesWithLocalProducts(entries, products) {
+  return (Array.isArray(entries) ? entries : []).map((entry) => {
+    if (!entry || typeof entry !== 'object') return entry;
+    const nextId = pickProductionProductId(products, {
+      productId: entry.productId,
+      productName: entry.productName,
+      categoryName: entry.categoryName,
+    });
+    if (nextId == null || nextId === '' || sameRecordId(nextId, entry.productId)) return entry;
+    const known = (Array.isArray(products) ? products : []).some((product) => sameRecordId(product?.id, nextId));
+    if (!known) return entry;
+    return { ...entry, productId: nextId };
+  });
 }
 
 /** סימן בענן שההעלאה החד-פעמית הסתיימה. מסונכרן, בניגוד לדגל המקומי. */

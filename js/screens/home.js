@@ -3,28 +3,29 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=505';
+} from '../db.js?v=506';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   wrapDateInputWithToday, bindTodayDateButtons,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=505';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=505';
+} from '../utils.js?v=506';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=506';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=505';
-import { requestAutoBackupNow } from '../backup-service.js?v=505';
+} from '../calc.js?v=506';
+import { requestAutoBackupNow } from '../backup-service.js?v=506';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=505';
+} from '../kitchen-db.js?v=506';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=505';
+} from '../order-reminder.js?v=506';
+import { entriesWithLocalProducts } from '../sync/cloud-first.js?v=506';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -248,6 +249,35 @@ function bindProductionEntryDeletes(container, onDeleted) {
   });
 }
 
+function labelProductsForEntries(products, categories) {
+  const names = new Map((categories || []).map((category) => [Number(category.id), category.name || '']));
+  return (products || []).map((product) => ({
+    ...product,
+    categoryName: names.get(Number(product.categoryId)) || product.categoryName || '',
+  }));
+}
+
+function linkHomeEntries(entries, products, categories) {
+  return entriesWithLocalProducts(entries, labelProductsForEntries(products, categories));
+}
+
+function productsForHomeCards(allProducts, byProduct) {
+  return (allProducts || []).filter((product) => {
+    if (product?.active) return true;
+    const qty = Number(byProduct?.[product.id] ?? byProduct?.[Number(product.id)] ?? 0);
+    return qty > 0;
+  });
+}
+
+async function pullProductionHistoryForHome() {
+  try {
+    const { ensureProductionHistoryPull } = await import('../supabase-sync.js?v=506');
+    await ensureProductionHistoryPull();
+  } catch (err) {
+    console.warn('production history pull', err);
+  }
+}
+
 async function renderHomeProductionList(container) {
   const today = todayISO();
   const { year: curY, month: curM } = currentMonth();
@@ -268,6 +298,7 @@ async function renderHomeProductionList(container) {
       ? getEntriesForDate(selectedDay)
       : getEntriesForMonth(selectedMonth.year, selectedMonth.month),
   ]);
+  const linkedEntries = linkHomeEntries(entries, allProducts, categories);
 
   const productMap = buildProductMap(allProducts);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
@@ -281,7 +312,7 @@ async function renderHomeProductionList(container) {
     <div class="card history-card">
       <div class="card-title">${listTitle}</div>
       <p class="form-hint" style="margin-bottom:12px">לחץ 🗑 למחיקת רישום — גם אם נוצר מתזרים יצור</p>
-      ${buildProductionEntriesListHTML(entries, productMap, categories, catMap, { showDelete: true })}
+      ${buildProductionEntriesListHTML(linkedEntries, productMap, categories, catMap, { showDelete: true })}
     </div>`;
 
   document.getElementById('home-prod-list-back')?.addEventListener('click', () => {
@@ -323,6 +354,7 @@ async function renderCategoryHistory(container, categoryId) {
       ? getEntriesForDate(selectedDay)
       : getEntriesForMonth(selectedMonth.year, selectedMonth.month),
   ]);
+  const linkedEntries = linkHomeEntries(periodEntries, allProducts, categories);
 
   const category = categories.find((c) => Number(c.id) === Number(categoryId));
   if (!category) {
@@ -332,7 +364,7 @@ async function renderCategoryHistory(container, categoryId) {
 
   const productMap = buildProductMap(allProducts);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
-  const body = buildCategoryHistoryHTML(periodEntries, productMap, categories, category, catMap);
+  const body = buildCategoryHistoryHTML(linkedEntries, productMap, categories, category, catMap);
 
   document.getElementById('page-title').textContent = category.name;
   document.getElementById('page-subtitle').textContent = `היסטוריית ייצור · ${periodLabel}`;
@@ -556,6 +588,8 @@ function bindCategoryCardClicks(container) {
 }
 
 export async function renderHome(container) {
+  await pullProductionHistoryForHome();
+
   if (container.dataset.homeProductionList === '1') {
     return renderHomeProductionList(container);
   }
@@ -598,14 +632,15 @@ export async function renderHome(container) {
   const productMap = buildProductMap(allProducts);
   const catMap = new Map(categories.map((c) => [c.id, c.name]));
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
-  const activeProducts = allProducts.filter((p) => p.active);
+  const linkedEntries = linkHomeEntries(entries, allProducts, categories);
   const usageRange = isDay
     ? { from: selectedDay, to: selectedDay }
     : monthDateRange(selectedMonth);
   const [totals, materialUsage] = await Promise.all([
-    getProductionTotals(entries, productMap),
+    getProductionTotals(linkedEntries, productMap),
     computeHomeMaterialUsage(usageRange),
   ]);
+  const activeProducts = productsForHomeCards(allProducts, totals.byProduct);
 
   const totalTarget = await getTarget('total', null, targetPeriod);
   const totalPct = pct(totals.total, totalTarget);
@@ -721,7 +756,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigateToWorkspace } = await import('../app.js?v=505');
+    const { navigateToWorkspace } = await import('../app.js?v=506');
     navigateToWorkspace('suppliers', 'suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -748,7 +783,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=505');
+    const { navigate } = await import('../app.js?v=506');
     navigate('process');
   };
 
@@ -773,7 +808,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=505');
+    const { navigate } = await import('../app.js?v=506');
     navigate('backup');
   });
 

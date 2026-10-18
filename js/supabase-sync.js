@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=505';
+import { db, getSetting, setSetting } from './db.js?v=506';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=505';
+} from './supabase-backup.js?v=506';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=505';
+} from './sync/collections.js?v=506';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -35,17 +35,20 @@ import {
   isCloudFirstEnabled,
   isCutoverDevice,
   localDatabaseHasRecords,
+  entriesWithLocalProducts,
   pickProductionProductId,
   planAdoptCloudFirst,
   planAppendOnlyPush,
   planCloudJoin,
   planCutoverSnapshot,
+  planDemoteForeignCutover,
   planProductionHistoryPull,
   planProductionHistoryUpload,
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
+  PRODUCTION_PULL_VERSION,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=505';
+} from './sync/cloud-first.js?v=506';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -55,14 +58,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=505';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=505';
+} from './sync/id-map.js?v=506';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=506';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=505';
+} from './auth.js?v=506';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -225,7 +228,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=505');
+    const { showToast } = await import('./utils.js?v=506');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2149,14 +2152,84 @@ async function readProductionHistoryMarker() {
   );
   if (!Array.isArray(rows)) return null;
   const hit = rows.find((row) => !row.deleted_at && productionHistoryMarkerAt(row?.payload?.value));
-  return hit ? hit.payload.value : null;
+  if (!hit) return null;
+  applyingRemote = true;
+  try {
+    await setSetting(PRODUCTION_HISTORY_REV_KEY, hit.payload.value);
+  } finally {
+    applyingRemote = false;
+  }
+  return hit.payload.value;
 }
 
+/** מחשב שסומן בטעות כמכשיר הגיבוי עובר למשיכה, בלי לגעת באייפון עצמו. */
+async function demoteForeignCutoverDevice() {
+  const live = await getLiveSyncSettings();
+  if (live.cutoverDevice !== true) return;
+  let marker = null;
+  try {
+    marker = await readCloudCutoverMarker();
+  } catch (err) {
+    console.warn('cloud cutover marker', err);
+    return;
+  }
+  const plan = planDemoteForeignCutover({
+    cutoverDevice: true,
+    localDeviceId: await getOrCreateDeviceId(),
+    markerDeviceId: marker?.deviceId || '',
+  });
+  if (!plan.demote) return;
+  await saveLiveSyncSettings({ cloudFirst: true, cutoverDevice: false });
+}
+
+/** שומר מזהה מוצר מקומי על שורות שכבר ירדו עם שם, בלי להעלות אותן בחזרה. */
+async function relinkStoredProductionEntries() {
+  const products = await productionProductsForRelink();
+  const entries = await db.productionEntries.toArray();
+  const linked = entriesWithLocalProducts(entries, products);
+  let changed = 0;
+  applyingRemote = true;
+  try {
+    for (let i = 0; i < entries.length; i++) {
+      const before = entries[i];
+      const after = linked[i];
+      if (!before || !after || String(before.productId) === String(after.productId)) continue;
+      await db.productionEntries.update(before.id, { productId: after.productId });
+      changed++;
+    }
+  } finally {
+    applyingRemote = false;
+    clearProductionProductCache();
+  }
+  return changed;
+}
+
+let historyPullInFlight = null;
+
 /**
- * אחרי שהאייפון החליף את תיעוד הייצור, המחשב מושך הכל מחדש
+ * אחרי שהאייפון החליף את תיעוד הייצור, המחשב מושך את שורות הייצור
  * ומוחק שורות מקומיות שלא קיימות בענן — כדי שלא ייספרו פעמיים.
+ * משיכה שכבר סומנה כגמורה בגרסה ישנה רצה שוב פעם אחת.
  */
-export async function ensureProductionHistoryPull() {
+export function ensureProductionHistoryPull() {
+  if (historyPullInFlight) return historyPullInFlight;
+  historyPullInFlight = runEnsureProductionHistoryPull().finally(() => {
+    historyPullInFlight = null;
+  });
+  return historyPullInFlight;
+}
+
+async function runEnsureProductionHistoryPull() {
+  try {
+    await adoptCloudFirstFromMarker();
+  } catch (err) {
+    console.warn('adopt cloud first', err);
+  }
+  try {
+    await demoteForeignCutoverDevice();
+  } catch (err) {
+    console.warn('demote cutover', err);
+  }
   const live = await getLiveSyncSettings();
   let marker = null;
   try {
@@ -2172,6 +2245,8 @@ export async function ensureProductionHistoryPull() {
     markerAt,
     pulledAt: live.productionHistoryPulledAt || '',
     entries: marker?.entries,
+    pullVersion: live.productionPullVersion || 0,
+    neededVersion: PRODUCTION_PULL_VERSION,
   });
   if (!plan.pullFull) return { pulled: false };
   collectProductionEntryIds = new Set();
@@ -2179,9 +2254,17 @@ export async function ensureProductionHistoryPull() {
     // רק קטגוריות, מוצרים ושורות ייצור. משיכה של כל הטבלאות נעצרת
     // אם טבלה אחרת נכשלת, ושורות הייצור (בסוף הרשימה) לא מגיעות למחשב.
     const pullResult = await pullProductionEntriesForMonth({ preferRemote: true, protectCloud: true });
+    const seen = collectProductionEntryIds ? collectProductionEntryIds.size : 0;
+    // משיכה ריקה לא נספרת כהצלחה — אחרת המחשב לא מנסה שוב.
+    if (seen === 0) return { pulled: false, empty: true };
     await purgeProductionEntriesNotInCloud(collectProductionEntryIds);
-    await saveLiveSyncSettings({ productionHistoryPulledAt: markerAt || 'local-repair' });
-    emitStatus({ applied: pullResult?.applied || 1 });
+    await relinkStoredProductionEntries();
+    await saveLiveSyncSettings({
+      productionHistoryPulledAt: markerAt || 'local-repair',
+      productionPullVersion: PRODUCTION_PULL_VERSION,
+    });
+    const applied = pullResult?.applied || seen;
+    queueMicrotask(() => emitStatus({ applied }));
     return { pulled: true, pullResult };
   } finally {
     collectProductionEntryIds = null;
