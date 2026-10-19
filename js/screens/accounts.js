@@ -1,10 +1,10 @@
-import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=510';
+import { escapeHtml, showToast, formatDateTime } from '../utils.js?v=511';
 import {
   getCurrentUserEmail,
   getStoredSession,
   userRoleLabel,
   userStatusLabel,
-} from '../auth.js?v=510';
+} from '../auth.js?v=511';
 import {
   listAccountProfiles,
   updateAccountProfile,
@@ -13,28 +13,28 @@ import {
   confirmAccountEmail,
   roleOptionsHtml,
   effectiveWorkspaceAccess,
-} from '../accounts-api.js?v=510';
+} from '../accounts-api.js?v=511';
 import {
   MANAGEABLE_WORKSPACES,
   workspaceLabel,
   defaultWorkspacesForRole,
   sanitizeWorkspaceAccess,
-} from '../permissions.js?v=510';
+} from '../permissions.js?v=511';
 import {
   fetchAuditEvents,
   auditActionLabel,
   auditEntityLabel,
   formatAuditSnapshotSummary,
   auditKnownEntityTables,
-} from '../audit.js?v=510';
-import { openModal, closeModal } from '../modal.js?v=510';
+} from '../audit.js?v=511';
+import { openModal, closeModal } from '../modal.js?v=511';
 import {
   getAppShareUrl,
   createAppQrDataUrl,
   downloadAppQrImage,
   copyTextToClipboard,
-} from '../app-qr.js?v=510';
-import { describeDownloadMethod } from '../download.js?v=510';
+} from '../app-qr.js?v=511';
+import { describeDownloadMethod } from '../download.js?v=511';
 
 const TAB_KEY = 'yitzurAccountsTab';
 const TAB_SUBTITLES = {

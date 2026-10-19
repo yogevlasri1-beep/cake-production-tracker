@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=510';
+import { db, getSetting, setSetting } from './db.js?v=511';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=510';
+} from './supabase-backup.js?v=511';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=510';
+} from './sync/collections.js?v=511';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -35,6 +35,11 @@ import {
   isCloudFirstEnabled,
   isCutoverDevice,
   planLiveSyncAlwaysOn,
+  planLiveSyncTick,
+  FLUSH_DEBOUNCE_MS,
+  FULL_PULL_INTERVAL_MS,
+  PRODUCTION_PULL_INTERVAL_MS,
+  RECENT_PRODUCTION_MIN_GAP_MS,
   planManualLiveSync,
   planProductionLabelPush,
   toCloudUpdatedAt,
@@ -60,7 +65,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=510';
+} from './sync/cloud-first.js?v=511';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -70,14 +75,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=510';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=510';
+} from './sync/id-map.js?v=511';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=511';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=510';
+} from './auth.js?v=511';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -240,7 +245,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=510');
+    const { showToast } = await import('./utils.js?v=511');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -420,7 +425,7 @@ function scheduleFlush() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushSyncQueue().catch((err) => console.warn('sync flush', err));
-  }, 400);
+  }, FLUSH_DEBOUNCE_MS);
 }
 
 async function readLocalRecord(collection, localKey) {
@@ -1902,7 +1907,7 @@ let lastRecentProductionPullMs = 0;
  * סמן שעבר את זמן השמירה בטלפון דילג על הרישום ולא חזר אליו.
  */
 export function pullRecentProductionHistory({ notify = true, force = false } = {}) {
-  if (!force && Date.now() - lastRecentProductionPullMs < 20000) {
+  if (!force && Date.now() - lastRecentProductionPullMs < RECENT_PRODUCTION_MIN_GAP_MS) {
     return Promise.resolve({ applied: 0, skipped: true });
   }
   lastRecentProductionPullMs = Date.now();
@@ -2774,25 +2779,38 @@ export async function startLiveSync() {
   let pulledOk = false;
   let fullPulledOk = false;
   let lastHiddenPullAt = 0;
+  let lastFullPullAt = 0;
+  let tickInFlight = false;
   const tick = async () => {
-    if (authHalted) return;
+    if (authHalted || tickInFlight) return;
+    tickInFlight = true;
     try {
-      await flushSyncQueue();
-      // A hidden tab/window still polled ~80 tables every 15 seconds. In the
-      // background pull once a few minutes; returning to the window pulls at once.
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-        if (Date.now() - lastHiddenPullAt < HIDDEN_PULL_INTERVAL_MS) return;
-        lastHiddenPullAt = Date.now();
-      }
-      const pulled = await pullAllCollections({ full: false });
-      await pullRecentProductionHistory({ notify: true });
-      pulledOk = true;
-      // ניקוי כבד רק כשיש עדכונים מהענן (ולא יותר מפעם ב־3 דקות)
-      if ((pulled?.applied || 0) > 0 && !isCloudFirstEnabled(await getLiveSyncSettings())) {
-        await dedupeSupplierWorkspaceLight();
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const plan = planLiveSyncTick({
+        now: Date.now(),
+        lastFullPullAt,
+        hidden,
+        lastHiddenPullAt,
+        hiddenInterval: HIDDEN_PULL_INTERVAL_MS,
+        fullInterval: FULL_PULL_INTERVAL_MS,
+      });
+      if (plan.flush) await flushSyncQueue();
+      // ברקע לא שואלים את כל הטבלאות כל כמה שניות. חוזרים לחלון — בודקים מיד.
+      if (!plan.pullProduction && !plan.pullCatalog) return;
+      if (hidden) lastHiddenPullAt = Date.now();
+      if (plan.pullProduction) await pullRecentProductionHistory({ notify: true });
+      if (plan.pullCatalog) {
+        lastFullPullAt = Date.now();
+        const pulled = await pullAllCollections({ full: false });
+        pulledOk = true;
+        if ((pulled?.applied || 0) > 0 && !isCloudFirstEnabled(await getLiveSyncSettings())) {
+          await dedupeSupplierWorkspaceLight();
+        }
       }
     } catch (err) {
       console.warn('live sync tick', err);
+    } finally {
+      tickInFlight = false;
     }
   };
 
@@ -2867,7 +2885,7 @@ export async function startLiveSync() {
     }
   }
 
-  pullTimer = setInterval(tick, 15000);
+  pullTimer = setInterval(tick, PRODUCTION_PULL_INTERVAL_MS);
   liveSyncOnlineHandler = () => { if (!authHalted) tick(); };
   liveSyncVisibilityHandler = () => {
     if (authHalted) return;
