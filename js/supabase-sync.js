@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=507';
+import { db, getSetting, setSetting } from './db.js?v=508';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=507';
+} from './supabase-backup.js?v=508';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=507';
+} from './sync/collections.js?v=508';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -35,6 +35,9 @@ import {
   isCloudFirstEnabled,
   isCutoverDevice,
   planLiveSyncAlwaysOn,
+  planManualLiveSync,
+  planProductionLabelPush,
+  toCloudUpdatedAt,
   localDatabaseHasRecords,
   entriesWithLocalProducts,
   pickProductionProductId,
@@ -47,9 +50,10 @@ import {
   planProductionHistoryUpload,
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
+  PRODUCTION_LABEL_VERSION,
   PRODUCTION_PULL_VERSION,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=507';
+} from './sync/cloud-first.js?v=508';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -59,14 +63,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=507';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=507';
+} from './sync/id-map.js?v=508';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=508';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=507';
+} from './auth.js?v=508';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -229,7 +233,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=507');
+    const { showToast } = await import('./utils.js?v=508');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -425,10 +429,11 @@ async function readLocalRecord(collection, localKey) {
 async function buildUpsertCloudRow(collection, localKey, deviceId) {
   const row = await readLocalRecord(collection, localKey);
   if (!row) return null;
-  const updatedAt = syncNowISO();
+  const source = await labelSyncRow(collection, row);
+  const updatedAt = toCloudUpdatedAt(source.updatedAt || source.updated_at, syncNowISO());
   const syncId = await ensureSyncId(collection, localKey, { updatedAt });
   if (!syncId) return null;
-  const payload = await remapFksToSyncIds(collection, row);
+  const payload = await remapFksToSyncIds(collection, source);
   if (collection === 'settings') payload.key = row.key;
   return {
     id: syncId,
@@ -1054,7 +1059,13 @@ const FRESH_SEED_SUPPLIER_CATEGORY_NAMES = new Set([
 
 // supplierCategoryRoleKey moved to ./sync/collections.js (also used by rowDedupeFingerprint
 // there); re-exported below so existing imports from this module keep working.
-export { supplierCategoryRoleKey, supplierCategoryCanonicalName };
+export {
+  supplierCategoryRoleKey,
+  supplierCategoryCanonicalName,
+  toCloudUpdatedAt,
+  planManualLiveSync,
+  planProductionLabelPush,
+};
 
 /**
  * מוחק קטגוריות ברירת-מחדל ריקות (גם אם כבר סונכרנו לענן) —
@@ -1542,9 +1553,10 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   // row and will win once pushed. Applying the cloud row first used to overwrite
   // the unsent edit, and the queued push then re-uploaded the old values.
   if (!relinkAgain && !preferRemote && existingMeta) {
+    // רק פעולה שעוד לא נשלחה. 'error' כבר נכשלה — אל תחסום מחיר/מנה שהגיעו מהענן.
     const pendingLocal = await db.syncQueue
       .where('status')
-      .anyOf('pending', 'error')
+      .equals('pending')
       .filter((op) => (
         op.collection === collection
         && String(op.localKey) === String(existingMeta.localKey)
@@ -1669,6 +1681,8 @@ export const PULL_PAGE_SIZE = 1000;
  * next tick (rows already held are skipped cheaply, see skipUnchanged).
  */
 export const PULL_OVERLAP_MS = 2 * 60 * 1000;
+/** בלי כותרת Date (CORS) אי אפשר למדוד את שעוון השרת — חלון רחב יותר לא מפספס כתיבה. */
+export const PULL_UNMEASURED_OVERLAP_MS = 15 * 60 * 1000;
 
 /**
  * `after` = last row of the previous page (keyset paging). Offset paging skipped
@@ -1693,13 +1707,18 @@ export function buildCollectionPullPath(collection, {
 }
 
 /** Cursor for an incremental pull: last pull minus the overlap window. */
-export function incrementalPullSince(lastPullAt, serverNowMs = Date.now() + serverClockOffsetMs) {
+export function incrementalPullSince(
+  lastPullAt,
+  serverNowMs = Date.now() + serverClockOffsetMs,
+  clockMeasured = true,
+) {
   const last = lastPullAt ? Date.parse(lastPullAt) : NaN;
   if (!Number.isFinite(last)) return null;
   // A cursor in the future (saved while this device's clock ran fast) would hide
   // every new row — fall back to a full pull once.
   if (last > serverNowMs + 60 * 1000) return null;
-  return new Date(last - PULL_OVERLAP_MS).toISOString();
+  const overlap = clockMeasured ? PULL_OVERLAP_MS : PULL_UNMEASURED_OVERLAP_MS;
+  return new Date(last - overlap).toISOString();
 }
 
 const PULL_MAX_PAGES = 500;
@@ -1773,7 +1792,11 @@ async function runPull({ full = false, preferRemote = false } = {}) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return { applied: 0 };
   await ensureServerClock(cfg);
-  const since = full ? null : incrementalPullSince(live.lastPullAt);
+  const since = full ? null : incrementalPullSince(
+    live.lastPullAt,
+    Date.now() + serverClockOffsetMs,
+    serverClockMeasured,
+  );
   const skipUnchanged = !!since;
   const protectCloud = isCloudFirstEnabled(live) && !isCutoverDevice(live);
   const deferred = [];
@@ -1889,14 +1912,16 @@ async function runSeed({ force = false } = {}) {
     for (const row of rows) {
       const localKey = localKeyOf(collection, row);
       if (!localKey) continue;
+      const localStamp = toCloudUpdatedAt(row.updatedAt || row.updated_at, null);
       const updatedAt = cloudFirst
-        ? cutoverRowUpdatedAt(collection, row.updatedAt || row.updated_at || null, syncNowISO())
-        : syncNowISO();
+        ? cutoverRowUpdatedAt(collection, localStamp, syncNowISO())
+        : (localStamp || syncNowISO());
       // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
       // לא מוחקים את המפה: מזהה חדש על שורה שכבר בענן היה משכפל אותה.
       const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
       if (!syncId) continue;
-      const payload = await remapFksToSyncIds(collection, row);
+      const source = await labelSyncRow(collection, row);
+      const payload = await remapFksToSyncIds(collection, source);
       if (collection === 'settings') payload.key = row.key;
       cloudRows.push({
         id: syncId,
@@ -2008,18 +2033,50 @@ export async function pushProductionHistoryFromCutover({ confirm = false } = {})
   return { pushed: true, seeded: result.seeded || 0, entries, blockers: [] };
 }
 
+/** מכשיר הגיבוי מעלה שוב מנות אחרונות עם שם מוצר, כדי שהמחשב יוכל לקשר אותן. */
+async function ensureProductionLabelPush() {
+  const live = await getLiveSyncSettings();
+  const plan = planProductionLabelPush({
+    cutoverDevice: live.cutoverDevice === true,
+    labelVersion: live.productionLabelVersion || 0,
+  });
+  if (!plan.push) return { pushed: false };
+  const sinceDate = new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const result = await seedNamedCollections(['productionEntries'], {
+    stampNow: true,
+    replace: true,
+    sinceDate,
+  });
+  const entries = result.counts?.productionEntries || 0;
+  try {
+    await setSetting(PRODUCTION_HISTORY_REV_KEY, { at: syncNowISO(), entries });
+    await enqueueUpsert('settings', PRODUCTION_HISTORY_REV_KEY);
+    await flushSyncQueue();
+  } catch (err) {
+    console.warn('production label marker', err);
+  }
+  await saveLiveSyncSettings({ productionLabelVersion: PRODUCTION_LABEL_VERSION });
+  return { pushed: true, entries };
+}
+
 async function productionEntryLabels(row) {
   const product = row?.productId != null ? await db.products.get(Number(row.productId)) : null;
   if (!product) return row;
   const category = product.categoryId != null ? await db.categories.get(Number(product.categoryId)) : null;
   return {
     ...row,
-    productName: product.name || '',
-    categoryName: category?.name || '',
+    productName: row.productName || product.name || '',
+    categoryName: row.categoryName || category?.name || '',
   };
 }
 
-async function seedNamedCollections(names, { stampNow = false, replace = false } = {}) {
+async function labelSyncRow(collection, row) {
+  if (!row) return row;
+  if (collection !== 'productionEntries' && collection !== 'productionRuns') return row;
+  return productionEntryLabels(row);
+}
+
+async function seedNamedCollections(names, { stampNow = false, replace = false, sinceDate = null } = {}) {
   const live = await getLiveSyncSettings();
   const cloudFirst = isCloudFirstEnabled(live);
   const cfg = await getSupabaseBackupConfig();
@@ -2038,16 +2095,18 @@ async function seedNamedCollections(names, { stampNow = false, replace = false }
     if (!rows.length) continue;
     const cloudRows = [];
     for (const row of rows) {
+      if (sinceDate && row.date && String(row.date) < sinceDate) continue;
       const localKey = localKeyOf(collection, row);
       if (!localKey) continue;
+      const localStamp = toCloudUpdatedAt(row.updatedAt || row.updated_at, null);
       const updatedAt = stampNow
         ? syncNowISO()
         : (cloudFirst
-          ? cutoverRowUpdatedAt(collection, row.updatedAt || row.updated_at || null, syncNowISO())
-          : syncNowISO());
+          ? cutoverRowUpdatedAt(collection, localStamp, syncNowISO())
+          : (localStamp || syncNowISO()));
       const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
       if (!syncId) continue;
-      const source = collection === 'productionEntries' ? await productionEntryLabels(row) : row;
+      const source = await labelSyncRow(collection, row);
       const payload = await remapFksToSyncIds(collection, source);
       cloudRows.push({
         id: syncId,
@@ -2279,14 +2338,13 @@ async function pullProductionEntriesForMonth({ preferRemote = true, protectCloud
   fpCache = new Map();
   clearProductionProductCache();
   try {
-    for (const collection of ['categories', 'products']) {
+    for (const collection of ['categories', 'products', ...PRODUCTION_HISTORY_COLLECTIONS]) {
       try {
         applied += await pullCollection(collection, opts);
       } catch (err) {
         console.warn('live sync pull', collection, err);
       }
     }
-    applied += await pullCollection('productionEntries', opts);
     const deviceId = await getOrCreateDeviceId();
     const stillDeferred = [];
     for (const item of deferred) {
@@ -2569,6 +2627,11 @@ export async function startLiveSync() {
   live = await getLiveSyncSettings();
   await ensureCloudJoinPull();
   live = await getLiveSyncSettings();
+  try {
+    await ensureProductionLabelPush();
+  } catch (err) {
+    console.warn('production label push', err);
+  }
   try {
     await ensureProductionHistoryPull();
   } catch (err) {

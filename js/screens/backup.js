@@ -18,18 +18,18 @@ import {
   supportsBackupLocationPicker,
   confirmAndRestoreBackupFile,
   downloadLatestBackupFile,
-} from '../backup-service.js?v=507';
-import { describeDownloadMethod } from '../download.js?v=507';
-import { showToast, escapeHtml } from '../utils.js?v=507';
-import { openModal, closeModal } from '../modal.js?v=507';
-import { APP_VERSION } from '../version.js?v=507';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=507';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=507';
-import { canAccessBackupFull } from '../permissions.js?v=507';
-import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=507';
-import { getSetting } from '../db.js?v=507';
-import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent } from '../sync/cloud-first.js?v=507';
-import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=507';
+} from '../backup-service.js?v=508';
+import { describeDownloadMethod } from '../download.js?v=508';
+import { showToast, escapeHtml } from '../utils.js?v=508';
+import { openModal, closeModal } from '../modal.js?v=508';
+import { APP_VERSION } from '../version.js?v=508';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=508';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=508';
+import { canAccessBackupFull } from '../permissions.js?v=508';
+import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=508';
+import { getSetting } from '../db.js?v=508';
+import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=508';
+import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=508';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -447,8 +447,8 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('repair-supplier-links-status');
     const label = btn?.textContent;
     try {
-      const { db } = await import('../db.js?v=507');
-      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=507');
+      const { db } = await import('../db.js?v=508');
+      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=508');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -488,7 +488,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('wipe-cloud-status');
     const label = btn?.textContent;
     try {
-      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=507');
+      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=508');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -602,19 +602,16 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       const {
         flushSyncQueue, pullAllCollections, getLiveSyncSettings, ensureCloudJoinPull, ensureProductionHistoryPull,
-      } = await import('../supabase-sync.js?v=507');
+      } = await import('../supabase-sync.js?v=508');
       const live = await getLiveSyncSettings();
-      const reader = live.cloudFirst === true && live.cutoverDevice !== true;
-      if (reader) await ensureCloudJoinPull();
-      const pushed = reader ? { flushed: 0 } : await flushSyncQueue();
-      let pulled;
-      if (reader) {
-        const hist = await ensureProductionHistoryPull();
-        pulled = hist.pulled ? (hist.pullResult || { applied: 0 }) : await pullAllCollections({ full: true });
-        await flushSyncQueue();
-      } else {
-        pulled = await pullAllCollections({ full: true });
-      }
+      const plan = planManualLiveSync(live);
+      if (plan.reader) await ensureCloudJoinPull();
+      const pushed = plan.flushFirst ? await flushSyncQueue() : { flushed: 0 };
+      if (plan.pullHistory) await ensureProductionHistoryPull();
+      const pulled = plan.pullFull
+        ? await pullAllCollections({ full: true })
+        : { applied: 0 };
+      await flushSyncQueue();
       showToast(`סונכרן ✓ · נדחפו ${pushed.flushed || 0} · התקבלו ${pulled.applied || 0}`);
       renderBackup(container, { navigate });
     } catch (err) {
@@ -630,7 +627,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
     try {
-      const { sendSyncProbe } = await import('../supabase-sync.js?v=507');
+      const { sendSyncProbe } = await import('../supabase-sync.js?v=508');
       const email = getCurrentUserEmail() || '';
       const note = `בדיקה מ-${email || 'משתמש'} · ${new Date().toLocaleTimeString('he-IL')}`;
       const { value, pushed } = await sendSyncProbe({ note, email });
@@ -655,7 +652,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'בודק...'; }
     try {
-      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=507');
+      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=508');
       const { value, pulled } = await refreshAndReadSyncProbe();
       if (!value?.at) {
         if (status) {
@@ -690,7 +687,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה... אל תסגור'; }
     try {
-      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=507');
+      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=508');
       const result = await pushCutoverSnapshot({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -718,7 +715,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה תיעוד... אל תסגור'; }
     try {
-      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=507');
+      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=508');
       const result = await pushProductionHistoryFromCutover({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -745,7 +742,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
     try {
-      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=507');
+      const { seedLocalDataToSupabase, saveLiveSyncSettings } = await import('../supabase-sync.js?v=508');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true });
       showToast(`הועלו ${result.seeded || 0} רשומות ✓`);
@@ -763,7 +760,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=507');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=508');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -780,7 +777,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=507');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=508');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });
@@ -873,7 +870,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (btn) btn.disabled = true;
     try {
       showToast('מכין קובץ Excel...');
-      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=507');
+      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=508');
       const msg = await exportAllDataTablesExcel();
       showToast(msg);
     } catch (err) {

@@ -1,6 +1,6 @@
-import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=507';
-import { openModal, closeModal } from '../modal.js?v=507';
-import { requestAutoBackupNow } from '../backup-service.js?v=507';
+import { escapeHtml, showToast, formatDateTime, weekStartISO, todayISO } from '../utils.js?v=508';
+import { openModal, closeModal } from '../modal.js?v=508';
+import { requestAutoBackupNow } from '../backup-service.js?v=508';
 import {
   getInventoryStockRows,
   getInventoryMovements,
@@ -10,11 +10,11 @@ import {
   inventoryMovementKindLabel,
   computeWeeklyInventoryGaps,
   formatWhatsAppGapOrderText,
-} from '../inventory-db.js?v=507';
-import { getSupplierCategories, findRawMaterialsByBarcode } from '../kitchen-db.js?v=507';
-import { getCurrentUserRole } from '../auth.js?v=507';
-import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=507';
-import { openBarcodeScanner } from '../barcode-scan.js?v=507';
+} from '../inventory-db.js?v=508';
+import { getSupplierCategories, findRawMaterialsByBarcode } from '../kitchen-db.js?v=508';
+import { getCurrentUserRole } from '../auth.js?v=508';
+import { canAdjustInventory, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=508';
+import { openBarcodeScanner } from '../barcode-scan.js?v=508';
 
 const TAB_SUBTITLES = {
   stock: 'יתרות חומרי גלם והתאמות מלאי',
@@ -235,7 +235,7 @@ async function openReceiveByBarcodeModal(onDone) {
 
 async function openAdjustModal(row, onDone, { receiveHint = false, scannedBarcode = '' } = {}) {
   const m = row.material;
-  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=507');
+  const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=508');
   openModal({
     title: receiveHint ? `קבלה בסריקה — ${m.name}` : `התאמת מלאי — ${m.name}`,
     bodyHTML: `
@@ -290,7 +290,7 @@ async function openAdjustModal(row, onDone, { receiveHint = false, scannedBarcod
       }
       const unit = row.unit || m.unit || '';
       if (!hasSet && packagingBatchNumber && Number(deltaVal) > 0) {
-        const { receiveInventoryLot } = await import('../inventory-db.js?v=507');
+        const { receiveInventoryLot } = await import('../inventory-db.js?v=508');
         await receiveInventoryLot({
           rawMaterialId: m.id, qty: deltaVal, unit, packagingBatchNumber, reason,
         });

@@ -31,6 +31,43 @@ export function planLiveSyncAlwaysOn(enabled) {
   return { enabled: true, restore: enabled !== true };
 }
 
+/**
+ * «סנכרן עכשיו» במחשב קורא חייב לדחוף שינויים חיים (מחיר, מנה חדשה),
+ * לא רק למשוך. דילוג על הדחיפה השאיר את העריכה במחשב בלבד.
+ */
+export function planManualLiveSync({ cloudFirst, cutoverDevice } = {}) {
+  const reader = cloudFirst === true && cutoverDevice !== true;
+  return { reader, flushFirst: true, pullFull: true, pullHistory: reader };
+}
+
+/**
+ * חותמת לענן: זמן העריכה המקומית, לא רגע הדחיפה.
+ * דחיפה שתמיד שמה «עכשיו» הפכה תור ישן לכתיבה חדשה ודרסה מחיר שעודכן במכשיר אחר.
+ * updatedAt בלי Z הוא שעון מקומי (חומרי גלם); עם Z — UTC (מנות).
+ */
+export function toCloudUpdatedAt(value, nowIso) {
+  const text = String(value || '').trim();
+  if (!text) return nowIso || null;
+  if (/[zZ]$/.test(text) || /[+-]\d{2}:\d{2}$/.test(text)) {
+    const ms = Date.parse(text);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : (nowIso || null);
+  }
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) {
+    const ms = Date.parse(text);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : (nowIso || null);
+  }
+  const ms = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0),
+  ).getTime();
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : (nowIso || null);
+}
+
 export function isCutoverDevice(live) {
   return live?.cutoverDevice === true;
 }
@@ -113,7 +150,20 @@ export const PRODUCTION_HISTORY_REV_KEY = 'productionHistoryRev';
  * דור של משיכת התיעוד. מחשב שמשך בגרסה ישנה שמר את זמן הסימן
  * ודילג על המשיכה החדשה — לכן מעלים את המספר כדי למשוך פעם נוספת.
  */
-export const PRODUCTION_PULL_VERSION = 2;
+export const PRODUCTION_PULL_VERSION = 3;
+
+/** דור להעלאה מחדש של מנות עם שם מוצר — בלי זה המחשב מסנן אותן מהמסך. */
+export const PRODUCTION_LABEL_VERSION = 1;
+
+export function planProductionLabelPush({
+  cutoverDevice,
+  labelVersion = 0,
+  neededVersion = PRODUCTION_LABEL_VERSION,
+} = {}) {
+  if (cutoverDevice !== true) return { push: false };
+  if ((Number(labelVersion) || 0) >= Number(neededVersion)) return { push: false };
+  return { push: true };
+}
 
 export function productionHistoryMarkerAt(value) {
   const at = value && typeof value === 'object' ? value.at : '';

@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=507';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=507';
-import { defaultColorForIndex } from './chart.js?v=507';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=507';
-import { logAuditEvent } from './audit.js?v=507';
+} from './validators.js?v=508';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=508';
+import { defaultColorForIndex } from './chart.js?v=508';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=508';
+import { logAuditEvent } from './audit.js?v=508';
 
 export { ValidationError };
 
@@ -5009,7 +5009,15 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
     }
   }
 
-  const record = { date, productId: pid, quantity: qty, isWaste: waste, updatedAt: new Date().toISOString() };
+  const record = {
+    date,
+    productId: pid,
+    quantity: qty,
+    isWaste: waste,
+    productName: product.name || '',
+    categoryName: category?.name || '',
+    updatedAt: new Date().toISOString(),
+  };
   const rid = sanitizeProductId(runId);
   if (rid) record.runId = rid;
   if (stepIndex != null && !Number.isNaN(Number(stepIndex))) record.stepIndex = Number(stepIndex);

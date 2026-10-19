@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=507';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=507';
+} from './runner.js?v=508';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=508';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -24,14 +24,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=507';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=507';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=507';
+} from '../js/kitchen-db.js?v=508';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=508';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=508';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=507';
-import { addCategoryGroup } from '../js/db.js?v=507';
+} from '../js/supabase-sync.js?v=508';
+import { addCategoryGroup } from '../js/db.js?v=508';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1044,6 +1044,19 @@ export async function runIntegrationTests() {
     assertOk(matPush, 'עדכון חומר (update) נכנס ל-syncQueue');
     const histPush = queue.find((q) => q.collection === 'rawMaterialPriceHistory' && q.type === 'upsert');
     assertOk(histPush, 'היסטוריית מחיר נכנסה ל-syncQueue');
+  });
+
+  await testAsync('addProductionEntry — שומר שם מוצר כדי שהמחשב יקשר מנה מהאייפון', async () => {
+    await wait(100);
+    await resetDatabase();
+    await initDB();
+    const catId = await addCategory('שטרודל 30 סמ');
+    const productId = await addProduct({ categoryId: catId, name: 'שטרודל גבינה' });
+    const entryId = await addProductionEntry({ date: '2026-10-19', productId, quantity: 12 });
+    const entry = await db.productionEntries.get(entryId);
+    assertEqual(entry.productName, 'שטרודל גבינה');
+    assertEqual(entry.categoryName, 'שטרודל 30 סמ');
+    assertOk(entry.updatedAt, 'מנה מקבלת חותמת זמן');
   });
 
   await testAsync('add/updateRawMaterial — נשמר updatedAt ומופיע בפריסת ספקים', async () => {
