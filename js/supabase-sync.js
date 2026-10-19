@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=508';
+import { db, getSetting, setSetting } from './db.js?v=509';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=508';
+} from './supabase-backup.js?v=509';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=508';
+} from './sync/collections.js?v=509';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -53,7 +53,7 @@ import {
   PRODUCTION_LABEL_VERSION,
   PRODUCTION_PULL_VERSION,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=508';
+} from './sync/cloud-first.js?v=509';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -63,14 +63,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=508';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=508';
+} from './sync/id-map.js?v=509';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=509';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=508';
+} from './auth.js?v=509';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -233,7 +233,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=508');
+    const { showToast } = await import('./utils.js?v=509');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -517,7 +517,7 @@ async function postCloudRows(cfg, collection, body, { replace = false, skippedId
         if (skippedIds) skippedIds.add(row.id);
         continue;
       }
-      // מכשיר הגיבוי: שורה בלי חותמת עדיין נשלחת. מחשב לא נכנס לכאן לשורה שכבר בענן.
+      // שורה בלי חותמת נשלחת רק כשאין מולה שורה חיה בענן.
       const localRow = (!row.updated_at && (flags.cutover || !remote || remote.deleted_at))
         ? { ...row, updated_at: syncNowISO() }
         : row;

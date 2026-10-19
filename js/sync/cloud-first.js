@@ -208,14 +208,14 @@ export function planDemoteForeignCutover({ cutoverDevice, localDeviceId, markerD
 }
 
 /**
- * מחשב לא דורס שורת ייצור שכבר בענן. שורה חדשה (אין בענן) עדיין נשלחת.
- * ההעלאה המפורשת מהאייפון (replace) מחליפה את השורה כמו שהיא.
+ * כל מכשיר שולח רישום, תיקון ומחיקה.
+ * אם בענן יש שמירה חדשה יותר, היא נשארת. עותק ישן לא דורס אותה.
+ * ההעלאה המפורשת (replace) מחליפה את השורה כמו שהיא.
  */
-export function planAppendOnlyPush({ collection, cutoverDevice, remoteExists, replace } = {}) {
+export function planAppendOnlyPush({ collection, replace } = {}) {
   if (replace === true) return { send: true, reason: 'replace' };
   if (!PRODUCTION_HISTORY_COLLECTIONS.includes(collection)) return { send: true, reason: 'catalog' };
-  if (cutoverDevice !== true && remoteExists === true) return { send: false, reason: 'reader-keeps-cloud' };
-  return { send: true, reason: 'ok' };
+  return { send: true, reason: 'any-device' };
 }
 
 function normLabel(value) {
