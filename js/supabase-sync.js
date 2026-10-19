@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=509';
+import { db, getSetting, setSetting } from './db.js?v=510';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=509';
+} from './supabase-backup.js?v=510';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=509';
+} from './sync/collections.js?v=510';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -48,12 +48,19 @@ import {
   planDemoteForeignCutover,
   planProductionHistoryPull,
   planProductionHistoryUpload,
+  planRecentProductionRepush,
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
   PRODUCTION_LABEL_VERSION,
   PRODUCTION_PULL_VERSION,
+  PRODUCTION_REPUSH_VERSION,
   productionHistoryMarkerAt,
-} from './sync/cloud-first.js?v=509';
+  recentProductionDateFloor,
+  recentProductionPullSince,
+  localISODate,
+  shouldRepushRecentProductionRow,
+  cloudUpdatedAtForSentHistory,
+} from './sync/cloud-first.js?v=510';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -63,14 +70,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=509';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=509';
+} from './sync/id-map.js?v=510';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=510';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=509';
+} from './auth.js?v=510';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -233,7 +240,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=509');
+    const { showToast } = await import('./utils.js?v=510');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -522,7 +529,18 @@ async function postCloudRows(cfg, collection, body, { replace = false, skippedId
         ? { ...row, updated_at: syncNowISO() }
         : row;
       const decided = applyCloudFirstToCloudRow(collection, localRow, remote);
-      if (decided.send && decided.cloudRow) sending.push(decided.cloudRow);
+      if (decided.send && decided.cloudRow) {
+        const stamped = cloudUpdatedAtForSentHistory(
+          collection,
+          syncNowISO(),
+          decided.cloudRow.updated_at,
+        );
+        const cloudRow = { ...decided.cloudRow, updated_at: stamped || decided.cloudRow.updated_at };
+        if (row && row.id === cloudRow.id) row.updated_at = cloudRow.updated_at;
+        sending.push(cloudRow);
+      } else if (row?.id && skippedIds) {
+        skippedIds.add(row.id);
+      }
     }
     if (!sending.length) return 0;
     payload = Array.isArray(body) ? sending : sending[0];
@@ -1769,6 +1787,15 @@ async function ensureServerClock(cfg) {
 let pullInFlight = null;
 let pullInFlightFull = false;
 
+/** משיכות שכותבות ל-IndexedDB רצות אחת אחרי השנייה, כדי לא ליצור כפילות. */
+let applyTail = Promise.resolve();
+
+function afterApplies(task) {
+  const run = applyTail.then(task, task);
+  applyTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
 /**
  * Serialised: the 15s timer, tab focus, «סנכרן עכשיו» and startup could run two
  * pulls at once, and two pulls applying the same new cloud row both found no
@@ -1785,7 +1812,8 @@ export async function pullAllCollections({ full = false, preferRemote = false } 
   return pullInFlight;
 }
 
-async function runPull({ full = false, preferRemote = false } = {}) {
+async function runPull({ full = false, preferRemote = false, exclusive = false } = {}) {
+  if (!exclusive) return afterApplies(() => runPull({ full, preferRemote, exclusive: true }));
   if (authHalted) return { applied: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { applied: 0 };
@@ -1865,6 +1893,110 @@ async function runPull({ full = false, preferRemote = false } = {}) {
     clearProductionProductCache();
   }
   return { applied };
+}
+
+let lastRecentProductionPullMs = 0;
+
+/**
+ * מושך את רישום הייצור מהיום, בלי קשר לסמן המשיכה הכללי.
+ * סמן שעבר את זמן השמירה בטלפון דילג על הרישום ולא חזר אליו.
+ */
+export function pullRecentProductionHistory({ notify = true, force = false } = {}) {
+  if (!force && Date.now() - lastRecentProductionPullMs < 20000) {
+    return Promise.resolve({ applied: 0, skipped: true });
+  }
+  lastRecentProductionPullMs = Date.now();
+  return afterApplies(() => pullRecentProductionHistoryNow(notify));
+}
+
+async function pullRecentProductionHistoryNow(notify) {
+  if (authHalted) return { applied: 0 };
+  const live = await getLiveSyncSettings();
+  if (!live.enabled) return { applied: 0 };
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg.supabaseUrl || !cfg.anonKey) return { applied: 0 };
+  const since = recentProductionPullSince(new Date());
+  const reader = isCloudFirstEnabled(live) && !isCutoverDevice(live);
+  const deferred = [];
+  const opts = {
+    since,
+    deferred,
+    skipUnchanged: true,
+    preferRemote: reader,
+    protectCloud: reader,
+  };
+  let applied = 0;
+  fpCache = new Map();
+  clearProductionProductCache();
+  try {
+    for (const collection of PRODUCTION_HISTORY_COLLECTIONS) {
+      try {
+        applied += await pullCollection(collection, opts);
+      } catch (err) {
+        console.warn('recent production pull', collection, err);
+      }
+    }
+    const deviceId = await getOrCreateDeviceId();
+    const stillDeferred = [];
+    for (const item of deferred) {
+      const ok = await applyRemoteRow(item.collection, item.row, deviceId, {
+        preferRemote: reader,
+        protectCloud: reader,
+      });
+      if (ok === 'defer') stillDeferred.push(item);
+      else if (ok) applied++;
+    }
+    for (const item of stillDeferred) {
+      const ok = await applyRemoteRow(item.collection, item.row, deviceId, {
+        allowUnresolvedFks: true,
+        preferRemote: reader,
+        protectCloud: reader,
+      });
+      if (ok && ok !== 'defer') applied++;
+    }
+    if (applied > 0) {
+      try { await relinkStoredProductionEntries(); } catch { /* ignore */ }
+    }
+  } finally {
+    fpCache = null;
+    clearProductionProductCache();
+  }
+  if (notify && applied > 0) queueMicrotask(() => emitStatus({ applied }));
+  return { applied };
+}
+
+/** מעלה שוב רישום מהיום ואתמול, גם אם התור כבר סימן אותו כנשלח. */
+async function ensureRecentProductionRepush() {
+  const live = await getLiveSyncSettings();
+  const plan = planRecentProductionRepush({ version: live.productionRepushVersion || 0 });
+  if (!plan.push) return { pushed: false };
+  const now = new Date();
+  const floor = recentProductionDateFloor(now);
+  const today = localISODate(now);
+  for (const collection of ['productionEntries', 'processLogs']) {
+    const table = db[collection];
+    if (!table) continue;
+    const rows = await table.toArray();
+    for (const row of rows) {
+      const localKey = row?.id ?? row?.key;
+      if (localKey == null) continue;
+      const meta = await getMetaByLocal(collection, localKey);
+      if (!shouldRepushRecentProductionRow({
+        date: row?.date,
+        today,
+        floor,
+        hasSyncId: !!(meta?.syncId && !meta.deletedAt),
+      })) continue;
+      await enqueueUpsert(collection, localKey);
+    }
+  }
+  try {
+    await flushSyncQueue();
+  } catch (err) {
+    console.warn('recent production repush', err);
+  }
+  await saveLiveSyncSettings({ productionRepushVersion: PRODUCTION_REPUSH_VERSION });
+  return { pushed: true };
 }
 
 /**
@@ -2653,6 +2785,7 @@ export async function startLiveSync() {
         lastHiddenPullAt = Date.now();
       }
       const pulled = await pullAllCollections({ full: false });
+      await pullRecentProductionHistory({ notify: true });
       pulledOk = true;
       // ניקוי כבד רק כשיש עדכונים מהענן (ולא יותר מפעם ב־3 דקות)
       if ((pulled?.applied || 0) > 0 && !isCloudFirstEnabled(await getLiveSyncSettings())) {
@@ -2737,10 +2870,19 @@ export async function startLiveSync() {
   pullTimer = setInterval(tick, 15000);
   liveSyncOnlineHandler = () => { if (!authHalted) tick(); };
   liveSyncVisibilityHandler = () => {
-    if (!authHalted && document.visibilityState === 'visible') tick();
+    if (authHalted) return;
+    if (document.visibilityState === 'hidden') {
+      flushSyncQueue().catch((err) => console.warn('sync flush', err));
+      return;
+    }
+    tick();
   };
   window.addEventListener('online', liveSyncOnlineHandler);
   document.addEventListener('visibilitychange', liveSyncVisibilityHandler);
+  window.addEventListener('pagehide', () => {
+    if (!authHalted) flushSyncQueue().catch((err) => console.warn('sync flush', err));
+  });
+  ensureRecentProductionRepush().catch((err) => console.warn('recent production repush', err));
 }
 
 /** Push only local rows that are not yet linked to a cloud syncId. */

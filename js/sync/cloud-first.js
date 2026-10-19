@@ -218,6 +218,65 @@ export function planAppendOnlyPush({ collection, replace } = {}) {
   return { send: true, reason: 'any-device' };
 }
 
+/** העלאה חוזרת של רישום מהיומיים האחרונים, פעם אחת בכל מכשיר. */
+export const PRODUCTION_REPUSH_VERSION = 1;
+
+export function planRecentProductionRepush({
+  version = 0,
+  neededVersion = PRODUCTION_REPUSH_VERSION,
+} = {}) {
+  if ((Number(version) || 0) >= Number(neededVersion)) return { push: false };
+  return { push: true };
+}
+
+/**
+ * חלון משיכה לרישום של היום.
+ * מתחיל 3 שעות לפני חצות המקומית, כדי לתפוס אפייה מוקדמת
+ * בלי למשוך שוב את כל ההיסטוריה שהועלתה אתמול.
+ */
+export function recentProductionPullSince(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), -3, 0, 0, 0);
+  return start.toISOString();
+}
+
+/** תאריך מקומי בפורמט YYYY-MM-DD. */
+export function localISODate(now = new Date()) {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * רישום של היום עולה שוב גם אם כבר סומן כנשלח.
+ * רישום של אתמול עולה רק אם מעולם לא קושר לענן — כדי שמחשב עם עותק ישן לא ידרוס.
+ */
+export function shouldRepushRecentProductionRow({ date, today, floor, hasSyncId } = {}) {
+  const day = String(date || '');
+  if (day && floor && day < floor) return false;
+  if (day && today && day < today && hasSyncId) return false;
+  return true;
+}
+
+/** אתמול בתאריך מקומי — רישום מהיום ומהלילה הקודם עולה שוב. */
+export function recentProductionDateFloor(now = new Date()) {
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const y = start.getFullYear();
+  const m = String(start.getMonth() + 1).padStart(2, '0');
+  const d = String(start.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * חותמת שנכתבת לענן רק אחרי שהוחלט לשלוח.
+ * שעון איטי בטלפון משאיר את השורה מאחורי סמן המשיכה של המחשב,
+ * והמחשב לא שואל עליה שוב.
+ */
+export function cloudUpdatedAtForSentHistory(collection, serverNowIso, rowUpdatedAt) {
+  if (!PRODUCTION_HISTORY_COLLECTIONS.includes(collection)) return rowUpdatedAt || serverNowIso || null;
+  return serverNowIso || rowUpdatedAt || null;
+}
+
 function normLabel(value) {
   return String(value || '')
     .replace(/["'״׳“”‘’]/g, '')

@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=509';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=509';
-import { defaultColorForIndex } from './chart.js?v=509';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=509';
-import { logAuditEvent } from './audit.js?v=509';
+} from './validators.js?v=510';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=510';
+import { defaultColorForIndex } from './chart.js?v=510';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=510';
+import { logAuditEvent } from './audit.js?v=510';
 
 export { ValidationError };
 
@@ -5000,7 +5000,7 @@ export async function addProductionEntry({ date, productId, quantity, runId, ste
       .equals([date, pid])
       .first();
     if (existing && !!existing.isWaste === waste) {
-      const patch = { quantity: (existing.quantity || 0) + qty };
+      const patch = { quantity: (existing.quantity || 0) + qty, updatedAt: new Date().toISOString() };
       const rid = sanitizeProductId(runId);
       if (rid) patch.runId = rid;
       if (stepIndex != null && !Number.isNaN(Number(stepIndex))) patch.stepIndex = Number(stepIndex);
@@ -5527,6 +5527,7 @@ export async function addProcessLog({ date, categoryId, activity, notes, quantit
     activity: act,
     notes: String(notes || '').trim().slice(0, 500),
     quantity: qtyRaw,
+    updatedAt: new Date().toISOString(),
   });
 }
 
@@ -5536,6 +5537,7 @@ export async function updateProcessLog(id, data) {
     const qty = patch.quantity !== '' && patch.quantity != null ? Number(patch.quantity) : null;
     patch.quantity = qty > 0 ? qty : null;
   }
+  patch.updatedAt = new Date().toISOString();
   return db.processLogs.update(id, patch);
 }
 
