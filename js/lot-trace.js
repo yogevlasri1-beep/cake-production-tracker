@@ -9,7 +9,7 @@ import {
   computeRunMetrics,
   getProducts,
   getCategories,
-} from './db.js?v=512';
+} from './db.js?v=513';
 
 function norm(s) {
   return String(s || '').trim().toLocaleLowerCase('he');

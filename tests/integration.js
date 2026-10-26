@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=512';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=512';
+} from './runner.js?v=513';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=513';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -24,15 +24,15 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=512';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=512';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=512';
+} from '../js/kitchen-db.js?v=513';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=513';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=513';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
   enqueueUnsyncedProductionHistory,
-} from '../js/supabase-sync.js?v=512';
-import { addCategoryGroup } from '../js/db.js?v=512';
+} from '../js/supabase-sync.js?v=513';
+import { addCategoryGroup } from '../js/db.js?v=513';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1147,6 +1147,31 @@ export async function runIntegrationTests() {
       cloud.restore();
       noteServerClock(new Date().toUTCString());
       await saveLiveSyncSettings({ lastPullAt: null });
+    }
+  });
+
+  await testAsync('סנכרון חי — מנה נדחפת לענן מיד אחרי השמירה', async () => {
+    await wait(200);
+    const cloud = installMockCloud();
+    try {
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+      await saveLiveSyncSettings({
+        enabled: true, cloudFirst: true, cutoverDevice: true, seedDone: true, lastPullAt: null,
+      });
+      const catId = await addCategory('עוגות מיידי');
+      const productId = await addProduct({ categoryId: catId, name: 'קרואסון' });
+      cloud.posts.length = 0;
+      await addProductionEntry({ date: '2026-10-26', productId, quantity: 5 });
+      await wait(80);
+      const sent = [...cloud.tableOf('sync_production_entries').values()];
+      assertOk(
+        sent.some((row) => Number(row.payload?.quantity) === 5),
+        'המנה עלתה לענן בלי לחיצה על סנכרן ובלי המתנת 200ms',
+      );
+    } finally {
+      cloud.restore();
     }
   });
 

@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=512';
+import { db, getSetting, setSetting } from './db.js?v=513';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=512';
+} from './supabase-backup.js?v=513';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=512';
+} from './sync/collections.js?v=513';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -54,6 +54,7 @@ import {
   planProductionHistoryPull,
   planProductionHistoryUpload,
   planRecentProductionRepush,
+  shouldPushImmediately,
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
   PRODUCTION_LABEL_VERSION,
@@ -67,7 +68,7 @@ import {
   shouldCatchUpProductionRow,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=512';
+} from './sync/cloud-first.js?v=513';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -77,14 +78,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=512';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=512';
+} from './sync/id-map.js?v=513';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=513';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=512';
+} from './auth.js?v=513';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -247,7 +248,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=512');
+    const { showToast } = await import('./utils.js?v=513');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -402,14 +403,14 @@ async function countQueueBacklog() {
   return db.syncQueue.where('status').anyOf('pending', 'error').count();
 }
 
-async function enqueue(op) {
+async function enqueue(op, { schedule = true } = {}) {
   await db.syncQueue.add({
     ...op,
     createdAt: new Date().toISOString(),
     status: 'pending',
   });
   await saveLiveSyncSettings({ pendingCount: await countQueueBacklog() });
-  scheduleFlush();
+  if (schedule) scheduleFlush();
 }
 
 const LOCAL_ONLY_SETTINGS = new Set([
@@ -450,12 +451,19 @@ function isSyncableOp(collection, localKey) {
   return true;
 }
 
-async function enqueueOp(type, collection, localKey) {
+async function enqueueOp(type, collection, localKey, { schedule = true } = {}) {
   if (!isSyncableOp(collection, localKey)) return;
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
-  await enqueue({ type, collection, localKey: String(localKey) });
+  const immediate = shouldPushImmediately(collection);
+  await enqueue(
+    { type, collection, localKey: String(localKey) },
+    { schedule: schedule && !immediate },
+  );
   dropPersistedPendingOp({ type, collection, localKey });
+  if (schedule && immediate && !drainingPendingOps) {
+    await flushSyncQueue();
+  }
 }
 
 export async function enqueueUpsert(collection, localKey) {
@@ -473,6 +481,56 @@ function scheduleFlush() {
   flushTimer = setTimeout(() => {
     flushSyncQueue().catch((err) => console.warn('sync flush', err));
   }, FLUSH_DEBOUNCE_MS);
+}
+
+let drainingPendingOps = false;
+let drainInFlight = null;
+let drainAgain = false;
+
+async function drainPendingOpsNow() {
+  if (drainInFlight) {
+    drainAgain = true;
+    return drainInFlight;
+  }
+  drainInFlight = runDrainPendingOps().finally(() => {
+    drainInFlight = null;
+    if (drainAgain) {
+      drainAgain = false;
+      void drainPendingOpsNow();
+    }
+  });
+  return drainInFlight;
+}
+
+async function runDrainPendingOps() {
+  const ops = pendingOps.splice(0, pendingOps.length);
+  if (!ops.length) return { flushed: 0, immediate: false };
+  drainingPendingOps = true;
+  let immediate = false;
+  try {
+    for (const op of ops) {
+      try {
+        if (shouldPushImmediately(op.collection)) immediate = true;
+        await enqueueOp(op.type, op.collection, op.localKey, { schedule: false });
+      } catch (err) {
+        persistPendingOp(op);
+        console.warn('live sync enqueue', err);
+      }
+    }
+  } finally {
+    drainingPendingOps = false;
+  }
+  if (immediate) {
+    try {
+      const result = await flushSyncQueue();
+      return { flushed: result?.flushed || 0, immediate: true };
+    } catch (err) {
+      console.warn('sync flush', err);
+      return { flushed: 0, immediate: true };
+    }
+  }
+  scheduleFlush();
+  return { flushed: 0, immediate: false };
 }
 
 async function readLocalRecord(collection, localKey) {
@@ -661,7 +719,7 @@ export function flushSyncQueue() {
     flushInFlight = null;
     if (flushAgain) {
       flushAgain = false;
-      scheduleFlush();
+      flushSyncQueue().catch((err) => console.warn('sync flush', err));
     }
   });
   return flushInFlight;
@@ -2057,7 +2115,7 @@ export async function enqueueUnsyncedProductionHistory({
         })
         : shouldCatchUpProductionRow({ hasSyncId, localNewer });
       if (!take) continue;
-      await enqueueOp('upsert', collection, localKey);
+      await enqueueOp('upsert', collection, localKey, { schedule: false });
       queued++;
     }
   }
@@ -2614,7 +2672,6 @@ export async function resetLocalSyncState() {
  */
 const pendingOps = [];
 const txPendingOps = new WeakMap();
-let pendingOpsTimer = null;
 const PENDING_OPS_BACKUP_KEY = 'liveSyncPendingOps';
 
 function persistPendingOp(op) {
@@ -2664,33 +2721,27 @@ function takePersistedPendingOps() {
 
 async function enqueuePersistedPendingOps() {
   const ops = takePersistedPendingOps();
+  let immediate = false;
   for (const op of ops) {
     if (!op?.collection || op.localKey == null || op.localKey === '') continue;
     try {
-      await enqueueOp(op.type || 'upsert', op.collection, op.localKey);
+      if (shouldPushImmediately(op.collection)) immediate = true;
+      await enqueueOp(op.type || 'upsert', op.collection, op.localKey, { schedule: false });
     } catch (err) {
       persistPendingOp(op);
       console.warn('live sync persisted enqueue', err);
     }
   }
+  if (immediate) {
+    try { await flushSyncQueue(); } catch (err) { console.warn('sync flush', err); }
+  } else if (ops.length) {
+    scheduleFlush();
+  }
   return ops.length;
 }
 
 function flushPendingOpsSoon() {
-  if (pendingOpsTimer) return;
-  pendingOpsTimer = setTimeout(async () => {
-    pendingOpsTimer = null;
-    const ops = pendingOps.splice(0, pendingOps.length);
-    for (const op of ops) {
-      try {
-        await enqueueOp(op.type, op.collection, op.localKey);
-        dropPersistedPendingOp(op);
-      } catch (err) {
-        persistPendingOp(op);
-        console.warn('live sync enqueue', err);
-      }
-    }
-  }, 0);
+  void drainPendingOpsNow();
 }
 
 function queueSyncOp(op) {

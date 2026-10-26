@@ -35,7 +35,7 @@ export function planLiveSyncAlwaysOn(enabled) {
 export const PRODUCTION_PULL_INTERVAL_MS = 3000;
 /** שאר הטבלאות (מוצרים, ספקים, מתכונים) נשארות בבדיקה איטית יותר. */
 export const FULL_PULL_INTERVAL_MS = 15000;
-/** כמה לחכות לפני שליחה, כדי ששמירה אחת עם כמה כתיבות תצא ביחד. */
+/** כמה לחכות לפני שליחה של קטלוג (מחיר, מתכון), כדי ששמירה אחת עם כמה כתיבות תצא ביחד. */
 export const FLUSH_DEBOUNCE_MS = 200;
 /** לא מתחילים שתי משיכות של אותו רישום כמעט באותו רגע. */
 export const RECENT_PRODUCTION_MIN_GAP_MS = 2500;
@@ -164,6 +164,14 @@ export const PRODUCTION_HISTORY_COLLECTIONS = [
   'productionEntries',
   'processLogs',
 ];
+
+/**
+ * רישום ייצור נדחף מיד אחרי השמירה, בלי טיימר של 200ms.
+ * באייפון נעילת מסך הורגת setTimeout והמנה נשארת במכשיר.
+ */
+export function shouldPushImmediately(collection) {
+  return PRODUCTION_HISTORY_COLLECTIONS.includes(collection);
+}
 
 /** רק מכשיר הגיבוי, ורק אחרי אישור. לא רץ לבד. */
 export function planProductionHistoryUpload({ confirm, cutoverDevice, online } = {}) {
