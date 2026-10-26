@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=511';
+import { db, getSetting, setSetting } from './db.js?v=513';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=511';
+} from './supabase-backup.js?v=513';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=511';
+} from './sync/collections.js?v=513';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -54,18 +54,21 @@ import {
   planProductionHistoryPull,
   planProductionHistoryUpload,
   planRecentProductionRepush,
+  shouldPushImmediately,
   PRODUCTION_HISTORY_COLLECTIONS,
   PRODUCTION_HISTORY_REV_KEY,
   PRODUCTION_LABEL_VERSION,
   PRODUCTION_PULL_VERSION,
+  PRODUCTION_REPUSH_LOOKBACK_DAYS,
   PRODUCTION_REPUSH_VERSION,
   productionHistoryMarkerAt,
-  recentProductionDateFloor,
+  productionRepushDateFloor,
   recentProductionPullSince,
-  localISODate,
+  isLocalProductionNewerThanMeta,
+  shouldCatchUpProductionRow,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=511';
+} from './sync/cloud-first.js?v=513';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -75,14 +78,14 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=511';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=511';
+} from './sync/id-map.js?v=513';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=513';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=511';
+} from './auth.js?v=513';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -245,7 +248,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=511');
+    const { showToast } = await import('./utils.js?v=513');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -260,7 +263,18 @@ export async function getLiveSyncSettings() {
   return { ...DEFAULT_LIVE, ...(saved || {}) };
 }
 
-export async function saveLiveSyncSettings(patch) {
+let saveLiveTail = Promise.resolve();
+
+export function saveLiveSyncSettings(patch) {
+  const run = saveLiveTail.then(
+    () => saveLiveSyncSettingsNow(patch),
+    () => saveLiveSyncSettingsNow(patch),
+  );
+  saveLiveTail = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function saveLiveSyncSettingsNow(patch) {
   const cur = await getLiveSyncSettings();
   const next = { ...cur, ...patch };
   await setSetting(LIVE_SYNC_SETTINGS, next);
@@ -269,7 +283,40 @@ export async function saveLiveSyncSettings(patch) {
 }
 
 export function isApplyingRemoteSync() {
-  return applyingRemote;
+  return applyingRemote || isRemoteApplyTx();
+}
+
+function currentDexieTx() {
+  return (typeof Dexie !== 'undefined' && Dexie.currentTransaction) || null;
+}
+
+function isRemoteApplyTx() {
+  const tx = currentDexieTx();
+  return !!(tx && tx.liveSyncRemoteApply);
+}
+
+function markRemoteApplyTx() {
+  const tx = currentDexieTx();
+  if (tx) tx.liveSyncRemoteApply = true;
+}
+
+/**
+ * כתיבה שמגיעה מהענן לא נכנסת לתור. הסימון הוא על הטרנזקציה,
+ * לא דגל גלובלי: דגל גלובלי על await חסם שמירת מנה באייפון בזמן משיכה.
+ */
+async function runRemoteLocalWrite(tableName, fn) {
+  const table = db[tableName];
+  const tables = [table, db.syncMeta, tableName === 'settings' ? null : db.settings].filter(Boolean);
+  applyingRemote = true;
+  try {
+    if (!table || typeof db.transaction !== 'function') return fn();
+    return await db.transaction('rw', ...tables, async () => {
+      markRemoteApplyTx();
+      return fn();
+    });
+  } finally {
+    applyingRemote = false;
+  }
 }
 
 /**
@@ -356,14 +403,14 @@ async function countQueueBacklog() {
   return db.syncQueue.where('status').anyOf('pending', 'error').count();
 }
 
-async function enqueue(op) {
+async function enqueue(op, { schedule = true } = {}) {
   await db.syncQueue.add({
     ...op,
     createdAt: new Date().toISOString(),
     status: 'pending',
   });
   await saveLiveSyncSettings({ pendingCount: await countQueueBacklog() });
-  scheduleFlush();
+  if (schedule) scheduleFlush();
 }
 
 const LOCAL_ONLY_SETTINGS = new Set([
@@ -404,20 +451,28 @@ function isSyncableOp(collection, localKey) {
   return true;
 }
 
-async function enqueueOp(type, collection, localKey) {
+async function enqueueOp(type, collection, localKey, { schedule = true } = {}) {
   if (!isSyncableOp(collection, localKey)) return;
   const live = await getLiveSyncSettings();
   if (!live.enabled) return;
-  await enqueue({ type, collection, localKey: String(localKey) });
+  const immediate = shouldPushImmediately(collection);
+  await enqueue(
+    { type, collection, localKey: String(localKey) },
+    { schedule: schedule && !immediate },
+  );
+  dropPersistedPendingOp({ type, collection, localKey });
+  if (schedule && immediate && !drainingPendingOps) {
+    await flushSyncQueue();
+  }
 }
 
 export async function enqueueUpsert(collection, localKey) {
-  if (applyingRemote) return;
+  if (isRemoteApplyTx()) return;
   await enqueueOp('upsert', collection, localKey);
 }
 
 export async function enqueueDelete(collection, localKey) {
-  if (applyingRemote) return;
+  if (isRemoteApplyTx()) return;
   await enqueueOp('delete', collection, localKey);
 }
 
@@ -426,6 +481,56 @@ function scheduleFlush() {
   flushTimer = setTimeout(() => {
     flushSyncQueue().catch((err) => console.warn('sync flush', err));
   }, FLUSH_DEBOUNCE_MS);
+}
+
+let drainingPendingOps = false;
+let drainInFlight = null;
+let drainAgain = false;
+
+async function drainPendingOpsNow() {
+  if (drainInFlight) {
+    drainAgain = true;
+    return drainInFlight;
+  }
+  drainInFlight = runDrainPendingOps().finally(() => {
+    drainInFlight = null;
+    if (drainAgain) {
+      drainAgain = false;
+      void drainPendingOpsNow();
+    }
+  });
+  return drainInFlight;
+}
+
+async function runDrainPendingOps() {
+  const ops = pendingOps.splice(0, pendingOps.length);
+  if (!ops.length) return { flushed: 0, immediate: false };
+  drainingPendingOps = true;
+  let immediate = false;
+  try {
+    for (const op of ops) {
+      try {
+        if (shouldPushImmediately(op.collection)) immediate = true;
+        await enqueueOp(op.type, op.collection, op.localKey, { schedule: false });
+      } catch (err) {
+        persistPendingOp(op);
+        console.warn('live sync enqueue', err);
+      }
+    }
+  } finally {
+    drainingPendingOps = false;
+  }
+  if (immediate) {
+    try {
+      const result = await flushSyncQueue();
+      return { flushed: result?.flushed || 0, immediate: true };
+    } catch (err) {
+      console.warn('sync flush', err);
+      return { flushed: 0, immediate: true };
+    }
+  }
+  scheduleFlush();
+  return { flushed: 0, immediate: false };
 }
 
 async function readLocalRecord(collection, localKey) {
@@ -614,7 +719,7 @@ export function flushSyncQueue() {
     flushInFlight = null;
     if (flushAgain) {
       flushAgain = false;
-      scheduleFlush();
+      flushSyncQueue().catch((err) => console.warn('sync flush', err));
     }
   });
   return flushInFlight;
@@ -1431,12 +1536,7 @@ async function deleteLocalDuplicateRow(collection, row) {
   const dropKey = localKeyOf(collection, row);
   const dropMeta = await getMetaByLocal(collection, dropKey);
   invalidateFingerprintCache(collection);
-  applyingRemote = true;
-  try {
-    await db[collection].delete(row.id);
-  } finally {
-    applyingRemote = false;
-  }
+  await runRemoteLocalWrite(collection, () => db[collection].delete(row.id));
   if (dropMeta?.syncId) {
     await markMetaDeleted(collection, dropKey, syncNowISO());
     await enqueue({ type: 'delete', collection, localKey: dropKey });
@@ -1526,13 +1626,10 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
           }
         }
         invalidateFingerprintCache(collection);
-        applyingRemote = true;
-        try {
+        await runRemoteLocalWrite(collection, async () => {
           if (collection === 'settings') await db.settings.delete(existingMeta.localKey);
           else await db[collection].delete(Number(existingMeta.localKey));
-        } finally {
-          applyingRemote = false;
-        }
+        });
       }
       await upsertMeta({
         collection,
@@ -1612,13 +1709,10 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   if (collection === 'settings') {
     const key = payload.key || existingMeta?.localKey;
     if (!key) return false;
-    applyingRemote = true;
-    try {
+    await runRemoteLocalWrite('settings', async () => {
       await db.settings.put({ key, value: payload.value });
       await upsertMeta({ collection, localKey: key, syncId, updatedAt: remoteUpdated });
-    } finally {
-      applyingRemote = false;
-    }
+    });
     return true;
   }
 
@@ -1656,8 +1750,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   }
 
   if (existingMeta) invalidateFingerprintCache(collection);
-  applyingRemote = true;
-  try {
+  await runRemoteLocalWrite(collection, async () => {
     if (existingMeta) {
       const localId = Number(existingMeta.localKey);
       const { id: _drop, ...rest } = payload;
@@ -1688,9 +1781,7 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
         updatedAt: remoteUpdated,
       });
     }
-  } finally {
-    applyingRemote = false;
-  }
+  });
   return true;
 }
 
@@ -1974,34 +2065,61 @@ async function pullRecentProductionHistoryNow(notify) {
 async function ensureRecentProductionRepush() {
   const live = await getLiveSyncSettings();
   const plan = planRecentProductionRepush({ version: live.productionRepushVersion || 0 });
-  if (!plan.push) return { pushed: false };
-  const now = new Date();
-  const floor = recentProductionDateFloor(now);
-  const today = localISODate(now);
-  for (const collection of ['productionEntries', 'processLogs']) {
-    const table = db[collection];
-    if (!table) continue;
-    const rows = await table.toArray();
-    for (const row of rows) {
-      const localKey = row?.id ?? row?.key;
-      if (localKey == null) continue;
-      const meta = await getMetaByLocal(collection, localKey);
-      if (!shouldRepushRecentProductionRow({
-        date: row?.date,
-        today,
-        floor,
-        hasSyncId: !!(meta?.syncId && !meta.deletedAt),
-      })) continue;
-      await enqueueUpsert(collection, localKey);
-    }
-  }
+  const queued = await enqueueUnsyncedProductionHistory({
+    includeRecentSynced: plan.push,
+    lookbackDays: PRODUCTION_REPUSH_LOOKBACK_DAYS,
+  });
+  if (!plan.push && !queued) return { pushed: false, queued: 0 };
   try {
     await flushSyncQueue();
   } catch (err) {
     console.warn('recent production repush', err);
   }
-  await saveLiveSyncSettings({ productionRepushVersion: PRODUCTION_REPUSH_VERSION });
-  return { pushed: true };
+  if (plan.push) {
+    await saveLiveSyncSettings({ productionRepushVersion: PRODUCTION_REPUSH_VERSION });
+  }
+  return { pushed: true, queued };
+}
+
+/**
+ * מכניס לתור רישום ייצור שנשמר מקומית ולא הגיע לענן.
+ * באייפון נעילת מסך הורגת את טיימר התור — בלי זה השבוע נשאר במכשיר.
+ */
+export async function enqueueUnsyncedProductionHistory({
+  includeRecentSynced = false,
+  lookbackDays = PRODUCTION_REPUSH_LOOKBACK_DAYS,
+} = {}) {
+  const now = new Date();
+  const floor = productionRepushDateFloor(now, lookbackDays);
+  let queued = 0;
+  for (const collection of PRODUCTION_HISTORY_COLLECTIONS) {
+    const table = db[collection];
+    if (!table || typeof table.toArray !== 'function') continue;
+    const rows = await table.toArray();
+    for (const row of rows) {
+      const localKey = row?.id ?? row?.key;
+      if (localKey == null) continue;
+      const meta = await getMetaByLocal(collection, localKey);
+      const hasSyncId = !!(meta?.syncId && !meta.deletedAt);
+      const localNewer = isLocalProductionNewerThanMeta({
+        localUpdatedAt: row?.updatedAt || row?.updated_at,
+        startedAt: row?.startedAt,
+        metaUpdatedAt: meta?.updatedAt,
+      });
+      const take = includeRecentSynced
+        ? shouldRepushRecentProductionRow({
+          date: row?.date,
+          floor,
+          hasSyncId,
+          localNewer,
+        })
+        : shouldCatchUpProductionRow({ hasSyncId, localNewer });
+      if (!take) continue;
+      await enqueueOp('upsert', collection, localKey, { schedule: false });
+      queued++;
+    }
+  }
+  return queued;
 }
 
 /**
@@ -2350,12 +2468,7 @@ async function readProductionHistoryMarker() {
   if (!Array.isArray(rows)) return null;
   const hit = rows.find((row) => !row.deleted_at && productionHistoryMarkerAt(row?.payload?.value));
   if (!hit) return null;
-  applyingRemote = true;
-  try {
-    await setSetting(PRODUCTION_HISTORY_REV_KEY, hit.payload.value);
-  } finally {
-    applyingRemote = false;
-  }
+  await runRemoteLocalWrite('settings', () => setSetting(PRODUCTION_HISTORY_REV_KEY, hit.payload.value));
   return hit.payload.value;
 }
 
@@ -2385,17 +2498,17 @@ async function relinkStoredProductionEntries() {
   const entries = await db.productionEntries.toArray();
   const linked = entriesWithLocalProducts(entries, products);
   let changed = 0;
-  applyingRemote = true;
   try {
     for (let i = 0; i < entries.length; i++) {
       const before = entries[i];
       const after = linked[i];
       if (!before || !after || String(before.productId) === String(after.productId)) continue;
-      await db.productionEntries.update(before.id, { productId: after.productId });
+      await runRemoteLocalWrite('productionEntries', () => (
+        db.productionEntries.update(before.id, { productId: after.productId })
+      ));
       changed++;
     }
   } finally {
-    applyingRemote = false;
     clearProductionProductCache();
   }
   return changed;
@@ -2512,15 +2625,12 @@ async function purgeProductionEntriesNotInCloud(seen) {
     drop.push(entry);
   }
   if (!drop.length) return 0;
-  applyingRemote = true;
-  try {
+  await runRemoteLocalWrite('productionEntries', async () => {
     for (const entry of drop) {
       await db.productionEntries.delete(entry.id);
       await db.syncMeta.where('[collection+localKey]').equals(['productionEntries', String(entry.id)]).delete();
     }
-  } finally {
-    applyingRemote = false;
-  }
+  });
   return drop.length;
 }
 
@@ -2562,25 +2672,81 @@ export async function resetLocalSyncState() {
  */
 const pendingOps = [];
 const txPendingOps = new WeakMap();
-let pendingOpsTimer = null;
+const PENDING_OPS_BACKUP_KEY = 'liveSyncPendingOps';
+
+function persistPendingOp(op) {
+  if (typeof localStorage === 'undefined' || !op) return;
+  try {
+    const raw = localStorage.getItem(PENDING_OPS_BACKUP_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(list)) return;
+    list.push({
+      type: op.type,
+      collection: op.collection,
+      localKey: String(op.localKey),
+      at: Date.now(),
+    });
+    localStorage.setItem(PENDING_OPS_BACKUP_KEY, JSON.stringify(list.slice(-500)));
+  } catch { /* private mode / quota */ }
+}
+
+function dropPersistedPendingOp(op) {
+  if (typeof localStorage === 'undefined' || !op) return;
+  try {
+    const raw = localStorage.getItem(PENDING_OPS_BACKUP_KEY);
+    if (!raw) return;
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list) || !list.length) return;
+    const next = list.filter((item) => !(
+      item?.type === op.type
+      && item?.collection === op.collection
+      && String(item?.localKey) === String(op.localKey)
+    ));
+    if (next.length) localStorage.setItem(PENDING_OPS_BACKUP_KEY, JSON.stringify(next));
+    else localStorage.removeItem(PENDING_OPS_BACKUP_KEY);
+  } catch { /* ignore */ }
+}
+
+function takePersistedPendingOps() {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PENDING_OPS_BACKUP_KEY);
+    localStorage.removeItem(PENDING_OPS_BACKUP_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+async function enqueuePersistedPendingOps() {
+  const ops = takePersistedPendingOps();
+  let immediate = false;
+  for (const op of ops) {
+    if (!op?.collection || op.localKey == null || op.localKey === '') continue;
+    try {
+      if (shouldPushImmediately(op.collection)) immediate = true;
+      await enqueueOp(op.type || 'upsert', op.collection, op.localKey, { schedule: false });
+    } catch (err) {
+      persistPendingOp(op);
+      console.warn('live sync persisted enqueue', err);
+    }
+  }
+  if (immediate) {
+    try { await flushSyncQueue(); } catch (err) { console.warn('sync flush', err); }
+  } else if (ops.length) {
+    scheduleFlush();
+  }
+  return ops.length;
+}
 
 function flushPendingOpsSoon() {
-  if (pendingOpsTimer) return;
-  pendingOpsTimer = setTimeout(async () => {
-    pendingOpsTimer = null;
-    const ops = pendingOps.splice(0, pendingOps.length);
-    for (const op of ops) {
-      try {
-        await enqueueOp(op.type, op.collection, op.localKey);
-      } catch (err) {
-        console.warn('live sync enqueue', err);
-      }
-    }
-  }, 0);
+  void drainPendingOpsNow();
 }
 
 function queueSyncOp(op) {
-  const tx = (typeof Dexie !== 'undefined' && Dexie.currentTransaction) || null;
+  persistPendingOp(op);
+  const tx = currentDexieTx();
   if (!tx || typeof tx.on !== 'function') {
     pendingOps.push(op);
     flushPendingOpsSoon();
@@ -2596,7 +2762,10 @@ function queueSyncOp(op) {
       flushPendingOpsSoon();
     });
     // On abort the writes never happened, so the buffered ops are dropped.
-    tx.on('abort', () => txPendingOps.delete(tx));
+    tx.on('abort', () => {
+      txPendingOps.delete(tx);
+      for (const item of buffered) dropPersistedPendingOp(item);
+    });
   }
   buffered.push(op);
 }
@@ -2619,11 +2788,14 @@ export function installLiveSyncMiddleware() {
             ...table,
             mutate(req) {
               return table.mutate(req).then((res) => {
-                if (applyingRemote) return res;
+                if (isRemoteApplyTx()) return res;
                 invalidateFingerprintCache(tableName);
                 try {
                   if (req.type === 'add') {
-                    for (const k of res.results || []) {
+                    const keys = (res.results && res.results.length)
+                      ? res.results
+                      : (req.values || []).map((v) => v?.id ?? v?.key).filter((k) => k != null && k !== '');
+                    for (const k of keys) {
                       queueSyncOp({
                         type: 'upsert',
                         collection: tableName,
@@ -2762,6 +2934,11 @@ export async function startLiveSync() {
   if (!live.enabled) return;
   await adoptCloudFirstFromMarker();
   live = await getLiveSyncSettings();
+  try {
+    await enqueuePersistedPendingOps();
+  } catch (err) {
+    console.warn('live sync persisted ops', err);
+  }
   await ensureCloudJoinPull();
   live = await getLiveSyncSettings();
   try {

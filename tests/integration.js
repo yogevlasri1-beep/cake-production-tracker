@@ -5,8 +5,8 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=511';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=511';
+} from './runner.js?v=513';
+import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=513';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -24,14 +24,15 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=511';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=511';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=511';
+} from '../js/kitchen-db.js?v=513';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=513';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=513';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=511';
-import { addCategoryGroup } from '../js/db.js?v=511';
+  enqueueUnsyncedProductionHistory,
+} from '../js/supabase-sync.js?v=513';
+import { addCategoryGroup } from '../js/db.js?v=513';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1146,6 +1147,61 @@ export async function runIntegrationTests() {
       cloud.restore();
       noteServerClock(new Date().toUTCString());
       await saveLiveSyncSettings({ lastPullAt: null });
+    }
+  });
+
+  await testAsync('סנכרון חי — מנה נדחפת לענן מיד אחרי השמירה', async () => {
+    await wait(200);
+    const cloud = installMockCloud();
+    try {
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+      await saveLiveSyncSettings({
+        enabled: true, cloudFirst: true, cutoverDevice: true, seedDone: true, lastPullAt: null,
+      });
+      const catId = await addCategory('עוגות מיידי');
+      const productId = await addProduct({ categoryId: catId, name: 'קרואסון' });
+      cloud.posts.length = 0;
+      await addProductionEntry({ date: '2026-10-26', productId, quantity: 5 });
+      await wait(80);
+      const sent = [...cloud.tableOf('sync_production_entries').values()];
+      assertOk(
+        sent.some((row) => Number(row.payload?.quantity) === 5),
+        'המנה עלתה לענן בלי לחיצה על סנכרן ובלי המתנת 200ms',
+      );
+    } finally {
+      cloud.restore();
+    }
+  });
+
+  await testAsync('סנכרון חי — רישום ייצור שנפל מהתור עולה ב-catch-up', async () => {
+    await wait(200);
+    const cloud = installMockCloud();
+    try {
+      await resetDatabase();
+      installLiveSyncMiddleware();
+      await initDB();
+      await saveLiveSyncSettings({
+        enabled: true, cloudFirst: true, cutoverDevice: true, seedDone: true, lastPullAt: null,
+      });
+      const catId = await addCategory('עוגות בדיקה');
+      const productId = await addProduct({ categoryId: catId, name: 'עוגת גבינה' });
+      const entryId = await addProductionEntry({ date: '2026-10-22', productId, quantity: 8 });
+      await wait(80);
+      await db.syncQueue.clear();
+      await db.syncMeta.clear();
+      const queued = await enqueueUnsyncedProductionHistory({ includeRecentSynced: false });
+      assertOk(queued >= 1, 'רישום בלי קישור לענן נכנס לתור');
+      const pending = await db.syncQueue
+        .filter((op) => op.collection === 'productionEntries' && String(op.localKey) === String(entryId))
+        .first();
+      assertOk(pending, 'המנה ממתינה בדחיפה');
+      await flushSyncQueue();
+      const sent = [...cloud.tableOf('sync_production_entries').values()];
+      assertOk(sent.some((row) => Number(row.payload?.quantity) === 8), 'המנה הגיעה לענן');
+    } finally {
+      cloud.restore();
     }
   });
 
