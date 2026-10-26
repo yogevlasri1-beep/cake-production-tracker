@@ -63,10 +63,12 @@ export function planLiveSyncTick({
 /**
  * «סנכרן עכשיו» במחשב קורא חייב לדחוף שינויים חיים (מחיר, מנה חדשה),
  * לא רק למשוך. דילוג על הדחיפה השאיר את העריכה במחשב בלבד.
+ * catchUpProduction: רישום שנשמר מקומית ולא נכנס לתור (אייפון שהרג טיימר)
+ * עולה שוב לפני השטיפה — אחרת הכפתור מדווח 0 נדחפו והשבוע נשאר במכשיר.
  */
 export function planManualLiveSync({ cloudFirst, cutoverDevice } = {}) {
   const reader = cloudFirst === true && cutoverDevice !== true;
-  return { reader, flushFirst: true, pullFull: true, pullHistory: reader };
+  return { reader, flushFirst: true, pullFull: true, pullHistory: reader, catchUpProduction: true };
 }
 
 /**
@@ -247,8 +249,13 @@ export function planAppendOnlyPush({ collection, replace } = {}) {
   return { send: true, reason: 'any-device' };
 }
 
-/** העלאה חוזרת של רישום מהיומיים האחרונים, פעם אחת בכל מכשיר. */
-export const PRODUCTION_REPUSH_VERSION = 1;
+/**
+ * העלאה חוזרת חד-פעמית אחרי תיקון.
+ * v1: יומיים אחרונים בלבד — רישום מאמצע השבוע נשאר באייפון.
+ * v2: שלושה שבועות + כל שורה בלי קישור לענן, בלי קשר לתאריך.
+ */
+export const PRODUCTION_REPUSH_VERSION = 2;
+export const PRODUCTION_REPUSH_LOOKBACK_DAYS = 21;
 
 export function planRecentProductionRepush({
   version = 0,
@@ -277,19 +284,49 @@ export function localISODate(now = new Date()) {
 }
 
 /**
- * רישום של היום עולה שוב גם אם כבר סומן כנשלח.
- * רישום של אתמול עולה רק אם מעולם לא קושר לענן — כדי שמחשב עם עותק ישן לא ידרוס.
+ * רישום שנשמר מקומית ולא הגיע לענן.
+ * באייפון טיימר של תור הסנכרון נקטע כשנועלים את המסך — השורה נשארת בלי syncId.
  */
-export function shouldRepushRecentProductionRow({ date, today, floor, hasSyncId } = {}) {
+export function shouldCatchUpProductionRow({ hasSyncId, localNewer } = {}) {
+  if (localNewer === true) return true;
+  return hasSyncId !== true;
+}
+
+/**
+ * עריכה מקומית אחרי המיפוי האחרון לענן — צריך לדחוף שוב.
+ * בלי חותמת מקומית לא מנחשים; שורה בלי מיפוי מטופלת ב-shouldCatchUpProductionRow.
+ */
+export function isLocalProductionNewerThanMeta({ localUpdatedAt, startedAt, metaUpdatedAt } = {}) {
+  const localMs = Date.parse(toCloudUpdatedAt(localUpdatedAt || startedAt, null));
+  const metaMs = Date.parse(metaUpdatedAt);
+  if (!Number.isFinite(localMs)) return false;
+  if (!Number.isFinite(metaMs)) return true;
+  return localMs > metaMs;
+}
+
+/**
+ * חד-פעמי אחרי תיקון: גם שורות שכבר יש להן syncId בחלון התאריכים.
+ * שורה בלי קישור לענן עולה תמיד, גם מלפני החלון — אחרת שבוע שלם נתקע באייפון.
+ */
+export function shouldRepushRecentProductionRow({
+  date, floor, hasSyncId, localNewer,
+} = {}) {
+  if (shouldCatchUpProductionRow({ hasSyncId, localNewer })) return true;
   const day = String(date || '');
-  if (day && floor && day < floor) return false;
-  if (day && today && day < today && hasSyncId) return false;
+  if (!day) return true;
+  if (floor && day < floor) return false;
   return true;
 }
 
 /** אתמול בתאריך מקומי — רישום מהיום ומהלילה הקודם עולה שוב. */
 export function recentProductionDateFloor(now = new Date()) {
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return productionRepushDateFloor(now, 1);
+}
+
+/** תחילת חלון ההעלאה החוזרת (ברירת מחדל: 21 יום). */
+export function productionRepushDateFloor(now = new Date(), days = PRODUCTION_REPUSH_LOOKBACK_DAYS) {
+  const lookback = Math.max(0, Number(days) || 0);
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - lookback);
   const y = start.getFullYear();
   const m = String(start.getMonth() + 1).padStart(2, '0');
   const d = String(start.getDate()).padStart(2, '0');
