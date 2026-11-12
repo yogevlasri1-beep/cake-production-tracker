@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=512';
+import { db, getSetting, setSetting } from './db.js?v=513';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=512';
+} from './supabase-backup.js?v=513';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,7 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=512';
+} from './sync/collections.js?v=513';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -65,7 +65,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=512';
+} from './sync/cloud-first.js?v=513';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -75,15 +75,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=512';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=512';
+} from './sync/id-map.js?v=513';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=513';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=512';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=512';
+} from './auth.js?v=513';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=513';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -176,8 +176,9 @@ export function formatLiveSyncErrorForUi(live) {
  * Bump when rowFingerprint / rowDedupeFingerprint rules change so devices re-run local dedupe.
  * v17: rebalance materials/suppliers wrongly dumped into אריזות back to חומ״ג/ניקיון.
  * v18: coerce string FKs + unassigned-material fingerprint includes category.
+ * v19: after Nov 11 duplicate re-seed — drop extra local copies of products/runs.
  */
-const DEDUPE_VERSION = 18;
+const DEDUPE_VERSION = 19;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -191,8 +192,9 @@ const DEDUPE_VERSION = 18;
  * new computer could keep lastPullAt and never receive the rest of the catalog.
  * v12: timestamps and the pull cursor now follow the server clock. Rows that an
  * earlier device-clock mismatch made other devices skip are recovered by one full pull.
+ * v13: pull tombstones from the Nov 11 duplicate re-upload of the yitzur backup.
  */
-const REPAIR_VERSION = 12;
+const REPAIR_VERSION = 13;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -246,7 +248,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=512');
+    const { showToast } = await import('./utils.js?v=513');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }

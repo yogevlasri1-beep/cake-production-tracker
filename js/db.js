@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=512';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=512';
-import { defaultColorForIndex } from './chart.js?v=512';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=512';
-import { logAuditEvent } from './audit.js?v=512';
+} from './validators.js?v=513';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=513';
+import { defaultColorForIndex } from './chart.js?v=513';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=513';
+import { logAuditEvent } from './audit.js?v=513';
 
 export { ValidationError };
 
@@ -8787,8 +8787,9 @@ export async function updateRunStepFields(runId, stepIndex, {
   }
 }
 
-/** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרim העדכניות (שלבים, דגלים, שמות) */
-export async function syncProductionRunWithFlow(runId) {
+/** מסנכרן תהליך פעיל/הושלם עם הגדרות התזרים העדכניות (שלבים, דגלים, שמות).
+ * לא מוסיף שלבים חדשים לתהליך קיים — זה פתח תזרימים ישנים מחדש. */
+export async function syncProductionRunWithFlow(runId, { addMissingSteps = false } = {}) {
   const run = await getProductionRun(runId, { normalize: false });
   if (!run) throw new ValidationError('תהליך לא נמצא');
   if (!run.flowId) return { updated: false, reason: 'no-flow' };
@@ -8832,6 +8833,7 @@ export async function syncProductionRunWithFlow(runId) {
         else if (i < run.currentStepIndex) stepStatus = 'completed';
         else if (i === run.currentStepIndex) stepStatus = 'active';
 
+        if (!addMissingSteps) continue;
         await db.runStepStates.add({
           runId: run.id,
           stepIndex: i,
