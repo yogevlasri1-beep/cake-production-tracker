@@ -1,6 +1,7 @@
-import { getSetting, setSetting } from './db.js?v=511';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=511';
-import { ValidationError } from './validators.js?v=511';
+import { getSetting, setSetting } from './db.js?v=512';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=512';
+import { ValidationError } from './validators.js?v=512';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=512';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -56,7 +57,7 @@ export function buildSupabaseHeaders(anonKey, extra = {}) {
 /** JWT של המשתמש המחובר — ל-RLS. דינמי כדי למנוע ייבוא מעגלי עם auth.js. */
 export async function resolveSupabaseUserAccessToken() {
   try {
-    const { getValidSession } = await import('./auth.js?v=511');
+    const { getValidSession } = await import('./auth.js?v=512');
     const session = await getValidSession();
     return session?.access_token || null;
   } catch {
@@ -143,14 +144,14 @@ export function parseSupabaseBackupRow(row) {
 async function supabaseFetch(cfg, path, { method = 'GET', body, headers = {} } = {}) {
   const url = buildSupabaseRestUrl(cfg.supabaseUrl, path);
   const accessToken = await resolveSupabaseUserAccessToken();
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method,
     headers: buildSupabaseHeaders(cfg.anonKey, {
       ...headers,
       ...(accessToken ? { accessToken } : {}),
     }),
     body: body != null ? JSON.stringify(body) : undefined,
-  });
+  }, SYNC_FETCH_TIMEOUT_MS);
   if (!res.ok) {
     let detail = res.statusText;
     try {

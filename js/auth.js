@@ -1,5 +1,6 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=511';
-import { ValidationError } from './validators.js?v=511';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=512';
+import { ValidationError } from './validators.js?v=512';
+import { fetchWithTimeout, AUTH_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=512';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;
@@ -61,12 +62,12 @@ async function fetchProfile(cfg, session) {
   if (!cfg.supabaseUrl || !cfg.anonKey || !session?.access_token || !session?.user?.id) return null;
   const url = `${buildSupabaseRestUrl(cfg.supabaseUrl, '/profiles')}?id=eq.${session.user.id}&select=role,display_name,status,email,workspace_access`;
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         apikey: cfg.anonKey,
         Authorization: `Bearer ${session.access_token}`,
       },
-    });
+    }, AUTH_FETCH_TIMEOUT_MS);
     if (!res.ok) return null;
     const rows = await res.json().catch(() => null);
     return Array.isArray(rows) && rows[0] ? rows[0] : null;
@@ -107,14 +108,22 @@ async function attachProfile(cfg, session, { requireActive = false } = {}) {
 
 async function authFetch(cfg, path, body) {
   const url = buildAuthUrl(cfg.supabaseUrl, path);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      apikey: cfg.anonKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetchWithTimeout(url, {
+      method: 'POST',
+      headers: {
+        apikey: cfg.anonKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    }, AUTH_FETCH_TIMEOUT_MS);
+  } catch (err) {
+    if (isTransientAuthError(err)) {
+      throw new ValidationError(AUTH_OFFLINE_MESSAGE);
+    }
+    throw err;
+  }
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     const detail = json?.error_description || json?.msg || json?.error || res.statusText;
@@ -232,13 +241,13 @@ export async function signOut() {
     const cfg = await getSupabaseBackupConfig();
     const url = buildAuthUrl(cfg.supabaseUrl, '/logout');
     if (url) {
-      await fetch(url, {
+      await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           apikey: cfg.anonKey,
           Authorization: `Bearer ${session.access_token}`,
         },
-      });
+      }, AUTH_FETCH_TIMEOUT_MS);
     }
   } catch {
     /* best-effort — local session already cleared */
@@ -248,9 +257,9 @@ export async function signOut() {
 export { getStoredSession };
 
 export function isTransientAuthError(err) {
-  if (err?.kind === 'network') return true;
+  if (err?.kind === 'network' || err?.name === 'AbortError') return true;
   const raw = String(err?.message || err || '');
-  return /failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed/i.test(raw)
+  return /failed to fetch|networkerror|net::|offline|timeout|econnrefused|load failed|abort/i.test(raw)
     || (typeof navigator !== 'undefined' && navigator.onLine === false && /fetch|network/i.test(raw));
 }
 
@@ -291,14 +300,14 @@ async function postRefreshToken(session) {
   const url = buildAuthUrl(cfg.supabaseUrl, '/token?grant_type=refresh_token');
   let res;
   try {
-    res = await fetch(url, {
+    res = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         apikey: cfg.anonKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ refresh_token: session.refresh_token }),
-    });
+    }, AUTH_FETCH_TIMEOUT_MS);
   } catch (err) {
     const wrapped = new Error(err?.message || 'Failed to fetch');
     wrapped.kind = 'network';
@@ -356,14 +365,28 @@ export function forceRefreshSession() {
   return refreshInFlight;
 }
 
-export async function getValidSession() {
+/** אפשר לפתוח מקומית גם כשה-JWT פג — בלי לחכות לסופהבייס. */
+export function canOpenAppWithStoredSession(session, { allowStale = false, now = Date.now() } = {}) {
+  if (!session?.access_token) return false;
+  if (session.status !== undefined && session.status !== 'active') return false;
+  if (!sessionNeedsRefresh(session, now)) return true;
+  return allowStale === true;
+}
+
+export async function getValidSession({ allowStale = false } = {}) {
   const session = getStoredSession();
   if (!session?.access_token) return null;
+  if (session.status !== undefined && session.status !== 'active') {
+    clearSession();
+    return null;
+  }
+
+  if (allowStale && sessionNeedsRefresh(session)) {
+    forceRefreshSession().catch(() => {});
+    return session;
+  }
+
   if (!sessionNeedsRefresh(session)) {
-    if (session.status !== undefined && session.status !== 'active') {
-      clearSession();
-      return null;
-    }
     if (session.role !== undefined && session.status !== undefined) {
       return session;
     }

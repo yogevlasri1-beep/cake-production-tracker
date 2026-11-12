@@ -3,29 +3,29 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=511';
+} from '../db.js?v=512';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   wrapDateInputWithToday, bindTodayDateButtons,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=511';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=511';
+} from '../utils.js?v=512';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=512';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=511';
-import { requestAutoBackupNow } from '../backup-service.js?v=511';
+} from '../calc.js?v=512';
+import { requestAutoBackupNow } from '../backup-service.js?v=512';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=511';
+} from '../kitchen-db.js?v=512';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=511';
-import { entriesWithLocalProducts } from '../sync/cloud-first.js?v=511';
+} from '../order-reminder.js?v=512';
+import { entriesWithLocalProducts } from '../sync/cloud-first.js?v=512';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -276,12 +276,22 @@ function productsForHomeCards(allProducts, byProduct) {
 
 async function pullProductionHistoryForHome() {
   try {
-    const { ensureProductionHistoryPull, pullRecentProductionHistory } = await import('../supabase-sync.js?v=511');
+    const { ensureProductionHistoryPull, pullRecentProductionHistory } = await import('../supabase-sync.js?v=512');
     await ensureProductionHistoryPull();
-    await pullRecentProductionHistory({ notify: false, force: true });
+    return await pullRecentProductionHistory({ notify: true, force: false });
   } catch (err) {
     console.warn('production history pull', err);
+    return { applied: 0 };
   }
+}
+
+/** Cloud catch-up must not block first paint — a hung Supabase fetch froze the home screen. */
+function scheduleHomeCloudRefresh(container) {
+  if (!container || container.dataset.homeCloudRefresh === '1') return;
+  container.dataset.homeCloudRefresh = '1';
+  pullProductionHistoryForHome().finally(() => {
+    delete container.dataset.homeCloudRefresh;
+  });
 }
 
 async function renderHomeProductionList(container) {
@@ -594,7 +604,7 @@ function bindCategoryCardClicks(container) {
 }
 
 export async function renderHome(container) {
-  await pullProductionHistoryForHome();
+  scheduleHomeCloudRefresh(container);
 
   if (container.dataset.homeProductionList === '1') {
     return renderHomeProductionList(container);
@@ -762,7 +772,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigateToWorkspace } = await import('../app.js?v=511');
+    const { navigateToWorkspace } = await import('../app.js?v=512');
     navigateToWorkspace('suppliers', 'suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -789,7 +799,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=511');
+    const { navigate } = await import('../app.js?v=512');
     navigate('process');
   };
 
@@ -814,7 +824,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=511');
+    const { navigate } = await import('../app.js?v=512');
     navigate('backup');
   });
 
@@ -873,14 +883,12 @@ export async function renderHome(container) {
   if (chartTo > today) chartTo = today;
   if (chartFrom > chartTo) chartFrom = chartTo;
 
-  const chartEntries = await getEntriesInRange(chartFrom, chartTo);
-
-  const paintCharts = async () => {
+  const paintCharts = async (entries) => {
     await renderProductionChart(
       document.getElementById('production-chart'),
       document.getElementById('chart-summary'),
       chartPeriod,
-      chartEntries,
+      entries,
       productMap,
       categories,
       anchorDate
@@ -894,12 +902,17 @@ export async function renderHome(container) {
     );
   };
 
+  const loadAndPaintCharts = async () => {
+    const entries = await getEntriesInRange(chartFrom, chartTo);
+    await paintCharts(entries);
+  };
+
   const chartsCollapse = container.querySelector('.home-charts-collapse');
   chartsCollapse?.addEventListener('toggle', () => {
     container.dataset.homeChartsOpen = chartsCollapse.open ? '1' : '0';
-    if (chartsCollapse.open) paintCharts();
+    if (chartsCollapse.open) loadAndPaintCharts();
   });
-  if (chartsCollapse?.open) await paintCharts();
+  if (chartsCollapse?.open) await loadAndPaintCharts();
 
   container.querySelectorAll('#chart-tabs .tab').forEach((tab) => {
     tab.addEventListener('click', () => {
