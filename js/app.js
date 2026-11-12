@@ -1,14 +1,14 @@
-import { initDB, runDeferredDbMaintenance } from './db.js?v=514';
-import { renderHome, homeMeta } from './screens/home.js?v=514';
-import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=514';
-import { initIOSInstallPrompt } from './ios-install.js?v=514';
-import { initNetworkCheck } from './network.js?v=514';
-import { registerServiceWorker } from './sw-register.js?v=514';
-import { APP_VERSION } from './version.js?v=514';
-import { showToast } from './utils.js?v=514';
-import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=514';
-import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=514';
-import './modal.js?v=514';
+import { initDB, runDeferredDbMaintenance } from './db.js?v=515';
+import { renderHome, homeMeta } from './screens/home.js?v=515';
+import { getSavedWorkspace, saveWorkspace, WORKSPACES, MANAGER_TAB_KEY } from './workspaces.js?v=515';
+import { initIOSInstallPrompt } from './ios-install.js?v=515';
+import { initNetworkCheck } from './network.js?v=515';
+import { registerServiceWorker } from './sw-register.js?v=515';
+import { APP_VERSION } from './version.js?v=515';
+import { showToast } from './utils.js?v=515';
+import { getCurrentUserRole, getCurrentWorkspaceAccess, signOut } from './auth.js?v=515';
+import { allowedWorkspaces, canAccessWorkspace, PERMISSION_DENIED_MESSAGE } from './permissions.js?v=515';
+import './modal.js?v=515';
 
 function lazyScreen(loader) {
   let resolved = null;
@@ -36,19 +36,19 @@ async function resolveScreen(entry) {
 const PRODUCTION_SCREENS = {
   home: { render: renderHome, meta: homeMeta },
   process: lazyScreen(async () => {
-    const m = await import('./screens/process.js?v=514');
+    const m = await import('./screens/process.js?v=515');
     return { render: m.renderProcess, meta: m.processMeta };
   }),
   products: lazyScreen(async () => {
-    const m = await import('./screens/products.js?v=514');
+    const m = await import('./screens/products.js?v=515');
     return { render: m.renderProducts, meta: m.productsMeta };
   }),
   reports: lazyScreen(async () => {
-    const m = await import('./screens/reports.js?v=514');
+    const m = await import('./screens/reports.js?v=515');
     return { render: m.renderReports, meta: m.reportsMeta };
   }),
   backup: lazyScreen(async () => {
-    const m = await import('./screens/backup.js?v=514');
+    const m = await import('./screens/backup.js?v=515');
     return {
       render: (container) => m.renderBackup(container, { navigate, openFinance: openFinanceScreen }),
       meta: m.backupMeta,
@@ -60,55 +60,55 @@ const WORKSPACE_SCREENS = {
   production: PRODUCTION_SCREENS,
   suppliers: {
     suppliers: lazyScreen(async () => {
-      const m = await import('./screens/suppliers.js?v=514');
+      const m = await import('./screens/suppliers.js?v=515');
       return { render: m.renderSuppliers, meta: m.suppliersMeta };
     }),
   },
   recipes: {
     recipes: lazyScreen(async () => {
-      const m = await import('./screens/recipes.js?v=514');
+      const m = await import('./screens/recipes.js?v=515');
       return { render: m.renderRecipes, meta: m.recipesMeta };
     }),
   },
   manager: {
     manager: lazyScreen(async () => {
-      const m = await import('./screens/manager.js?v=514');
+      const m = await import('./screens/manager.js?v=515');
       return { render: m.renderManager, meta: m.managerMeta };
     }),
   },
   haccp: {
     haccp: lazyScreen(async () => {
-      const m = await import('./screens/haccp.js?v=514');
+      const m = await import('./screens/haccp.js?v=515');
       return { render: m.renderHaccp, meta: m.haccpMeta };
     }),
   },
   accounts: {
     accounts: lazyScreen(async () => {
-      const m = await import('./screens/accounts.js?v=514');
+      const m = await import('./screens/accounts.js?v=515');
       return { render: m.renderAccounts, meta: m.accountsMeta };
     }),
   },
   lots: {
     lots: lazyScreen(async () => {
-      const m = await import('./screens/lots.js?v=514');
+      const m = await import('./screens/lots.js?v=515');
       return { render: m.renderLots, meta: m.lotsMeta };
     }),
   },
   inventory: {
     inventory: lazyScreen(async () => {
-      const m = await import('./screens/inventory.js?v=514');
+      const m = await import('./screens/inventory.js?v=515');
       return { render: m.renderInventory, meta: m.inventoryMeta };
     }),
   },
   productCatalog: {
     productCatalog: lazyScreen(async () => {
-      const m = await import('./screens/product-catalog.js?v=514');
+      const m = await import('./screens/product-catalog.js?v=515');
       return { render: m.renderProductCatalog, meta: m.productCatalogMeta };
     }),
   },
   finance: {
     finance: lazyScreen(async () => {
-      const m = await import('./screens/finance.js?v=514');
+      const m = await import('./screens/finance.js?v=515');
       return {
         render: (container) => m.renderFinance(container, { navigate, openBackup: openBackupScreen }),
         meta: m.financeMeta,
@@ -122,12 +122,12 @@ let suppliersNavReady = false;
 
 async function ensureWorkspaceNav(workspaceId) {
   if (workspaceId === 'recipes' && !recipesNavReady) {
-    const { initRecipesSubNav } = await import('./screens/recipes.js?v=514');
+    const { initRecipesSubNav } = await import('./screens/recipes.js?v=515');
     initRecipesSubNav();
     recipesNavReady = true;
   }
   if (workspaceId === 'suppliers' && !suppliersNavReady) {
-    const { initSuppliersSubNav } = await import('./screens/suppliers.js?v=514');
+    const { initSuppliersSubNav } = await import('./screens/suppliers.js?v=515');
     initSuppliersSubNav();
     suppliersNavReady = true;
   }
@@ -135,8 +135,8 @@ async function ensureWorkspaceNav(workspaceId) {
 
 function prefetchCommonScreens() {
   const run = () => {
-    import('./screens/process.js?v=514').catch(() => {});
-    import('./screens/products.js?v=514').catch(() => {});
+    import('./screens/process.js?v=515').catch(() => {});
+    import('./screens/products.js?v=515').catch(() => {});
   };
   if (typeof requestIdleCallback === 'function') {
     requestIdleCallback(run, { timeout: 2500 });
@@ -367,10 +367,10 @@ document.querySelectorAll('.nav-btn').forEach((btn) => {
 });
 
 async function boot() {
-  const { getValidSession } = await import('./auth.js?v=514');
+  const { getValidSession } = await import('./auth.js?v=515');
   const session = await getValidSession({ allowStale: true });
   if (!session) {
-    const { renderLoginGate } = await import('./screens/login.js?v=514');
+    const { renderLoginGate } = await import('./screens/login.js?v=515');
     renderLoginGate(() => startApp());
     return;
   }
@@ -385,11 +385,11 @@ async function startApp() {
       versionEl.title = 'לחץ לבדיקת עדכון';
       versionEl.style.cursor = 'pointer';
       versionEl.addEventListener('click', async () => {
-        const { forceAppUpdate } = await import('./sw-register.js?v=514');
+        const { forceAppUpdate } = await import('./sw-register.js?v=515');
         showToast('מעדכן...');
         await forceAppUpdate();
       });
-      import('./sw-register.js?v=514').then(async ({ detectRemoteVersion }) => {
+      import('./sw-register.js?v=515').then(async ({ detectRemoteVersion }) => {
         const remote = await detectRemoteVersion();
         if (remote && remote !== APP_VERSION) {
           versionEl.textContent = `גרסה ${APP_VERSION} ← ${remote} זמין`;
@@ -412,7 +412,7 @@ async function startApp() {
       startLiveSync,
       ensureLiveSyncDefaults,
       onLiveSyncStatus,
-    } = await import('./supabase-sync.js?v=514');
+    } = await import('./supabase-sync.js?v=515');
     onLiveSyncStatus((patch) => {
       if (!patch?.applied || currentScreen !== 'home' || currentWorkspace !== 'production') return;
       const main = document.getElementById('main-content');
@@ -426,7 +426,7 @@ async function startApp() {
     await initDB();
     await ensureLiveSyncDefaults();
 
-    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=514');
+    const { initAutoBackupSystem, promptRestoreIfNeeded } = await import('./backup-service.js?v=515');
     initAutoBackupSystem();
     await promptRestoreIfNeeded(navigate);
 

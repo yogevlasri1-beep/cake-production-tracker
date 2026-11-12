@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=514';
+import { db, getSetting, setSetting } from './db.js?v=515';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=514';
+} from './supabase-backup.js?v=515';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -28,7 +28,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=514';
+} from './sync/collections.js?v=515';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -68,7 +68,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=514';
+} from './sync/cloud-first.js?v=515';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -78,15 +78,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=514';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=514';
+} from './sync/id-map.js?v=515';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=515';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=514';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=514';
+} from './auth.js?v=515';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=515';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -181,8 +181,9 @@ export function formatLiveSyncErrorForUi(live) {
  * v18: coerce string FKs + unassigned-material fingerprint includes category.
  * v19: after Nov 11 duplicate re-seed — drop extra local copies of products/runs.
  * v20: do not merge a duplicate flow's steps/links onto the survivor (that doubled flow contents).
+ * v21: collapse production entries that only differ by a duplicate product id / leftover name.
  */
-const DEDUPE_VERSION = 20;
+const DEDUPE_VERSION = 21;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -198,8 +199,9 @@ const DEDUPE_VERSION = 20;
  * earlier device-clock mismatch made other devices skip are recovered by one full pull.
  * v13: pull tombstones from the Nov 11 duplicate re-upload of the yitzur backup.
  * v14: restore product↔flow links and portion lists from the Nov 9 backup; drop local extras.
+ * v15: remap productionRuns.categoryIds / categoryGroupId so תיעוד ייצור stops listing each product twice.
  */
-const REPAIR_VERSION = 14;
+const REPAIR_VERSION = 15;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -253,7 +255,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=514');
+    const { showToast } = await import('./utils.js?v=515');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2893,7 +2895,7 @@ export async function startLiveSync() {
   // v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
   if (!isCloudFirstEnabled(live) && (live.repairVersion || 0) < REPAIR_VERSION) {
     try {
-      await discardPendingOpsForCollections(FLOW_TEMPLATE_PURGE_COLLECTIONS);
+      await discardPendingOpsForCollections([...FLOW_TEMPLATE_PURGE_COLLECTIONS, 'productionRuns']);
       await flushSyncQueue();
       collectAliveByCollection = new Map(FLOW_TEMPLATE_PURGE_COLLECTIONS.map((c) => [c, new Set()]));
       await pullAllCollections({ full: true, preferRemote: true });

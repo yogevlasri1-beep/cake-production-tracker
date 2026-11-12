@@ -144,7 +144,12 @@ export const COLLECTION_FKS = {
   checklistTasks: { categoryGroupId: 'categoryGroups', categoryId: 'categories' },
   flowChecklistItems: { flowId: 'flows', checklistTaskId: 'checklistTasks' },
   flowCleaningTasks: { flowId: 'flows' },
-  productionRuns: { categoryId: 'categories', productId: 'products', flowId: 'flows' },
+  productionRuns: {
+    categoryId: 'categories',
+    categoryGroupId: 'categoryGroups',
+    productId: 'products',
+    flowId: 'flows',
+  },
   runStepStates: { runId: 'productionRuns' },
   productPreparations: { productId: 'products' },
   // flowPreparationId stores checklistTasks.id (legacy name kept for compatibility)
@@ -232,6 +237,7 @@ export const COLLECTION_FKS = {
 export const ARRAY_FKS = {
   rawMaterials: { portionProductIds: 'products' },
   haccpFlowVerifications: { verifierMemberIds: 'haccpTeamMembers' },
+  productionRuns: { categoryIds: 'categories' },
 };
 
 /**
@@ -637,10 +643,14 @@ export function rowDedupeFingerprint(collection, row) {
   }
   if (collection === 'productionEntries') {
     const date = row.date ?? '';
-    const pid = Number(row.productId) || row.productId || '';
     const qtyNum = Number(row.quantity);
     const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(row.quantity ?? '');
-    return date && pid !== '' ? `${collection}|${date}|${pid}|${qty}|${row.isWaste ? '1' : '0'}` : '';
+    const name = normName(row.productName);
+    const pid = Number(row.productId) || row.productId || '';
+    const productKey = name || pid;
+    return date && productKey !== ''
+      ? `${collection}|${date}|${productKey}|${qty}|${row.isWaste ? '1' : '0'}`
+      : '';
   }
   // חומרי גלם: אותו שם+ספק = כפילות גם תחת קטגוריות שונות
   // (seed «חומרי גלם יבשים» מול «חומרי גלם» אמיתי — מחיר על הכפילות לא נראה בראשי)

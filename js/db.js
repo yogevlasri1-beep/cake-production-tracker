@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=514';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=514';
-import { defaultColorForIndex } from './chart.js?v=514';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=514';
-import { logAuditEvent } from './audit.js?v=514';
+} from './validators.js?v=515';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=515';
+import { defaultColorForIndex } from './chart.js?v=515';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=515';
+import { logAuditEvent } from './audit.js?v=515';
 
 export { ValidationError };
 
@@ -5153,7 +5153,18 @@ export async function getRunProductionEntries(runId) {
   }
 
   entries.sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
-  return entries;
+  const unique = [];
+  const seenFp = new Set();
+  for (const entry of entries) {
+    const name = productNameKey(entry.productName) || String(entry.productId ?? '');
+    const qtyNum = Number(entry.quantity);
+    const qty = Number.isFinite(qtyNum) ? String(qtyNum) : String(entry.quantity ?? '');
+    const fp = `${entry.date || ''}|${name}|${qty}|${entry.isWaste ? '1' : '0'}`;
+    if (seenFp.has(fp)) continue;
+    seenFp.add(fp);
+    unique.push(entry);
+  }
+  return unique;
 }
 
 export async function getEntriesForDate(date) {
@@ -9455,6 +9466,29 @@ export async function collectPlanProductFlowsForExport(items) {
   return flowOrder.map((id) => flowData.get(id)).filter(Boolean);
 }
 
+/** Keep one product per name — leftover re-seed copies with different ids otherwise appear twice in תיעוד ייצור. */
+export function uniqueProductsByName(products, { preferIds } = {}) {
+  const prefer = new Set((preferIds || []).map((id) => Number(id)).filter(Boolean));
+  const byKey = new Map();
+  for (const product of products || []) {
+    if (!product) continue;
+    const key = productNameKey(product.name) || `id:${product.id}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, product);
+      continue;
+    }
+    const prevPreferred = prefer.has(Number(prev.id));
+    const nextPreferred = prefer.has(Number(product.id));
+    if (nextPreferred && !prevPreferred) {
+      byKey.set(key, product);
+    } else if (nextPreferred === prevPreferred && Number(product.id) < Number(prev.id)) {
+      byKey.set(key, product);
+    }
+  }
+  return [...byKey.values()];
+}
+
 export async function getProductFlowLinkRows(productId) {
   const pid = Number(productId);
   if (!pid || !db.productFlowLinks) return [];
@@ -9597,15 +9631,18 @@ export async function getCandidateProductsForFlow(flowId) {
   }
   const linked = await getLinkedProductsForFlow(fid);
   const seen = new Set(products.map((p) => p.id));
+  const linkedIds = [];
   for (const { product } of linked) {
     if (product && !seen.has(product.id)) {
       products.push(product);
       seen.add(product.id);
     }
+    if (product?.id) linkedIds.push(product.id);
   }
-  return products
-    .filter((p) => p.active !== false)
-    .sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
+  return uniqueProductsByName(
+    products.filter((p) => p.active !== false),
+    { preferIds: linkedIds },
+  ).sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
 }
 
 /** תזרים ברירת מחדל למוצר — שיוך ישיר קודם, אחרת לפי קטגוריה / קבוצה */
