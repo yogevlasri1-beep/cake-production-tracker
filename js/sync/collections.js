@@ -84,6 +84,39 @@ export const COLLECTION_TABLE = {
   settings: 'sync_app_settings',
 };
 
+/**
+ * Children that ARE the content of a parent row. When two parents collapse
+ * (same flow name, etc.), retargeting these onto the survivor duplicates every
+ * step / checklist / product link inside the remaining flow.
+ * Delete the dropped parent's copies instead; keep the survivor's own rows.
+ */
+export const OWNED_CHILD_COLLECTIONS = {
+  flows: [
+    'flowSteps',
+    'flowPortionPresets',
+    'flowCleaningTasks',
+    'flowChecklistItems',
+    'productFlowLinks',
+  ],
+};
+
+/** Template rows rebuilt from the kitchen backup — local extras are purged after a repair pull. */
+export const FLOW_TEMPLATE_PURGE_COLLECTIONS = [
+  'productFlowLinks',
+  'flowSteps',
+  'flowChecklistItems',
+  'flowCleaningTasks',
+  'flowPortionPresets',
+  'groupPortionPresets',
+  'portionPresetLinks',
+];
+
+export function shouldRetargetChildOnParentDedupe(parentCollection, childCollection) {
+  const owned = OWNED_CHILD_COLLECTIONS[parentCollection];
+  if (!owned) return true;
+  return !owned.includes(childCollection);
+}
+
 /** FK field → target collection (numeric local ids remapped to sync UUIDs). */
 export const COLLECTION_FKS = {
   categories: { groupId: 'categoryGroups' },

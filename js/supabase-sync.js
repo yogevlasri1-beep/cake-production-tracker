@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=513';
+import { db, getSetting, setSetting } from './db.js?v=514';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=513';
+} from './supabase-backup.js?v=514';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,7 +25,10 @@ import {
   rowDedupeFingerprint,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
-} from './sync/collections.js?v=513';
+  OWNED_CHILD_COLLECTIONS,
+  FLOW_TEMPLATE_PURGE_COLLECTIONS,
+  shouldRetargetChildOnParentDedupe,
+} from './sync/collections.js?v=514';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -65,7 +68,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=513';
+} from './sync/cloud-first.js?v=514';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -75,15 +78,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=513';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=513';
+} from './sync/id-map.js?v=514';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=514';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=513';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=513';
+} from './auth.js?v=514';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=514';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -177,8 +180,9 @@ export function formatLiveSyncErrorForUi(live) {
  * v17: rebalance materials/suppliers wrongly dumped into אריזות back to חומ״ג/ניקיון.
  * v18: coerce string FKs + unassigned-material fingerprint includes category.
  * v19: after Nov 11 duplicate re-seed — drop extra local copies of products/runs.
+ * v20: do not merge a duplicate flow's steps/links onto the survivor (that doubled flow contents).
  */
-const DEDUPE_VERSION = 19;
+const DEDUPE_VERSION = 20;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -193,8 +197,9 @@ const DEDUPE_VERSION = 19;
  * v12: timestamps and the pull cursor now follow the server clock. Rows that an
  * earlier device-clock mismatch made other devices skip are recovered by one full pull.
  * v13: pull tombstones from the Nov 11 duplicate re-upload of the yitzur backup.
+ * v14: restore product↔flow links and portion lists from the Nov 9 backup; drop local extras.
  */
-const REPAIR_VERSION = 13;
+const REPAIR_VERSION = 14;
 
 let applyingRemote = false;
 let flushTimer = null;
@@ -248,7 +253,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=513');
+    const { showToast } = await import('./utils.js?v=514');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -822,6 +827,7 @@ async function tombstoneCloudDuplicate(collection, syncId, deviceId) {
 let fpCache = null;
 /** במהלך משיכת תיעוד: מזהי הענן שנראו, כדי למחוק במחשב שורות שלא קיימות באייפון. */
 let collectProductionEntryIds = null;
+let collectAliveByCollection = null;
 let productionProductCache = null;
 
 function clearProductionProductCache() {
@@ -953,6 +959,7 @@ async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId
   const to = Number(toLocalId);
   if (!from || !to || from === to) return;
   for (const [collection, fks] of Object.entries(COLLECTION_FKS)) {
+    if (!shouldRetargetChildOnParentDedupe(targetCollection, collection)) continue;
     const fields = Object.entries(fks).filter(([, dep]) => dep === targetCollection).map(([f]) => f);
     const arrayFields = Object.entries(ARRAY_FKS[collection] || {})
       .filter(([, dep]) => dep === targetCollection).map(([f]) => f);
@@ -984,6 +991,27 @@ async function retargetLocalForeignKeys(targetCollection, fromLocalId, toLocalId
   }
 }
 
+/** Drop a duplicate parent's own content instead of merging it onto the survivor. */
+async function deleteOwnedChildrenOf(parentCollection, parentLocalId) {
+  const owned = OWNED_CHILD_COLLECTIONS[parentCollection];
+  if (!owned?.length) return;
+  const from = Number(parentLocalId);
+  if (!from) return;
+  for (const collection of owned) {
+    const fks = COLLECTION_FKS[collection] || {};
+    const fields = Object.entries(fks)
+      .filter(([, dep]) => dep === parentCollection)
+      .map(([field]) => field);
+    if (!fields.length || !db[collection]) continue;
+    const rows = await db[collection].toArray();
+    for (const row of rows) {
+      if (fields.some((field) => Number(row[field]) === from)) {
+        await deleteLocalDuplicateRow(collection, row);
+      }
+    }
+  }
+}
+
 /** Dedupe one collection by rowDedupeFingerprint; returns number removed. */
 async function dedupeCollectionByFingerprint(collection) {
   if (collection === 'settings' || !db[collection]) return 0;
@@ -1007,6 +1035,7 @@ async function dedupeCollectionByFingerprint(collection) {
         if (collection === 'rawMaterials') {
           await mergeRawMaterialPriceInto(keep, drop);
         }
+        await deleteOwnedChildrenOf(collection, drop.id);
         await retargetLocalForeignKeys(collection, drop.id, keep.id);
       }
       await deleteLocalDuplicateRow(collection, drop);
@@ -1500,6 +1529,9 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   const syncId = cloudRow.id;
   if (collectProductionEntryIds && collection === 'productionEntries' && !cloudRow.deleted_at) {
     collectProductionEntryIds.add(syncId);
+  }
+  if (collectAliveByCollection && !cloudRow.deleted_at) {
+    collectAliveByCollection.get(collection)?.add(syncId);
   }
   const remoteUpdated = cloudRow.updated_at;
   let existingMeta = await getMetaBySyncId(syncId);
@@ -2527,6 +2559,45 @@ async function purgeProductionEntriesNotInCloud(seen) {
   return drop.length;
 }
 
+/** Don't push local flow-template mutations that would re-duplicate restored cloud rows. */
+async function discardPendingOpsForCollections(collections) {
+  const names = new Set(collections || []);
+  if (!names.size || !db.syncQueue) return 0;
+  const queued = await db.syncQueue.where('status').anyOf('pending', 'error').toArray();
+  const drop = queued.filter((item) => names.has(item.collection));
+  if (!drop.length) return 0;
+  await db.syncQueue.bulkUpdate(drop.map((item) => ({ key: item.id, changes: { status: 'done' } })));
+  return drop.length;
+}
+
+async function purgeLocalRowsNotInCloud(seenByCollection) {
+  if (!seenByCollection) return 0;
+  let removed = 0;
+  for (const [collection, seen] of seenByCollection) {
+    if (!collection || !db[collection] || !seen) continue;
+    const rows = await db[collection].toArray();
+    const drop = [];
+    for (const row of rows) {
+      const localKey = localKeyOf(collection, row);
+      const meta = await getMetaByLocal(collection, localKey);
+      if (meta?.syncId && seen.has(meta.syncId)) continue;
+      drop.push({ row, localKey });
+    }
+    if (!drop.length) continue;
+    applyingRemote = true;
+    try {
+      for (const { row, localKey } of drop) {
+        await db[collection].delete(row.id);
+        await db.syncMeta.where('[collection+localKey]').equals([collection, String(localKey)]).delete();
+        removed++;
+      }
+    } finally {
+      applyingRemote = false;
+    }
+  }
+  return removed;
+}
+
 /**
  * Drop every local↔cloud id mapping and pending op, so the next seed uploads
  * the local database as brand new rows. Required after restoring a JSON backup
@@ -2822,8 +2893,11 @@ export async function startLiveSync() {
   // v3 also re-pushes polymorphic FKs that were uploaded as raw local numerics.
   if (!isCloudFirstEnabled(live) && (live.repairVersion || 0) < REPAIR_VERSION) {
     try {
+      await discardPendingOpsForCollections(FLOW_TEMPLATE_PURGE_COLLECTIONS);
       await flushSyncQueue();
-      await pullAllCollections({ full: true });
+      collectAliveByCollection = new Map(FLOW_TEMPLATE_PURGE_COLLECTIONS.map((c) => [c, new Set()]));
+      await pullAllCollections({ full: true, preferRemote: true });
+      await purgeLocalRowsNotInCloud(collectAliveByCollection);
       fullPulledOk = true;
       await repushPolymorphicCollections();
       await dedupeSupplierWorkspaceLight({ force: true });
@@ -2831,6 +2905,8 @@ export async function startLiveSync() {
       pulledOk = true;
     } catch (err) {
       console.warn('live sync repair pull', err);
+    } finally {
+      collectAliveByCollection = null;
     }
   }
 
