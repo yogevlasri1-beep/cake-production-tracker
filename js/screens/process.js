@@ -28,12 +28,12 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-  uniqueProductsByName,
+  productsForFlowRun,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-} from '../db.js?v=518';
+} from '../db.js?v=519';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=518').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=519').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -76,7 +76,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=518');
+    } = await import('../inventory-db.js?v=519');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -117,7 +117,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=518');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=519');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -143,7 +143,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=518');
+    } = await import('../inventory-db.js?v=519');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -172,15 +172,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=518';
-import { metricsProductionValueBreakdown } from '../calc.js?v=518';
-import { openModal, closeModal } from '../modal.js?v=518';
-import { requestAutoBackupNow } from '../backup-service.js?v=518';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=518';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=518';
-import { materialMatchesSearch } from '../kitchen-db.js?v=518';
-import { getCurrentUserRole } from '../auth.js?v=518';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=518';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=519';
+import { metricsProductionValueBreakdown } from '../calc.js?v=519';
+import { openModal, closeModal } from '../modal.js?v=519';
+import { requestAutoBackupNow } from '../backup-service.js?v=519';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=519';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=519';
+import { materialMatchesSearch } from '../kitchen-db.js?v=519';
+import { getCurrentUserRole } from '../auth.js?v=519';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=519';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1118,7 +1118,7 @@ function filterCategoriesForRun(run, categories) {
   } else if (run.categoryGroupId) {
     scoped = categories.filter((c) => Number(c.groupId) === Number(run.categoryGroupId));
   } else {
-    scoped = [...categories];
+    scoped = [];
   }
   const seen = new Set(scoped.map((c) => Number(c.id)));
   for (const w of wasteCats) {
@@ -1130,21 +1130,20 @@ function filterCategoriesForRun(run, categories) {
 async function filterProductsForRun(run, products, categories) {
   const scopedCats = filterCategoriesForRun(run, categories);
   const catSet = new Set(scopedCats.map((c) => Number(c.id)));
-  let list = products.filter((p) => catSet.has(Number(p.categoryId)));
-  if (run.productId) list = list.filter((p) => p.id === run.productId);
-  const linkedIds = [];
-  if (run.flowId) {
-    const linked = await getLinkedProductsForFlow(run.flowId);
-    const seen = new Set(list.map((p) => p.id));
-    for (const { product } of linked) {
-      if (product?.id) linkedIds.push(product.id);
-      if (product && !seen.has(product.id)) {
-        list.push(product);
-        seen.add(product.id);
-      }
-    }
+  let categoryProducts = products.filter((p) => catSet.has(Number(p.categoryId)));
+  if (run.productId) {
+    categoryProducts = categoryProducts.filter((p) => Number(p.id) === Number(run.productId));
   }
-  return uniqueProductsByName(list, { preferIds: linkedIds })
+  const wasteProducts = products.filter((p) => isProductWasteCategory(
+    categories.find((c) => Number(c.id) === Number(p.categoryId)),
+  ));
+  let linkedProducts = [];
+  if (run.flowId) {
+    linkedProducts = (await getLinkedProductsForFlow(run.flowId))
+      .map((row) => row.product)
+      .filter(Boolean);
+  }
+  return productsForFlowRun({ linkedProducts, categoryProducts, wasteProducts })
     .sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
 }
 
@@ -2055,8 +2054,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=518');
-    const { db } = await import('../db.js?v=518');
+    const { getRecipe } = await import('../kitchen-db.js?v=519');
+    const { db } = await import('../db.js?v=519');
     const blocks = [];
 
     for (const row of rows) {
@@ -2995,7 +2994,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=518');
+    const kitchen = await import('../kitchen-db.js?v=519');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -5019,7 +5018,7 @@ async function renderStartView(container, ctx) {
     }));
   }
 
-  const filteredProducts = groupId
+  let filteredProducts = groupId
     ? products.filter((p) => groupCategories.some((c) => c.id === p.categoryId))
     : products;
 
@@ -5078,6 +5077,17 @@ async function renderStartView(container, ctx) {
   const nextBatch = await resolveNextBatchNumber(runSettings.nextBatchNumber);
   if (nextBatch !== Math.max(1, Number(runSettings.nextBatchNumber) || 1)) {
     await setRunSettings({ nextBatchNumber: nextBatch });
+  }
+
+  if (selectedFlowId) {
+    const linked = await getLinkedProductsForFlow(selectedFlowId);
+    if (linked.length) {
+      const ids = new Set(linked.map((row) => Number(row.product?.id)).filter(Boolean));
+      const onlyLinked = filteredProducts.filter((p) => ids.has(Number(p.id)));
+      filteredProducts = onlyLinked.length
+        ? onlyLinked
+        : linked.map((row) => row.product).filter(Boolean);
+    }
   }
 
   container.innerHTML = `

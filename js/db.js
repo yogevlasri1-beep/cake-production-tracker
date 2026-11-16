@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=518';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=518';
-import { defaultColorForIndex } from './chart.js?v=518';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=518';
-import { logAuditEvent } from './audit.js?v=518';
+} from './validators.js?v=519';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=519';
+import { defaultColorForIndex } from './chart.js?v=519';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=519';
+import { logAuditEvent } from './audit.js?v=519';
 
 export { ValidationError };
 
@@ -9489,6 +9489,28 @@ export function uniqueProductsByName(products, { preferIds } = {}) {
   return [...byKey.values()];
 }
 
+/**
+ * בתיעוד ייצור: אם שויכו מוצרים לתזרים — רק הם (ופחת).
+ * בלי שיוך: לפי קטגוריות הריצה. בלי קטגוריות — לא כל המוצרים.
+ */
+export function productsForFlowRun({
+  linkedProducts = [],
+  categoryProducts = [],
+  wasteProducts = [],
+} = {}) {
+  const linked = (linkedProducts || []).filter(Boolean);
+  if (linked.length) {
+    const ids = new Set(linked.map((p) => Number(p.id)).filter(Boolean));
+    const extra = (wasteProducts || []).filter((p) => p && !ids.has(Number(p.id)));
+    return uniqueProductsByName([...linked, ...extra], { preferIds: [...ids] });
+  }
+  const category = (categoryProducts || []).filter(Boolean);
+  if (category.length) {
+    return uniqueProductsByName(category);
+  }
+  return uniqueProductsByName((wasteProducts || []).filter(Boolean));
+}
+
 export async function getProductFlowLinkRows(productId) {
   const pid = Number(productId);
   if (!pid || !db.productFlowLinks) return [];
@@ -9627,7 +9649,7 @@ export async function getCandidateProductsForFlow(flowId) {
     const catIds = new Set(cats.map((c) => c.id));
     products = (await db.products.toArray()).filter((p) => catIds.has(p.categoryId));
   } else {
-    products = await db.products.toArray();
+    products = [];
   }
   const linked = await getLinkedProductsForFlow(fid);
   const seen = new Set(products.map((p) => p.id));

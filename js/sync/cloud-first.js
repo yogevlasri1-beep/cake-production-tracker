@@ -414,6 +414,46 @@ export function planCloudJoin({ cloudFirst, cutoverDevice, joinPullDone } = {}) 
   return { pullFull: true, dropQueue: true };
 }
 
+/** סימן בענן אחרי שחזור JSON — מכשירים אחרים מחליפים את העותק הישן מהענן. */
+export const CLOUD_RESTORE_KEY = 'cloudRestore';
+export const CLOUD_RESTORE_PULL_VERSION = 1;
+
+export function cloudRestoreMarkerPresent(value) {
+  return !!(value && typeof value === 'object' && value.at);
+}
+
+/**
+ * אחרי שחזור: מכשיר אחר לא שולח את העותק הישן. הוא מושך את הענן ומנקה עודפים.
+ * מכשיר השחזור עצמו רק מסמן שכבר עודכן.
+ * בלי סימן בענן — גרסת משיכה חדשה מריצה את אותו צעד פעם אחת (השחזור מ-9.11).
+ */
+export function planRestoreJoin({
+  restorePullVersion = 0,
+  neededVersion = CLOUD_RESTORE_PULL_VERSION,
+  restoreMarkerAt = '',
+  appliedRestoreAt = '',
+  localDeviceId = '',
+  restoreDeviceId = '',
+} = {}) {
+  const source = restoreDeviceId && localDeviceId
+    && String(restoreDeviceId) === String(localDeviceId);
+  if (source) {
+    return {
+      join: false,
+      stamp: Number(restorePullVersion || 0) < Number(neededVersion || 0),
+      dropQueue: false,
+      reason: 'source-device',
+    };
+  }
+  if (Number(restorePullVersion || 0) < Number(neededVersion || 0)) {
+    return { join: true, stamp: false, dropQueue: true, reason: 'version' };
+  }
+  if (restoreMarkerAt && (!appliedRestoreAt || Date.parse(restoreMarkerAt) > Date.parse(appliedRestoreAt))) {
+    return { join: true, stamp: false, dropQueue: true, reason: 'marker' };
+  }
+  return { join: false, stamp: false, dropQueue: false, reason: 'done' };
+}
+
 function isEmptyValue(value) {
   return value == null || value === '';
 }

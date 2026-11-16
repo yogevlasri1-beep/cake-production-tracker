@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=518';
+import { db, getSetting, setSetting } from './db.js?v=519';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=518';
+} from './supabase-backup.js?v=519';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -28,12 +28,15 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=518';
+} from './sync/collections.js?v=519';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
   CLOUD_CUTOVER_KEY,
+  CLOUD_RESTORE_KEY,
+  CLOUD_RESTORE_PULL_VERSION,
   cloudCutoverMarkerPresent,
+  cloudRestoreMarkerPresent,
   cutoverRowUpdatedAt,
   isCloudFirstEnabled,
   isCutoverDevice,
@@ -54,6 +57,7 @@ import {
   planAdoptCloudFirst,
   planAppendOnlyPush,
   planCloudJoin,
+  planRestoreJoin,
   planCutoverSnapshot,
   planDemoteForeignCutover,
   planProductionHistoryPull,
@@ -70,7 +74,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=518';
+} from './sync/cloud-first.js?v=519';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -80,15 +84,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=518';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=518';
+} from './sync/id-map.js?v=519';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=519';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=518';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=518';
+} from './auth.js?v=519';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=519';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -260,7 +264,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=518');
+    const { showToast } = await import('./utils.js?v=519');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2372,6 +2376,73 @@ async function adoptCloudFirstFromMarker() {
   await saveLiveSyncSettings({ cloudFirst: true, cutoverDevice: false });
 }
 
+async function readCloudRestoreMarker() {
+  const local = await getSetting(CLOUD_RESTORE_KEY);
+  if (cloudRestoreMarkerPresent(local)) return local;
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) return null;
+  const rows = await supabaseFetch(
+    cfg,
+    `/sync_app_settings?select=payload,deleted_at&payload->>key=eq.${encodeURIComponent(CLOUD_RESTORE_KEY)}&limit=5`,
+  );
+  if (!Array.isArray(rows)) return null;
+  const hit = rows.find((row) => !row.deleted_at && cloudRestoreMarkerPresent(row?.payload?.value));
+  return hit ? hit.payload.value : null;
+}
+
+async function stampRestoreJoin(live, marker) {
+  await saveLiveSyncSettings({
+    restorePullVersion: CLOUD_RESTORE_PULL_VERSION,
+    appliedRestoreAt: marker?.at || live.appliedRestoreAt || new Date().toISOString(),
+  });
+}
+
+/**
+ * אחרי שחזור בענן: מכשיר אחר מושך את השחזור ומנקה את העותק הישן, בלי לדחוף קודם.
+ */
+export async function ensureRestoreJoinPull() {
+  const live = await getLiveSyncSettings();
+  if (live.holdPulls === true) return { joined: false, reason: 'hold' };
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { joined: false, reason: 'offline' };
+  }
+  let marker = null;
+  try {
+    marker = await readCloudRestoreMarker();
+  } catch (err) {
+    console.warn('cloud restore marker', err);
+  }
+  const deviceId = await getOrCreateDeviceId();
+  const plan = planRestoreJoin({
+    restorePullVersion: live.restorePullVersion || 0,
+    neededVersion: CLOUD_RESTORE_PULL_VERSION,
+    restoreMarkerAt: marker?.at || '',
+    appliedRestoreAt: live.appliedRestoreAt || '',
+    localDeviceId: deviceId,
+    restoreDeviceId: marker?.deviceId || '',
+  });
+  if (!plan.join) {
+    if (plan.stamp) await stampRestoreJoin(live, marker);
+    return { joined: false, reason: plan.reason };
+  }
+  if (plan.dropQueue && db.syncQueue) {
+    await db.syncQueue.clear();
+    await saveLiveSyncSettings({ pendingCount: 0 });
+  }
+  collectAliveByCollection = new Map(
+    orderedCollections().filter((name) => name !== 'settings').map((name) => [name, new Set()]),
+  );
+  try {
+    await pullAllCollections({ full: true, preferRemote: true });
+    await purgeLocalRowsNotInCloud(collectAliveByCollection, { skipCollections: ['settings'] });
+  } finally {
+    collectAliveByCollection = null;
+  }
+  await stampRestoreJoin(live, marker);
+  await saveLiveSyncSettings({ seedDone: true, lastPullAt: new Date().toISOString() });
+  return { joined: true, reason: plan.reason };
+}
+
 /** מחשב או טלפון אחר: מושך את כל הענן פעם אחת, בלי לשלוח את מה שכבר היה עליו. */
 export async function ensureCloudJoinPull() {
   const live = await getLiveSyncSettings();
@@ -2587,11 +2658,13 @@ async function discardPendingOpsForCollections(collections) {
   return drop.length;
 }
 
-async function purgeLocalRowsNotInCloud(seenByCollection) {
+async function purgeLocalRowsNotInCloud(seenByCollection, { skipCollections = [] } = {}) {
   if (!seenByCollection) return 0;
+  const skip = new Set(skipCollections);
   let removed = 0;
   for (const [collection, seen] of seenByCollection) {
     if (!collection || !db[collection] || !seen) continue;
+    if (skip.has(collection)) continue;
     const rows = await db[collection].toArray();
     const drop = [];
     for (const row of rows) {
@@ -2852,6 +2925,12 @@ export async function startLiveSync() {
   if (!live.enabled) return;
   if (live.holdPulls === true) return;
   await adoptCloudFirstFromMarker();
+  live = await getLiveSyncSettings();
+  try {
+    await ensureRestoreJoinPull();
+  } catch (err) {
+    console.warn('restore join pull', err);
+  }
   live = await getLiveSyncSettings();
   await ensureCloudJoinPull();
   live = await getLiveSyncSettings();
@@ -3115,9 +3194,18 @@ export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
   try {
     const seed = await seedLocalDataToSupabase({ force: true });
     const now = new Date().toISOString();
+    const deviceId = await getOrCreateDeviceId();
+    const restoreMarker = { at: now, deviceId };
+    await setSetting(CLOUD_RESTORE_KEY, restoreMarker);
+    await enqueueUpsert('settings', CLOUD_RESTORE_KEY);
+    try { await flushSyncQueue(); } catch (err) {
+      console.warn('restore marker push', err);
+    }
     await saveLiveSyncSettings({
       seedDone: true,
       holdPulls: false,
+      restorePullVersion: CLOUD_RESTORE_PULL_VERSION,
+      appliedRestoreAt: now,
       lastPushAt: now,
       lastPullAt: now,
       lastError: null,
