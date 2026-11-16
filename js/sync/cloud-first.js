@@ -52,12 +52,33 @@ export function planLiveSyncTick({
   lastHiddenPullAt = 0,
   hiddenInterval = 120000,
   fullInterval = FULL_PULL_INTERVAL_MS,
+  holdPulls = false,
 } = {}) {
+  if (holdPulls === true) {
+    return { flush: false, pullProduction: false, pullCatalog: false };
+  }
   if (hidden && now - lastHiddenPullAt < hiddenInterval) {
     return { flush: true, pullProduction: false, pullCatalog: false };
   }
   const pullCatalog = !lastFullPullAt || (now - lastFullPullAt) >= fullInterval;
   return { flush: true, pullProduction: true, pullCatalog };
+}
+
+/**
+ * After a JSON restore the local DB is the source of truth.
+ * Replace the cloud only when this computer can actually upload.
+ */
+export function planRestoreBackupReplaceCloud({
+  supabaseConfigured = false,
+  online = true,
+} = {}) {
+  if (supabaseConfigured !== true) {
+    return { replaceCloud: false, reason: 'no-supabase' };
+  }
+  if (online === false) {
+    return { replaceCloud: false, reason: 'offline' };
+  }
+  return { replaceCloud: true, reason: 'ok' };
 }
 
 /**

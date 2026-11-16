@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=515';
+import { db, getSetting, setSetting } from './db.js?v=516';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=515';
+} from './supabase-backup.js?v=516';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -28,7 +28,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=515';
+} from './sync/collections.js?v=516';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -39,6 +39,7 @@ import {
   isCutoverDevice,
   planLiveSyncAlwaysOn,
   planLiveSyncTick,
+  planRestoreBackupReplaceCloud,
   FLUSH_DEBOUNCE_MS,
   FULL_PULL_INTERVAL_MS,
   PRODUCTION_PULL_INTERVAL_MS,
@@ -68,7 +69,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=515';
+} from './sync/cloud-first.js?v=516';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -78,15 +79,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=515';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=515';
+} from './sync/id-map.js?v=516';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=516';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=515';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=515';
+} from './auth.js?v=516';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=516';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -103,6 +104,8 @@ const DEFAULT_LIVE = {
   dedupeVersion: 0,
   repairVersion: 0,
   pendingCount: 0,
+  /** After a JSON restore: do not pull until the restored copy is uploaded. */
+  holdPulls: false,
 };
 
 /**
@@ -207,6 +210,7 @@ let applyingRemote = false;
 let flushTimer = null;
 let pullTimer = null;
 let started = false;
+let tickInFlight = false;
 let authHalted = false;
 let liveSyncOnlineHandler = null;
 let liveSyncVisibilityHandler = null;
@@ -255,7 +259,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=515');
+    const { showToast } = await import('./utils.js?v=516');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -280,6 +284,16 @@ export async function saveLiveSyncSettings(patch) {
 
 export function isApplyingRemoteSync() {
   return applyingRemote;
+}
+
+/** Skip live-sync enqueue (same as applying a remote pull) while restoring a backup. */
+export async function withSyncEnqueuePaused(fn) {
+  applyingRemote = true;
+  try {
+    return await fn();
+  } finally {
+    applyingRemote = false;
+  }
 }
 
 /**
@@ -2836,6 +2850,7 @@ export async function startLiveSync() {
 
   let live = await getLiveSyncSettings();
   if (!live.enabled) return;
+  if (live.holdPulls === true) return;
   await adoptCloudFirstFromMarker();
   live = await getLiveSyncSettings();
   await ensureCloudJoinPull();
@@ -2856,12 +2871,12 @@ export async function startLiveSync() {
   let fullPulledOk = false;
   let lastHiddenPullAt = 0;
   let lastFullPullAt = 0;
-  let tickInFlight = false;
   const tick = async () => {
     if (authHalted || tickInFlight) return;
     tickInFlight = true;
     try {
       const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const liveNow = await getLiveSyncSettings();
       const plan = planLiveSyncTick({
         now: Date.now(),
         lastFullPullAt,
@@ -2869,6 +2884,7 @@ export async function startLiveSync() {
         lastHiddenPullAt,
         hiddenInterval: HIDDEN_PULL_INTERVAL_MS,
         fullInterval: FULL_PULL_INTERVAL_MS,
+        holdPulls: liveNow.holdPulls === true,
       });
       if (plan.flush) await flushSyncQueue();
       // ברקע לא שואלים את כל הטבלאות כל כמה שניות. חוזרים לחלון — בודקים מיד.
@@ -3010,14 +3026,17 @@ async function seedOrphanLocalRows() {
   return { seeded };
 }
 
-export function isCloudWipeAllowed(live) {
+export function isCloudWipeAllowed(live, { replaceCloudRestore = false } = {}) {
+  if (replaceCloudRestore === true) return true;
   return live?.enabled === false;
 }
 
 /** מוחק את כל שורות הסנכרון של המטבח בענן. לא נוגע ב-Dexie המקומי. */
-export async function wipeKitchenCloudTables() {
+export async function wipeKitchenCloudTables({ replaceCloudRestore = false } = {}) {
   const live = await getLiveSyncSettings();
-  if (!isCloudWipeAllowed(live)) return { ok: false, reason: 'live-sync-on', deletedTables: 0 };
+  if (!isCloudWipeAllowed(live, { replaceCloudRestore })) {
+    return { ok: false, reason: 'live-sync-on', deletedTables: 0 };
+  }
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) throw new Error('Supabase לא מוגדר');
   const kitchenId = KITCHEN_ID;
@@ -3055,10 +3074,88 @@ export async function wipeKitchenCloudTables() {
   };
 }
 
+/**
+ * After a local JSON restore: stop pulls, wipe kitchen sync tables, remap ids,
+ * upload the restored copy, then resume live sync.
+ */
+export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
+  const cfg = await getSupabaseBackupConfig();
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const plan = planRestoreBackupReplaceCloud({
+    supabaseConfigured: !!(cfg.supabaseUrl && cfg.anonKey),
+    online,
+  });
+  if (!plan.replaceCloud) {
+    return { replacedCloud: false, reason: plan.reason };
+  }
+
+  onProgress?.('עוצר סנכרון...');
+  await stopLiveSync();
+  await saveLiveSyncSettings({ holdPulls: true });
+
+  onProgress?.('מרוקן את הענן...');
+  const wipe = await wipeKitchenCloudTables({ replaceCloudRestore: true });
+  if (!wipe.ok) {
+    await saveLiveSyncSettings({ holdPulls: false });
+    started = false;
+    await startLiveSync();
+    return {
+      replacedCloud: false,
+      reason: wipe.reason || 'wipe-failed',
+      wipe,
+    };
+  }
+
+  onProgress?.('מאפס קישורי סנכרון...');
+  await resetLocalSyncState();
+  await saveLiveSyncSettings({ holdPulls: true });
+
+  onProgress?.('מעלה את הגיבוי לענן... זה לוקח כמה דקות');
+  try {
+    const seed = await seedLocalDataToSupabase({ force: true });
+    const now = new Date().toISOString();
+    await saveLiveSyncSettings({
+      seedDone: true,
+      holdPulls: false,
+      lastPushAt: now,
+      lastPullAt: now,
+      lastError: null,
+      lastErrorKind: null,
+    });
+    started = false;
+    await startLiveSync();
+    return { replacedCloud: true, seeded: seed.seeded || 0 };
+  } catch (err) {
+    await saveLiveSyncSettings({
+      holdPulls: true,
+      seedDone: false,
+      lastError: String(err?.message || err),
+      lastErrorKind: 'other',
+    });
+    return {
+      replacedCloud: false,
+      reason: 'seed-failed',
+      error: String(err?.message || err),
+    };
+  }
+}
+
 export async function stopLiveSync() {
   if (pullTimer) clearInterval(pullTimer);
   pullTimer = null;
   started = false;
+  if (typeof window !== 'undefined' && liveSyncOnlineHandler) {
+    window.removeEventListener('online', liveSyncOnlineHandler);
+    liveSyncOnlineHandler = null;
+  }
+  if (typeof document !== 'undefined' && liveSyncVisibilityHandler) {
+    document.removeEventListener('visibilitychange', liveSyncVisibilityHandler);
+    liveSyncVisibilityHandler = null;
+  }
+  const waitStarted = Date.now();
+  while (tickInFlight && Date.now() - waitStarted < 120000) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
 }
 
 export async function setLiveSyncEnabled(enabled) {

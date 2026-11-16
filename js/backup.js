@@ -1,13 +1,13 @@
-import { exportAllData, importAllData } from './db.js?v=515';
+import { exportAllData, importAllData } from './db.js?v=516';
 import {
   financeRestoreWouldWipe,
   confirmFinanceRestoreWipe,
-} from './finance-db.js?v=515';
-import { APP_VERSION } from './version.js?v=515';
-import { defaultColorForIndex } from './chart.js?v=515';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=515';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=515';
-import { ValidationError } from './validators.js?v=515';
+} from './finance-db.js?v=516';
+import { APP_VERSION } from './version.js?v=516';
+import { defaultColorForIndex } from './chart.js?v=516';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=516';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=516';
+import { ValidationError } from './validators.js?v=516';
 
 export const BACKUP_VERSION = 3;
 
@@ -332,6 +332,43 @@ export function summarizeBackupData(data) {
     financeImports: data.financeImports?.length || 0,
     financeLines: data.financeLines?.length || 0,
   };
+}
+
+export function countBackupRuns(data) {
+  const runs = Array.isArray(data?.productionRuns) ? data.productionRuns : [];
+  let active = 0;
+  for (const run of runs) {
+    if (run && run.status === 'active') active += 1;
+  }
+  return { total: runs.length, active };
+}
+
+/** Short Hebrew preview so a huge JSON file does not need to be searched by hand. */
+export function describeBackupRestorePreview({
+  exportedAt = '',
+  appVersion = '',
+  counts = {},
+  runs = null,
+} = {}) {
+  const total = runs?.total ?? (Number(counts?.productionRuns) || 0);
+  const active = runs?.active;
+  const lines = [];
+  if (exportedAt) {
+    const when = new Date(exportedAt);
+    lines.push(`תאריך הגיבוי: ${Number.isNaN(when.getTime()) ? exportedAt : when.toLocaleString('he-IL')}`);
+  }
+  if (appVersion) lines.push(`גרסת אפליקציה: ${appVersion}`);
+  if (active == null) {
+    lines.push(total === 0 ? 'אין ריצות בגיבוי' : `${total} ריצות בגיבוי`);
+  } else if (active === 0) {
+    lines.push(total === 0 ? 'אין ריצות בגיבוי' : `אין ריצות פתוחות · ${total} ריצות שהושלמו`);
+  } else {
+    lines.push(`${active} ריצות פתוחות · ${total} ריצות בכלל`);
+  }
+  lines.push(
+    `${counts?.flows || 0} תזרימים · ${counts?.productionEntries || 0} רישומי ייצור · ${counts?.products || 0} מוצרים`,
+  );
+  return lines.join('\n');
 }
 
 export function formatBackupSummary(counts) {

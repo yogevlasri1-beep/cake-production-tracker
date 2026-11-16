@@ -1,14 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=515';
+} from './db.js?v=516';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
-  restoreBackupPayload,
-} from './backup.js?v=515';
-import { downloadBlob } from './download.js?v=515';
-import { ValidationError } from './validators.js?v=515';
-import { openModal, closeModal } from './modal.js?v=515';
-import { escapeHtml, showToast } from './utils.js?v=515';
+  restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
+} from './backup.js?v=516';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=516';
+import { downloadBlob } from './download.js?v=516';
+import { ValidationError } from './validators.js?v=516';
+import { openModal, closeModal } from './modal.js?v=516';
+import { escapeHtml, showToast } from './utils.js?v=516';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -18,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=515';
+} from './backup-folder-bridge.js?v=516';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -33,7 +34,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=515';
+} from './supabase-backup.js?v=516';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -229,6 +230,32 @@ export async function restoreLocalSnapshot(id) {
     counts: payload.counts,
     summary: row.summary,
   };
+}
+
+export async function readLocalSnapshotForRestore(id) {
+  const row = await db.localBackups.get(Number(id));
+  if (!row?.payloadJson) throw new ValidationError('גיבוי מקומי לא נמצא');
+  const payload = JSON.parse(row.payloadJson);
+  const data = payload.data;
+  if (!data || typeof data !== 'object') throw new ValidationError('קובץ הגיבוי לא תקין');
+  return {
+    data,
+    name: formatWhenOrSummary(row),
+    meta: {
+      exportedAt: payload.exportedAt || row.createdAt || '',
+      appVersion: payload.appVersion || '',
+      counts: payload.counts || {},
+    },
+  };
+}
+
+function formatWhenOrSummary(row) {
+  if (row?.createdAt) {
+    try {
+      return new Date(row.createdAt).toLocaleString('he-IL');
+    } catch { /* fall through */ }
+  }
+  return row?.summary || 'גיבוי מקומי';
 }
 
 /** ייצוא קובץ JSON — Share באייפון / הורדה בדפדפן */
@@ -430,7 +457,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=515');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=516');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -468,30 +495,104 @@ export {
   isThisPrimaryBackupDevice,
 };
 
-export function confirmAndRestoreBackupFile(file, navigate) {
-  openModal({
-    title: 'שחזור מקובץ',
-    bodyHTML: `<p style="line-height:1.6">הקובץ <strong>${escapeHtml(file.name)}</strong> יחליף את כל הנתונים.<br><br>להמשיך?</p>`,
-    footerHTML: `
-      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="confirm-restore-file">שחזר</button>`,
+function restoreConfirmBodyHTML({ titleName, preview }) {
+  return `
+    <p style="line-height:1.6;margin-bottom:10px"><strong>${escapeHtml(titleName)}</strong></p>
+    <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
+    <p style="line-height:1.6">
+      זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>.
+      האייפון יתעדכן רק אחרי שתפתח אותו בסוף.
+      זה לוקח כמה דקות — לא צריך לבדוק מהר.
+    </p>`;
+}
+
+export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
+  const {
+    withSyncEnqueuePaused,
+    replaceCloudFromLocalBackup,
+    getLiveSyncStatus,
+    stopLiveSync,
+    saveLiveSyncSettings,
+    startLiveSync,
+  } = await import('./supabase-sync.js?v=516');
+  onProgress?.('עוצר סנכרון...');
+  await saveLiveSyncSettings({ holdPulls: true });
+  await stopLiveSync();
+  onProgress?.('משחזר במחשב...');
+  await withSyncEnqueuePaused(() => restoreBackupPayload(data));
+  const status = await getLiveSyncStatus();
+  const plan = planRestoreBackupReplaceCloud({
+    supabaseConfigured: status.supabaseConfigured === true,
+    online: status.online !== false,
   });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('confirm-restore-file')?.addEventListener('click', async () => {
-    const btn = document.getElementById('confirm-restore-file');
-    btn.disabled = true;
-    btn.textContent = 'משחזר...';
-    try {
-      const meta = await restoreBackupFromFile(file);
-      closeModal();
-      showToast(`שוחזר ✓ · ${formatBackupSummary(meta.counts)}`);
-      if (navigate) await navigate('home');
-    } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'שחזר';
-      showToast(err.message || 'שגיאה');
+  if (!plan.replaceCloud) {
+    if (plan.reason === 'no-supabase') {
+      await saveLiveSyncSettings({ holdPulls: false });
+      await startLiveSync();
     }
-  });
+    return { replacedCloud: false, reason: plan.reason };
+  }
+  return replaceCloudFromLocalBackup({ onProgress });
+}
+
+export function toastAfterRestore(cloud) {
+  if (cloud?.replacedCloud) {
+    showToast('שוחזר למחשב ולענן ✓ אפשר לפתוח את האייפון');
+    return;
+  }
+  if (cloud?.reason === 'offline' || cloud?.reason === 'no-supabase') {
+    showToast('שוחזר במחשב. הענן לא עודכן — אין חיבור');
+    return;
+  }
+  if (cloud?.reason === 'seed-failed') {
+    showToast('שוחזר במחשב. ההעלאה לענן נכשלה — אל תפתח את האייפון. לחץ «העלה את כל הדאטה המקומית»');
+    return;
+  }
+  showToast('שוחזר במחשב. הענן לא הוחלף לגמרי — אל תפתח את האייפון עדיין');
+}
+
+export function confirmAndRestoreBackupFile(file, navigate) {
+  (async () => {
+    let parsed;
+    try {
+      showToast('קורא את קובץ הגיבוי...');
+      parsed = await parseBackupFile(file);
+    } catch (err) {
+      showToast(err.message || 'לא ניתן לקרוא את הקובץ');
+      return;
+    }
+    const preview = describeBackupRestorePreview({
+      exportedAt: parsed.meta.exportedAt,
+      appVersion: parsed.meta.appVersion,
+      counts: parsed.meta.counts,
+      runs: countBackupRuns(parsed.data),
+    });
+    openModal({
+      title: 'שחזור מקובץ',
+      bodyHTML: restoreConfirmBodyHTML({ titleName: file.name, preview }),
+      footerHTML: `
+        <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+        <button type="button" class="btn btn-primary" id="confirm-restore-file">שחזר למחשב ולענן</button>`,
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('confirm-restore-file')?.addEventListener('click', async () => {
+      const btn = document.getElementById('confirm-restore-file');
+      btn.disabled = true;
+      btn.textContent = 'משחזר...';
+      try {
+        const cloud = await runRestoreToComputerAndCloud(parsed.data, {
+          onProgress: (msg) => { btn.textContent = msg; },
+        });
+        closeModal();
+        toastAfterRestore(cloud);
+        if (navigate) await navigate('home');
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'שחזר למחשב ולענן';
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  })().catch((err) => showToast(err.message || 'שגיאה'));
 }
 
 export async function promptRestoreIfNeeded(navigate) {
