@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=516';
+} from './db.js?v=517';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=516';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=516';
-import { downloadBlob } from './download.js?v=516';
-import { ValidationError } from './validators.js?v=516';
-import { openModal, closeModal } from './modal.js?v=516';
-import { escapeHtml, showToast } from './utils.js?v=516';
+} from './backup.js?v=517';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=517';
+import { downloadBlob } from './download.js?v=517';
+import { ValidationError } from './validators.js?v=517';
+import { openModal, closeModal } from './modal.js?v=517';
+import { escapeHtml, showToast } from './utils.js?v=517';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=516';
+} from './backup-folder-bridge.js?v=517';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -34,7 +34,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=516';
+} from './supabase-backup.js?v=517';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -457,7 +457,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=516');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=517');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -514,7 +514,7 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     stopLiveSync,
     saveLiveSyncSettings,
     startLiveSync,
-  } = await import('./supabase-sync.js?v=516');
+  } = await import('./supabase-sync.js?v=517');
   onProgress?.('עוצר סנכרון...');
   await saveLiveSyncSettings({ holdPulls: true });
   await stopLiveSync();

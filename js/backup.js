@@ -1,13 +1,13 @@
-import { exportAllData, importAllData } from './db.js?v=516';
+import { exportAllData, importAllData } from './db.js?v=517';
 import {
   financeRestoreWouldWipe,
   confirmFinanceRestoreWipe,
-} from './finance-db.js?v=516';
-import { APP_VERSION } from './version.js?v=516';
-import { defaultColorForIndex } from './chart.js?v=516';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=516';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=516';
-import { ValidationError } from './validators.js?v=516';
+} from './finance-db.js?v=517';
+import { APP_VERSION } from './version.js?v=517';
+import { defaultColorForIndex } from './chart.js?v=517';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=517';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=517';
+import { ValidationError } from './validators.js?v=517';
 
 export const BACKUP_VERSION = 3;
 
@@ -334,13 +334,28 @@ export function summarizeBackupData(data) {
   };
 }
 
+export function formatBackupRunLabel(run) {
+  const name = String(run?.flowName || run?.name || '').trim() || 'תזרים';
+  const batch = String(run?.batchNumber || '').trim();
+  const dateRaw = String(run?.date || '').trim();
+  let date = dateRaw;
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateRaw)) {
+    const [y, m, d] = dateRaw.slice(0, 10).split('-');
+    date = `${Number(d)}.${Number(m)}.${y}`;
+  }
+  const parts = [name];
+  if (batch) parts.push(`אצווה ${batch}`);
+  if (date) parts.push(date);
+  return parts.join(' · ');
+}
+
 export function countBackupRuns(data) {
   const runs = Array.isArray(data?.productionRuns) ? data.productionRuns : [];
-  let active = 0;
+  const labels = [];
   for (const run of runs) {
-    if (run && run.status === 'active') active += 1;
+    if (run && run.status === 'active') labels.push(formatBackupRunLabel(run));
   }
-  return { total: runs.length, active };
+  return { total: runs.length, active: labels.length, labels };
 }
 
 /** Short Hebrew preview so a huge JSON file does not need to be searched by hand. */
@@ -352,6 +367,7 @@ export function describeBackupRestorePreview({
 } = {}) {
   const total = runs?.total ?? (Number(counts?.productionRuns) || 0);
   const active = runs?.active;
+  const labels = Array.isArray(runs?.labels) ? runs.labels : [];
   const lines = [];
   if (exportedAt) {
     const when = new Date(exportedAt);
@@ -363,7 +379,16 @@ export function describeBackupRestorePreview({
   } else if (active === 0) {
     lines.push(total === 0 ? 'אין ריצות בגיבוי' : `אין ריצות פתוחות · ${total} ריצות שהושלמו`);
   } else {
-    lines.push(`${active} ריצות פתוחות · ${total} ריצות בכלל`);
+    lines.push(`${active} ריצות פתוחות:`);
+    const shown = labels.slice(0, 12);
+    for (const label of shown) lines.push(`• ${label}`);
+    if (labels.length > shown.length) {
+      lines.push(`• ועוד ${labels.length - shown.length}`);
+    }
+    if (!shown.length) {
+      lines.push('• (השמות יופיעו אחרי בחירת הקובץ מחדש)');
+    }
+    lines.push(`${total} ריצות בכלל (כולל שהושלמו)`);
   }
   lines.push(
     `${counts?.flows || 0} תזרימים · ${counts?.productionEntries || 0} רישומי ייצור · ${counts?.products || 0} מוצרים`,
