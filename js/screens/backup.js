@@ -7,7 +7,6 @@ import {
   clearBackupLocation,
   listLocalSnapshots,
   listExternalBackupFiles,
-  restoreSupabaseBackup,
   testSupabaseBackupConnection,
   saveSupabaseBackupConfig,
   uploadBackupToSupabase,
@@ -19,19 +18,24 @@ import {
   readLocalSnapshotForRestore,
   runRestoreToComputerAndCloud,
   toastAfterRestore,
-} from '../backup-service.js?v=521';
-import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=521';
-import { describeDownloadMethod } from '../download.js?v=521';
-import { showToast, escapeHtml } from '../utils.js?v=521';
-import { openModal, closeModal } from '../modal.js?v=521';
-import { APP_VERSION } from '../version.js?v=521';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=521';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=521';
-import { canAccessBackupFull } from '../permissions.js?v=521';
-import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=521';
-import { getSetting } from '../db.js?v=521';
-import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=521';
-import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=521';
+  saveGoodRestorePoint,
+  saveSafetySnapshot,
+  readRestorePointData,
+  backupKindLabel,
+  formatCatalogHealth,
+} from '../backup-service.js?v=522';
+import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=522';
+import { describeDownloadMethod } from '../download.js?v=522';
+import { showToast, escapeHtml } from '../utils.js?v=522';
+import { openModal, closeModal } from '../modal.js?v=522';
+import { APP_VERSION } from '../version.js?v=522';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=522';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=522';
+import { canAccessBackupFull } from '../permissions.js?v=522';
+import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=522';
+import { getSetting } from '../db.js?v=522';
+import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=522';
+import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=522';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -39,7 +43,24 @@ function formatWhen(iso) {
 }
 
 function kindLabel(kind) {
-  return kind === 'auto' ? 'אוטומטי' : 'ידני';
+  return backupKindLabel(kind);
+}
+
+function restorePointRowsHTML(points, btnClass) {
+  if (!points?.length) return '';
+  return `<div class="backup-snapshot-list">${points.map((p) => `
+    <div class="backup-snapshot-item">
+      <div class="backup-snapshot-info">
+        <strong>${formatWhen(p.exportedAt)}</strong>
+        <span class="backup-snapshot-meta">${escapeHtml(kindLabel(p.kind))} · ${escapeHtml(p.summary || '')} · ${p.source === 'supabase' ? 'ענן' : 'מכשיר'}</span>
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm ${btnClass}"
+        data-source="${escapeHtml(p.source || '')}"
+        data-id="${escapeHtml(String(p.id || ''))}"
+        data-local-id="${escapeHtml(String(p.localId || ''))}"
+        data-kind="${escapeHtml(p.kind || '')}">שחזר</button>
+    </div>`).join('')}
+  </div>`;
 }
 
 const BACKUP_SECTIONS_KEY = 'backup-sections-open';
@@ -47,7 +68,7 @@ const BACKUP_SECTIONS_KEY = 'backup-sections-open';
 function getBackupOpenSections() {
   try {
     const raw = sessionStorage.getItem(BACKUP_SECTIONS_KEY);
-    if (raw == null) return new Set(['hero', 'supplier-repair', 'cloud-wipe', 'tables']);
+    if (raw == null) return new Set(['hero', 'restore-points', 'tables']);
     const parsed = JSON.parse(raw);
     return new Set(Array.isArray(parsed) ? parsed : []);
   } catch {
@@ -104,7 +125,10 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     supportsLocationPicker, isNativeApp, isIOS,
     supabaseConfig, supabaseConfigured, supabaseBackups, deviceId,
     backupScopeId, isPrimaryDevice, liveSync,
+    restorePoints, catalogHealth, driftWarning,
   } = status;
+  const goodPoints = restorePoints?.goods || [];
+  const safetyPoints = restorePoints?.safeties || [];
   const iosPwa = isIOS && !isNativeApp;
 
   const role = getCurrentUserRole();
@@ -282,7 +306,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       ${isNativeApp ? `<p class="form-hint" style="margin-top:8px">אפליקציה מותקנת — בחירת תיקייה דרך «קבצים»</p>` : ''}`;
 
   const localBody = `
-      <p class="form-hint">נשמר <strong>גיבוי JSON אחד</strong> — כל גיבוי חדש מחליף את הקודם. העותק החי של האפליקציה נשאר על המכשיר גם בלי אינטרנט.</p>
+      <p class="form-hint">נשמר <strong>עותק אחרון אחד</strong> שמתחלף. נקודות טובות וצילומי ביטחון נשארים בנפרד ולא נמחקים מכאן.</p>
       ${snapshots.length === 0
         ? '<p class="report-empty">אין עדיין גיבוי מקומי</p>'
         : `<div class="backup-snapshot-list">${snapshots.map((s) => `
@@ -389,6 +413,45 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
         <button type="button" class="btn btn-secondary btn-sm" id="live-sync-probe-check" ${supabaseConfigured ? '' : 'disabled'}>
           בדוק אות מהענן
         </button>
+      </div>
+      <p class="form-hint" style="margin:10px 0 0;line-height:1.45">
+        במחשב חדש לחצו «סנכרן עכשיו» — זה מושך את כל הנתונים מהענן.
+        פעולות מסוכנות (העלאה מלאה, ניקוי כפילויות, ריקון) נמצאות למטה, סגורות.
+      </p>
+      <div id="live-sync-probe-status" class="form-hint" style="margin-top:8px;line-height:1.5">
+        בדיקת סנכרון: במשתמש המשני לחץ «שלח אות בדיקה», אצלך לחץ «בדוק אות מהענן».
+      </div>
+      <p class="form-hint" style="margin-top:10px">
+        גיבוי JSON בענן (למעלה) נשאר כרשת ביטחון. סנכרון חי לא דורש «מכשיר ראשי».
+      </p>`;
+
+  const restorePointsBody = `
+      <p class="form-hint" style="line-height:1.5;margin-bottom:10px">
+        אחרי שהנתונים נראים נכון — שמור נקודה טובה. אם מחר יש כפילויות או רשימה ריקה, חוזרים לכאן.
+        הנקודה לא נמחקת עם הגיבוי היומי.
+      </p>
+      <p class="backup-meta" style="margin-bottom:10px">
+        עכשיו: ${escapeHtml(formatCatalogHealth(catalogHealth))}
+      </p>
+      ${driftWarning ? `<p class="form-hint" style="color:var(--danger);line-height:1.5;margin-bottom:10px">${escapeHtml(driftWarning)}</p>` : ''}
+      <button type="button" class="btn btn-primary" id="save-good-point-btn" style="width:100%;margin-bottom:8px">
+        שמור נקודה טובה
+      </button>
+      <p class="form-hint" id="save-good-point-status" style="margin-bottom:10px;line-height:1.5"></p>
+      ${goodPoints.length
+        ? restorePointRowsHTML(goodPoints, 'restore-good-point')
+        : '<p class="report-empty">אין עדיין נקודה טובה. אחרי שהמסך נראה נכון — שמור.</p>'}
+      ${safetyPoints.length ? `
+        <p class="form-hint" style="margin:12px 0 6px">צילום אוטומטי לפני פעולה מסוכנת</p>
+        ${restorePointRowsHTML(safetyPoints.slice(0, 5), 'restore-good-point')}
+      ` : ''}`;
+
+  const dangerOpsBody = `
+      <p class="form-hint" style="line-height:1.5;margin-bottom:10px">
+        הפעולות האלה יכולות לשבור נתונים. לפני כל אחת נשמר צילום ביטחון.
+        אל תלחצו עליהן ביום רגיל.
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button type="button" class="btn btn-secondary btn-sm" id="live-sync-reseed" ${supabaseConfigured ? '' : 'disabled'}>
           העלה את כל הדאטה המקומית
         </button>
@@ -398,23 +461,18 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
         <button type="button" class="btn btn-danger btn-sm" id="live-sync-reset" ${supabaseConfigured ? '' : 'disabled'}>
           אפס מצב סנכרון
         </button>
+        <button type="button" class="btn btn-danger btn-sm" id="wipe-cloud-btn" ${supabaseConfigured ? '' : 'disabled'}>
+          רוקן את הענן
+        </button>
       </div>
-      <p class="form-hint" style="margin:10px 0 0;line-height:1.45">
-        במחשב חדש לחצו «סנכרן עכשיו» — זה מושך את כל הנתונים מהענן.
-        אל תלחצו «העלה את כל הדאטה המקומית» אם המחשב כמעט ריק.
-      </p>
-      <div id="live-sync-probe-status" class="form-hint" style="margin-top:8px;line-height:1.5">
-        בדיקת סנכרון: במשתמש המשני לחץ «שלח אות בדיקה», אצלך לחץ «בדוק אות מהענן».
-      </div>
-      <p class="form-hint" style="margin-top:10px">
-        גיבוי JSON בענן (למעלה) נשאר כרשת ביטחון. סנכרון חי לא דורש «מכשיר ראשי».
-      </p>`;
+      <p class="form-hint" id="wipe-cloud-status" style="margin-top:8px;line-height:1.5"></p>`;
 
   container.innerHTML = `
     <button type="button" class="btn btn-secondary btn-sm backup-back-btn" id="backup-back">← חזרה</button>
     ${backupSectionHTML('account', '👤 חשבון', accountBody)}
     ${backupSectionHTML('app-update', '🔄 עדכון אפליקציה', appUpdateBody)}
     ${backupSectionHTML('hero', '💾 גיבוי ושחזור', heroBody, { extraClass: 'backup-hero-card' })}
+    ${backupSectionHTML('restore-points', 'נקודות שמורות', restorePointsBody, { extraClass: 'backup-hero-card' })}
     ${backupSectionHTML('supplier-repair', '🔗 תיקון קישורי ספקים', `
       <p class="form-hint" style="line-height:1.5;margin-bottom:10px">
         מחזיר ספק לחומרי גלם שנשאר בלי ספק, לפי שם. רק שמות עם ספק אחד ברור.
@@ -425,16 +483,6 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       </button>
       <p class="form-hint" id="repair-supplier-links-status" style="margin-top:8px;line-height:1.5"></p>
     `)}
-    ${backupSectionHTML('cloud-wipe', '☁️ ריקון ענן לפני זריעה', `
-      <p class="form-hint" style="line-height:1.5;margin-bottom:10px">
-        מוחק רק את נתוני הסנכרון <strong>בענן</strong>. מה שבאייפון לא נמחק.
-        סנכרון חי חייב להיות כבוי. אחרי הריקון: «אפס מצב סנכרון» ואז «העלה את כל הדאטה המקומית».
-      </p>
-      <button type="button" class="btn btn-danger" id="wipe-cloud-btn" style="width:100%" ${supabaseConfigured ? '' : 'disabled'}>
-        רוקן את הענן
-      </button>
-      <p class="form-hint" id="wipe-cloud-status" style="margin-top:8px;line-height:1.5"></p>
-    `)}
     ${backupSectionHTML('tables', '📊 הורדת טבלאות Excel', tablesBody)}
     ${backupSectionHTML('cloud-cutover', '☁️ העברת הנתונים לענן', cloudCutoverBody)}
     ${backupSectionHTML('live-sync', '🔄 סנכרון חי בין מכשירים', liveSyncBody, { extraClass: 'backup-live-sync-card' })}
@@ -442,6 +490,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     ${backupSectionHTML('auto', '⏱ גיבוי אוטומטי', autoBody)}
     ${backupSectionHTML('folder', '📁 תיקיית ברירת מחדל לגיבויים', folderBody, { extraClass: 'backup-folder-card' })}
     ${backupSectionHTML('local', '📱 גיבוי מקומי על המכשיר', localBody)}
+    ${backupSectionHTML('danger-ops', 'פעולות מסוכנות', dangerOpsBody)}
     ${backupSectionHTML('import', '📂 ייבוא מקובץ', importBody)}`;
 
   bindBackupSectionToggles(container);
@@ -451,8 +500,8 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('repair-supplier-links-status');
     const label = btn?.textContent;
     try {
-      const { db } = await import('../db.js?v=521');
-      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=521');
+      const { db } = await import('../db.js?v=522');
+      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=522');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -471,6 +520,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       }
       if (!confirm(`לקשר ספק ל-${plan.linkCount} חומרי גלם לפי שם?\n\nלא ישנה מחירים ולא ימחק כלום.\nסנכרון חי חייב להישאר כבוי.`)) return;
       if (btn) { btn.disabled = true; btn.textContent = 'מקשר...'; }
+      await saveSafetySnapshot('repair');
       const result = await applySupplierLinkRepair({ db, getLiveSyncSettings });
       if (!result.ok) {
         showToast(result.reason === 'live-sync-on' ? 'כבה סנכרון חי ונסה שוב' : 'התיקון לא רץ');
@@ -492,7 +542,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('wipe-cloud-status');
     const label = btn?.textContent;
     try {
-      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=521');
+      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=522');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -501,7 +551,9 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       }
       if (!confirm('לרוקן את כל נתוני הסנכרון בענן?\n\nהנתונים באייפון לא יימחקו.\nסנכרון חי חייב להישאר כבוי.')) return;
       if (!confirm('אישור שני: למחוק את הענן עכשיו?\n\nאחר כך: אפס מצב סנכרון, ואז העלה את כל הדאטה המקומית.')) return;
-      if (btn) { btn.disabled = true; btn.textContent = 'מוחק ענן...'; }
+      if (btn) { btn.disabled = true; btn.textContent = 'שומר נקודת ביטחון...'; }
+      await saveSafetySnapshot('wipe');
+      if (btn) btn.textContent = 'מוחק ענן...';
       const result = await wipeKitchenCloudTables();
       if (!result.ok) {
         const extra = result.errors?.length ? ` ${result.errors.slice(0, 2).join(' · ')}` : '';
@@ -606,7 +658,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       const {
         flushSyncQueue, pullAllCollections, getLiveSyncSettings, ensureCloudJoinPull, ensureProductionHistoryPull,
-      } = await import('../supabase-sync.js?v=521');
+      } = await import('../supabase-sync.js?v=522');
       const live = await getLiveSyncSettings();
       const plan = planManualLiveSync(live);
       if (plan.reader) await ensureCloudJoinPull();
@@ -631,7 +683,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
     try {
-      const { sendSyncProbe } = await import('../supabase-sync.js?v=521');
+      const { sendSyncProbe } = await import('../supabase-sync.js?v=522');
       const email = getCurrentUserEmail() || '';
       const note = `בדיקה מ-${email || 'משתמש'} · ${new Date().toLocaleTimeString('he-IL')}`;
       const { value, pushed } = await sendSyncProbe({ note, email });
@@ -656,7 +708,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'בודק...'; }
     try {
-      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=521');
+      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=522');
       const { value, pulled } = await refreshAndReadSyncProbe();
       if (!value?.at) {
         if (status) {
@@ -691,7 +743,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה... אל תסגור'; }
     try {
-      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=521');
+      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=522');
       const result = await pushCutoverSnapshot({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -719,7 +771,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה תיעוד... אל תסגור'; }
     try {
-      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=521');
+      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=522');
       const result = await pushProductionHistoryFromCutover({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -744,14 +796,16 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (!confirm('להעלות את כל הנתונים המקומיים לענן? (לא מוחק נתונים קיימים בענן — last-write-wins)')) return;
     const btn = document.getElementById('live-sync-reseed');
     const label = btn?.textContent;
-    if (btn) { btn.disabled = true; btn.textContent = 'מעלה...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'שומר נקודת ביטחון...'; }
     try {
+      await saveSafetySnapshot('reseed');
+      if (btn) btn.textContent = 'מעלה...';
       const {
         seedLocalDataToSupabase,
         saveLiveSyncSettings,
         stopLiveSync,
         startLiveSync,
-      } = await import('../supabase-sync.js?v=521');
+      } = await import('../supabase-sync.js?v=522');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true, holdPulls: false });
       await stopLiveSync();
@@ -769,9 +823,11 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (!confirm('לאפס את הקישור בין הנתונים המקומיים לענן?\n\nהנתונים על המכשיר לא נמחקים. בסנכרון הבא הכל יועלה לענן מחדש כרשומות חדשות.\n\nלהשתמש רק אחרי שחזור גיבוי או ניקוי הענן.')) return;
     const btn = document.getElementById('live-sync-reset');
     const label = btn?.textContent;
-    if (btn) { btn.disabled = true; btn.textContent = 'מאפס...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'שומר נקודת ביטחון...'; }
     try {
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=521');
+      await saveSafetySnapshot('reset');
+      if (btn) btn.textContent = 'מאפס...';
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=522');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -786,9 +842,11 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (!confirm('לאחד כפילויות מקומיות (אותו שם + אותו ספק/קטגוריה) ולסמן כפולים בענן למחיקה?')) return;
     const btn = document.getElementById('live-sync-dedupe');
     const label = btn?.textContent;
-    if (btn) { btn.disabled = true; btn.textContent = 'מנקה...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'שומר נקודת ביטחון...'; }
     try {
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=521');
+      await saveSafetySnapshot('dedupe');
+      if (btn) btn.textContent = 'מנקה...';
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=522');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });
@@ -881,7 +939,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (btn) btn.disabled = true;
     try {
       showToast('מכין קובץ Excel...');
-      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=521');
+      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=522');
       const msg = await exportAllDataTablesExcel();
       showToast(msg);
     } catch (err) {
@@ -944,8 +1002,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       title: 'מחיקת גיבויים ישנים',
       bodyHTML: `
         <p style="line-height:1.6">
-          יימחקו כל הגיבויים הישנים — יישאר רק <strong>הגיבוי האחרון</strong>
-          (על המכשיר ובתיקייה, אם הוגדרה).
+          יימחקו גיבויים רגילים ישנים. <strong>נקודות טובות וצילומי ביטחון נשארים</strong>.
         </p>`,
       footerHTML: `
         <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
@@ -976,6 +1033,34 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
 
   container.querySelectorAll('.restore-local-backup').forEach((btn) => {
     btn.addEventListener('click', () => confirmRestoreLocal(Number(btn.dataset.id), navigate));
+  });
+
+  document.getElementById('save-good-point-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('save-good-point-btn');
+    const statusEl = document.getElementById('save-good-point-status');
+    const label = btn?.textContent;
+    if (btn) { btn.disabled = true; btn.textContent = 'שומר...'; }
+    try {
+      const result = await saveGoodRestorePoint();
+      const where = result.supabase ? 'נשמר במכשיר ובענן' : 'נשמר במכשיר';
+      const msg = `נקודה טובה ✓ · ${result.summary} · ${where}`;
+      showToast(msg);
+      if (statusEl) statusEl.textContent = msg;
+      renderBackup(container, { navigate });
+    } catch (err) {
+      showToast(err.message || 'לא נשמרה נקודה טובה');
+      if (statusEl) statusEl.textContent = err.message || 'שגיאה';
+      if (btn) { btn.disabled = false; btn.textContent = label; }
+    }
+  });
+
+  container.querySelectorAll('.restore-good-point').forEach((btn) => {
+    btn.addEventListener('click', () => confirmRestoreNamedPoint({
+      source: btn.dataset.source,
+      id: btn.dataset.id,
+      localId: btn.dataset.localId,
+      kind: btn.dataset.kind,
+    }, navigate));
   });
 
   document.getElementById('backup-restore-file')?.addEventListener('change', async (e) => {
@@ -1123,7 +1208,7 @@ function confirmRestoreExternal(path, name, navigate) {
     let parsed;
     try {
       showToast('קורא את קובץ הגיבוי...');
-      const json = await (await import('../backup-folder-bridge.js?v=521')).readBackupJsonFromFolder(path);
+      const json = await (await import('../backup-folder-bridge.js?v=522')).readBackupJsonFromFolder(path);
       const file = new File([json], name || path, { type: 'application/json' });
       parsed = await parseBackupFile(file);
     } catch (err) {
@@ -1167,30 +1252,59 @@ function confirmRestoreExternal(path, name, navigate) {
   })().catch((err) => showToast(err.message || 'שגיאה'));
 }
 
-function confirmRestoreSupabase(id, navigate) {
-  openModal({
-    title: 'שחזור מ-Supabase',
-    bodyHTML: `<p style="line-height:1.6">פעולה זו תחליף את <strong>כל</strong> הנתונים הנוכחיים בגיבוי מהענן.<br><br>להמשיך?</p>`,
-    footerHTML: `
-      <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
-      <button type="button" class="btn btn-primary" id="confirm-restore-supabase">שחזר</button>`,
-  });
-  document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
-  document.getElementById('confirm-restore-supabase')?.addEventListener('click', async () => {
-    const btn = document.getElementById('confirm-restore-supabase');
-    btn.disabled = true;
-    btn.textContent = 'משחזר...';
+function confirmRestoreNamedPoint(point, navigate) {
+  (async () => {
+    let snapshot;
     try {
-      const meta = await restoreSupabaseBackup(id);
-      closeModal();
-      showToast(`שוחזר מענן ✓ · ${formatBackupSummary(meta.counts)}`);
-      navigate?.('home');
+      showToast('קורא את הנקודה השמורה...');
+      snapshot = await readRestorePointData(point);
     } catch (err) {
-      btn.disabled = false;
-      btn.textContent = 'שחזר';
-      showToast(err.message || 'שגיאה');
+      showToast(err.message || 'נקודה לא נמצאה');
+      return;
     }
-  });
+    const preview = describeBackupRestorePreview({
+      exportedAt: snapshot.meta.exportedAt,
+      appVersion: snapshot.meta.appVersion,
+      counts: snapshot.meta.counts,
+      runs: countBackupRuns(snapshot.data),
+    });
+    openModal({
+      title: 'שחזור מנקודה שמורה',
+      bodyHTML: restoreConfirmBodyFromPreview(snapshot.name, preview),
+      footerHTML: `
+        <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
+        <button type="button" class="btn btn-primary" id="confirm-restore-point">שחזר למחשב ולענן</button>`,
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    document.getElementById('confirm-restore-point')?.addEventListener('click', async () => {
+      const btn = document.getElementById('confirm-restore-point');
+      btn.disabled = true;
+      btn.textContent = 'משחזר...';
+      try {
+        const cloud = await runRestoreToComputerAndCloud(snapshot.data, {
+          onProgress: (msg) => { btn.textContent = msg; },
+        });
+        closeModal();
+        toastAfterRestore(cloud);
+        navigate?.('home');
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'שחזר למחשב ולענן';
+        showToast(err.message || 'שגיאה');
+      }
+    });
+  })().catch((err) => showToast(err.message || 'שגיאה'));
+}
+
+function restoreConfirmBodyFromPreview(titleName, preview) {
+  return `
+    <p style="line-height:1.6;margin-bottom:10px"><strong>${escapeHtml(titleName)}</strong></p>
+    <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
+    <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון רק בסוף. זה לוקח כמה דקות.</p>`;
+}
+
+function confirmRestoreSupabase(id, navigate) {
+  confirmRestoreNamedPoint({ source: 'supabase', id }, navigate);
 }
 
 function confirmRestoreLocal(id, navigate) {

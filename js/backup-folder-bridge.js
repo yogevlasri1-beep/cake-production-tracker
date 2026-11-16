@@ -1,7 +1,8 @@
 /**
  * API אחיד — בחירת תיקייה ב«קבצים» (iOS native) או Chrome/Mac
  */
-import { getSetting, setSetting } from './db.js?v=521';
+import { getSetting, setSetting } from './db.js?v=522';
+import { isProtectedBackupFileName } from './backup-guard.js?v=522';
 
 const SETTINGS_KEY = 'backupSettings';
 
@@ -62,10 +63,13 @@ export async function pickDefaultBackupFolder() {
   }
 }
 
-export async function writeBackupJsonToFolder(payload) {
+export async function writeBackupJsonToFolder(payload, { extraName } = {}) {
   const api = await getFolderAPI();
   const json = JSON.stringify(payload, null, 2);
   await api.writeFile({ path: 'yitzur-gibuy-latest.json', data: json });
+  if (extraName && extraName !== 'yitzur-gibuy-latest.json') {
+    await api.writeFile({ path: extraName, data: json });
+  }
   await pruneExternalBackupFiles();
   return true;
 }
@@ -84,6 +88,7 @@ export async function pruneExternalBackupFiles() {
   for (const entry of entries || []) {
     if (entry.isDir || !entry.name?.endsWith('.json')) continue;
     if (entry.name === LATEST_BACKUP_FILE) continue;
+    if (isProtectedBackupFileName(entry.name)) continue;
     if (!entry.name.startsWith(BACKUP_FILE_PREFIX)) continue;
     try {
       await api.deleteFile({ path: entry.name });

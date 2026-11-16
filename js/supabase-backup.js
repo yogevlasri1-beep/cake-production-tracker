@@ -1,12 +1,18 @@
-import { getSetting, setSetting } from './db.js?v=521';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=521';
-import { ValidationError } from './validators.js?v=521';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=521';
+import { getSetting, setSetting } from './db.js?v=522';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=522';
+import { ValidationError } from './validators.js?v=522';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=522';
+import {
+  MAX_PINNED_BACKUPS,
+  MAX_ROTATING_CLOUD,
+  MAX_SAFETY_BACKUPS,
+  selectBackupsToPrune,
+} from './backup-guard.js?v=522';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
 const TABLE = 'app_backups';
-const MAX_CLOUD_SNAPSHOTS = 10;
+const MAX_CLOUD_SNAPSHOTS = MAX_ROTATING_CLOUD;
 
 /** מזהה קבוע — כל ההתקנות / אחרי מחיקה משתמשים באותו מקום בענן */
 export const BACKUP_SCOPE_ID = 'yitzur';
@@ -57,7 +63,7 @@ export function buildSupabaseHeaders(anonKey, extra = {}) {
 /** JWT של המשתמש המחובר — ל-RLS. דינמי כדי למנוע ייבוא מעגלי עם auth.js. */
 export async function resolveSupabaseUserAccessToken() {
   try {
-    const { getValidSession } = await import('./auth.js?v=521');
+    const { getValidSession } = await import('./auth.js?v=522');
     const session = await getValidSession();
     return session?.access_token || null;
   } catch {
@@ -229,10 +235,14 @@ export async function uploadBackupToSupabase(payload, kind = 'manual') {
 async function pruneSupabaseBackups(cfg, scopeId) {
   const rows = await supabaseFetch(
     cfg,
-    `/${TABLE}?device_id=eq.${encodeURIComponent(scopeId)}&select=id,exported_at&order=exported_at.desc`,
+    `/${TABLE}?device_id=eq.${encodeURIComponent(scopeId)}&select=id,exported_at,kind&order=exported_at.desc`,
   );
-  if (!Array.isArray(rows) || rows.length <= MAX_CLOUD_SNAPSHOTS) return 0;
-  const toDelete = rows.slice(MAX_CLOUD_SNAPSHOTS).map((r) => r.id);
+  if (!Array.isArray(rows) || !rows.length) return 0;
+  const toDelete = selectBackupsToPrune(rows, {
+    maxPinned: MAX_PINNED_BACKUPS,
+    maxSafety: MAX_SAFETY_BACKUPS,
+    maxRotating: MAX_CLOUD_SNAPSHOTS,
+  });
   if (!toDelete.length) return 0;
   await supabaseFetch(cfg, `/${TABLE}?id=in.(${toDelete.join(',')})`, {
     method: 'DELETE',
@@ -241,7 +251,7 @@ async function pruneSupabaseBackups(cfg, scopeId) {
   return toDelete.length;
 }
 
-export async function listSupabaseBackups(limit = 10) {
+export async function listSupabaseBackups(limit = 40) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return [];
   const rows = await supabaseFetch(

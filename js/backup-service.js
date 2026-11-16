@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=521';
+} from './db.js?v=522';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=521';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=521';
-import { downloadBlob } from './download.js?v=521';
-import { ValidationError } from './validators.js?v=521';
-import { openModal, closeModal } from './modal.js?v=521';
-import { escapeHtml, showToast } from './utils.js?v=521';
+} from './backup.js?v=522';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=522';
+import { downloadBlob } from './download.js?v=522';
+import { ValidationError } from './validators.js?v=522';
+import { openModal, closeModal } from './modal.js?v=522';
+import { escapeHtml, showToast } from './utils.js?v=522';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,11 +19,12 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=521';
+} from './backup-folder-bridge.js?v=522';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
   restoreSupabaseBackup,
+  fetchSupabaseBackupPayload,
   getSupabaseBackupConfig,
   isSupabaseBackupConfigured,
   testSupabaseBackupConnection,
@@ -34,7 +35,21 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=521';
+} from './supabase-backup.js?v=522';
+import {
+  MAX_PINNED_BACKUPS,
+  MAX_ROTATING_LOCAL,
+  MAX_SAFETY_BACKUPS,
+  backupKindLabel,
+  catalogDriftWarning,
+  catalogHealthFromCounts,
+  formatCatalogHealth,
+  isProtectedBackupKind,
+  mergeRestorePoints,
+  protectedBackupFileName,
+  safetyKindForAction,
+  selectBackupsToPrune,
+} from './backup-guard.js?v=522';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -146,11 +161,12 @@ export async function clearBackupLocation() {
   await saveBackupSettings({ externalLocationLabel: null, locationType: null });
 }
 
-async function writePayloadToExternal(payload) {
+async function writePayloadToExternal(payload, kind) {
   const settings = await getBackupSettings();
   if (!settings.externalLocationLabel) return false;
   try {
-    await writeBackupJsonToFolder(payload);
+    const extraName = protectedBackupFileName(kind, payload?.exportedAt);
+    await writeBackupJsonToFolder(payload, extraName ? { extraName } : {});
     return true;
   } catch (err) {
     console.warn('Folder backup write failed', err);
@@ -180,30 +196,44 @@ export async function restoreFromExternalHandle(entryHandle) {
   return restoreBackupFromFile(file);
 }
 
+function localBackupPruneRows(rows) {
+  return (rows || []).map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    exportedAt: row.createdAt,
+  }));
+}
+
+async function pruneLocalSnapshots() {
+  const existing = await db.localBackups.toArray();
+  const dropIds = selectBackupsToPrune(localBackupPruneRows(existing), {
+    maxPinned: MAX_PINNED_BACKUPS,
+    maxSafety: MAX_SAFETY_BACKUPS,
+    maxRotating: MAX_ROTATING_LOCAL,
+  });
+  if (dropIds.length) await db.localBackups.bulkDelete(dropIds);
+  return dropIds.length;
+}
+
 async function saveLocalSnapshot(payload, kind) {
+  const counts = payload.counts || {};
   const row = {
     createdAt: payload.exportedAt,
     kind,
-    summary: formatBackupSummary(payload.counts),
+    summary: formatBackupSummary(counts),
     payloadJson: JSON.stringify(payload),
-    entryCount: payload.counts.productionEntries || 0,
+    entryCount: counts.productionEntries || 0,
+    products: counts.products || 0,
+    flows: counts.flows || 0,
+    categories: counts.categories || 0,
   };
-
-  const existing = await db.localBackups.orderBy('createdAt').reverse().toArray();
-  if (existing.length > 0) {
-    await db.localBackups.bulkDelete(existing.map((r) => r.id));
-  }
   await db.localBackups.add(row);
+  await pruneLocalSnapshots();
 }
 
-/** מוחק גיבויים ישנים — משאיר רק האחרון (מקומי + תיקייה) */
+/** מוחק גיבויים רגילים ישנים. נקודות טובות וצילומי ביטחון נשארים. */
 export async function keepOnlyLatestBackup() {
-  const all = await db.localBackups.orderBy('createdAt').reverse().toArray();
-  let localDeleted = 0;
-  if (all.length > 1) {
-    localDeleted = all.length - 1;
-    await db.localBackups.bulkDelete(all.slice(1).map((r) => r.id));
-  }
+  const localDeleted = await pruneLocalSnapshots();
 
   let externalDeleted = 0;
   try {
@@ -213,16 +243,18 @@ export async function keepOnlyLatestBackup() {
   }
 
   await saveBackupSettings({ maxLocalSnapshots: 1 });
-  return { localDeleted, externalDeleted, kept: all.length > 0 ? 1 : 0 };
+  const kept = await db.localBackups.count();
+  return { localDeleted, externalDeleted, kept };
 }
 
 export async function listLocalSnapshots(limit = 10) {
   return db.localBackups.orderBy('createdAt').reverse().limit(limit).toArray();
 }
 
-/** אין עותק JSON על המכשיר — שומרים אחד, בלי להעלות לענן. */
+/** אין עותק JSON רגיל על המכשיר — שומרים אחד, בלי להעלות לענן. נקודה טובה לא מחליפה עותק אחרון. */
 export function shouldSaveLastLocalCopy(snapshots) {
-  return !Array.isArray(snapshots) || snapshots.length === 0;
+  if (!Array.isArray(snapshots) || snapshots.length === 0) return true;
+  return snapshots.every((row) => isProtectedBackupKind(row?.kind));
 }
 
 export async function ensureLastLocalCopy({ force = false } = {}) {
@@ -350,7 +382,7 @@ export async function runBackup({ kind = 'manual', shareToFiles = false } = {}) 
   await saveLocalSnapshot(payload, kind);
 
   try {
-    result.external = await writePayloadToExternal(payload);
+    result.external = await writePayloadToExternal(payload, kind);
     if (result.external) {
       payload.exportMeta.savedToFolder = true;
       result.payload = payload;
@@ -448,12 +480,12 @@ export function initAutoBackupSystem() {
 
 export async function getBackupHistory() {
   const [local, external, supabase] = await Promise.all([
-    listLocalSnapshots(10),
+    listLocalSnapshots(40),
     listExternalBackupFiles().catch(() => []),
     (async () => {
       if (!(await isSupabaseBackupConfigured())) return [];
       try {
-        return await listSupabaseBackups(10);
+        return await listSupabaseBackups(40);
       } catch (err) {
         console.warn('List Supabase backups', err);
         return [];
@@ -463,9 +495,97 @@ export async function getBackupHistory() {
   return { local, external, supabase };
 }
 
+export async function currentCatalogHealth() {
+  const [products, flows, categories, productionEntries] = await Promise.all([
+    db.products.count(),
+    db.flows.count(),
+    db.categories.count(),
+    db.productionEntries.count(),
+  ]);
+  return catalogHealthFromCounts({ products, flows, categories, productionEntries });
+}
+
+export async function saveNamedBackup(kind, { cloudOptional = true } = {}) {
+  const payload = await createBackupPayload();
+  await saveLocalSnapshot(payload, kind);
+  let supabase = false;
+  let supabaseError = null;
+  try {
+    const cloud = await uploadBackupToSupabase(payload, kind);
+    supabase = cloud.uploaded === true;
+  } catch (err) {
+    supabaseError = err.message || String(err);
+    console.warn('named backup cloud', err);
+    if (!cloudOptional) throw err;
+  }
+  try {
+    await writePayloadToExternal(payload, kind);
+  } catch (err) {
+    console.warn('named backup folder', err);
+  }
+  return {
+    payload,
+    supabase,
+    supabaseError,
+    summary: formatBackupSummary(payload.counts),
+    kind,
+  };
+}
+
+export async function saveGoodRestorePoint() {
+  return saveNamedBackup('good');
+}
+
+export async function saveSafetySnapshot(action) {
+  if (await isDatabaseEmpty()) return { saved: false, reason: 'empty' };
+  const result = await saveNamedBackup(safetyKindForAction(action));
+  return { saved: true, ...result };
+}
+
+export async function listRestorePoints() {
+  const [local, supabase] = await Promise.all([
+    listLocalSnapshots(40),
+    (async () => {
+      if (!(await isSupabaseBackupConfigured())) return [];
+      try {
+        return await listSupabaseBackups(40);
+      } catch (err) {
+        console.warn('List restore points', err);
+        return [];
+      }
+    })(),
+  ]);
+  return mergeRestorePoints(local, supabase);
+}
+
+export async function readRestorePointData(point) {
+  if (!point) throw new ValidationError('נקודה לא נמצאה');
+  if (point.source === 'supabase' && point.id) {
+    const { data, meta } = await fetchSupabaseBackupPayload(point.id);
+    return {
+      data,
+      name: backupKindLabel(point.kind),
+      meta: {
+        exportedAt: meta.exportedAt || point.exportedAt || '',
+        appVersion: meta.appVersion || '',
+        counts: meta.counts || {},
+      },
+    };
+  }
+  return readLocalSnapshotForRestore(point.localId || point.id);
+}
+
 export async function getBackupStatus() {
   const settings = await getBackupSettings();
   const snapshots = await listLocalSnapshots(5);
+  const restorePoints = await listRestorePoints();
+  let catalogHealth = catalogHealthFromCounts();
+  try {
+    catalogHealth = await currentCatalogHealth();
+  } catch (err) {
+    console.warn('catalog health', err);
+  }
+  const driftWarning = catalogDriftWarning(catalogHealth, restorePoints.goods[0]);
   const hasDefaultFolder = hasDefaultBackupFolder(settings);
   const supabaseConfig = await getSupabaseBackupConfig();
   const supabaseConfigured = await isSupabaseBackupConfigured();
@@ -481,7 +601,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=521');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=522');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -489,6 +609,9 @@ export async function getBackupStatus() {
   return {
     settings,
     snapshots,
+    restorePoints,
+    catalogHealth,
+    driftWarning,
     hasDirectory: hasDefaultFolder,
     hasFileLocation: false,
     hasExternalLocation: hasDefaultFolder,
@@ -512,11 +635,14 @@ export async function getBackupStatus() {
 
 export {
   restoreSupabaseBackup,
+  fetchSupabaseBackupPayload,
   testSupabaseBackupConnection,
   saveSupabaseBackupConfig,
   uploadBackupToSupabase,
   listSupabaseBackups,
   isThisPrimaryBackupDevice,
+  backupKindLabel,
+  formatCatalogHealth,
 };
 
 function restoreConfirmBodyHTML({ titleName, preview }) {
@@ -538,7 +664,14 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     stopLiveSync,
     saveLiveSyncSettings,
     startLiveSync,
-  } = await import('./supabase-sync.js?v=521');
+  } = await import('./supabase-sync.js?v=522');
+  onProgress?.('שומר נקודת ביטחון...');
+  try {
+    await saveSafetySnapshot('restore');
+  } catch (err) {
+    console.warn('safety snapshot before restore', err);
+    throw new ValidationError('לא נשמרה נקודת ביטחון. השחזור בוטל.');
+  }
   onProgress?.('עוצר סנכרון...');
   await saveLiveSyncSettings({ holdPulls: true });
   await stopLiveSync();
