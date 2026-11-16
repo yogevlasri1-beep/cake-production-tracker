@@ -3,29 +3,29 @@ import {
   getProductionTotals, getTarget, getEntriesInRange, getProcessLogsForDate,
   getProcessLogsForMonth, getEntriesForCategory, getCategoryGroups,
   getActiveProductionRuns, deleteProductionEntryFully,
-} from '../db.js?v=520';
+} from '../db.js?v=521';
 import {
   progressBar, pct, progressBadge, formatMoney, currentMonth, monthLabel,
   todayISO, formatDateHebrew, escapeHtml, formatDate, showToast, formatProductQuantity,
   wrapDateInputWithToday, bindTodayDateButtons,
   formatPortionCount, formatDecimal,
-} from '../utils.js?v=520';
-import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=520';
+} from '../utils.js?v=521';
+import { renderProductionChart, renderCategoryPieChart, defaultColorForIndex } from '../chart.js?v=521';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, mapGetById,
   compareReportProducts,
-} from '../calc.js?v=520';
-import { requestAutoBackupNow } from '../backup-service.js?v=520';
+} from '../calc.js?v=521';
+import { requestAutoBackupNow } from '../backup-service.js?v=521';
 import {
   computeHomeMaterialUsage,
   formatMaterialUsageQty,
-} from '../kitchen-db.js?v=520';
+} from '../kitchen-db.js?v=521';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
   dismissOrderReminderForCurrentWeek,
-} from '../order-reminder.js?v=520';
-import { entriesWithLocalProducts } from '../sync/cloud-first.js?v=520';
+} from '../order-reminder.js?v=521';
+import { entriesWithLocalProducts } from '../sync/cloud-first.js?v=521';
 
 function homeRunTitleParts(run, catMap, productMap, groupMap) {
   let targetName = 'תהליך';
@@ -276,7 +276,7 @@ function productsForHomeCards(allProducts, byProduct) {
 
 async function pullProductionHistoryForHome() {
   try {
-    const { ensureProductionHistoryPull, pullRecentProductionHistory } = await import('../supabase-sync.js?v=520');
+    const { ensureProductionHistoryPull, pullRecentProductionHistory } = await import('../supabase-sync.js?v=521');
     await ensureProductionHistoryPull();
     return await pullRecentProductionHistory({ notify: true, force: false });
   } catch (err) {
@@ -772,7 +772,7 @@ export async function renderHome(container) {
 
   container.querySelector('[data-order-reminder-go]')?.addEventListener('click', async () => {
     sessionStorage.setItem('yitzurSupplierTab', 'order');
-    const { navigateToWorkspace } = await import('../app.js?v=520');
+    const { navigateToWorkspace } = await import('../app.js?v=521');
     navigateToWorkspace('suppliers', 'suppliers');
   });
   container.querySelector('[data-order-reminder-dismiss]')?.addEventListener('click', () => {
@@ -799,7 +799,7 @@ export async function renderHome(container) {
     if (btnOrCard.dataset.runDate) main.dataset.selectedDate = btnOrCard.dataset.runDate;
     main.dataset.view = 'run';
     main.dataset.runId = runId;
-    const { navigate } = await import('../app.js?v=520');
+    const { navigate } = await import('../app.js?v=521');
     navigate('process');
   };
 
@@ -824,7 +824,7 @@ export async function renderHome(container) {
   });
 
   document.getElementById('home-open-backup')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=520');
+    const { navigate } = await import('../app.js?v=521');
     navigate('backup');
   });
 

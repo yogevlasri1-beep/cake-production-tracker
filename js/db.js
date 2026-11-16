@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=520';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=520';
-import { defaultColorForIndex } from './chart.js?v=520';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=520';
-import { logAuditEvent } from './audit.js?v=520';
+} from './validators.js?v=521';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=521';
+import { defaultColorForIndex } from './chart.js?v=521';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=521';
+import { logAuditEvent } from './audit.js?v=521';
 
 export { ValidationError };
 
@@ -6186,6 +6186,49 @@ function compareFlows(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
 
+function flowDedupeKey(flow) {
+  const name = productNameKey(flow?.name) || `id:${flow?.id}`;
+  const cat = Number(flow?.categoryId) || 0;
+  const group = Number(flow?.categoryGroupId) || 0;
+  return `${name}|c:${cat}|g:${group}`;
+}
+
+/** אותו שם לאותה קטגוריה/קבוצה — תזרים אחד. מעדיפים יותר שלבים, אחר כך ברירת מחדל, אחר כך מזהה נמוך. */
+export function uniqueFlowsByName(flows, { preferIds } = {}) {
+  const prefer = new Set((preferIds || []).map((id) => Number(id)).filter(Boolean));
+  const byKey = new Map();
+  for (const flow of flows || []) {
+    if (!flow) continue;
+    const key = flowDedupeKey(flow);
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, flow);
+      continue;
+    }
+    const prevPreferred = prefer.has(Number(prev.id));
+    const nextPreferred = prefer.has(Number(flow.id));
+    if (nextPreferred && !prevPreferred) {
+      byKey.set(key, flow);
+      continue;
+    }
+    if (nextPreferred !== prevPreferred) continue;
+    const prevSteps = Number(prev.stepCount) || 0;
+    const nextSteps = Number(flow.stepCount) || 0;
+    if (nextSteps > prevSteps) {
+      byKey.set(key, flow);
+      continue;
+    }
+    if (nextSteps < prevSteps) continue;
+    if (flow.isDefault && !prev.isDefault) {
+      byKey.set(key, flow);
+      continue;
+    }
+    if (!flow.isDefault && prev.isDefault) continue;
+    if (Number(flow.id) < Number(prev.id)) byKey.set(key, flow);
+  }
+  return [...byKey.values()];
+}
+
 function migrateLegacyFlowStepsToFlows(flowSteps) {
   const groups = new Map();
   for (const step of flowSteps) {
@@ -6223,15 +6266,17 @@ function migrateLegacyFlowStepsToFlows(flowSteps) {
 export async function getFlowsForCategory(categoryId) {
   const cid = sanitizeProductId(categoryId);
   if (!cid) return [];
-  const flows = await db.flows.where('categoryId').equals(cid).toArray();
-  return flows.sort(compareFlows);
+  const flows = (await db.flows.toArray())
+    .filter((f) => Number(f.categoryId) === Number(cid));
+  return uniqueFlowsByName(flows).sort(compareFlows);
 }
 
 export async function getFlowsForGroup(categoryGroupId) {
   const gid = sanitizeProductId(categoryGroupId);
   if (!gid) return [];
-  const flows = await db.flows.where('categoryGroupId').equals(gid).toArray();
-  return flows.sort(compareFlows);
+  const flows = (await db.flows.toArray())
+    .filter((f) => Number(f.categoryGroupId) === Number(gid));
+  return uniqueFlowsByName(flows).sort(compareFlows);
 }
 
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
@@ -6246,18 +6291,20 @@ export async function getAllFlowsOverview() {
   const groupMap = new Map(groups.map((g) => [g.id, g.name]));
   const stepCounts = new Map();
   for (const s of steps) {
-    if (s.flowId) stepCounts.set(s.flowId, (stepCounts.get(s.flowId) || 0) + 1);
+    const fid = Number(s.flowId);
+    if (!fid) continue;
+    stepCounts.set(fid, (stepCounts.get(fid) || 0) + 1);
   }
 
-  return flows
+  return uniqueFlowsByName(flows
     .map((f) => {
       const isCategory = !!f.categoryId;
-      const cat = isCategory ? catMap.get(f.categoryId) : null;
+      const cat = isCategory ? (catMap.get(f.categoryId) || catMap.get(Number(f.categoryId))) : null;
       const groupId = isCategory ? cat?.groupId : f.categoryGroupId;
-      const groupName = groupMap.get(groupId) || '';
+      const groupName = groupMap.get(groupId) || groupMap.get(Number(groupId)) || '';
       const targetLabel = isCategory
         ? (cat?.name || 'קטגוריה')
-        : (groupMap.get(f.categoryGroupId) || 'קבוצה');
+        : (groupMap.get(f.categoryGroupId) || groupMap.get(Number(f.categoryGroupId)) || 'קבוצה');
       return {
         ...f,
         targetType: isCategory ? 'category' : 'group',
@@ -6265,9 +6312,9 @@ export async function getAllFlowsOverview() {
         groupId: groupId || f.categoryGroupId || null,
         categoryId: f.categoryId || null,
         groupName,
-        stepCount: stepCounts.get(f.id) || 0,
+        stepCount: stepCounts.get(Number(f.id)) || 0,
       };
-    })
+    }))
     .sort((a, b) => {
       const gCmp = (a.groupName || '').localeCompare(b.groupName || '', 'he');
       if (gCmp) return gCmp;
@@ -6334,7 +6381,7 @@ export async function resolveFlowsForCategorySelection({ categoryIds, categoryGr
       byId.set(f.id, f);
     }
   }
-  if (byId.size) return [...byId.values()].sort(compareFlows);
+  if (byId.size) return uniqueFlowsByName([...byId.values()]).sort(compareFlows);
   return categoryGroupId ? getFlowsForGroup(categoryGroupId) : [];
 }
 
