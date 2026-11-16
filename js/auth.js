@@ -1,6 +1,6 @@
-import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=517';
-import { ValidationError } from './validators.js?v=517';
-import { fetchWithTimeout, AUTH_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=517';
+import { getSupabaseBackupConfig, normalizeSupabaseUrl, buildSupabaseRestUrl } from './supabase-backup.js?v=518';
+import { ValidationError } from './validators.js?v=518';
+import { fetchWithTimeout, AUTH_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=518';
 
 const SESSION_KEY = 'authSession';
 const REFRESH_SKEW_MS = 60_000;

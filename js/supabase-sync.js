@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=517';
+import { db, getSetting, setSetting } from './db.js?v=518';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=517';
+} from './supabase-backup.js?v=518';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -28,7 +28,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=517';
+} from './sync/collections.js?v=518';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -42,6 +42,7 @@ import {
   planRestoreBackupReplaceCloud,
   FLUSH_DEBOUNCE_MS,
   FULL_PULL_INTERVAL_MS,
+  HIDDEN_PULL_INTERVAL_MS,
   PRODUCTION_PULL_INTERVAL_MS,
   RECENT_PRODUCTION_MIN_GAP_MS,
   planManualLiveSync,
@@ -69,7 +70,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=517';
+} from './sync/cloud-first.js?v=518';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -79,15 +80,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=517';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=517';
+} from './sync/id-map.js?v=518';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=518';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=517';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=517';
+} from './auth.js?v=518';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=518';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -259,7 +260,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=517');
+    const { showToast } = await import('./utils.js?v=518');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2795,7 +2796,6 @@ async function repushPolymorphicCollections() {
  * מוגבל בתדירות (ברירת מחדל כל 3 דקות) כדי לא להאט טעינה/רינדור.
  */
 let lastLightDedupeAt = 0;
-const HIDDEN_PULL_INTERVAL_MS = 2 * 60 * 1000;
 let lightDedupeInFlight = null;
 const LIGHT_DEDUPE_MIN_MS = 3 * 60 * 1000;
 
@@ -2885,6 +2885,7 @@ export async function startLiveSync() {
         hiddenInterval: HIDDEN_PULL_INTERVAL_MS,
         fullInterval: FULL_PULL_INTERVAL_MS,
         holdPulls: liveNow.holdPulls === true,
+        online: typeof navigator === 'undefined' || navigator.onLine !== false,
       });
       if (plan.flush) await flushSyncQueue();
       // ברקע לא שואלים את כל הטבלאות כל כמה שניות. חוזרים לחלון — בודקים מיד.

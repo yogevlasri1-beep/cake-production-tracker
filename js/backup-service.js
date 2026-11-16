@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=517';
+} from './db.js?v=518';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=517';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=517';
-import { downloadBlob } from './download.js?v=517';
-import { ValidationError } from './validators.js?v=517';
-import { openModal, closeModal } from './modal.js?v=517';
-import { escapeHtml, showToast } from './utils.js?v=517';
+} from './backup.js?v=518';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=518';
+import { downloadBlob } from './download.js?v=518';
+import { ValidationError } from './validators.js?v=518';
+import { openModal, closeModal } from './modal.js?v=518';
+import { escapeHtml, showToast } from './utils.js?v=518';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=517';
+} from './backup-folder-bridge.js?v=518';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -34,7 +34,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=517';
+} from './supabase-backup.js?v=518';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -218,6 +218,21 @@ export async function keepOnlyLatestBackup() {
 
 export async function listLocalSnapshots(limit = 10) {
   return db.localBackups.orderBy('createdAt').reverse().limit(limit).toArray();
+}
+
+/** אין עותק JSON על המכשיר — שומרים אחד, בלי להעלות לענן. */
+export function shouldSaveLastLocalCopy(snapshots) {
+  return !Array.isArray(snapshots) || snapshots.length === 0;
+}
+
+export async function ensureLastLocalCopy({ force = false } = {}) {
+  const existing = await listLocalSnapshots(1);
+  if (!force && !shouldSaveLastLocalCopy(existing)) {
+    return { saved: false, kept: true };
+  }
+  const payload = await createBackupPayload();
+  await saveLocalSnapshot(payload, force ? 'restore' : 'working');
+  return { saved: true, kept: false };
 }
 
 export async function restoreLocalSnapshot(id) {
@@ -414,7 +429,16 @@ function installDbChangeHooks() {
 export function initAutoBackupSystem() {
   ensureSupabaseDefaults().catch((err) => console.warn('Supabase defaults', err));
   installDbChangeHooks();
-  runAutoBackupIfDue(false).catch((err) => console.warn('Startup backup', err));
+  setTimeout(() => {
+    (async () => {
+      try {
+        const auto = await runAutoBackupIfDue(false);
+        if (!auto) await ensureLastLocalCopy();
+      } catch (err) {
+        console.warn('Startup backup', err);
+      }
+    })();
+  }, 2500);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       runAutoBackupIfDue(false).catch((err) => console.warn('Visibility backup', err));
@@ -457,7 +481,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=517');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=518');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -514,12 +538,17 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     stopLiveSync,
     saveLiveSyncSettings,
     startLiveSync,
-  } = await import('./supabase-sync.js?v=517');
+  } = await import('./supabase-sync.js?v=518');
   onProgress?.('עוצר סנכרון...');
   await saveLiveSyncSettings({ holdPulls: true });
   await stopLiveSync();
   onProgress?.('משחזר במחשב...');
   await withSyncEnqueuePaused(() => restoreBackupPayload(data));
+  try {
+    await ensureLastLocalCopy({ force: true });
+  } catch (err) {
+    console.warn('local copy after restore', err);
+  }
   const status = await getLiveSyncStatus();
   const plan = planRestoreBackupReplaceCloud({
     supabaseConfigured: status.supabaseConfigured === true,

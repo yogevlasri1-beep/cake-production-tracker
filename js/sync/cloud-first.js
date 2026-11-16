@@ -32,9 +32,11 @@ export function planLiveSyncAlwaysOn(enabled) {
 }
 
 /** בדיקת רישום היום. קצר מספיק כדי שהמכשיר השני יתעדכן מהר, בלי לשאול בלי הפסקה. */
-export const PRODUCTION_PULL_INTERVAL_MS = 3000;
+export const PRODUCTION_PULL_INTERVAL_MS = 5000;
 /** שאר הטבלאות (מוצרים, ספקים, מתכונים) נשארות בבדיקה איטית יותר. */
-export const FULL_PULL_INTERVAL_MS = 15000;
+export const FULL_PULL_INTERVAL_MS = 45000;
+/** ברקע שואלים את הענן רק כל כמה דקות. */
+export const HIDDEN_PULL_INTERVAL_MS = 180000;
 /** כמה לחכות לפני שליחה, כדי ששמירה אחת עם כמה כתיבות תצא ביחד. */
 export const FLUSH_DEBOUNCE_MS = 200;
 /** לא מתחילים שתי משיכות של אותו רישום כמעט באותו רגע. */
@@ -42,6 +44,8 @@ export const RECENT_PRODUCTION_MIN_GAP_MS = 2500;
 
 /**
  * מה לעשות בכל בדיקה.
+ * המכשיר שומר עותק אחרון ונפתח ממנו. הענן הוא המחברת המשותפת.
+ * דחיפה רק אחרי שינוי אמיתי (תור + המתנה קצרה). בלי אינטרנט — לא מושכים ולא דוחפים.
  * אפליקציה פתוחה: רישום היום בכל בדיקה, שאר הנתונים רק כשעבר החלון האיטי.
  * אפליקציה ברקע: שולחים מה שיש, ושואלים את הענן רק כל כמה דקות.
  */
@@ -50,11 +54,12 @@ export function planLiveSyncTick({
   lastFullPullAt = 0,
   hidden = false,
   lastHiddenPullAt = 0,
-  hiddenInterval = 120000,
+  hiddenInterval = HIDDEN_PULL_INTERVAL_MS,
   fullInterval = FULL_PULL_INTERVAL_MS,
   holdPulls = false,
+  online = true,
 } = {}) {
-  if (holdPulls === true) {
+  if (holdPulls === true || online === false) {
     return { flush: false, pullProduction: false, pullCatalog: false };
   }
   if (hidden && now - lastHiddenPullAt < hiddenInterval) {
