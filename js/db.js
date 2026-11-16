@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=522';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=522';
-import { defaultColorForIndex } from './chart.js?v=522';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=522';
-import { logAuditEvent } from './audit.js?v=522';
+} from './validators.js?v=523';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=523';
+import { defaultColorForIndex } from './chart.js?v=523';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=523';
+import { logAuditEvent } from './audit.js?v=523';
 
 export { ValidationError };
 
@@ -6229,6 +6229,55 @@ export function uniqueFlowsByName(flows, { preferIds } = {}) {
   return [...byKey.values()];
 }
 
+/**
+ * מזהה ישן אחרי שחזור מצביע לאותו תזרים חי.
+ * בהיסטוריה בלי זה כל תזרים מופיע פעמיים — פעם כחי ופעם כ«נמחק».
+ */
+export function buildFlowAliasLookup(rawFlows = []) {
+  const unique = uniqueFlowsByName(rawFlows);
+  const keptByKey = new Map(unique.map((flow) => [flowDedupeKey(flow), Number(flow.id)]));
+  const byId = new Map();
+  const byName = new Map();
+  for (const flow of unique) {
+    const nameKey = productNameKey(flow.name);
+    if (!nameKey) continue;
+    if (!byName.has(nameKey)) byName.set(nameKey, []);
+    byName.get(nameKey).push(Number(flow.id));
+  }
+  for (const flow of rawFlows || []) {
+    const id = Number(flow.id);
+    if (!id) continue;
+    const kept = keptByKey.get(flowDedupeKey(flow));
+    if (kept) byId.set(id, kept);
+  }
+  return { unique, byId, byName };
+}
+
+export function canonicalFlowIdForRun(run, lookup) {
+  const fid = Number(run?.flowId);
+  if (fid && lookup?.byId?.has(fid)) return lookup.byId.get(fid);
+  const nameKey = productNameKey(run?.flowName);
+  const named = nameKey ? lookup?.byName?.get(nameKey) : null;
+  if (named?.length === 1) return named[0];
+  return fid || null;
+}
+
+export function flowIdsForCanonical(canonicalId, lookup) {
+  const kept = Number(canonicalId);
+  const ids = new Set();
+  if (kept) ids.add(kept);
+  if (lookup?.byId) {
+    for (const [from, to] of lookup.byId) {
+      if (Number(to) === kept) ids.add(Number(from));
+    }
+  }
+  return [...ids].filter(Boolean);
+}
+
+export async function getFlowAliasLookup() {
+  return buildFlowAliasLookup(await db.flows.toArray());
+}
+
 function migrateLegacyFlowStepsToFlows(flowSteps) {
   const groups = new Map();
   for (const step of flowSteps) {
@@ -7718,11 +7767,21 @@ export async function getProductionRunsForDate(date) {
   return runs;
 }
 
-/** כל תהליכי יצור של תזרים — מהחדש לישן */
-export async function getProductionRunsForFlow(flowId) {
+async function productionRunIdsForFlow(flowId) {
   const fid = sanitizeProductId(flowId);
   if (!fid) return [];
-  const runs = await db.productionRuns.filter((r) => Number(r.flowId) === fid).toArray();
+  const lookup = await getFlowAliasLookup();
+  const ids = new Set(flowIdsForCanonical(fid, lookup));
+  ids.add(fid);
+  return [...ids];
+}
+
+/** כל תהליכי יצור של תזרים — כולל עותק כפול אחרי שחזור. מהחדש לישן */
+export async function getProductionRunsForFlow(flowId) {
+  const ids = await productionRunIdsForFlow(flowId);
+  if (!ids.length) return [];
+  const idSet = new Set(ids.map(Number));
+  const runs = await db.productionRuns.filter((r) => idSet.has(Number(r.flowId))).toArray();
   runs.sort((a, b) => {
     const ta = a.completedAt || a.startedAt || `${a.date || ''}T00:00:00`;
     const tb = b.completedAt || b.startedAt || `${b.date || ''}T00:00:00`;
@@ -7734,9 +7793,10 @@ export async function getProductionRunsForFlow(flowId) {
 
 /** סיכום מוצרים שיוצרו בכל תהליכי התזרים */
 export async function getFlowProductsHistory(flowId) {
-  const fid = sanitizeProductId(flowId);
-  if (!fid) return [];
-  const runs = await db.productionRuns.filter((r) => Number(r.flowId) === fid).toArray();
+  const ids = await productionRunIdsForFlow(flowId);
+  if (!ids.length) return [];
+  const idSet = new Set(ids.map(Number));
+  const runs = await db.productionRuns.filter((r) => idSet.has(Number(r.flowId))).toArray();
   const runIds = new Set(runs.map((r) => r.id));
   if (!runIds.size) return [];
 

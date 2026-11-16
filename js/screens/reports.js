@@ -10,33 +10,34 @@ import {
   getManagerDepartments, getManagerTasks, getManagerIncidents,
   getManagerShiftNotes, getManagerEmployees, getManagerResponsibilityAreas,
   getDepartmentCleaningLists, getDepartmentCleaningTasks, getTargets,
-} from '../db.js?v=522';
+  getFlowAliasLookup, canonicalFlowIdForRun,
+} from '../db.js?v=523';
 import {
   todayISO, formatDate, formatDateHebrew, formatMoney, currentMonth,
   showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatDecimal, formatDuration, runDurationMs, stepDurationMs, formatDateTime, formatProductQuantity,
   addDaysISO,
-} from '../utils.js?v=522';
+} from '../utils.js?v=523';
 import {
   exportProductionExcel, exportProcessExcel, exportCombinedExcel,
   summarizeProcessLogs, monthRange, weekRange,
-} from '../export.js?v=522';
-import { openModal, closeModal } from '../modal.js?v=522';
+} from '../export.js?v=523';
+import { openModal, closeModal } from '../modal.js?v=523';
 import {
   renderSheetsStatusHTML, bindSheetsStatusEvents, exportReportToSheets,
   openSheetsSetupModal,
-} from '../sheets-flow.js?v=522';
-import { isSheetsConfigured } from '../google-sheets.js?v=522';
+} from '../sheets-flow.js?v=523';
+import { isSheetsConfigured } from '../google-sheets.js?v=523';
 import {
   buildProductMap, sumCategoryTotals, productProductionValue, productProductionCost,
   mapGetById, sortProductsForReport, compareReportProducts,
   productUnitCost, productLineValue, entryQuantityForProduct,
   metricsProductionValueBreakdown,
-} from '../calc.js?v=522';
-import { defaultColorForIndex } from '../chart.js?v=522';
-import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=522';
+} from '../calc.js?v=523';
+import { defaultColorForIndex } from '../chart.js?v=523';
+import { saveReportPageAsHtml, printReportElement } from '../report-page-export.js?v=523';
 import {
   getPurchaseCategories, getPurchaseItems, PURCHASE_STATUS_LABELS,
-} from '../purchasing-db.js?v=522';
+} from '../purchasing-db.js?v=523';
 
 const MANAGER_PRIORITY_LABELS = { low: 'נמוך', medium: 'בינוני', high: 'גבוה' };
 const MANAGER_TASK_STATUS = { open: 'פתוח', progress: 'בתהליך', done: 'הושלם' };
@@ -358,11 +359,13 @@ export function sortProductionHistoryEntries(entries, productMap, categories) {
   });
 }
 
-export function groupRunsByFlow(productionRuns) {
+export function groupRunsByFlow(productionRuns, lookup = null) {
   const byFlow = new Map();
   const noFlowRuns = [];
   for (const run of productionRuns) {
-    const fid = Number(run.flowId);
+    const fid = lookup
+      ? canonicalFlowIdForRun(run, lookup)
+      : Number(run.flowId);
     if (!fid) {
       noFlowRuns.push(run);
       continue;
@@ -1144,12 +1147,13 @@ async function buildFlowsReportHTML(productionRuns, productMap, flowsOverview) {
     entries: await getRunProductionEntries(run.id),
   })));
 
-  const { byFlow, noFlowRuns } = groupRunsByFlow(productionRuns);
-  const noFlowItems = runsWithEntries.filter((item) => !Number(item.run.flowId));
+  const lookup = await getFlowAliasLookup();
+  const { byFlow, noFlowRuns } = groupRunsByFlow(productionRuns, lookup);
+  const noFlowItems = runsWithEntries.filter((item) => !canonicalFlowIdForRun(item.run, lookup));
 
   const flowMap = new Map(flowsOverview.map((f) => [f.id, f]));
   const flowRows = [...byFlow.entries()].map(([flowId, runs]) => {
-    const items = runsWithEntries.filter((item) => Number(item.run.flowId) === flowId);
+    const items = runsWithEntries.filter((item) => Number(canonicalFlowIdForRun(item.run, lookup)) === Number(flowId));
     return {
       flowId,
       meta: flowMap.get(flowId),
@@ -1230,7 +1234,8 @@ async function buildFlowsDetailReportHTML(productionRuns, ctx, catMap, productMa
     return '<p class="report-empty">אין תזרימי יצור לתקופה זו</p>';
   }
 
-  const { byFlow, noFlowRuns } = groupRunsByFlow(productionRuns);
+  const lookup = await getFlowAliasLookup();
+  const { byFlow, noFlowRuns } = groupRunsByFlow(productionRuns, lookup);
   const flowMap = new Map(flowsOverview.map((f) => [f.id, f]));
 
   const flowIds = [...byFlow.keys()].sort((a, b) => {
@@ -1459,11 +1464,12 @@ async function computeFlowForecast(flowMeta, runsForFlow, productMap) {
 
 async function buildFlowsForecasts(productionRuns, flowsOverview, productMap, { selectedFlowId } = {}) {
   const flowMap = new Map((flowsOverview || []).map((f) => [Number(f.id), f]));
-  const { byFlow } = groupRunsByFlow(productionRuns || []);
+  const lookup = await getFlowAliasLookup();
+  const { byFlow } = groupRunsByFlow(productionRuns || [], lookup);
 
   let flowIds;
   if (selectedFlowId) {
-    flowIds = [Number(selectedFlowId)];
+    flowIds = [Number(lookup.byId.get(Number(selectedFlowId)) || selectedFlowId)];
   } else {
     const ids = new Set([
       ...[...byFlow.keys()].map(Number),

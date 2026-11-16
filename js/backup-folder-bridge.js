@@ -1,8 +1,8 @@
 /**
  * API אחיד — בחירת תיקייה ב«קבצים» (iOS native) או Chrome/Mac
  */
-import { getSetting, setSetting } from './db.js?v=522';
-import { isProtectedBackupFileName } from './backup-guard.js?v=522';
+import { getSetting, setSetting } from './db.js?v=523';
+import { isProtectedBackupFileName } from './backup-guard.js?v=523';
 
 const SETTINGS_KEY = 'backupSettings';
 
