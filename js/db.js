@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=519';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=519';
-import { defaultColorForIndex } from './chart.js?v=519';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=519';
-import { logAuditEvent } from './audit.js?v=519';
+} from './validators.js?v=520';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=520';
+import { defaultColorForIndex } from './chart.js?v=520';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=520';
+import { logAuditEvent } from './audit.js?v=520';
 
 export { ValidationError };
 
@@ -6278,7 +6278,13 @@ export async function getAllFlowsOverview() {
 }
 
 export async function getFlow(flowId) {
-  return db.flows.get(Number(flowId));
+  const n = Number(flowId);
+  if (n) {
+    const byNum = await db.flows.get(n);
+    if (byNum) return byNum;
+  }
+  const all = await db.flows.toArray();
+  return all.find((f) => String(f.id) === String(flowId) || (n && Number(f.id) === n)) || undefined;
 }
 
 export async function getFlowStepsForFlow(flowId) {
@@ -9489,9 +9495,17 @@ export function uniqueProductsByName(products, { preferIds } = {}) {
   return [...byKey.values()];
 }
 
+function idsEqual(a, b) {
+  if (a == null || b == null || a === '' || b === '') return false;
+  if (String(a) === String(b)) return true;
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
 /**
  * בתיעוד ייצור: אם שויכו מוצרים לתזרים — רק הם (ופחת).
- * בלי שיוך: לפי קטגוריות הריצה. בלי קטגוריות — לא כל המוצרים.
+ * בלי שיוך: לפי קטגוריות הריצה או התזרים. בלי קטגוריות — לא כל המוצרים.
  */
 export function productsForFlowRun({
   linkedProducts = [],
@@ -9511,17 +9525,53 @@ export function productsForFlowRun({
   return uniqueProductsByName((wasteProducts || []).filter(Boolean));
 }
 
+function numericIds(values) {
+  return [...new Set((values || []).map((id) => Number(id)).filter((n) => Number.isFinite(n) && n))];
+}
+
+function idsExistInCategoriesOrProducts(ids, categories, products) {
+  if (!ids.length) return false;
+  const catSet = new Set((categories || []).map((c) => Number(c.id)));
+  const prodSet = new Set((products || []).map((p) => Number(p.categoryId)));
+  if (!catSet.size && !prodSet.size) return true;
+  return ids.some((id) => catSet.has(id) || prodSet.has(id));
+}
+
+/** קטגוריות לתיעוד: קודם הריצה, אם הן ריקות או לא תואמות — הקטגוריה/קבוצה של התזרים. */
+export function categoryIdsForFlowRun(run, flow, categories, products) {
+  const fromGroup = (gid) => {
+    const n = Number(gid);
+    if (!n) return [];
+    return (categories || [])
+      .filter((c) => Number(c.groupId) === n)
+      .map((c) => Number(c.id));
+  };
+
+  const runIds = run?.categoryIds?.length
+    ? numericIds(run.categoryIds)
+    : numericIds(run?.categoryId ? [run.categoryId] : []);
+  if (idsExistInCategoriesOrProducts(runIds, categories, products)) return runIds;
+
+  const runGroup = fromGroup(run?.categoryGroupId);
+  if (runGroup.length) return runGroup;
+
+  const flowIds = numericIds(flow?.categoryId ? [flow.categoryId] : []);
+  if (idsExistInCategoriesOrProducts(flowIds, categories, products)) return flowIds;
+
+  return fromGroup(flow?.categoryGroupId || flow?.groupId);
+}
+
 export async function getProductFlowLinkRows(productId) {
-  const pid = Number(productId);
-  if (!pid || !db.productFlowLinks) return [];
-  const rows = await db.productFlowLinks.where('productId').equals(pid).toArray();
+  if (productId == null || productId === '' || !db.productFlowLinks) return [];
+  const rows = (await db.productFlowLinks.toArray())
+    .filter((row) => idsEqual(row.productId, productId));
   return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
 }
 
 export async function getFlowProductLinkRows(flowId) {
-  const fid = Number(flowId);
-  if (!fid || !db.productFlowLinks) return [];
-  const rows = await db.productFlowLinks.where('flowId').equals(fid).toArray();
+  if (flowId == null || flowId === '' || !db.productFlowLinks) return [];
+  const rows = (await db.productFlowLinks.toArray())
+    .filter((row) => idsEqual(row.flowId, flowId));
   return rows.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
 }
 
@@ -9545,16 +9595,16 @@ export async function getLinkedFlowsForProduct(productId) {
 export async function getLinkedProductsForFlow(flowId) {
   const links = await getFlowProductLinkRows(flowId);
   if (!links.length) return [];
-  const products = await Promise.all(links.map((l) => db.products.get(Number(l.productId))));
+  const allProducts = await db.products.toArray();
   const seen = new Set();
   const out = [];
-  for (let i = 0; i < links.length; i++) {
-    const product = products[i];
+  for (const link of links) {
+    const product = allProducts.find((p) => idsEqual(p.id, link.productId));
     if (!product) continue;
     const pid = Number(product.id);
     if (seen.has(pid)) continue;
     seen.add(pid);
-    out.push({ link: links[i], product });
+    out.push({ link, product });
   }
   return out;
 }
@@ -9639,15 +9689,17 @@ export async function getCandidateFlowsForProduct(productId) {
 
 export async function getCandidateProductsForFlow(flowId) {
   const fid = Number(flowId);
-  const flow = await db.flows.get(fid);
+  const flow = (fid && await db.flows.get(fid))
+    || (await db.flows.toArray()).find((f) => idsEqual(f.id, flowId));
   if (!flow) return [];
+  const allProducts = await db.products.toArray();
   let products = [];
   if (flow.categoryId) {
-    products = await db.products.where('categoryId').equals(flow.categoryId).toArray();
+    products = allProducts.filter((p) => idsEqual(p.categoryId, flow.categoryId));
   } else if (flow.categoryGroupId) {
-    const cats = await db.categories.where('groupId').equals(flow.categoryGroupId).toArray();
-    const catIds = new Set(cats.map((c) => c.id));
-    products = (await db.products.toArray()).filter((p) => catIds.has(p.categoryId));
+    const cats = await db.categories.toArray();
+    const catIds = cats.filter((c) => idsEqual(c.groupId, flow.categoryGroupId));
+    products = allProducts.filter((p) => catIds.some((c) => idsEqual(c.id, p.categoryId)));
   } else {
     products = [];
   }

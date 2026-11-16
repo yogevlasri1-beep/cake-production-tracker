@@ -28,12 +28,12 @@ import {
   ensureRunPreparationChecks, setRunPreparationChecked, addRunPreparationFromFlow,
   ensureRunCleaningChecks, setRunCleaningChecked, addRunCleaningTaskFromFlow,
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
-  productsForFlowRun,
+  productsForFlowRun, categoryIdsForFlowRun,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-} from '../db.js?v=519';
+} from '../db.js?v=520';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=519').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=520').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -76,7 +76,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=519');
+    } = await import('../inventory-db.js?v=520');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -117,7 +117,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=519');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=520');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -143,7 +143,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=519');
+    } = await import('../inventory-db.js?v=520');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -172,15 +172,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=519';
-import { metricsProductionValueBreakdown } from '../calc.js?v=519';
-import { openModal, closeModal } from '../modal.js?v=519';
-import { requestAutoBackupNow } from '../backup-service.js?v=519';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=519';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=519';
-import { materialMatchesSearch } from '../kitchen-db.js?v=519';
-import { getCurrentUserRole } from '../auth.js?v=519';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=519';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=520';
+import { metricsProductionValueBreakdown } from '../calc.js?v=520';
+import { openModal, closeModal } from '../modal.js?v=520';
+import { requestAutoBackupNow } from '../backup-service.js?v=520';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=520';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=520';
+import { materialMatchesSearch } from '../kitchen-db.js?v=520';
+import { getCurrentUserRole } from '../auth.js?v=520';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=520';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1102,24 +1102,17 @@ function stepInlineEditHTML(step, stepIndex, { expanded = false } = {}) {
   return stepNotesPanelHTML(step, stepIndex, { hidden: !expanded });
 }
 
-function resolveRunCategoryIds(run) {
-  if (run.categoryIds?.length) return run.categoryIds.map(Number).filter(Boolean);
-  if (run.categoryId) return [Number(run.categoryId)];
-  return [];
+function resolveRunCategoryIds(run, flow, categories, products) {
+  return categoryIdsForFlowRun(run, flow, categories, products);
 }
 
-function filterCategoriesForRun(run, categories) {
+function filterCategoriesForRun(run, categories, flow, products) {
   const wasteCats = (categories || []).filter((c) => isProductWasteCategory(c));
-  const catIds = resolveRunCategoryIds(run);
-  let scoped;
-  if (catIds.length) {
-    const set = new Set(catIds.map(Number));
-    scoped = categories.filter((c) => set.has(Number(c.id)));
-  } else if (run.categoryGroupId) {
-    scoped = categories.filter((c) => Number(c.groupId) === Number(run.categoryGroupId));
-  } else {
-    scoped = [];
-  }
+  const catIds = resolveRunCategoryIds(run, flow, categories, products);
+  const set = new Set(catIds.map(Number));
+  const scoped = set.size
+    ? categories.filter((c) => set.has(Number(c.id)))
+    : [];
   const seen = new Set(scoped.map((c) => Number(c.id)));
   for (const w of wasteCats) {
     if (!seen.has(Number(w.id))) scoped.push(w);
@@ -1128,11 +1121,13 @@ function filterCategoriesForRun(run, categories) {
 }
 
 async function filterProductsForRun(run, products, categories) {
-  const scopedCats = filterCategoriesForRun(run, categories);
-  const catSet = new Set(scopedCats.map((c) => Number(c.id)));
+  const flow = run.flowId ? await getFlow(run.flowId) : null;
+  const catIds = resolveRunCategoryIds(run, flow, categories, products);
+  const catSet = new Set(catIds.map(Number));
   let categoryProducts = products.filter((p) => catSet.has(Number(p.categoryId)));
   if (run.productId) {
-    categoryProducts = categoryProducts.filter((p) => Number(p.id) === Number(run.productId));
+    const one = categoryProducts.filter((p) => Number(p.id) === Number(run.productId));
+    if (one.length) categoryProducts = one;
   }
   const wasteProducts = products.filter((p) => isProductWasteCategory(
     categories.find((c) => Number(c.id) === Number(p.categoryId)),
@@ -2054,8 +2049,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=519');
-    const { db } = await import('../db.js?v=519');
+    const { getRecipe } = await import('../kitchen-db.js?v=520');
+    const { db } = await import('../db.js?v=520');
     const blocks = [];
 
     for (const row of rows) {
@@ -2994,7 +2989,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=519');
+    const kitchen = await import('../kitchen-db.js?v=520');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -3008,7 +3003,8 @@ async function renderRunView(container, runId, ctx) {
   const hasProductionSteps = productionStepIdx >= 0;
 
   if (hasProductionSteps) {
-    const scopedCategories = filterCategoriesForRun(run, categories);
+    const flow = run.flowId ? await getFlow(run.flowId) : null;
+    const scopedCategories = filterCategoriesForRun(run, categories, flow, products);
     const scopedProducts = await filterProductsForRun(run, products, categories);
     const selectedCategories = {};
     const selectedFormProducts = {};
