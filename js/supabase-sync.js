@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=533';
+import { db, getSetting, setSetting } from './db.js?v=534';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=533';
+} from './supabase-backup.js?v=534';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=533';
+} from './sync/collections.js?v=534';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -77,7 +77,14 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=533';
+  mergeCatalogRecord,
+} from './sync/cloud-first.js?v=534';
+import {
+  STABLE_CATALOG_COLLECTIONS,
+  buildStableIdIndexFromCloud,
+  lookupStableCloudId,
+  claimStableCloudId,
+} from './sync/catalog-identity.js?v=534';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -89,7 +96,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=533';
+} from './sync/restore-lock.js?v=534';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -99,15 +106,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=533';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=533';
+} from './sync/id-map.js?v=534';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=534';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=533';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=533';
+} from './auth.js?v=534';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=534';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -283,7 +290,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=533');
+    const { showToast } = await import('./utils.js?v=534');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1843,14 +1850,25 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
     if (existingMeta) {
       const localId = Number(existingMeta.localKey);
       const { id: _drop, ...rest } = payload;
+      let patch = rest;
+      if (CATALOG_MATCH_COLLECTIONS.has(collection) && !preferRemote) {
+        const local = await readLocalRecord(collection, existingMeta.localKey);
+        if (local) {
+          const { id: _localId, ...localRest } = local;
+          patch = mergeCatalogRecord(localRest, rest, {
+            remoteUpdatedAt: local.updatedAt,
+            incomingUpdatedAt: payload.updatedAt || remoteUpdated,
+          });
+        }
+      }
       let localKey = existingMeta.localKey;
-      const updated = Number.isFinite(localId) ? await db[collection].update(localId, rest) : 0;
+      const updated = Number.isFinite(localId) ? await db[collection].update(localId, patch) : 0;
       if (!updated) {
         // Re-create under the same local id where possible, so numeric FKs on rows
         // that survived keep resolving to it.
         const addedId = Number.isFinite(localId)
-          ? await db[collection].add({ ...rest, id: localId })
-          : await db[collection].add(rest);
+          ? await db[collection].add({ ...patch, id: localId })
+          : await db[collection].add(patch);
         localKey = String(addedId);
       }
       await upsertMeta({
@@ -2202,7 +2220,32 @@ export function seedLocalDataToSupabase(options = {}) {
 /** Rows per POST. One request per row made a full seed take ~30 minutes. */
 const SEED_CHUNK_SIZE = 200;
 
-async function runSeed({ force = false } = {}) {
+async function fetchCloudCollectionRows(cfg, collection) {
+  const all = [];
+  let after = null;
+  for (let page = 0; page < 30; page++) {
+    const path = buildCollectionPullPath(collection, { after, limit: PULL_PAGE_SIZE });
+    const rows = await supabaseFetch(cfg, path);
+    if (!Array.isArray(rows) || !rows.length) break;
+    all.push(...rows);
+    if (rows.length < PULL_PAGE_SIZE) break;
+    const last = rows[rows.length - 1];
+    after = { updatedAt: last.updated_at, id: last.id };
+  }
+  return all;
+}
+
+async function snapshotStableCatalogIds(cfg) {
+  const [groups, categories, products, flows] = await Promise.all([
+    fetchCloudCollectionRows(cfg, 'categoryGroups'),
+    fetchCloudCollectionRows(cfg, 'categories'),
+    fetchCloudCollectionRows(cfg, 'products'),
+    fetchCloudCollectionRows(cfg, 'flows'),
+  ]);
+  return buildStableIdIndexFromCloud({ groups, categories, products, flows });
+}
+
+async function runSeed({ force = false, stableIdIndex = null } = {}) {
   const live = await getLiveSyncSettings();
   if (live.seedDone && !force) return { seeded: 0, skipped: true };
   const cfg = await getSupabaseBackupConfig();
@@ -2220,6 +2263,15 @@ async function runSeed({ force = false } = {}) {
   const deviceId = await getOrCreateDeviceId();
   const kitchenId = KITCHEN_ID || BACKUP_SCOPE_ID;
   let seeded = 0;
+  const usedStableIds = new Set();
+  let localMaps = { categoryNameOf: () => '', groupNameOf: () => '' };
+  if (stableIdIndex) {
+    const [localCategories, localGroups] = await Promise.all([
+      db.categories ? db.categories.toArray() : [],
+      db.categoryGroups ? db.categoryGroups.toArray() : [],
+    ]);
+    localMaps = buildCatalogNameMaps(localCategories, localGroups);
+  }
 
   for (const collection of orderedCollections()) {
     const table = db[collection];
@@ -2235,9 +2287,19 @@ async function runSeed({ force = false } = {}) {
       const updatedAt = cloudFirst
         ? cutoverRowUpdatedAt(collection, localStamp, syncNowISO())
         : (localStamp || syncNowISO());
+      let reuseSyncId = null;
+      if (stableIdIndex && STABLE_CATALOG_COLLECTIONS.includes(collection)) {
+        reuseSyncId = claimStableCloudId(
+          usedStableIds,
+          lookupStableCloudId(stableIdIndex, collection, row, localMaps),
+        );
+      }
       // Writes the local↔cloud mapping, so a failed chunk keeps the same id on retry.
       // לא מוחקים את המפה: מזהה חדש על שורה שכבר בענן היה משכפל אותה.
-      const syncId = await ensureSyncId(collection, localKey, updatedAt ? { updatedAt } : {});
+      const syncId = await ensureSyncId(collection, localKey, {
+        ...(updatedAt ? { updatedAt } : {}),
+        reuseSyncId,
+      });
       if (!syncId) continue;
       const source = await labelSyncRow(collection, row);
       const payload = await remapFksToSyncIds(collection, source);
@@ -3514,6 +3576,14 @@ export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
   await stopLiveSync();
   await saveLiveSyncSettings({ holdPulls: true });
 
+  onProgress?.('שומר מזהי קטלוג לפי שם...');
+  let stableIdIndex = null;
+  try {
+    stableIdIndex = await snapshotStableCatalogIds(cfg);
+  } catch (err) {
+    console.warn('stable catalog id snapshot', err);
+  }
+
   onProgress?.('מרוקן את הענן...');
   const wipe = await wipeKitchenCloudTables({ replaceCloudRestore: true });
   if (!wipe.ok) {
@@ -3536,7 +3606,7 @@ export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
 
   onProgress?.('מעלה את הגיבוי לענן... זה לוקח כמה דקות');
   try {
-    const seed = await seedLocalDataToSupabase({ force: true });
+    const seed = await seedLocalDataToSupabase({ force: true, stableIdIndex });
     const now = new Date().toISOString();
     const deviceId = await getOrCreateDeviceId();
     const restoreMarker = { at: now, deviceId };

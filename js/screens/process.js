@@ -34,10 +34,10 @@ import {
   uniqueFlowsByName,
   idsEqual, findLayoutCategory, findLayoutGroup,
   getSetting,
-} from '../db.js?v=533';
+} from '../db.js?v=534';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=533').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=534').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -80,7 +80,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=533');
+    } = await import('../inventory-db.js?v=534');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -121,7 +121,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=533');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=534');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -147,7 +147,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=533');
+    } = await import('../inventory-db.js?v=534');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -176,18 +176,18 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=533';
-import { inspectLocalCatalogHealth, formatCatalogDuplicateWarning } from '../data-health.js?v=533';
-import { formatRestoreModeWarning } from '../sync/restore-lock.js?v=533';
-import { productNameKey } from '../validators.js?v=533';
-import { metricsProductionValueBreakdown } from '../calc.js?v=533';
-import { openModal, closeModal } from '../modal.js?v=533';
-import { requestAutoBackupNow } from '../backup-service.js?v=533';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=533';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=533';
-import { materialMatchesSearch } from '../kitchen-db.js?v=533';
-import { getCurrentUserRole } from '../auth.js?v=533';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=533';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=534';
+import { inspectLocalCatalogHealth, formatCatalogDuplicateWarning, isCatalogUnsafe } from '../data-health.js?v=534';
+import { formatRestoreModeWarning } from '../sync/restore-lock.js?v=534';
+import { productNameKey } from '../validators.js?v=534';
+import { metricsProductionValueBreakdown } from '../calc.js?v=534';
+import { openModal, closeModal } from '../modal.js?v=534';
+import { requestAutoBackupNow } from '../backup-service.js?v=534';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=534';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=534';
+import { materialMatchesSearch } from '../kitchen-db.js?v=534';
+import { getCurrentUserRole } from '../auth.js?v=534';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=534';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -2065,8 +2065,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=533');
-    const { db } = await import('../db.js?v=533');
+    const { getRecipe } = await import('../kitchen-db.js?v=534');
+    const { db } = await import('../db.js?v=534');
     const blocks = [];
 
     for (const row of rows) {
@@ -3031,7 +3031,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=533');
+    const kitchen = await import('../kitchen-db.js?v=534');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
@@ -5330,8 +5330,11 @@ async function renderStartView(container, ctx) {
         showToast(restoreWarning);
         return;
       }
-      const warning = formatCatalogDuplicateWarning(await inspectLocalCatalogHealth());
-      if (warning && !confirm(`${warning}\n\nלהתחיל תהליך בכל זאת? עדיף קודם לסנכרן בגיבוי.`)) return;
+      const health = await inspectLocalCatalogHealth();
+      if (isCatalogUnsafe(health)) {
+        showToast(formatCatalogDuplicateWarning(health) || 'תקלה בנתונים. לא מתחילים תהליך.');
+        return;
+      }
     } catch (err) {
       console.warn('catalog duplicate health', err);
     }

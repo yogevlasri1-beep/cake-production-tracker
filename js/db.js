@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=533';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=533';
-import { defaultColorForIndex } from './chart.js?v=533';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=533';
-import { logAuditEvent } from './audit.js?v=533';
+} from './validators.js?v=534';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=534';
+import { defaultColorForIndex } from './chart.js?v=534';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=534';
+import { logAuditEvent } from './audit.js?v=534';
 
 export { ValidationError };
 
@@ -3616,7 +3616,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=533');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=534');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);
@@ -6883,7 +6883,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=533');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=534');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);

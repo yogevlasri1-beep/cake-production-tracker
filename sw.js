@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '533';
+const VERSION = '534';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -30,6 +30,7 @@ const PRECACHE = [
   v('./js/permissions.js'),
   v('./js/sync/collections.js'),
   v('./js/sync/restore-lock.js'),
+  v('./js/sync/catalog-identity.js'),
   v('./js/data-health.js'),
   v('./js/sync/id-map.js'),
   v('./js/chart.js'),

@@ -1,5 +1,6 @@
-import { db } from '../db.js?v=533';
-import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=533';
+import { db } from '../db.js?v=534';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=534';
+import { pickStableSyncId } from './catalog-identity.js?v=534';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {
@@ -21,7 +22,7 @@ export async function getMetaBySyncId(syncId) {
   return db.syncMeta.where('syncId').equals(syncId).first();
 }
 
-export async function ensureSyncId(collection, localKey, { updatedAt } = {}) {
+export async function ensureSyncId(collection, localKey, { updatedAt, reuseSyncId } = {}) {
   const key = String(localKey ?? '');
   if (!key || key === 'null' || key === 'undefined' || key === 'NaN') return null;
   const existing = await getMetaByLocal(collection, key);
@@ -31,7 +32,7 @@ export async function ensureSyncId(collection, localKey, { updatedAt } = {}) {
     }
     return existing.syncId;
   }
-  const syncId = newSyncId();
+  const syncId = pickStableSyncId({ reuseSyncId }) || newSyncId();
   const now = updatedAt || new Date().toISOString();
   await db.syncMeta.put({
     collection,

@@ -2,8 +2,8 @@
  * בדיקת בריאות קטלוג מקומי: כפילויות אחרי שחזור/משיכה.
  * לא מוחק כלום — רק מזהה ומתריע.
  */
-import { db } from './db.js?v=533';
-import { flowNameKey, isSharedFlowName, buildCatalogNameMaps } from './sync/collections.js?v=533';
+import { db } from './db.js?v=534';
+import { flowNameKey, isSharedFlowName, buildCatalogNameMaps } from './sync/collections.js?v=534';
 
 function groupBy(rows, keyOf) {
   const grouped = new Map();
@@ -53,6 +53,14 @@ export function inspectCatalogDuplicates({
     const group = maps.groupNameOf(cat.groupId);
     return group ? `${name}|g:${group}` : `${name}|ungrouped`;
   }));
+  const categoryIds = new Set((categories || []).map((cat) => String(cat.id)));
+  const groupIds = new Set((groups || []).map((group) => String(group.id)));
+  const orphanProductCount = (products || []).filter((product) => (
+    product?.categoryId != null && product.categoryId !== ''
+    && !categoryIds.has(String(product.categoryId))
+  )).length;
+  const missingGroups = (groups || []).length === 0
+    && (categories || []).some((cat) => cat?.groupId != null && cat.groupId !== '');
   const ok = !duplicateFlows.length && !duplicateProducts.length && !duplicateCategories.length;
   return {
     ok,
@@ -61,11 +69,17 @@ export function inspectCatalogDuplicates({
     duplicateCategories,
     extraFlowCopies: duplicateFlows.reduce((n, row) => n + row.count - 1, 0),
     extraProductCopies: duplicateProducts.reduce((n, row) => n + row.count - 1, 0),
+    orphanProductCount,
+    missingGroups,
   };
 }
 
+export function isCatalogUnsafe(report) {
+  return !!(report && report.ok === false);
+}
+
 export function formatCatalogDuplicateWarning(report) {
-  if (!report || report.ok) return null;
+  if (!report) return null;
   const bits = [];
   if (report.duplicateFlows.length) {
     const sample = report.duplicateFlows.slice(0, 3).map((row) => `«${row.name}» ×${row.count}`).join(', ');
@@ -76,6 +90,12 @@ export function formatCatalogDuplicateWarning(report) {
   }
   if (report.duplicateCategories.length) {
     bits.push(`${report.duplicateCategories.length} קטגוריות כפולות`);
+  }
+  if (report.missingGroups) bits.push('חסרות קבוצות קטגוריות');
+  if (report.orphanProductCount) bits.push(`${report.orphanProductCount} מוצרים בלי קטגוריה`);
+  if (!bits.length) return null;
+  if (report.ok) {
+    return `שימו לב: ${bits.join(' · ')}. אפשר להמשיך לעבוד.`;
   }
   return `תקלה בנתונים: ${bits.join(' · ')}. אל תתחיל תהליך חדש. גיבוי → סנכרן עכשיו. אל תלחץ «העלה שוב».`;
 }
