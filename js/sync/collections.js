@@ -718,3 +718,65 @@ export function rowNameFingerprint(collection, row) {
   return n ? `${collection}|name|${n}` : '';
 }
 
+export function buildCatalogNameMaps(categories = [], groups = []) {
+  const categoryNameById = new Map();
+  for (const cat of categories || []) {
+    if (cat?.id == null || cat.id === '') continue;
+    const name = normName(cat.name);
+    if (!name) continue;
+    categoryNameById.set(String(cat.id), name);
+    const n = Number(cat.id);
+    if (Number.isFinite(n)) categoryNameById.set(String(n), name);
+  }
+  const groupNameById = new Map();
+  for (const group of groups || []) {
+    if (group?.id == null || group.id === '') continue;
+    const name = normName(group.name);
+    if (!name) continue;
+    groupNameById.set(String(group.id), name);
+    const n = Number(group.id);
+    if (Number.isFinite(n)) groupNameById.set(String(n), name);
+  }
+  const categoryNameOf = (id) => {
+    if (id == null || id === '') return '';
+    return categoryNameById.get(String(id))
+      || (Number.isFinite(Number(id)) ? categoryNameById.get(String(Number(id))) : '')
+      || '';
+  };
+  const groupNameOf = (id) => {
+    if (id == null || id === '') return '';
+    return groupNameById.get(String(id))
+      || (Number.isFinite(Number(id)) ? groupNameById.get(String(Number(id))) : '')
+      || '';
+  };
+  return { categoryNameOf, groupNameOf };
+}
+
+/**
+ * השוואת קטלוג אחרי שחזור: אותו שם + שם קטגוריה/קבוצה, גם כשהמספרים שונים.
+ * בלי זה משיכה מהאייפון יוצרת תזרים שני לאותו מוצר.
+ */
+export function catalogMatchKey(collection, row, maps = {}) {
+  const n = normName(row?.name);
+  if (!n) return '';
+  const categoryNameOf = maps.categoryNameOf || (() => '');
+  const groupNameOf = maps.groupNameOf || (() => '');
+  if (collection === 'categoryGroups') return `${collection}|${n}`;
+  if (collection === 'categories') {
+    const groupName = groupNameOf(row.groupId);
+    return groupName ? `${collection}|${n}|g:${groupName}` : `${collection}|${n}|ungrouped`;
+  }
+  if (collection === 'products') {
+    const categoryName = categoryNameOf(row.categoryId);
+    return categoryName ? `${collection}|${n}|c:${categoryName}` : '';
+  }
+  if (collection === 'flows') {
+    const categoryName = categoryNameOf(row.categoryId);
+    if (categoryName) return `${collection}|${n}|c:${categoryName}`;
+    const groupName = groupNameOf(row.categoryGroupId || row.groupId);
+    if (groupName) return `${collection}|${n}|g:${groupName}`;
+    return '';
+  }
+  return '';
+}
+

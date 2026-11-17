@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=528';
+} from './runner.js?v=529';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=528';
+} from '../js/db.js?v=529';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=528';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=528';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=528';
+} from '../js/kitchen-db.js?v=529';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=529';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=529';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=528';
-import { addCategoryGroup } from '../js/db.js?v=528';
+} from '../js/supabase-sync.js?v=529';
+import { addCategoryGroup } from '../js/db.js?v=529';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -330,6 +330,38 @@ export async function runIntegrationTests() {
 
     const allCats = await db.categories.where('name').equals('עוגות').toArray();
     assertEqual(allCats.length, 1, 'עדיין קטגוריה אחת בלבד מקומית — לא נוצרה כפילות');
+  });
+
+  await testAsync('findLocalByFingerprint — תזרים אחרי שחזור לפי שם קטגוריה', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+    const oldGroup = await addCategoryGroup('מאפים');
+    const newGroup = await addCategoryGroup('מאפים');
+    const oldCat = await db.categories.add({ name: 'שטרודל', groupId: oldGroup, sortOrder: 1 });
+    const newCat = await db.categories.add({ name: 'שטרודל', groupId: newGroup, sortOrder: 2 });
+    const localFlow = await db.flows.add({
+      name: 'שטרודל תפוחים', categoryId: oldCat, categoryGroupId: null, sortOrder: 1,
+    });
+    await upsertMeta({
+      collection: 'flows',
+      localKey: String(localFlow),
+      syncId: 'flow-old-iphone',
+      updatedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    const match = await findLocalByFingerprint('flows', {
+      name: 'שטרודל תפוחים',
+      categoryId: newCat,
+      categoryGroupId: null,
+    }, { syncId: 'flow-restored-mac' });
+    assertOk(match, 'נמצא התזרים המקומי לפי שם הקטגוריה');
+    assertEqual(Number(match.id), Number(localFlow));
+    const other = await findLocalByFingerprint('flows', {
+      name: 'ברירת מחדל',
+      categoryId: newCat,
+    }, { syncId: 'flow-other' });
+    assertEqual(other, null, 'תזרים בשם אחר לא מתאחד בטעות');
   });
 
   await testAsync('findLocalByFingerprint — מחיר ממשתמש משני על חומר כפול מתמזג ל-survivor', async () => {

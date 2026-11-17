@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=528';
+import { db, getSetting, setSetting } from './db.js?v=529';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=528';
+} from './supabase-backup.js?v=529';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -23,12 +23,14 @@ import {
   shouldApplyRemote,
   rowFingerprint,
   rowDedupeFingerprint,
+  catalogMatchKey,
+  buildCatalogNameMaps,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=528';
+} from './sync/collections.js?v=529';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -74,7 +76,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=528';
+} from './sync/cloud-first.js?v=529';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -84,15 +86,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=528';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=528';
+} from './sync/id-map.js?v=529';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=529';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=528';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=528';
+} from './auth.js?v=529';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=529';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -191,7 +193,7 @@ export function formatLiveSyncErrorForUi(live) {
  * v20: do not merge a duplicate flow's steps/links onto the survivor (that doubled flow contents).
  * v21: collapse production entries that only differ by a duplicate product id / leftover name.
  */
-const DEDUPE_VERSION = 21;
+const DEDUPE_VERSION = 22;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -264,7 +266,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=528');
+    const { showToast } = await import('./utils.js?v=529');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -780,6 +782,7 @@ async function runFlush() {
  * material added under two different categories on two devices).
  */
 const LOOSE_MATCH_COLLECTIONS = new Set(['supplierCategories', 'suppliers', 'rawMaterials']);
+const CATALOG_MATCH_COLLECTIONS = new Set(['categoryGroups', 'categories', 'products', 'flows']);
 
 /**
  * Master-data collections where a fingerprint already claimed by another syncId
@@ -971,6 +974,34 @@ export async function findLocalByFingerprint(collection, row, { syncId = null } 
     const claimed = [...strictMatches, ...looseMatches][0];
     if (claimed) return { ...claimed, __cloudDuplicateOf: true };
   }
+  if (CATALOG_MATCH_COLLECTIONS.has(collection)) {
+    const catalogMatch = await findLocalByCatalogName(collection, row, syncId);
+    if (catalogMatch) return catalogMatch;
+  }
+  return null;
+}
+
+async function findLocalByCatalogName(collection, row, syncId) {
+  if (!row || !db[collection]) return null;
+  const [categories, groups] = await Promise.all([
+    db.categories ? db.categories.toArray() : [],
+    db.categoryGroups ? db.categoryGroups.toArray() : [],
+  ]);
+  const maps = buildCatalogNameMaps(categories, groups);
+  const wanted = catalogMatchKey(collection, row, maps);
+  if (!wanted) return null;
+  const matches = [];
+  for (const candidate of await db[collection].toArray()) {
+    if (catalogMatchKey(collection, candidate, maps) === wanted) matches.push(candidate);
+  }
+  if (!matches.length) return null;
+  for (const candidate of matches) {
+    const meta = await getMetaByLocal(collection, candidate.id);
+    if (!meta?.syncId || meta.syncId === syncId) return candidate;
+  }
+  if (TOMBSTONE_CLAIMED_COLLECTIONS.has(collection)) {
+    return { ...matches[0], __cloudDuplicateOf: true };
+  }
   return null;
 }
 
@@ -1105,6 +1136,45 @@ function sanitizeBarcodeLike(v) {
   return String(v || '').trim();
 }
 
+/** תזרימים כפולים אחרי שחזור: אותו שם לאותה קטגוריה, מזהים שונים. שומרים את העותק עם יותר שלבים. */
+async function dedupeFlowsByCatalogName() {
+  if (!db.flows) return 0;
+  const [flows, steps, categories, groups] = await Promise.all([
+    db.flows.toArray(),
+    db.flowSteps ? db.flowSteps.toArray() : [],
+    db.categories ? db.categories.toArray() : [],
+    db.categoryGroups ? db.categoryGroups.toArray() : [],
+  ]);
+  const maps = buildCatalogNameMaps(categories, groups);
+  const stepCounts = new Map();
+  for (const step of steps) {
+    if (step?.flowId == null || step.flowId === '') continue;
+    const id = Number(step.flowId);
+    if (!id) continue;
+    stepCounts.set(id, (stepCounts.get(id) || 0) + 1);
+  }
+  const grouped = new Map();
+  for (const flow of flows) {
+    const key = catalogMatchKey('flows', flow, maps);
+    if (!key) continue;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push({ ...flow, stepCount: stepCounts.get(Number(flow.id)) || 0 });
+  }
+  let removed = 0;
+  for (const list of grouped.values()) {
+    if (list.length < 2) continue;
+    list.sort((a, b) => compareDedupeSurvivors('flows', a, b));
+    const keep = list[0];
+    for (const drop of list.slice(1)) {
+      await deleteOwnedChildrenOf('flows', drop.id);
+      await retargetLocalForeignKeys('flows', drop.id, keep.id);
+      await deleteLocalDuplicateRow('flows', drop);
+      removed++;
+    }
+  }
+  return removed;
+}
+
 /**
  * One-time local dedupe: same dedupe-fingerprint → keep preferred row, delete rest, retarget FKs.
  */
@@ -1113,6 +1183,7 @@ export async function dedupeLocalSyncCollections() {
   for (const collection of orderedCollections()) {
     removed += await dedupeCollectionByFingerprint(collection);
   }
+  removed += await dedupeFlowsByCatalogName();
   // מעבר נוסף: קישורי תזרים עם שמות משימה זהים (אחרי מיזוג ids)
   removed += await dedupeFlowChecklistLinksByName();
   // קטגוריות ספקים לפי תפקיד (אריזות / ניקיון) — גם כשהשמות שונים («אריזה» מול «אריזות»)
@@ -1422,6 +1493,12 @@ function compareDedupeSurvivors(collection, a, b) {
     const bFlag = (b.isPackaging || b.isCleaning) ? 1 : 0;
     if (bFlag !== aFlag) return bFlag - aFlag;
   }
+  if (collection === 'flows') {
+    const aSteps = Number(a.stepCount) || 0;
+    const bSteps = Number(b.stepCount) || 0;
+    if (bSteps !== aSteps) return bSteps - aSteps;
+    if (!!b.isDefault !== !!a.isDefault) return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);
+  }
   return (a.id - b.id);
 }
 
@@ -1684,8 +1761,9 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
     if (match) {
       if (match.__cloudDuplicateOf) {
         // מכשיר קורא לא מוחק שורה בענן. במשיכה הראשונה הענן מעדכן את העותק המקומי.
-        if (protectCloud && !preferRemote) return true;
-        if (protectCloud && preferRemote) {
+        // תזרימים/קטלוג אחרי שחזור: משייכים את ה-UUID החדש לשורה הקיימת במקום ליצור כפילות.
+        if (protectCloud && !preferRemote && !CATALOG_MATCH_COLLECTIONS.has(collection)) return true;
+        if ((protectCloud && preferRemote) || CATALOG_MATCH_COLLECTIONS.has(collection)) {
           existingMeta = {
             collection,
             localKey: String(match.id),
