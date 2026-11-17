@@ -385,6 +385,15 @@ function normName(s) {
   return String(s || '').trim().toLocaleLowerCase('he');
 }
 
+/** שם תזרים אחרי שחזור: «קראנץ» ו«קראנץ׳» הם אותו תזרים. */
+export function flowNameKey(name) {
+  return normName(name)
+    .replace(/[\u0591-\u05C7]/g, '')
+    .replace(/[׳''ʼ'""`"״]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * תפקיד קטגוריית ספק למיזוג כפילויות בין מכשירים —
  * גם כשהשם לא זהה בין מכשירים ("אריזה" מול "אריזות", "חומרי גלם" מול "חומרי גלם יבשים").
@@ -754,7 +763,7 @@ export function buildCatalogNameMaps(categories = [], groups = []) {
 
 /** «ברירת מחדל» לגיטימי כמה פעמים — פעם לכל קטגוריה. שאר השמות אחרי שחזור הם אותו תזרים. */
 export function isSharedFlowName(name) {
-  return normName(name) === normName('ברירת מחדל');
+  return flowNameKey(name) === flowNameKey('ברירת מחדל');
 }
 
 /**
@@ -776,7 +785,8 @@ export function catalogMatchKey(collection, row, maps = {}) {
     return categoryName ? `${collection}|${n}|c:${categoryName}` : '';
   }
   if (collection === 'flows') {
-    if (!isSharedFlowName(row.name)) return `${collection}|${n}`;
+    const flowKey = flowNameKey(row.name) || n;
+    if (!isSharedFlowName(row.name)) return `${collection}|${flowKey}`;
     const categoryName = categoryNameOf(row.categoryId);
     if (categoryName) return `${collection}|${n}|c:${categoryName}`;
     const groupName = groupNameOf(row.categoryGroupId || row.groupId);

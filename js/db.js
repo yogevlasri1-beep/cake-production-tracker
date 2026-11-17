@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=530';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=530';
-import { defaultColorForIndex } from './chart.js?v=530';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=530';
-import { logAuditEvent } from './audit.js?v=530';
+} from './validators.js?v=531';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=531';
+import { defaultColorForIndex } from './chart.js?v=531';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=531';
+import { logAuditEvent } from './audit.js?v=531';
 
 export { ValidationError };
 
@@ -3615,6 +3615,12 @@ export async function runDeferredDbMaintenance() {
   } catch (err) {
     console.warn('product recipes cost default sync', err);
   }
+  try {
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=531');
+    await foldRestoreFlowTwins();
+  } catch (err) {
+    console.warn('fold restore flow twins', err);
+  }
 }
 
 export async function getSetting(key) {
@@ -6391,12 +6397,18 @@ function compareFlows(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
 
+function flowNameKey(name) {
+  return productNameKey(name)
+    .replace(/[\u0591-\u05C7]/g, '')
+    .replace(/[׳''ʼ'""`"״]/g, '');
+}
+
 function isSharedFlowName(name) {
-  return productNameKey(name) === productNameKey('ברירת מחדל');
+  return flowNameKey(name) === flowNameKey('ברירת מחדל');
 }
 
 function flowDedupeKey(flow) {
-  const name = productNameKey(flow?.name) || `id:${flow?.id}`;
+  const name = flowNameKey(flow?.name) || productNameKey(flow?.name) || `id:${flow?.id}`;
   if (!isSharedFlowName(flow?.name)) return name;
   const target = productNameKey(
     flow?.targetLabel || flow?.categoryName || flow?.groupName || '',
@@ -6493,7 +6505,7 @@ export function uniqueFlowsByName(flows, { preferIds, runCounts } = {}) {
 function rebuildFlowNameIndex(unique) {
   const byName = new Map();
   for (const flow of unique || []) {
-    const nameKey = productNameKey(flow.name);
+    const nameKey = flowNameKey(flow.name) || productNameKey(flow.name);
     if (!nameKey) continue;
     if (!byName.has(nameKey)) byName.set(nameKey, []);
     byName.get(nameKey).push(Number(flow.id));
@@ -6628,12 +6640,12 @@ export function buildFlowAliasLookup(rawFlows = [], { runs = [], runCounts, layo
 export function canonicalFlowIdForRun(run, lookup) {
   const fid = Number(run?.flowId);
   if (fid && lookup?.byId?.has(fid)) return lookup.byId.get(fid);
-  const nameKey = productNameKey(run?.flowName);
+  const nameKey = flowNameKey(run?.flowName) || productNameKey(run?.flowName);
   const named = nameKey ? lookup?.byName?.get(nameKey) : null;
   if (named?.length === 1) return named[0];
   if (named?.length > 1 && lookup?.layout) {
     const cat = findLayoutCategory(lookup.layout, { categoryId: run?.categoryId });
-    const candidates = (lookup.unique || []).filter((flow) => productNameKey(flow.name) === nameKey);
+    const candidates = (lookup.unique || []).filter((flow) => (flowNameKey(flow.name) || productNameKey(flow.name)) === nameKey);
     const byCat = cat
       ? candidates.filter((flow) => idsEqual(flow.categoryId, cat.id))
       : [];
@@ -6652,7 +6664,7 @@ export function uniqueHistoryFlowOptions(liveFlows = [], runs = [], lookup = nul
   const byId = new Map();
   const liveNames = new Set();
   for (const flow of source) {
-    const nameKey = productNameKey(flow?.name);
+    const nameKey = flowNameKey(flow?.name) || productNameKey(flow?.name);
     if (nameKey) liveNames.add(nameKey);
     const rawId = Number(flow?.id);
     if (!rawId) continue;
@@ -6669,7 +6681,7 @@ export function uniqueHistoryFlowOptions(liveFlows = [], runs = [], lookup = nul
     if (!run?.flowId) continue;
     const canonical = lookup ? canonicalFlowIdForRun(run, lookup) : Number(run.flowId);
     if (canonical && byId.has(Number(canonical))) continue;
-    const nameKey = productNameKey(run.flowName);
+    const nameKey = flowNameKey(run.flowName) || productNameKey(run.flowName);
     if (nameKey && liveNames.has(nameKey)) continue;
     const id = Number(canonical || run.flowId);
     if (!id || byId.has(id)) continue;
@@ -6870,6 +6882,12 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
+  try {
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=531');
+    await foldRestoreFlowTwins();
+  } catch (err) {
+    console.warn('fold restore flow twins', err);
+  }
   const [flows, steps, categories, groups] = await Promise.all([
     db.flows.toArray(),
     db.flowSteps.toArray(),

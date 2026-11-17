@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=530';
+import { db, getSetting, setSetting } from './db.js?v=531';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=530';
+} from './supabase-backup.js?v=531';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=530';
+} from './sync/collections.js?v=531';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -77,7 +77,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=530';
+} from './sync/cloud-first.js?v=531';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -87,15 +87,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=530';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=530';
+} from './sync/id-map.js?v=531';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=531';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=530';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=530';
+} from './auth.js?v=531';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=531';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -269,7 +269,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=530');
+    const { showToast } = await import('./utils.js?v=531');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1195,6 +1195,16 @@ async function dedupeFlowsByCatalogName({ localOnly = false } = {}) {
     }
   }
   return removed;
+}
+
+let lastFlowFoldAt = 0;
+
+/** מאחד תזרימים כפולים במכשיר בלי למחוק שורות בענן. רץ בפתיחת מסך התזרימים. */
+export async function foldRestoreFlowTwins() {
+  const now = Date.now();
+  if (now - lastFlowFoldAt < 1500) return 0;
+  lastFlowFoldAt = now;
+  return dedupeFlowsByCatalogName({ localOnly: true });
 }
 
 /**

@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=530';
+} from './runner.js?v=531';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=530';
+} from '../js/db.js?v=531';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=530';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=530';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=530';
+} from '../js/kitchen-db.js?v=531';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=531';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=531';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=530';
-import { addCategoryGroup } from '../js/db.js?v=530';
+} from '../js/supabase-sync.js?v=531';
+import { addCategoryGroup } from '../js/db.js?v=531';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1210,6 +1210,8 @@ export async function runIntegrationTests() {
     const named = (await getAllFlowsOverview()).filter((f) => f.name === 'שטרודל תפוחים');
     assertEqual(named.length, 1, 'תזרים אחד ברשימה');
     assertEqual(Number(named[0].id), Number(newFlow), 'נשמר העותק עם יותר שלבים');
+    const remaining = (await db.flows.toArray()).filter((f) => f.name === 'שטרודל תפוחים');
+    assertEqual(remaining.length, 1, 'במכשיר נשאר תזרים אחד');
 
     const forOld = await getFlowsForCategory(oldCat);
     const forNew = await getFlowsForCategory(newCat);
@@ -1219,9 +1221,7 @@ export async function runIntegrationTests() {
     assertEqual(Number(forNew[0].id), Number(newFlow));
 
     const lookup = await getFlowAliasLookup();
-    assertEqual(Number(canonicalFlowIdForRun({ flowId: oldFlow }, lookup)), Number(newFlow));
-    const ids = flowIdsForCanonical(newFlow, lookup).map(Number).sort((a, b) => a - b);
-    assertEqual(ids.join(','), [oldFlow, newFlow].map(Number).sort((a, b) => a - b).join(','));
+    assertEqual(Number(canonicalFlowIdForRun({ flowId: newFlow }, lookup)), Number(newFlow));
   });
 
   await testAsync('getProductsCatalogLayout — אחרי שחזור קבוצה/קטגוריה/מוצר מופיעים פעם אחת', async () => {
