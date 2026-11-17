@@ -2,8 +2,8 @@
  * בדיקת בריאות קטלוג מקומי: כפילויות אחרי שחזור/משיכה.
  * לא מוחק כלום — רק מזהה ומתריע.
  */
-import { db } from './db.js?v=532';
-import { flowNameKey, isSharedFlowName, buildCatalogNameMaps } from './sync/collections.js?v=532';
+import { db } from './db.js?v=533';
+import { flowNameKey, isSharedFlowName, buildCatalogNameMaps } from './sync/collections.js?v=533';
 
 function groupBy(rows, keyOf) {
   const grouped = new Map();

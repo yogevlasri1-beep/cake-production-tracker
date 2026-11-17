@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=532';
+import { db, getSetting, setSetting } from './db.js?v=533';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=532';
+} from './supabase-backup.js?v=533';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=532';
+} from './sync/collections.js?v=533';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -77,7 +77,19 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=532';
+} from './sync/cloud-first.js?v=533';
+import {
+  RESTORE_LOCK_KEY,
+  RESTORE_LOCK_GRACE_MS,
+  HEARTBEAT_INTERVAL_MS,
+  deviceHeartbeatKey,
+  planRestoreLockAcquire,
+  planRestoreLockRelease,
+  planLiveSyncDuringRestoreLock,
+  otherDeviceWroteAfterLock,
+  latestOtherDeviceAt,
+  cloudTableWipePath,
+} from './sync/restore-lock.js?v=533';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -87,15 +99,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=532';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=532';
+} from './sync/id-map.js?v=533';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=533';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=532';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=532';
+} from './auth.js?v=533';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=533';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -225,6 +237,8 @@ let authHalted = false;
 let liveSyncOnlineHandler = null;
 let liveSyncVisibilityHandler = null;
 let statusListeners = new Set();
+let restoreLockCache = { at: 0, value: null };
+let lastHeartbeatAt = 0;
 
 export function onLiveSyncStatus(fn) {
   statusListeners.add(fn);
@@ -269,7 +283,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=532');
+    const { showToast } = await import('./utils.js?v=533');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -656,6 +670,7 @@ export function flushSyncQueue() {
 
 async function runFlush() {
   if (authHalted) return { flushed: 0 };
+  if (await restoreFrozenForThisDevice()) return { flushed: 0, frozen: true };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { flushed: 0 };
   const cfg = await getSupabaseBackupConfig();
@@ -2501,6 +2516,200 @@ async function readCloudRestoreMarker() {
   return hit ? hit.payload.value : null;
 }
 
+async function cacheLocalRestoreLock(value) {
+  const prev = applyingRemote;
+  applyingRemote = true;
+  try {
+    await setSetting(RESTORE_LOCK_KEY, value);
+  } catch (err) {
+    console.warn('cache restore lock', err);
+  } finally {
+    applyingRemote = prev;
+  }
+}
+
+export async function peekRestoreLock({ maxAgeMs = 3000 } = {}) {
+  const now = Date.now();
+  if (restoreLockCache.at && now - restoreLockCache.at < maxAgeMs) {
+    return restoreLockCache.value;
+  }
+  let value = null;
+  let fromCloud = false;
+  try {
+    const cfg = await getSupabaseBackupConfig();
+    if (cfg?.supabaseUrl && cfg?.anonKey) {
+      const rows = await supabaseFetch(
+        cfg,
+        `/sync_app_settings?select=payload,updated_at,device_id,deleted_at&payload->>key=eq.${encodeURIComponent(RESTORE_LOCK_KEY)}&limit=5`,
+      );
+      const hit = Array.isArray(rows)
+        ? rows.find((row) => !row.deleted_at && row?.payload?.value)
+        : null;
+      value = hit?.payload?.value || null;
+      fromCloud = true;
+    }
+  } catch (err) {
+    console.warn('peek restore lock', err);
+  }
+  if (!fromCloud) {
+    value = await getSetting(RESTORE_LOCK_KEY);
+  }
+  restoreLockCache = { at: now, value };
+  await cacheLocalRestoreLock(value);
+  return value;
+}
+
+export async function pushSettingToCloud(key, value) {
+  await setSetting(key, value);
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) return { pushed: false, reason: 'no-supabase' };
+  const deviceId = await getOrCreateDeviceId();
+  const cloudRow = await buildUpsertCloudRow('settings', key, deviceId);
+  if (!cloudRow) return { pushed: false, reason: 'no-row' };
+  await supabaseFetch(cfg, `/${tableOf('settings')}?on_conflict=id`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: [cloudRow],
+  });
+  return { pushed: true };
+}
+
+async function readOtherDeviceHeartbeats(cfg, deviceId) {
+  const rows = await supabaseFetch(
+    cfg,
+    `/sync_app_settings?select=payload,updated_at,device_id,deleted_at&payload->>key=like.${encodeURIComponent('deviceHeartbeat:*')}&deleted_at=is.null&limit=20`,
+  );
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((row) => row?.payload?.value)
+    .map((row) => ({
+      deviceId: row.payload.value.deviceId || row.device_id,
+      at: row.payload.value.at || row.updated_at,
+      updatedAt: row.updated_at,
+    }))
+    .filter((row) => row.deviceId && String(row.deviceId) !== String(deviceId));
+}
+
+async function otherDeviceWroteCatalogAfter(cfg, deviceId, lockAt) {
+  const since = encodeURIComponent(lockAt);
+  const me = encodeURIComponent(deviceId);
+  for (const table of ['sync_flows', 'sync_products']) {
+    const rows = await supabaseFetch(
+      cfg,
+      `/${table}?device_id=neq.${me}&updated_at=gte.${since}&select=id&limit=1`,
+    );
+    if (Array.isArray(rows) && rows.length) return true;
+  }
+  return false;
+}
+
+export async function acquireRestoreLock({
+  onProgress,
+  now = Date.now(),
+  waitMs = RESTORE_LOCK_GRACE_MS,
+  wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+} = {}) {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) {
+    return { ok: true, skipped: true, reason: 'no-supabase' };
+  }
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  if (!online) {
+    return { ok: false, reason: 'offline', message: 'אין חיבור. אי אפשר לנעול שחזור.' };
+  }
+  const deviceId = await getOrCreateDeviceId();
+  const existing = await peekRestoreLock({ maxAgeMs: 0 });
+  let heartbeats = [];
+  try {
+    heartbeats = await readOtherDeviceHeartbeats(cfg, deviceId);
+  } catch (err) {
+    console.warn('restore lock heartbeats', err);
+    return { ok: false, reason: 'check-failed', message: 'לא הצלחתי לבדוק אם האייפון פתוח. נסו שוב.' };
+  }
+  const otherAt = latestOtherDeviceAt(heartbeats, deviceId);
+  const plan = planRestoreLockAcquire({
+    existingLock: existing,
+    deviceId,
+    otherDeviceSeenAt: otherAt ? new Date(otherAt).toISOString() : '',
+    now,
+  });
+  if (!plan.ok) return plan;
+  onProgress?.('נועל שחזור — מכשירים אחרים עוצרים...');
+  const pushed = await pushSettingToCloud(RESTORE_LOCK_KEY, plan.lock);
+  if (!pushed.pushed) {
+    return { ok: false, reason: 'lock-write-failed', message: 'הנעילה לא נשמרה בענן. השחזור בוטל.' };
+  }
+  restoreLockCache = { at: Date.now(), value: plan.lock };
+  if (waitMs > 0) {
+    onProgress?.('בודק שהאייפון באמת סגור...');
+    await wait(waitMs);
+  }
+  try {
+    const afterBeats = await readOtherDeviceHeartbeats(cfg, deviceId);
+    const stillWritingRows = await otherDeviceWroteCatalogAfter(cfg, deviceId, plan.lock.at);
+    const stillWriting = otherDeviceWroteAfterLock({
+      heartbeats: afterBeats,
+      writeHits: stillWritingRows ? [{}] : [],
+      lockAt: plan.lock.at,
+      deviceId,
+    });
+    if (stillWriting) {
+      await releaseRestoreLock().catch(() => {});
+      return {
+        ok: false,
+        reason: 'still-writing',
+        message: 'האייפון עדיין דוחף נתונים. סגרו אותו לגמרי (החלקה למעלה) ונסו שוב.',
+      };
+    }
+  } catch (err) {
+    console.warn('restore lock grace check', err);
+    await releaseRestoreLock().catch(() => {});
+    return { ok: false, reason: 'check-failed', message: 'לא הצלחתי לוודא שהאייפון סגור. נסו שוב.' };
+  }
+  return { ok: true, lock: plan.lock };
+}
+
+export async function releaseRestoreLock() {
+  const deviceId = await getOrCreateDeviceId();
+  const existing = await peekRestoreLock({ maxAgeMs: 0 });
+  const plan = planRestoreLockRelease(existing, deviceId);
+  if (!plan.ok) return plan;
+  restoreLockCache = { at: Date.now(), value: plan.lock };
+  try {
+    await pushSettingToCloud(RESTORE_LOCK_KEY, plan.lock);
+  } catch (err) {
+    console.warn('release restore lock', err);
+    return { ok: false, reason: 'release-failed' };
+  }
+  return { ok: true, lock: plan.lock };
+}
+
+async function maybeWriteHeartbeat() {
+  const now = Date.now();
+  if (now - lastHeartbeatAt < HEARTBEAT_INTERVAL_MS) return;
+  lastHeartbeatAt = now;
+  try {
+    const deviceId = await getOrCreateDeviceId();
+    await setSetting(deviceHeartbeatKey(deviceId), {
+      at: new Date(now).toISOString(),
+      deviceId,
+    });
+  } catch (err) {
+    console.warn('device heartbeat', err);
+  }
+}
+
+async function restoreFrozenForThisDevice() {
+  const deviceId = await getOrCreateDeviceId();
+  const lock = await peekRestoreLock();
+  return planLiveSyncDuringRestoreLock({ lock, deviceId }).frozen === true;
+}
+
+export async function flushIfNotRestoreFrozen() {
+  if (await restoreFrozenForThisDevice()) return { flushed: 0, frozen: true };
+  return flushSyncQueue();
+}
+
 async function stampRestoreJoin(live, marker) {
   await saveLiveSyncSettings({
     restorePullVersion: CLOUD_RESTORE_PULL_VERSION,
@@ -3038,7 +3247,7 @@ export async function startLiveSync() {
   await adoptCloudFirstFromMarker();
   live = await getLiveSyncSettings();
   try {
-    await ensureRestoreJoinPull();
+    if (!(await restoreFrozenForThisDevice())) await ensureRestoreJoinPull();
   } catch (err) {
     console.warn('restore join pull', err);
   }
@@ -3067,6 +3276,15 @@ export async function startLiveSync() {
     try {
       const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
       const liveNow = await getLiveSyncSettings();
+      const deviceId = await getOrCreateDeviceId();
+      const lock = await peekRestoreLock();
+      const lockPlan = planLiveSyncDuringRestoreLock({ lock, deviceId });
+      if (!lockPlan.frozen) {
+        await maybeWriteHeartbeat();
+        try { await ensureRestoreJoinPull(); } catch (err) {
+          console.warn('restore join pull', err);
+        }
+      }
       const plan = planLiveSyncTick({
         now: Date.now(),
         lastFullPullAt,
@@ -3076,6 +3294,7 @@ export async function startLiveSync() {
         fullInterval: FULL_PULL_INTERVAL_MS,
         holdPulls: liveNow.holdPulls === true,
         online: typeof navigator === 'undefined' || navigator.onLine !== false,
+        restoreFrozen: lockPlan.frozen === true,
       });
       if (plan.flush) await flushSyncQueue();
       // ברקע לא שואלים את כל הטבלאות כל כמה שניות. חוזרים לחלון — בודקים מיד.
@@ -3187,7 +3406,7 @@ export async function startLiveSync() {
   liveSyncVisibilityHandler = () => {
     if (authHalted) return;
     if (document.visibilityState === 'hidden') {
-      flushSyncQueue().catch((err) => console.warn('sync flush', err));
+      flushIfNotRestoreFrozen().catch((err) => console.warn('sync flush', err));
       return;
     }
     tick();
@@ -3195,7 +3414,7 @@ export async function startLiveSync() {
   window.addEventListener('online', liveSyncOnlineHandler);
   document.addEventListener('visibilitychange', liveSyncVisibilityHandler);
   window.addEventListener('pagehide', () => {
-    if (!authHalted) flushSyncQueue().catch((err) => console.warn('sync flush', err));
+    if (!authHalted) flushIfNotRestoreFrozen().catch((err) => console.warn('sync flush', err));
   });
   ensureRecentProductionRepush().catch((err) => console.warn('recent production repush', err));
 }
@@ -3245,7 +3464,9 @@ export async function wipeKitchenCloudTables({ replaceCloudRestore = false } = {
   const errors = [];
   for (const table of tables) {
     try {
-      await supabaseFetch(cfg, `/${table}?kitchen_id=eq.${encodeURIComponent(kitchenId)}`, {
+      await supabaseFetch(cfg, cloudTableWipePath(table, kitchenId, {
+        preserveRestoreLock: replaceCloudRestore === true,
+      }), {
         method: 'DELETE',
         headers: { Prefer: 'return=minimal' },
       });
@@ -3296,6 +3517,9 @@ export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
   onProgress?.('מרוקן את הענן...');
   const wipe = await wipeKitchenCloudTables({ replaceCloudRestore: true });
   if (!wipe.ok) {
+    try { await releaseRestoreLock(); } catch (err) {
+      console.warn('release restore lock after wipe fail', err);
+    }
     await saveLiveSyncSettings({ holdPulls: false });
     started = false;
     await startLiveSync();
@@ -3331,6 +3555,9 @@ export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
       lastError: null,
       lastErrorKind: null,
     });
+    try { await releaseRestoreLock(); } catch (err) {
+      console.warn('release restore lock after restore', err);
+    }
     started = false;
     await startLiveSync();
     return { replacedCloud: true, seeded: seed.seeded || 0 };
@@ -3381,6 +3608,11 @@ export async function getLiveSyncStatus() {
     getOrCreateDeviceId(),
     db.syncQueue ? countQueueBacklog() : 0,
   ]);
+  let restoreFrozen = false;
+  try {
+    const lock = await getSetting(RESTORE_LOCK_KEY);
+    restoreFrozen = planLiveSyncDuringRestoreLock({ lock, deviceId }).frozen === true;
+  } catch { /* ignore */ }
   return {
     ...live,
     pendingCount: pending || live.pendingCount || 0,
@@ -3388,6 +3620,7 @@ export async function getLiveSyncStatus() {
     kitchenId: KITCHEN_ID,
     supabaseConfigured: !!(cfg.supabaseUrl && cfg.anonKey),
     online: typeof navigator !== 'undefined' ? navigator.onLine !== false : true,
+    restoreFrozen,
   };
 }
 

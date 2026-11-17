@@ -58,9 +58,13 @@ export function planLiveSyncTick({
   fullInterval = FULL_PULL_INTERVAL_MS,
   holdPulls = false,
   online = true,
+  restoreFrozen = false,
 } = {}) {
   if (holdPulls === true || online === false) {
     return { flush: false, pullProduction: false, pullCatalog: false };
+  }
+  if (restoreFrozen === true) {
+    return { flush: false, pullProduction: false, pullCatalog: false, frozen: true };
   }
   if (hidden && now - lastHiddenPullAt < hiddenInterval) {
     return { flush: true, pullProduction: false, pullCatalog: false };

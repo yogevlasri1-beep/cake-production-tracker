@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=532';
+} from './db.js?v=533';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=532';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=532';
-import { downloadBlob } from './download.js?v=532';
-import { ValidationError } from './validators.js?v=532';
-import { openModal, closeModal } from './modal.js?v=532';
-import { escapeHtml, showToast } from './utils.js?v=532';
+} from './backup.js?v=533';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=533';
+import { downloadBlob } from './download.js?v=533';
+import { ValidationError } from './validators.js?v=533';
+import { openModal, closeModal } from './modal.js?v=533';
+import { escapeHtml, showToast } from './utils.js?v=533';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=532';
+} from './backup-folder-bridge.js?v=533';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -35,7 +35,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=532';
+} from './supabase-backup.js?v=533';
 import {
   MAX_PINNED_BACKUPS,
   MAX_ROTATING_LOCAL,
@@ -49,7 +49,7 @@ import {
   protectedBackupFileName,
   safetyKindForAction,
   selectBackupsToPrune,
-} from './backup-guard.js?v=532';
+} from './backup-guard.js?v=533';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -588,10 +588,17 @@ export async function getBackupStatus() {
   const driftWarning = catalogDriftWarning(catalogHealth, restorePoints.goods[0]);
   let duplicateWarning = null;
   try {
-    const { inspectLocalCatalogHealth, formatCatalogDuplicateWarning } = await import('./data-health.js?v=532');
+    const { inspectLocalCatalogHealth, formatCatalogDuplicateWarning } = await import('./data-health.js?v=533');
     duplicateWarning = formatCatalogDuplicateWarning(await inspectLocalCatalogHealth());
   } catch (err) {
     console.warn('catalog duplicate health', err);
+  }
+  let restoreModeWarning = null;
+  try {
+    const { formatRestoreModeWarning } = await import('./sync/restore-lock.js?v=533');
+    restoreModeWarning = formatRestoreModeWarning(await getSetting('restoreLock'));
+  } catch (err) {
+    console.warn('restore mode warning', err);
   }
   const hasDefaultFolder = hasDefaultBackupFolder(settings);
   const supabaseConfig = await getSupabaseBackupConfig();
@@ -608,7 +615,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=532');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=533');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -620,6 +627,7 @@ export async function getBackupStatus() {
     catalogHealth,
     driftWarning,
     duplicateWarning,
+    restoreModeWarning,
     hasDirectory: hasDefaultFolder,
     hasFileLocation: false,
     hasExternalLocation: hasDefaultFolder,
@@ -659,7 +667,7 @@ function restoreConfirmBodyHTML({ titleName, preview }) {
     <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
     <p style="line-height:1.6">
       זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>.
-      האייפון יתעדכן רק אחרי שתפתח אותו בסוף.
+      האייפון חייב להיות סגור לגמרי. אם הוא פתוח — השחזור ייחסם.
       זה לוקח כמה דקות — לא צריך לבדוק מהר.
     </p>`;
 }
@@ -672,7 +680,9 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     stopLiveSync,
     saveLiveSyncSettings,
     startLiveSync,
-  } = await import('./supabase-sync.js?v=532');
+    acquireRestoreLock,
+    releaseRestoreLock,
+  } = await import('./supabase-sync.js?v=533');
   onProgress?.('שומר נקודת ביטחון...');
   try {
     await saveSafetySnapshot('restore');
@@ -680,29 +690,41 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     console.warn('safety snapshot before restore', err);
     throw new ValidationError('לא נשמרה נקודת ביטחון. השחזור בוטל.');
   }
-  onProgress?.('עוצר סנכרון...');
-  await saveLiveSyncSettings({ holdPulls: true });
-  await stopLiveSync();
-  onProgress?.('משחזר במחשב...');
-  await withSyncEnqueuePaused(() => restoreBackupPayload(data));
+  onProgress?.('בודק שמכשירים אחרים סגורים...');
+  const lockResult = await acquireRestoreLock({ onProgress });
+  if (!lockResult.ok) {
+    throw new ValidationError(lockResult.message || 'השחזור נחסם.');
+  }
+  const holdLock = !lockResult.skipped;
   try {
-    await ensureLastLocalCopy({ force: true });
-  } catch (err) {
-    console.warn('local copy after restore', err);
-  }
-  const status = await getLiveSyncStatus();
-  const plan = planRestoreBackupReplaceCloud({
-    supabaseConfigured: status.supabaseConfigured === true,
-    online: status.online !== false,
-  });
-  if (!plan.replaceCloud) {
-    if (plan.reason === 'no-supabase') {
-      await saveLiveSyncSettings({ holdPulls: false });
-      await startLiveSync();
+    onProgress?.('עוצר סנכרון...');
+    await saveLiveSyncSettings({ holdPulls: true });
+    await stopLiveSync();
+    onProgress?.('משחזר במחשב...');
+    await withSyncEnqueuePaused(() => restoreBackupPayload(data));
+    try {
+      await ensureLastLocalCopy({ force: true });
+    } catch (err) {
+      console.warn('local copy after restore', err);
     }
-    return { replacedCloud: false, reason: plan.reason };
+    const status = await getLiveSyncStatus();
+    const plan = planRestoreBackupReplaceCloud({
+      supabaseConfigured: status.supabaseConfigured === true,
+      online: status.online !== false,
+    });
+    if (!plan.replaceCloud) {
+      if (holdLock) await releaseRestoreLock().catch(() => {});
+      if (plan.reason === 'no-supabase') {
+        await saveLiveSyncSettings({ holdPulls: false });
+        await startLiveSync();
+      }
+      return { replacedCloud: false, reason: plan.reason };
+    }
+    return replaceCloudFromLocalBackup({ onProgress });
+  } catch (err) {
+    if (holdLock) await releaseRestoreLock().catch(() => {});
+    throw err;
   }
-  return replaceCloudFromLocalBackup({ onProgress });
 }
 
 export function toastAfterRestore(cloud) {

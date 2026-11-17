@@ -23,19 +23,19 @@ import {
   readRestorePointData,
   backupKindLabel,
   formatCatalogHealth,
-} from '../backup-service.js?v=532';
-import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=532';
-import { describeDownloadMethod } from '../download.js?v=532';
-import { showToast, escapeHtml } from '../utils.js?v=532';
-import { openModal, closeModal } from '../modal.js?v=532';
-import { APP_VERSION } from '../version.js?v=532';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=532';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=532';
-import { canAccessBackupFull } from '../permissions.js?v=532';
-import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=532';
-import { getSetting } from '../db.js?v=532';
-import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=532';
-import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=532';
+} from '../backup-service.js?v=533';
+import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=533';
+import { describeDownloadMethod } from '../download.js?v=533';
+import { showToast, escapeHtml } from '../utils.js?v=533';
+import { openModal, closeModal } from '../modal.js?v=533';
+import { APP_VERSION } from '../version.js?v=533';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=533';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=533';
+import { canAccessBackupFull } from '../permissions.js?v=533';
+import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=533';
+import { getSetting } from '../db.js?v=533';
+import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=533';
+import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=533';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -125,7 +125,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     supportsLocationPicker, isNativeApp, isIOS,
     supabaseConfig, supabaseConfigured, supabaseBackups, deviceId,
     backupScopeId, isPrimaryDevice, liveSync,
-    restorePoints, catalogHealth, driftWarning, duplicateWarning,
+    restorePoints, catalogHealth, driftWarning, duplicateWarning, restoreModeWarning,
   } = status;
   const goodPoints = restorePoints?.goods || [];
   const safetyPoints = restorePoints?.safeties || [];
@@ -420,6 +420,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
           <li>שחזור מקובץ JSON רק במחשב אחד. האייפון חייב להיות סגור לגמרי.</li>
           <li>אחרי שחזור: קודם «סנכרן עכשיו» במכשיר הישן. בלי «העלה שוב» ובלי «שחזר» שוב.</li>
           <li>אם מופיעה התראת כפילות — לא מתחילים תהליך חדש. סנכרון בלבד.</li>
+          <li>האפליקציה חוסמת שחזור אם האייפון היה פעיל בדקה האחרונה, ועוצרת דחיפה ממנו בזמן השחזור.</li>
         </ol>
       </details>
       <p class="form-hint" style="margin:10px 0 0;line-height:1.45">
@@ -441,6 +442,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
       <p class="backup-meta" style="margin-bottom:10px">
         עכשיו: ${escapeHtml(formatCatalogHealth(catalogHealth))}
       </p>
+      ${restoreModeWarning ? `<p class="form-hint" style="color:var(--danger);line-height:1.5;margin-bottom:10px"><strong>מצב שחזור.</strong> ${escapeHtml(restoreModeWarning)}</p>` : ''}
       ${duplicateWarning ? `<p class="form-hint" style="color:var(--danger);line-height:1.5;margin-bottom:10px"><strong>התראת תקלה.</strong> ${escapeHtml(duplicateWarning)}</p>` : ''}
       ${driftWarning ? `<p class="form-hint" style="color:var(--danger);line-height:1.5;margin-bottom:10px">${escapeHtml(driftWarning)}</p>` : ''}
       <button type="button" class="btn btn-primary" id="save-good-point-btn" style="width:100%;margin-bottom:8px">
@@ -509,8 +511,8 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('repair-supplier-links-status');
     const label = btn?.textContent;
     try {
-      const { db } = await import('../db.js?v=532');
-      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=532');
+      const { db } = await import('../db.js?v=533');
+      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=533');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -551,7 +553,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('wipe-cloud-status');
     const label = btn?.textContent;
     try {
-      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=532');
+      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=533');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -667,7 +669,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       const {
         flushSyncQueue, pullAllCollections, getLiveSyncSettings, ensureCloudJoinPull, ensureProductionHistoryPull,
-      } = await import('../supabase-sync.js?v=532');
+      } = await import('../supabase-sync.js?v=533');
       const live = await getLiveSyncSettings();
       const plan = planManualLiveSync(live);
       if (plan.reader) await ensureCloudJoinPull();
@@ -692,7 +694,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
     try {
-      const { sendSyncProbe } = await import('../supabase-sync.js?v=532');
+      const { sendSyncProbe } = await import('../supabase-sync.js?v=533');
       const email = getCurrentUserEmail() || '';
       const note = `בדיקה מ-${email || 'משתמש'} · ${new Date().toLocaleTimeString('he-IL')}`;
       const { value, pushed } = await sendSyncProbe({ note, email });
@@ -717,7 +719,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'בודק...'; }
     try {
-      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=532');
+      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=533');
       const { value, pulled } = await refreshAndReadSyncProbe();
       if (!value?.at) {
         if (status) {
@@ -752,7 +754,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה... אל תסגור'; }
     try {
-      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=532');
+      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=533');
       const result = await pushCutoverSnapshot({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -780,7 +782,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה תיעוד... אל תסגור'; }
     try {
-      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=532');
+      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=533');
       const result = await pushProductionHistoryFromCutover({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -814,7 +816,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
         saveLiveSyncSettings,
         stopLiveSync,
         startLiveSync,
-      } = await import('../supabase-sync.js?v=532');
+      } = await import('../supabase-sync.js?v=533');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true, holdPulls: false });
       await stopLiveSync();
@@ -836,7 +838,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       await saveSafetySnapshot('reset');
       if (btn) btn.textContent = 'מאפס...';
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=532');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=533');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -855,7 +857,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       await saveSafetySnapshot('dedupe');
       if (btn) btn.textContent = 'מנקה...';
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=532');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=533');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });
@@ -948,7 +950,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (btn) btn.disabled = true;
     try {
       showToast('מכין קובץ Excel...');
-      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=532');
+      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=533');
       const msg = await exportAllDataTablesExcel();
       showToast(msg);
     } catch (err) {
@@ -1217,7 +1219,7 @@ function confirmRestoreExternal(path, name, navigate) {
     let parsed;
     try {
       showToast('קורא את קובץ הגיבוי...');
-      const json = await (await import('../backup-folder-bridge.js?v=532')).readBackupJsonFromFolder(path);
+      const json = await (await import('../backup-folder-bridge.js?v=533')).readBackupJsonFromFolder(path);
       const file = new File([json], name || path, { type: 'application/json' });
       parsed = await parseBackupFile(file);
     } catch (err) {
@@ -1235,7 +1237,7 @@ function confirmRestoreExternal(path, name, navigate) {
       bodyHTML: `
         <p style="line-height:1.6;margin-bottom:10px"><strong>${escapeHtml(name)}</strong></p>
         <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
-        <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון רק בסוף. זה לוקח כמה דקות.</p>`,
+        <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון חייב להיות סגור לגמרי. אם הוא פתוח — השחזור ייחסם.</p>`,
       footerHTML: `
         <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
         <button type="button" class="btn btn-primary" id="confirm-restore-external">שחזר למחשב ולענן</button>`,
@@ -1309,7 +1311,7 @@ function restoreConfirmBodyFromPreview(titleName, preview) {
   return `
     <p style="line-height:1.6;margin-bottom:10px"><strong>${escapeHtml(titleName)}</strong></p>
     <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
-    <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון רק בסוף. זה לוקח כמה דקות.</p>`;
+    <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון חייב להיות סגור לגמרי. אם הוא פתוח — השחזור ייחסם.</p>`;
 }
 
 function confirmRestoreSupabase(id, navigate) {
@@ -1336,7 +1338,7 @@ function confirmRestoreLocal(id, navigate) {
       bodyHTML: `
         <p style="line-height:1.6;margin-bottom:10px"><strong>${escapeHtml(snapshot.name)}</strong></p>
         <p style="line-height:1.7;white-space:pre-line;margin-bottom:12px">${escapeHtml(preview)}</p>
-        <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון רק בסוף. זה לוקח כמה דקות.</p>`,
+        <p style="line-height:1.6">זה מחליף את הנתונים במחשב <strong>וגם בענן</strong>. האייפון חייב להיות סגור לגמרי. אם הוא פתוח — השחזור ייחסם.</p>`,
       footerHTML: `
         <button type="button" class="btn btn-secondary modal-cancel">ביטול</button>
         <button type="button" class="btn btn-primary" id="confirm-restore-local">שחזר למחשב ולענן</button>`,
