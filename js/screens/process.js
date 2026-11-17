@@ -32,10 +32,10 @@ import {
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
   getFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical, uniqueHistoryFlowOptions,
   idsEqual, findLayoutCategory, findLayoutGroup,
-} from '../db.js?v=527';
+} from '../db.js?v=528';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=527').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=528').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -78,7 +78,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=527');
+    } = await import('../inventory-db.js?v=528');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -119,7 +119,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=527');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=528');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -145,7 +145,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=527');
+    } = await import('../inventory-db.js?v=528');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -174,15 +174,16 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=527';
-import { metricsProductionValueBreakdown } from '../calc.js?v=527';
-import { openModal, closeModal } from '../modal.js?v=527';
-import { requestAutoBackupNow } from '../backup-service.js?v=527';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=527';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=527';
-import { materialMatchesSearch } from '../kitchen-db.js?v=527';
-import { getCurrentUserRole } from '../auth.js?v=527';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=527';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=528';
+import { productNameKey } from '../validators.js?v=528';
+import { metricsProductionValueBreakdown } from '../calc.js?v=528';
+import { openModal, closeModal } from '../modal.js?v=528';
+import { requestAutoBackupNow } from '../backup-service.js?v=528';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=528';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=528';
+import { materialMatchesSearch } from '../kitchen-db.js?v=528';
+import { getCurrentUserRole } from '../auth.js?v=528';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=528';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1596,19 +1597,35 @@ function groupRunsByDate(runs) {
 function groupRunsByFlow(runs, flowNameMap = new Map(), lookup = null) {
   const groups = [];
   const indexByFlow = new Map();
+  const uniqueIds = new Set((lookup?.unique || []).map((flow) => Number(flow.id)));
   for (const run of runs) {
-    const canonicalId = lookup
+    let canonicalId = lookup
       ? canonicalFlowIdForRun(run, lookup)
       : (run.flowId ? Number(run.flowId) : null);
-    const key = canonicalId ? `id:${canonicalId}` : 'none';
+    const nameKey = productNameKey(run.flowName);
+    if (canonicalId && uniqueIds.size && !uniqueIds.has(Number(canonicalId))) {
+      const named = nameKey ? lookup?.byName?.get(nameKey) : null;
+      if (named?.length === 1) canonicalId = named[0];
+      else {
+        const viaName = canonicalFlowIdForRun({ ...run, flowId: null }, lookup);
+        canonicalId = viaName || null;
+      }
+    }
+    const key = canonicalId
+      ? `id:${canonicalId}`
+      : (nameKey ? `n:${nameKey}` : 'none');
     if (!indexByFlow.has(key)) {
       let flowName;
-      if (!canonicalId) {
+      if (!canonicalId && !nameKey) {
         flowName = run.flowName || 'ללא תזרים';
       } else {
-        const liveName = flowNameMap.get(Number(canonicalId));
+        const liveName = (canonicalId && flowNameMap.get(Number(canonicalId)))
+          || [...flowNameMap.values()].find((name) => productNameKey(name) === nameKey)
+          || (lookup?.unique || []).find((flow) => productNameKey(flow.name) === nameKey)?.name;
         flowName = liveName
-          || `${run.flowName || `תזרים #${canonicalId}`} (נמחק)`;
+          || (canonicalId
+            ? `${run.flowName || `תזרים #${canonicalId}`} (נמחק)`
+            : (run.flowName || 'ללא תזרים'));
       }
       indexByFlow.set(key, groups.length);
       groups.push({
@@ -2044,8 +2061,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=527');
-    const { db } = await import('../db.js?v=527');
+    const { getRecipe } = await import('../kitchen-db.js?v=528');
+    const { db } = await import('../db.js?v=528');
     const blocks = [];
 
     for (const row of rows) {
@@ -2199,8 +2216,18 @@ async function renderRunsHistoryView(container, ctx) {
     getAllFlowsOverview(),
     getFlowAliasLookup(),
   ]);
-  const flowNameMap = new Map(allFlows.map((f) => [Number(f.id), f.name]));
+  const flowNameMap = new Map();
+  for (const flow of (lookup?.unique?.length ? lookup.unique : allFlows)) {
+    flowNameMap.set(Number(flow.id), flow.name);
+  }
+  if (lookup?.byId) {
+    for (const [from, to] of lookup.byId) {
+      const name = flowNameMap.get(Number(to));
+      if (name) flowNameMap.set(Number(from), name);
+    }
+  }
   const flowOptions = buildHistoryFlowOptions(allRuns, allFlows, lookup);
+  const liveFlowCount = flowOptions.filter((flow) => !flow.deleted).length;
   const optionIds = new Set(flowOptions.map((f) => Number(f.id)));
 
   let mode = getRunsHistoryMode();
@@ -2264,7 +2291,7 @@ async function renderRunsHistoryView(container, ctx) {
         <div class="form-group flow-history-flow-filter" style="margin:0">
           <label for="runs-history-flow-filter">תזרים</label>
           <select id="runs-history-flow-filter">
-            <option value="">כל התזרימים</option>
+            <option value="">כל התזרימים (${liveFlowCount})</option>
             ${flowOptions.map((f) => `
               <option value="${f.id}"${Number(flowFilter) === Number(f.id) ? ' selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
           </select>
@@ -2273,7 +2300,9 @@ async function renderRunsHistoryView(container, ctx) {
     </div>
 
     <div class="card flow-all-runs-history">
-      <div class="card-title">${flowFilter ? escapeHtml(selectedFlowName) : 'תהליכים'} (${filteredRuns.length})</div>
+      <div class="card-title">${flowFilter
+        ? `${escapeHtml(selectedFlowName)} (${filteredRuns.length} תהליכים)`
+        : `תהליכים (${filteredRuns.length}) · ${liveFlowCount} תזרימים`}</div>
       ${filteredRuns.length
     ? listHTML
     : `<p class="form-hint" style="text-align:center;padding:12px">${flowFilter ? 'אין תהליכים לתזרים זה' : 'עדיין לא התחלת תהליכי יצור'}</p>`}
@@ -2998,7 +3027,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=527');
+    const kitchen = await import('../kitchen-db.js?v=528');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),

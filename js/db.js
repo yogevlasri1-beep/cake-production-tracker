@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=527';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=527';
-import { defaultColorForIndex } from './chart.js?v=527';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=527';
-import { logAuditEvent } from './audit.js?v=527';
+} from './validators.js?v=528';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=528';
+import { defaultColorForIndex } from './chart.js?v=528';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=528';
+import { logAuditEvent } from './audit.js?v=528';
 
 export { ValidationError };
 
@@ -6496,8 +6496,26 @@ function rebuildFlowNameIndex(unique) {
   return byName;
 }
 
+function pickCompleteFlow(a, b, runCounts) {
+  const aSteps = Number(a?.stepCount) || 0;
+  const bSteps = Number(b?.stepCount) || 0;
+  if (bSteps !== aSteps) return bSteps > aSteps ? b : a;
+  const aRuns = runCountForFlow(runCounts, a?.id);
+  const bRuns = runCountForFlow(runCounts, b?.id);
+  if (bRuns !== aRuns) return bRuns > aRuns ? b : a;
+  if (a?.isDefault && !b?.isDefault) return a;
+  if (!a?.isDefault && b?.isDefault) return b;
+  return Number(a?.id) < Number(b?.id) ? a : b;
+}
+
+function redirectFoldedIds(byId, folded) {
+  for (const [from, to] of [...byId.entries()]) {
+    if (folded.has(Number(to))) byId.set(from, byId.get(Number(to)) || to);
+  }
+}
+
 /** עותק בלי יעד (מזהה קטגוריה ישן) מתאחד לתזרים החי עם אותו שם והדאטה המלאה. */
-function foldIncompleteFlowCopies(unique, byId) {
+function foldIncompleteFlowCopies(unique, byId, layout) {
   const completeByName = new Map();
   for (const flow of unique || []) {
     const key = productNameKey(flow?.name);
@@ -6509,17 +6527,55 @@ function foldIncompleteFlowCopies(unique, byId) {
   for (const flow of unique || []) {
     if (flow?.targetLabel) continue;
     const key = productNameKey(flow?.name);
-    const complete = completeByName.get(key);
-    if (complete?.length !== 1) continue;
-    const keeper = Number(complete[0].id);
+    const complete = completeByName.get(key) || [];
+    if (!complete.length) continue;
     const id = Number(flow.id);
-    if (!id || !keeper) continue;
-    byId.set(id, keeper);
+    if (!id) continue;
+    let keeper = complete.length === 1 ? complete[0] : null;
+    if (!keeper && layout) {
+      const cat = findLayoutCategory(layout, { categoryId: flow.categoryId, categoryName: flow.targetLabel });
+      const byCat = cat ? complete.filter((row) => idsEqual(row.categoryId, cat.id)) : [];
+      if (byCat.length) keeper = byCat.slice().sort((a, b) => (Number(b.stepCount) || 0) - (Number(a.stepCount) || 0))[0];
+    }
+    if (!keeper) {
+      folded.add(id);
+      continue;
+    }
+    byId.set(id, Number(keeper.id));
     folded.add(id);
   }
-  for (const [from, to] of [...byId.entries()]) {
-    if (folded.has(Number(to))) byId.set(from, byId.get(Number(to)) || to);
+  redirectFoldedIds(byId, folded);
+  return (unique || []).filter((flow) => !folded.has(Number(flow.id)));
+}
+
+/** אותו שם פעם כקטגוריה ופעם כקבוצה — אחרי שחזור זה אותו תזרים. שומרים את המלא. */
+function foldCrossTargetDuplicates(unique, byId, runCounts) {
+  const byName = new Map();
+  for (const flow of unique || []) {
+    const key = productNameKey(flow?.name);
+    if (!key) continue;
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(flow);
   }
+  const folded = new Set();
+  for (const list of byName.values()) {
+    if (list.length !== 2) continue;
+    const catFlow = list.find((flow) => flow.targetType === 'category' || flow.categoryId);
+    const groupFlow = list.find((flow) => (flow.targetType === 'group' || (!flow.categoryId && (flow.groupId || flow.categoryGroupId))) && flow !== catFlow);
+    if (!catFlow || !groupFlow) continue;
+    const sameGroup = idsEqual(catFlow.groupId, groupFlow.groupId)
+      || idsEqual(catFlow.groupId, groupFlow.categoryGroupId)
+      || idsEqual(catFlow.categoryGroupId, groupFlow.groupId);
+    if (!sameGroup) continue;
+    const keeper = pickCompleteFlow(catFlow, groupFlow, runCounts);
+    const drop = keeper === catFlow ? groupFlow : catFlow;
+    const dropId = Number(drop.id);
+    const keepId = Number(keeper.id);
+    if (!dropId || !keepId || dropId === keepId) continue;
+    byId.set(dropId, keepId);
+    folded.add(dropId);
+  }
+  redirectFoldedIds(byId, folded);
   return (unique || []).filter((flow) => !folded.has(Number(flow.id)));
 }
 
@@ -6538,14 +6594,26 @@ export function buildFlowAliasLookup(rawFlows = [], { runs = [], runCounts, layo
     const kept = keptByKey.get(flowDedupeKey(flow));
     if (kept) byId.set(id, kept);
   }
-  unique = foldIncompleteFlowCopies(unique, byId);
+  unique = foldIncompleteFlowCopies(unique, byId, layout);
+  unique = foldCrossTargetDuplicates(unique, byId, runCounts);
+  const uniqueIds = new Set(unique.map((flow) => Number(flow.id)));
+  for (const [from, to] of [...byId.entries()]) {
+    if (!uniqueIds.has(Number(to))) byId.delete(from);
+  }
   const byName = rebuildFlowNameIndex(unique);
   const lookup = { unique, byId, byName, layout: layout || null };
-  for (const run of runs || []) {
-    const fid = Number(run.flowId);
-    if (!fid || byId.has(fid)) continue;
-    const canonical = canonicalFlowIdForRun({ ...run, flowId: null }, lookup);
+  const mapIfMissing = (id, hint) => {
+    const fid = Number(id);
+    if (!fid) return;
+    if (byId.has(fid) && uniqueIds.has(Number(byId.get(fid)))) return;
+    const canonical = canonicalFlowIdForRun({ ...hint, flowId: null }, lookup);
     if (canonical) byId.set(fid, canonical);
+  };
+  for (const flow of rawFlows || []) {
+    mapIfMissing(flow.id, { flowName: flow.name, categoryId: flow.categoryId });
+  }
+  for (const run of runs || []) {
+    mapIfMissing(run.flowId, run);
   }
   return lookup;
 }
@@ -6573,13 +6641,17 @@ export function canonicalFlowIdForRun(run, lookup) {
 
 /** רשימת תזרימים לסינון היסטוריה — מספר תזרים אחד לכל עותק כפול. */
 export function uniqueHistoryFlowOptions(liveFlows = [], runs = [], lookup = null) {
+  const source = (lookup?.unique?.length ? lookup.unique : liveFlows) || [];
   const byId = new Map();
-  for (const flow of liveFlows || []) {
+  const liveNames = new Set();
+  for (const flow of source) {
+    const nameKey = productNameKey(flow?.name);
+    if (nameKey) liveNames.add(nameKey);
     const rawId = Number(flow?.id);
     if (!rawId) continue;
     const canonical = lookup?.byId?.has(rawId) ? Number(lookup.byId.get(rawId)) : rawId;
     if (!canonical || byId.has(canonical)) continue;
-    const kept = (liveFlows || []).find((row) => Number(row.id) === canonical) || flow;
+    const kept = source.find((row) => Number(row.id) === canonical) || flow;
     byId.set(canonical, {
       id: canonical,
       name: kept.name || flow.name,
@@ -6591,14 +6663,7 @@ export function uniqueHistoryFlowOptions(liveFlows = [], runs = [], lookup = nul
     const canonical = lookup ? canonicalFlowIdForRun(run, lookup) : Number(run.flowId);
     if (canonical && byId.has(Number(canonical))) continue;
     const nameKey = productNameKey(run.flowName);
-    const liveMatch = nameKey
-      ? (liveFlows || []).filter((flow) => productNameKey(flow.name) === nameKey)
-      : [];
-    if (liveMatch.length === 1) {
-      const liveId = Number(liveMatch[0].id);
-      const keptId = lookup?.byId?.has(liveId) ? Number(lookup.byId.get(liveId)) : liveId;
-      if (keptId && byId.has(keptId)) continue;
-    }
+    if (nameKey && liveNames.has(nameKey)) continue;
     const id = Number(canonical || run.flowId);
     if (!id || byId.has(id)) continue;
     const base = run.flowName || `תזרים #${id}`;
@@ -6722,7 +6787,7 @@ function dropUnmatchedFlowCopies(flows) {
     if (flow?.targetLabel) return true;
     const key = productNameKey(flow?.name);
     const siblings = named.get(key) || [];
-    return siblings.filter((row) => row.targetLabel).length !== 1;
+    return siblings.filter((row) => row.targetLabel).length === 0;
   });
 }
 
@@ -6784,9 +6849,9 @@ function mapFlowsToCatalogLayout(flows = [], steps = [], categories = [], groups
 }
 
 /** תזרימים לתצוגה: מזהה קטגוריה ישן מתורגם לקטלוג הייחודי, כפילות אחרי שחזור מוסתרת. */
-export function overviewFlowsFromRows(flows = [], steps = [], categories = [], groups = []) {
-  const { mapped } = mapFlowsToCatalogLayout(flows, steps, categories, groups);
-  return dropUnmatchedFlowCopies(uniqueFlowsByName(mapped))
+export function overviewFlowsFromRows(flows = [], steps = [], categories = [], groups = [], { runs, runCounts } = {}) {
+  const { mapped, layout } = mapFlowsToCatalogLayout(flows, steps, categories, groups);
+  return buildFlowAliasLookup(mapped, { runs, runCounts, layout }).unique.slice()
     .sort((a, b) => {
       const gCmp = (a.groupName || '').localeCompare(b.groupName || '', 'he');
       if (gCmp) return gCmp;
