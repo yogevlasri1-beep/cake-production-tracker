@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=524';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=524';
-import { defaultColorForIndex } from './chart.js?v=524';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=524';
-import { logAuditEvent } from './audit.js?v=524';
+} from './validators.js?v=525';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=525';
+import { defaultColorForIndex } from './chart.js?v=525';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=525';
+import { logAuditEvent } from './audit.js?v=525';
 
 export { ValidationError };
 
@@ -3713,26 +3713,108 @@ export async function getProductsByCategory() {
   return [...layout.ungrouped, ...layout.groups.flatMap((g) => g.categories)];
 }
 
+function catalogNameKey(row) {
+  return productNameKey(row?.name) || (row?.id != null ? `id:${row.id}` : '');
+}
+
+function pickPreferredCatalogRow(prev, next, scoreOf) {
+  const prevScore = scoreOf(prev);
+  const nextScore = scoreOf(next);
+  if (nextScore !== prevScore) return nextScore > prevScore ? next : prev;
+  const prevSort = prev.sortOrder ?? 0;
+  const nextSort = next.sortOrder ?? 0;
+  if (nextSort !== prevSort) return nextSort < prevSort ? next : prev;
+  return Number(next.id) < Number(prev.id) ? next : prev;
+}
+
+function uniqueCatalogRows(rows, keyOf, scoreOf) {
+  const byKey = new Map();
+  for (const row of rows || []) {
+    if (!row) continue;
+    const key = keyOf(row);
+    if (!key) continue;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, row);
+      continue;
+    }
+    byKey.set(key, pickPreferredCatalogRow(prev, row, scoreOf));
+  }
+  return [...byKey.values()];
+}
+
+/**
+ * קטלוג לתצוגה: קבוצה/קטגוריה/מוצר פעם אחת לפי שם.
+ * אחרי שחזור נשארים מזהים כפולים — בלי זה מסך המוצרים נראה כפול ומבולגן.
+ */
+export function buildProductsCatalogLayout(groups = [], categories = [], products = []) {
+  const groupNameById = new Map();
+  for (const group of groups || []) {
+    const key = catalogNameKey(group);
+    groupNameById.set(group.id, key);
+    groupNameById.set(Number(group.id), key);
+    groupNameById.set(String(group.id), key);
+  }
+  const groupNameOf = (gid) => {
+    if (gid == null || gid === '') return '';
+    return groupNameById.get(gid)
+      || groupNameById.get(Number(gid))
+      || groupNameById.get(String(gid))
+      || '';
+  };
+  const categoryKey = (cat) => `${catalogNameKey(cat)}|g:${groupNameOf(cat?.groupId)}`;
+
+  const uniqueGroups = uniqueCatalogRows(
+    groups,
+    catalogNameKey,
+    (group) => (categories || []).filter((cat) => Number(cat.groupId) === Number(group.id)).length,
+  ).slice().sort(compareCategories);
+
+  const uniqueCats = uniqueCatalogRows(
+    categories,
+    categoryKey,
+    (cat) => (products || []).filter((product) => Number(product.categoryId) === Number(cat.id)).length,
+  );
+
+  const uniqueCatObjects = uniqueCats.map((cat) => {
+    const key = categoryKey(cat);
+    const aliasIds = new Set(
+      (categories || [])
+        .filter((row) => categoryKey(row) === key)
+        .map((row) => Number(row.id))
+        .filter(Boolean),
+    );
+    const preferIds = (products || [])
+      .filter((product) => Number(product.categoryId) === Number(cat.id))
+      .map((product) => product.id);
+    const catProducts = uniqueProductsByName(
+      (products || []).filter((product) => aliasIds.has(Number(product.categoryId))),
+      { preferIds },
+    ).slice().sort(compareProducts);
+    return { ...cat, products: catProducts };
+  });
+
+  const grouped = uniqueGroups.map((group) => {
+    const aliasIds = rowIdsWithSameName(groups, group.id);
+    return {
+      ...group,
+      categories: uniqueCatObjects
+        .filter((cat) => aliasIds.has(Number(cat.groupId)))
+        .sort(compareCategories),
+    };
+  });
+  const ungrouped = uniqueCatObjects.filter((cat) => !cat.groupId).sort(compareCategories);
+  const allCategories = [...grouped.flatMap((group) => group.categories), ...ungrouped];
+  return { groups: grouped, ungrouped, allCategories };
+}
+
 export async function getProductsCatalogLayout() {
   const [groups, categories, products] = await Promise.all([
     getCategoryGroups(),
     getCategories(),
     getProducts(),
   ]);
-  const map = new Map(categories.map((c) => [c.id, { ...c, products: [] }]));
-  for (const p of products) {
-    map.get(p.categoryId)?.products.push(p);
-  }
-  for (const cat of map.values()) {
-    cat.products.sort(compareProducts);
-  }
-  const allCategories = categories.map((c) => map.get(c.id)).filter(Boolean);
-  const grouped = groups.map((group) => ({
-    ...group,
-    categories: allCategories.filter((c) => Number(c.groupId) === Number(group.id)),
-  }));
-  const ungrouped = allCategories.filter((c) => !c.groupId);
-  return { groups: grouped, ungrouped, allCategories };
+  return buildProductsCatalogLayout(groups, categories, products);
 }
 
 export async function addCategoryGroup(name, color = null) {

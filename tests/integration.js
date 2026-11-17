@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=524';
+} from './runner.js?v=525';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
-  canonicalFlowIdForRun, flowIdsForCanonical,
-} from '../js/db.js?v=524';
+  canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
+} from '../js/db.js?v=525';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=524';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=524';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=524';
+} from '../js/kitchen-db.js?v=525';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=525';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=525';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=524';
-import { addCategoryGroup } from '../js/db.js?v=524';
+} from '../js/supabase-sync.js?v=525';
+import { addCategoryGroup } from '../js/db.js?v=525';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1190,6 +1190,27 @@ export async function runIntegrationTests() {
     assertEqual(Number(canonicalFlowIdForRun({ flowId: oldFlow }, lookup)), Number(newFlow));
     const ids = flowIdsForCanonical(newFlow, lookup).map(Number).sort((a, b) => a - b);
     assertEqual(ids.join(','), [oldFlow, newFlow].map(Number).sort((a, b) => a - b).join(','));
+  });
+
+  await testAsync('getProductsCatalogLayout — אחרי שחזור קבוצה/קטגוריה/מוצר מופיעים פעם אחת', async () => {
+    await resetDatabase();
+    await initDB();
+    const oldGroup = await db.categoryGroups.add({ name: 'מאפים', sortOrder: 2 });
+    const newGroup = await db.categoryGroups.add({ name: 'מאפים', sortOrder: 1 });
+    const oldCat = await db.categories.add({ name: 'שטרודל', groupId: oldGroup, sortOrder: 2 });
+    const newCat = await db.categories.add({ name: 'שטרודל', groupId: newGroup, sortOrder: 1 });
+    await db.products.bulkAdd([
+      { name: 'שטרודל תפוחים 30', categoryId: oldCat, active: true, sortOrder: 2 },
+      { name: 'שטרודל תפוחים 30', categoryId: newCat, active: true, sortOrder: 1 },
+      { name: 'שטרודל תפוחים 50', categoryId: newCat, active: true, sortOrder: 2 },
+    ]);
+    const layout = await getProductsCatalogLayout();
+    assertEqual(layout.groups.length, 1, 'קבוצה אחת');
+    assertEqual(Number(layout.groups[0].id), Number(newGroup));
+    assertEqual(layout.groups[0].categories.length, 1, 'קטגוריה אחת');
+    assertEqual(Number(layout.groups[0].categories[0].id), Number(newCat));
+    const names = layout.groups[0].categories[0].products.map((p) => p.name).sort();
+    assertEqual(names.join(','), 'שטרודל תפוחים 30,שטרודל תפוחים 50');
   });
 
 await flushTests();
