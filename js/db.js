@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=536';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=536';
-import { defaultColorForIndex } from './chart.js?v=536';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=536';
-import { logAuditEvent } from './audit.js?v=536';
+} from './validators.js?v=537';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=537';
+import { defaultColorForIndex } from './chart.js?v=537';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=537';
+import { logAuditEvent } from './audit.js?v=537';
 
 export { ValidationError };
 
@@ -3366,6 +3366,11 @@ db.version(87).stores({
   financeLines: '++id, importId, accountCode, periodStart, periodEnd',
 });
 
+db.version(88).stores({
+  invoiceScans: '++id, supplierId, scannedAt, invoiceNumber, invoiceDate',
+  invoiceScanLines: '++id, scanId, materialId, sku, status',
+});
+
 async function migrateFlowPreparationsToGroup(tx) {
   const groupTable = tx.table('groupPreparations');
   if (await groupTable.count() > 0) return;
@@ -3616,7 +3621,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=536');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=537');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3956,7 +3961,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=536');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=537');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -4131,6 +4136,7 @@ export async function resetAllData() {
     'managerDepartments', 'departmentCleaningLists', 'departmentCleaningTasks',
     'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls', 'haccpMonitoringLogs',
     'financeAccountMap', 'financeImports', 'financeLines',
+    'invoiceScans', 'invoiceScanLines',
   ), async () => {
     await db.weeklyProductionPlanItems.clear();
     await db.weeklyProductionPlans.clear();
@@ -4190,6 +4196,8 @@ export async function resetAllData() {
     await db.financeLines?.clear?.();
     await db.financeImports?.clear?.();
     await db.financeAccountMap?.clear?.();
+    await db.invoiceScanLines?.clear?.();
+    await db.invoiceScans?.clear?.();
     await db.products.clear();
     await db.categories.clear();
     await db.categoryGroups.clear();
@@ -4345,6 +4353,8 @@ export async function exportAllData() {
     financeAccountMap,
     financeImports,
     financeLines,
+    invoiceScans,
+    invoiceScanLines,
   ] = await Promise.all([
     db.categories.toArray(),
     db.categoryGroups.toArray(),
@@ -4427,6 +4437,8 @@ export async function exportAllData() {
     db.financeAccountMap?.toArray?.() ?? Promise.resolve([]),
     db.financeImports?.toArray?.() ?? Promise.resolve([]),
     db.financeLines?.toArray?.() ?? Promise.resolve([]),
+    db.invoiceScans?.toArray?.() ?? Promise.resolve([]),
+    db.invoiceScanLines?.toArray?.() ?? Promise.resolve([]),
   ]);
   return {
     categories: categories.slice().sort(compareCategories),
@@ -4509,6 +4521,8 @@ export async function exportAllData() {
     financeAccountMap,
     financeImports,
     financeLines,
+    invoiceScans,
+    invoiceScanLines,
     settings: settingsRows
       .filter((row) => row?.key && !SETTINGS_SKIP_EXPORT.has(row.key))
       .map((row) => ({ key: row.key, value: row.value })),
@@ -4620,6 +4634,8 @@ export async function importAllData(payload, options = {}) {
   if (!Array.isArray(payload.financeAccountMap)) payload.financeAccountMap = [];
   if (!Array.isArray(payload.financeImports)) payload.financeImports = [];
   if (!Array.isArray(payload.financeLines)) payload.financeLines = [];
+  if (!Array.isArray(payload.invoiceScans)) payload.invoiceScans = [];
+  if (!Array.isArray(payload.invoiceScanLines)) payload.invoiceScanLines = [];
   if (!financeBackupPresent && db.financeLines && options.allowFinanceWipe !== true) {
     const localFinanceCount = (
       await db.financeAccountMap.count()
@@ -4673,6 +4689,7 @@ export async function importAllData(payload, options = {}) {
       'purchaseCategories', 'purchaseItems',
       'haccpTeamMembers', 'haccpPlans', 'haccpProductDescriptions', 'haccpIntendedUses', 'haccpFlowSteps', 'haccpFlowVerifications', 'haccpHazards', 'haccpCcps', 'haccpCriticalLimits', 'haccpMonitoring', 'haccpCorrectiveActions', 'haccpVerificationProcs', 'haccpDocuments', 'haccpPrpControls', 'haccpMonitoringLogs',
       'financeAccountMap', 'financeImports', 'financeLines',
+      'invoiceScans', 'invoiceScanLines',
     ),
     async (tx) => {
       await db.productionEntries.clear();
@@ -4709,6 +4726,8 @@ export async function importAllData(payload, options = {}) {
       await db.financeLines?.clear?.();
       await db.financeImports?.clear?.();
       await db.financeAccountMap?.clear?.();
+      await db.invoiceScanLines?.clear?.();
+      await db.invoiceScans?.clear?.();
       await db.recipeIngredients.clear();
       await db.recipeVersions?.clear?.();
       await db.recipeProductLinks.clear();
@@ -4921,6 +4940,8 @@ export async function importAllData(payload, options = {}) {
       if (payload.financeAccountMap?.length) await db.financeAccountMap.bulkPut(payload.financeAccountMap);
       if (payload.financeImports?.length) await db.financeImports.bulkPut(payload.financeImports);
       if (payload.financeLines?.length) await db.financeLines.bulkPut(payload.financeLines);
+      if (payload.invoiceScans?.length) await db.invoiceScans.bulkPut(payload.invoiceScans);
+      if (payload.invoiceScanLines?.length) await db.invoiceScanLines.bulkPut(payload.invoiceScanLines);
       if (payload.activityPresets.length) {
         await db.activityPresets.bulkPut(payload.activityPresets);
       } else {
@@ -6906,7 +6927,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=536');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=537');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);

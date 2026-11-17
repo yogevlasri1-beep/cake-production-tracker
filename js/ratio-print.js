@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=536';
+import { escapeHtml } from './utils.js?v=537';
 
 const RATIO_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }

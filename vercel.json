@@ -4,6 +4,12 @@
   "installCommand": "",
   "buildCommand": "",
   "outputDirectory": ".",
+  "functions": {
+    "api/parse-invoice.js": {
+      "maxDuration": 30,
+      "memory": 1024
+    }
+  },
   "headers": [
     {
       "source": "/index.html",

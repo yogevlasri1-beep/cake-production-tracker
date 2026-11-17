@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=536';
+import { db, getSetting, setSetting } from './db.js?v=537';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=536';
+} from './supabase-backup.js?v=537';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=536';
+} from './sync/collections.js?v=537';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -78,19 +78,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=536';
+} from './sync/cloud-first.js?v=537';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=536';
+} from './sync/catalog-identity.js?v=537';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=536';
+} from './sync/category-groups-repair.js?v=537';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -102,7 +102,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=536';
+} from './sync/restore-lock.js?v=537';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -112,15 +112,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=536';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=536';
+} from './sync/id-map.js?v=537';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=537';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=536';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=536';
+} from './auth.js?v=537';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=537';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -296,7 +296,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=536');
+    const { showToast } = await import('./utils.js?v=537');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }

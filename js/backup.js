@@ -1,13 +1,13 @@
-import { exportAllData, importAllData } from './db.js?v=536';
+import { exportAllData, importAllData } from './db.js?v=537';
 import {
   financeRestoreWouldWipe,
   confirmFinanceRestoreWipe,
-} from './finance-db.js?v=536';
-import { APP_VERSION } from './version.js?v=536';
-import { defaultColorForIndex } from './chart.js?v=536';
-import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=536';
-import { productLineValue, entryQuantityForProduct } from './calc.js?v=536';
-import { ValidationError } from './validators.js?v=536';
+} from './finance-db.js?v=537';
+import { APP_VERSION } from './version.js?v=537';
+import { defaultColorForIndex } from './chart.js?v=537';
+import { sanitizeMoney, sanitizeCategoryColor, roundMoney, sanitizeQuantity } from './validators.js?v=537';
+import { productLineValue, entryQuantityForProduct } from './calc.js?v=537';
+import { ValidationError } from './validators.js?v=537';
 
 export const BACKUP_VERSION = 3;
 
@@ -247,6 +247,8 @@ export function enrichBackupData(raw) {
     financeAccountMap: Array.isArray(raw.financeAccountMap) ? raw.financeAccountMap : [],
     financeImports: Array.isArray(raw.financeImports) ? raw.financeImports : [],
     financeLines: Array.isArray(raw.financeLines) ? raw.financeLines : [],
+    invoiceScans: Array.isArray(raw.invoiceScans) ? raw.invoiceScans : [],
+    invoiceScanLines: Array.isArray(raw.invoiceScanLines) ? raw.invoiceScanLines : [],
     __financeBackupPresent: raw.__financeBackupPresent === true || (
       raw.__financeBackupPresent !== false
       && Object.prototype.hasOwnProperty.call(raw, 'financeAccountMap')
@@ -331,6 +333,8 @@ export function summarizeBackupData(data) {
     financeAccountMap: data.financeAccountMap?.length || 0,
     financeImports: data.financeImports?.length || 0,
     financeLines: data.financeLines?.length || 0,
+    invoiceScans: data.invoiceScans?.length || 0,
+    invoiceScanLines: data.invoiceScanLines?.length || 0,
   };
 }
 
@@ -456,6 +460,8 @@ export function formatBackupSummary(counts) {
   if (counts.financeAccountMap) parts.push(`${counts.financeAccountMap} סיווגי חשבון`);
   if (counts.financeImports) parts.push(`${counts.financeImports} ייבוא כספים`);
   if (counts.financeLines) parts.push(`${counts.financeLines} שורות כספים`);
+  if (counts.invoiceScans) parts.push(`${counts.invoiceScans} סריקות חשבונית`);
+  if (counts.invoiceScanLines) parts.push(`${counts.invoiceScanLines} שורות סריקה`);
   if (counts.suppliers) parts.push(`${counts.suppliers} ספקים`);
   if (counts.rawMaterials) parts.push(`${counts.rawMaterials} חומרי גלם`);
   if (counts.inventoryBalances) parts.push(`${counts.inventoryBalances} יתרות מלאי`);

@@ -14163,3 +14163,136 @@ html[lang="he"] .mat-active-toggle.is-on .mat-active-switch::after {
   width: 100%;
   margin-top: 4px;
 }
+
+.suppliers-sub-nav .suppliers-nav-btn {
+  padding: 4px 0;
+  margin: 4px 1px;
+}
+
+.suppliers-sub-nav .suppliers-nav-label {
+  font-size: 0.48rem;
+}
+
+.invoice-scan-upload {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.invoice-file-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.invoice-wizard {
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  border-radius: 12px;
+  padding: 12px;
+  margin: 12px 0;
+}
+
+.invoice-wizard h4 {
+  margin: 0 0 8px;
+}
+
+.invoice-profile-name {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.invoice-profile-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  font-size: 0.85rem;
+}
+
+.invoice-extracted {
+  margin-top: 10px;
+  line-height: 1.5;
+}
+
+.invoice-wizard-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.invoice-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.invoice-line-card {
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.invoice-line-title {
+  font-weight: 700;
+}
+
+.invoice-price-mismatch {
+  color: #b91c1c;
+  font-weight: 700;
+  margin: 6px 0;
+}
+
+.invoice-line-card.invoice-price-mismatch {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.invoice-line-card.invoice-price-match {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+
+.invoice-update-price-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  font-weight: 600;
+}
+
+.invoice-history-group {
+  margin-top: 12px;
+}
+
+.invoice-history-group h4 {
+  margin: 0 0 6px;
+}
+
+.invoice-history-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: right;
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.invoice-history-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border, #e2e8f0);
+}
+
+.invoice-match-select {
+  width: 100%;
+  margin-top: 4px;
+}

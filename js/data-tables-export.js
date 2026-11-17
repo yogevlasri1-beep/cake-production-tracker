@@ -1,9 +1,9 @@
 /** ייצוא כל טבלאות הנתונים לקובץ Excel (גיליון לכל טבלה) */
 
-import { exportAllData } from './db.js?v=536';
-import { APP_VERSION } from './version.js?v=536';
-import { loadXLSX } from './xlsx-loader.js?v=536';
-import { downloadBlob, toastAfterDownload } from './download.js?v=536';
+import { exportAllData } from './db.js?v=537';
+import { APP_VERSION } from './version.js?v=537';
+import { loadXLSX } from './xlsx-loader.js?v=537';
+import { downloadBlob, toastAfterDownload } from './download.js?v=537';
 
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MAX_CELL_CHARS = 32000;
@@ -91,6 +91,8 @@ export const DATA_TABLE_LABELS = {
   financeAccountMap: 'סיווג חשבונות כספים',
   financeImports: 'ייבוא כספים',
   financeLines: 'שורות כספים',
+  invoiceScans: 'סריקות חשבונית',
+  invoiceScanLines: 'שורות סריקת חשבונית',
   settings: 'הגדרות',
 };
 
