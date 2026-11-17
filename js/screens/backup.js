@@ -23,19 +23,19 @@ import {
   readRestorePointData,
   backupKindLabel,
   formatCatalogHealth,
-} from '../backup-service.js?v=535';
-import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=535';
-import { describeDownloadMethod } from '../download.js?v=535';
-import { showToast, escapeHtml } from '../utils.js?v=535';
-import { openModal, closeModal } from '../modal.js?v=535';
-import { APP_VERSION } from '../version.js?v=535';
-import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=535';
-import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=535';
-import { canAccessBackupFull } from '../permissions.js?v=535';
-import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=535';
-import { getSetting } from '../db.js?v=535';
-import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=535';
-import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=535';
+} from '../backup-service.js?v=536';
+import { describeBackupRestorePreview, countBackupRuns, parseBackupFile } from '../backup.js?v=536';
+import { describeDownloadMethod } from '../download.js?v=536';
+import { showToast, escapeHtml } from '../utils.js?v=536';
+import { openModal, closeModal } from '../modal.js?v=536';
+import { APP_VERSION } from '../version.js?v=536';
+import { forceAppUpdate, checkForAppUpdate, detectRemoteVersion, isStandaloneApp } from '../sw-register.js?v=536';
+import { getCurrentUserEmail, getCurrentUserRole, userRoleLabel, signOut } from '../auth.js?v=536';
+import { canAccessBackupFull } from '../permissions.js?v=536';
+import { formatLiveSyncErrorForUi } from '../supabase-sync.js?v=536';
+import { getSetting } from '../db.js?v=536';
+import { CLOUD_CUTOVER_KEY, cloudCutoverMarkerPresent, planManualLiveSync } from '../sync/cloud-first.js?v=536';
+import { planSupplierLinkRepair, applySupplierLinkRepair } from '../repair-supplier-links.js?v=536';
 
 function formatWhen(iso) {
   if (!iso) return '—';
@@ -511,8 +511,8 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('repair-supplier-links-status');
     const label = btn?.textContent;
     try {
-      const { db } = await import('../db.js?v=535');
-      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=535');
+      const { db } = await import('../db.js?v=536');
+      const { getLiveSyncSettings } = await import('../supabase-sync.js?v=536');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -553,7 +553,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const statusEl = document.getElementById('wipe-cloud-status');
     const label = btn?.textContent;
     try {
-      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=535');
+      const { getLiveSyncSettings, wipeKitchenCloudTables } = await import('../supabase-sync.js?v=536');
       const live = await getLiveSyncSettings();
       if (live.enabled !== false) {
         showToast('כבה סנכרון חי ונסה שוב');
@@ -669,7 +669,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       const {
         flushSyncQueue, pullAllCollections, getLiveSyncSettings, ensureCloudJoinPull, ensureProductionHistoryPull,
-      } = await import('../supabase-sync.js?v=535');
+      } = await import('../supabase-sync.js?v=536');
       const live = await getLiveSyncSettings();
       const plan = planManualLiveSync(live);
       if (plan.reader) await ensureCloudJoinPull();
@@ -694,7 +694,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'שולח...'; }
     try {
-      const { sendSyncProbe } = await import('../supabase-sync.js?v=535');
+      const { sendSyncProbe } = await import('../supabase-sync.js?v=536');
       const email = getCurrentUserEmail() || '';
       const note = `בדיקה מ-${email || 'משתמש'} · ${new Date().toLocaleTimeString('he-IL')}`;
       const { value, pushed } = await sendSyncProbe({ note, email });
@@ -719,7 +719,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'בודק...'; }
     try {
-      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=535');
+      const { refreshAndReadSyncProbe } = await import('../supabase-sync.js?v=536');
       const { value, pulled } = await refreshAndReadSyncProbe();
       if (!value?.at) {
         if (status) {
@@ -754,7 +754,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה... אל תסגור'; }
     try {
-      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=535');
+      const { pushCutoverSnapshot } = await import('../supabase-sync.js?v=536');
       const result = await pushCutoverSnapshot({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -782,7 +782,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     const label = btn?.textContent;
     if (btn) { btn.disabled = true; btn.textContent = 'מעלה תיעוד... אל תסגור'; }
     try {
-      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=535');
+      const { pushProductionHistoryFromCutover } = await import('../supabase-sync.js?v=536');
       const result = await pushProductionHistoryFromCutover({ confirm: true });
       if (!result?.pushed) {
         const why = (result?.blockers || []).join(' · ') || 'ההעלאה לא רצה';
@@ -816,7 +816,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
         saveLiveSyncSettings,
         stopLiveSync,
         startLiveSync,
-      } = await import('../supabase-sync.js?v=535');
+      } = await import('../supabase-sync.js?v=536');
       const result = await seedLocalDataToSupabase({ force: true });
       await saveLiveSyncSettings({ seedDone: true, holdPulls: false });
       await stopLiveSync();
@@ -838,7 +838,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       await saveSafetySnapshot('reset');
       if (btn) btn.textContent = 'מאפס...';
-      const { resetLocalSyncState } = await import('../supabase-sync.js?v=535');
+      const { resetLocalSyncState } = await import('../supabase-sync.js?v=536');
       await resetLocalSyncState();
       showToast('מצב הסנכרון אופס ✓ — לחץ «העלה את כל הדאטה המקומית»');
       renderBackup(container, { navigate });
@@ -857,7 +857,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     try {
       await saveSafetySnapshot('dedupe');
       if (btn) btn.textContent = 'מנקה...';
-      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=535');
+      const { dedupeLocalSyncCollections, flushSyncQueue, pullAllCollections, saveLiveSyncSettings } = await import('../supabase-sync.js?v=536');
       const result = await dedupeLocalSyncCollections();
       await flushSyncQueue();
       await pullAllCollections({ full: true });
@@ -950,7 +950,7 @@ export async function renderBackup(container, { navigate, openFinance } = {}) {
     if (btn) btn.disabled = true;
     try {
       showToast('מכין קובץ Excel...');
-      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=535');
+      const { exportAllDataTablesExcel } = await import('../data-tables-export.js?v=536');
       const msg = await exportAllDataTablesExcel();
       showToast(msg);
     } catch (err) {
@@ -1219,7 +1219,7 @@ function confirmRestoreExternal(path, name, navigate) {
     let parsed;
     try {
       showToast('קורא את קובץ הגיבוי...');
-      const json = await (await import('../backup-folder-bridge.js?v=535')).readBackupJsonFromFolder(path);
+      const json = await (await import('../backup-folder-bridge.js?v=536')).readBackupJsonFromFolder(path);
       const file = new File([json], name || path, { type: 'application/json' });
       parsed = await parseBackupFile(file);
     } catch (err) {

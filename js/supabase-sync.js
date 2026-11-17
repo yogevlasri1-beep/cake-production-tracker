@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=535';
+import { db, getSetting, setSetting } from './db.js?v=536';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=535';
+} from './supabase-backup.js?v=536';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=535';
+} from './sync/collections.js?v=536';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -78,17 +78,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=535';
+} from './sync/cloud-first.js?v=536';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=535';
+} from './sync/catalog-identity.js?v=536';
 import {
   planMissingCategoryGroupRestore,
+  planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
-} from './sync/category-groups-repair.js?v=535';
+  shouldReplaceGroupName,
+} from './sync/category-groups-repair.js?v=536';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -100,7 +102,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=535';
+} from './sync/restore-lock.js?v=536';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -110,15 +112,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=535';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=535';
+} from './sync/id-map.js?v=536';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=536';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=535';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=535';
+} from './auth.js?v=536';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=536';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -294,7 +296,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=535');
+    const { showToast } = await import('./utils.js?v=536');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2256,7 +2258,16 @@ async function snapshotStableCatalogIds(cfg) {
 let lastGroupRepairAt = 0;
 let groupRepairInFlight = null;
 
+function isRunningAppTests() {
+  try {
+    return typeof location !== 'undefined' && /\/tests\//.test(location.pathname);
+  } catch {
+    return false;
+  }
+}
+
 export async function repairMissingCategoryGroups() {
+  if (isRunningAppTests()) return { restored: 0, renamed: 0, reason: 'tests' };
   if (groupRepairInFlight) return groupRepairInFlight;
   const now = Date.now();
   if (now - lastGroupRepairAt < 8000) return { restored: 0, reason: 'debounced' };
@@ -2279,11 +2290,14 @@ async function runRepairMissingCategoryGroups() {
     fetchCloudCollectionRows(cfg, 'categories'),
   ]);
   const plan = planMissingCategoryGroupRestore({ cloudGroups, cloudCategories });
-  if (!plan.length) return { restored: 0, reason: 'none' };
+  const renames = planKnownCategoryGroupRenames(cloudGroups);
+  if (!plan.length && !renames.length) return { restored: 0, renamed: 0, reason: 'none' };
 
   const localCategories = await db.categories.toArray();
   const updatedCategoryIds = [];
+  const touchedGroupIds = new Set();
   let restored = 0;
+  let renamed = 0;
   applyingRemote = true;
   try {
     for (const item of plan) {
@@ -2294,7 +2308,7 @@ async function runRepairMissingCategoryGroups() {
         const existing = await db.categoryGroups.get(Number(meta.localKey));
         if (existing) {
           localId = existing.id;
-          if (!String(existing.name || '').trim()) {
+          if (shouldReplaceGroupName(existing.name, name)) {
             await db.categoryGroups.update(localId, { name });
           }
         } else {
@@ -2328,13 +2342,24 @@ async function runRepairMissingCategoryGroups() {
         cat.groupId = localId;
         updatedCategoryIds.push(cat.id);
       }
+      touchedGroupIds.add(item.groupId);
       restored += 1;
+    }
+    for (const item of renames) {
+      const meta = await getMetaBySyncId(item.groupId);
+      if (meta?.collection !== 'categoryGroups') continue;
+      const existing = await db.categoryGroups.get(Number(meta.localKey));
+      if (!existing) continue;
+      if (!shouldReplaceGroupName(existing.name, item.inferredName)) continue;
+      await db.categoryGroups.update(existing.id, { name: item.inferredName });
+      touchedGroupIds.add(item.groupId);
+      renamed += 1;
     }
   } finally {
     applyingRemote = false;
   }
-  for (const item of plan) {
-    const meta = await getMetaBySyncId(item.groupId);
+  for (const groupId of touchedGroupIds) {
+    const meta = await getMetaBySyncId(groupId);
     if (meta?.collection === 'categoryGroups') {
       await enqueueUpsert('categoryGroups', Number(meta.localKey));
     }
@@ -2342,12 +2367,12 @@ async function runRepairMissingCategoryGroups() {
   for (const id of updatedCategoryIds) {
     await enqueueUpsert('categories', id);
   }
-  if (restored) {
+  if (restored || renamed) {
     try { await flushSyncQueue(); } catch (err) {
       console.warn('category group restore flush', err);
     }
   }
-  return { restored, groupIds: plan.map((p) => p.groupId) };
+  return { restored, renamed, groupIds: [...touchedGroupIds] };
 }
 
 async function runSeed({ force = false, stableIdIndex = null } = {}) {

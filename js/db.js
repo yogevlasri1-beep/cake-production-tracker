@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=535';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=535';
-import { defaultColorForIndex } from './chart.js?v=535';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=535';
-import { logAuditEvent } from './audit.js?v=535';
+} from './validators.js?v=536';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=536';
+import { defaultColorForIndex } from './chart.js?v=536';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=536';
+import { logAuditEvent } from './audit.js?v=536';
 
 export { ValidationError };
 
@@ -3616,7 +3616,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=535');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=536');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3940,8 +3940,11 @@ export function findLayoutGroup(layout, { groupId, groupName } = {}) {
 
 function catalogGroupsNeedRepair(groups = [], categories = []) {
   const live = new Set((groups || []).map((group) => String(group.id)));
-  return (categories || []).some((cat) => (
+  if ((categories || []).some((cat) => (
     cat?.groupId != null && cat.groupId !== '' && !live.has(String(cat.groupId))
+  ))) return true;
+  return (groups || []).some((group) => (
+    group?.name === 'עוגות' || group?.name === 'עוגות שמרים' || group?.name === 'שטרודלים'
   ));
 }
 
@@ -3953,7 +3956,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=535');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=536');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -6903,7 +6906,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=535');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=536');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);
