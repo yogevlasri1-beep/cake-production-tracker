@@ -5,8 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=523';
-import { db, initDB, addCategory, addProduct, addProductionEntry } from '../js/db.js?v=523';
+} from './runner.js?v=524';
+import {
+  db, initDB, addCategory, addProduct, addProductionEntry,
+  getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
+  canonicalFlowIdForRun, flowIdsForCanonical,
+} from '../js/db.js?v=524';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -24,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=523';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=523';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=523';
+} from '../js/kitchen-db.js?v=524';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=524';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=524';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=523';
-import { addCategoryGroup } from '../js/db.js?v=523';
+} from '../js/supabase-sync.js?v=524';
+import { addCategoryGroup } from '../js/db.js?v=524';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1147,6 +1151,45 @@ export async function runIntegrationTests() {
       noteServerClock(new Date().toUTCString());
       await saveLiveSyncSettings({ lastPullAt: null });
     }
+  });
+
+  await testAsync('getAllFlowsOverview — אחרי שחזור אותו תזרים עם מזהה קטגוריה שונה מופיע פעם אחת', async () => {
+    await resetDatabase();
+    await initDB();
+    const oldCat = await db.categories.add({ name: 'שטרודל', sortOrder: 1 });
+    const newCat = await db.categories.add({ name: 'שטרודל', sortOrder: 2 });
+    const oldFlow = await db.flows.add({
+      name: 'שטרודל תפוחים', categoryId: oldCat, categoryGroupId: null, sortOrder: 1,
+    });
+    const newFlow = await db.flows.add({
+      name: 'שטרודל תפוחים', categoryId: newCat, categoryGroupId: null, sortOrder: 1, isDefault: true,
+    });
+    await db.flowSteps.bulkAdd([
+      { flowId: oldFlow, name: 'לישה', sortOrder: 1 },
+      { flowId: oldFlow, name: 'אפייה', sortOrder: 2 },
+      { flowId: newFlow, name: 'לישה', sortOrder: 1 },
+      { flowId: newFlow, name: 'מילוי', sortOrder: 2 },
+      { flowId: newFlow, name: 'אפייה', sortOrder: 3 },
+      { flowId: newFlow, name: 'צינון', sortOrder: 4 },
+      { flowId: newFlow, name: 'ארוז', sortOrder: 5 },
+      { flowId: newFlow, name: 'תיעוד ייצור', sortOrder: 6 },
+    ]);
+
+    const named = (await getAllFlowsOverview()).filter((f) => f.name === 'שטרודל תפוחים');
+    assertEqual(named.length, 1, 'תזרים אחד ברשימה');
+    assertEqual(Number(named[0].id), Number(newFlow), 'נשמר העותק עם יותר שלבים');
+
+    const forOld = await getFlowsForCategory(oldCat);
+    const forNew = await getFlowsForCategory(newCat);
+    assertEqual(forOld.length, 1);
+    assertEqual(forNew.length, 1);
+    assertEqual(Number(forOld[0].id), Number(newFlow));
+    assertEqual(Number(forNew[0].id), Number(newFlow));
+
+    const lookup = await getFlowAliasLookup();
+    assertEqual(Number(canonicalFlowIdForRun({ flowId: oldFlow }, lookup)), Number(newFlow));
+    const ids = flowIdsForCanonical(newFlow, lookup).map(Number).sort((a, b) => a - b);
+    assertEqual(ids.join(','), [oldFlow, newFlow].map(Number).sort((a, b) => a - b).join(','));
   });
 
 await flushTests();

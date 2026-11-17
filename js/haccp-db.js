@@ -1,6 +1,6 @@
-import { db, ValidationError } from './db.js?v=523';
-import { sanitizeName, sanitizeProductId } from './validators.js?v=523';
-import { logAuditEvent } from './audit.js?v=523';
+import { db, ValidationError, uniqueFlowsByName } from './db.js?v=524';
+import { sanitizeName, sanitizeProductId } from './validators.js?v=524';
+import { logAuditEvent } from './audit.js?v=524';
 
 /** שלבי מפת הדרכים לפי מדריך משרד הבריאות */
 export const HACCP_STEPS = [
@@ -1090,9 +1090,16 @@ export async function listProductionFlowsForHaccpPlan(planId) {
   const gid = Number(plan.categoryGroupId);
   const categories = await db.categories.where('groupId').equals(gid).toArray();
   const catIds = new Set(categories.map((c) => c.id));
+  const catName = new Map(categories.map((c) => [Number(c.id), c.name]));
   const flows = await db.flows.toArray();
-  const relevant = flows.filter((f) =>
-    Number(f.categoryGroupId) === gid || catIds.has(Number(f.categoryId)));
+  const relevant = uniqueFlowsByName(
+    flows
+      .filter((f) => Number(f.categoryGroupId) === gid || catIds.has(Number(f.categoryId)))
+      .map((f) => ({
+        ...f,
+        targetLabel: catName.get(Number(f.categoryId)) || '',
+      })),
+  );
   const steps = await db.flowSteps.toArray();
   const byFlow = new Map();
   for (const s of steps) {

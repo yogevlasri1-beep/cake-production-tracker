@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=523';
+} from './db.js?v=524';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=523';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=523';
-import { downloadBlob } from './download.js?v=523';
-import { ValidationError } from './validators.js?v=523';
-import { openModal, closeModal } from './modal.js?v=523';
-import { escapeHtml, showToast } from './utils.js?v=523';
+} from './backup.js?v=524';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=524';
+import { downloadBlob } from './download.js?v=524';
+import { ValidationError } from './validators.js?v=524';
+import { openModal, closeModal } from './modal.js?v=524';
+import { escapeHtml, showToast } from './utils.js?v=524';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=523';
+} from './backup-folder-bridge.js?v=524';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -35,7 +35,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=523';
+} from './supabase-backup.js?v=524';
 import {
   MAX_PINNED_BACKUPS,
   MAX_ROTATING_LOCAL,
@@ -49,7 +49,7 @@ import {
   protectedBackupFileName,
   safetyKindForAction,
   selectBackupsToPrune,
-} from './backup-guard.js?v=523';
+} from './backup-guard.js?v=524';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -601,7 +601,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=523');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=524');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -664,7 +664,7 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     stopLiveSync,
     saveLiveSyncSettings,
     startLiveSync,
-  } = await import('./supabase-sync.js?v=523');
+  } = await import('./supabase-sync.js?v=524');
   onProgress?.('שומר נקודת ביטחון...');
   try {
     await saveSafetySnapshot('restore');

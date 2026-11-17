@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=523';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=523';
-import { defaultColorForIndex } from './chart.js?v=523';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=523';
-import { logAuditEvent } from './audit.js?v=523';
+} from './validators.js?v=524';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=524';
+import { defaultColorForIndex } from './chart.js?v=524';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=524';
+import { logAuditEvent } from './audit.js?v=524';
 
 export { ValidationError };
 
@@ -6188,12 +6188,51 @@ function compareFlows(a, b) {
 
 function flowDedupeKey(flow) {
   const name = productNameKey(flow?.name) || `id:${flow?.id}`;
+  const target = productNameKey(
+    flow?.targetLabel || flow?.categoryName || flow?.groupName || '',
+  );
+  if (target) return `${name}|t:${target}`;
   const cat = Number(flow?.categoryId) || 0;
   const group = Number(flow?.categoryGroupId) || 0;
   return `${name}|c:${cat}|g:${group}`;
 }
 
-/** אותו שם לאותה קטגוריה/קבוצה — תזרים אחד. מעדיפים יותר שלבים, אחר כך ברירת מחדל, אחר כך מזהה נמוך. */
+function enrichFlowsWithTargetLabels(flows, categories = [], groups = []) {
+  const catById = new Map();
+  for (const cat of categories || []) {
+    catById.set(Number(cat.id), cat);
+    catById.set(String(cat.id), cat);
+  }
+  const groupById = new Map();
+  for (const group of groups || []) {
+    groupById.set(Number(group.id), group);
+    groupById.set(String(group.id), group);
+  }
+  return (flows || []).map((flow) => {
+    if (flow?.targetLabel) return flow;
+    const cat = flow?.categoryId != null
+      ? (catById.get(Number(flow.categoryId)) || catById.get(String(flow.categoryId)))
+      : null;
+    const group = flow?.categoryGroupId != null
+      ? (groupById.get(Number(flow.categoryGroupId)) || groupById.get(String(flow.categoryGroupId)))
+      : null;
+    return { ...flow, targetLabel: cat?.name || group?.name || '' };
+  });
+}
+
+function rowIdsWithSameName(rows, id) {
+  const wanted = (rows || []).find((row) => Number(row.id) === Number(id));
+  const key = productNameKey(wanted?.name);
+  if (!key) return new Set([Number(id)].filter(Boolean));
+  return new Set(
+    (rows || [])
+      .filter((row) => productNameKey(row.name) === key)
+      .map((row) => Number(row.id))
+      .filter(Boolean),
+  );
+}
+
+/** אותו שם לאותו יעד (שם קטגוריה/קבוצה) — תזרים אחד, גם אם מזהי הקטגוריה שונים אחרי שחזור. מעדיפים יותר שלבים, אחר כך ברירת מחדל, אחר כך מזהה נמוך. */
 export function uniqueFlowsByName(flows, { preferIds } = {}) {
   const prefer = new Set((preferIds || []).map((id) => Number(id)).filter(Boolean));
   const byKey = new Map();
@@ -6275,7 +6314,12 @@ export function flowIdsForCanonical(canonicalId, lookup) {
 }
 
 export async function getFlowAliasLookup() {
-  return buildFlowAliasLookup(await db.flows.toArray());
+  const [flows, categories, groups] = await Promise.all([
+    db.flows.toArray(),
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
+  ]);
+  return buildFlowAliasLookup(enrichFlowsWithTargetLabels(flows, categories, groups));
 }
 
 function migrateLegacyFlowStepsToFlows(flowSteps) {
@@ -6315,16 +6359,30 @@ function migrateLegacyFlowStepsToFlows(flowSteps) {
 export async function getFlowsForCategory(categoryId) {
   const cid = sanitizeProductId(categoryId);
   if (!cid) return [];
-  const flows = (await db.flows.toArray())
-    .filter((f) => Number(f.categoryId) === Number(cid));
+  const [allFlows, categories] = await Promise.all([
+    db.flows.toArray(),
+    db.categories.toArray(),
+  ]);
+  const aliasIds = rowIdsWithSameName(categories, cid);
+  const cat = categories.find((c) => Number(c.id) === Number(cid));
+  const flows = allFlows
+    .filter((f) => aliasIds.has(Number(f.categoryId)))
+    .map((f) => ({ ...f, targetLabel: cat?.name || f.targetLabel || '' }));
   return uniqueFlowsByName(flows).sort(compareFlows);
 }
 
 export async function getFlowsForGroup(categoryGroupId) {
   const gid = sanitizeProductId(categoryGroupId);
   if (!gid) return [];
-  const flows = (await db.flows.toArray())
-    .filter((f) => Number(f.categoryGroupId) === Number(gid));
+  const [allFlows, groups] = await Promise.all([
+    db.flows.toArray(),
+    db.categoryGroups.toArray(),
+  ]);
+  const aliasIds = rowIdsWithSameName(groups, gid);
+  const group = groups.find((g) => Number(g.id) === Number(gid));
+  const flows = allFlows
+    .filter((f) => aliasIds.has(Number(f.categoryGroupId)))
+    .map((f) => ({ ...f, targetLabel: group?.name || f.targetLabel || '' }));
   return uniqueFlowsByName(flows).sort(compareFlows);
 }
 
@@ -6336,8 +6394,18 @@ export async function getAllFlowsOverview() {
     db.categories.toArray(),
     db.categoryGroups.toArray(),
   ]);
-  const catMap = new Map(categories.map((c) => [c.id, c]));
-  const groupMap = new Map(groups.map((g) => [g.id, g.name]));
+  const catMap = new Map();
+  for (const cat of categories) {
+    catMap.set(cat.id, cat);
+    catMap.set(Number(cat.id), cat);
+    catMap.set(String(cat.id), cat);
+  }
+  const groupMap = new Map();
+  for (const group of groups) {
+    groupMap.set(group.id, group.name);
+    groupMap.set(Number(group.id), group.name);
+    groupMap.set(String(group.id), group.name);
+  }
   const stepCounts = new Map();
   for (const s of steps) {
     const fid = Number(s.flowId);

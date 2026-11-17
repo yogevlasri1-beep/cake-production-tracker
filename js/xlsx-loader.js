@@ -1,4 +1,4 @@
-import { APP_VERSION } from './version.js?v=523';
+import { APP_VERSION } from './version.js?v=524';
 
 export async function loadXLSX() {
   if (window.XLSX) return window.XLSX;
