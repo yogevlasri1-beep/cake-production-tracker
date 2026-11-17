@@ -1,22 +1,22 @@
-import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=531';
+import { test, testAsync, assertEqual, assertOk, assertApprox, flushTests } from './runner.js?v=532';
 import {
   isValidISODate, sanitizeQuantity, sanitizeMoney, sanitizeName, sanitizeRecipeQuantity, roundMoney,
-} from '../js/validators.js?v=531';
+} from '../js/validators.js?v=532';
 import {
   pct, pctDisplay, computeProductionTotals, computeReportRows,
   computeProcessSummary, weekRange, monthRange, sumEntryQuantities,
   qtyForCategoryOnDate, addDaysISO, simulateMergeEntries, sumEntriesForProducts,
   auditProductionData, sumCategoryTotals, buildProductMap, sortProductsForReport,
   isWasteProductionRecord, metricsProductionValueBreakdown, productLineValue,
-} from '../js/calc.js?v=531';
-import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=531';
-import { enrichBackupData, summarizeBackupData, formatBackupSummary, countBackupRuns, describeBackupRestorePreview } from '../js/backup.js?v=531';
+} from '../js/calc.js?v=532';
+import { parseDate, parseQuantity, detectAndParse, parseImportFile } from '../js/import.js?v=532';
+import { enrichBackupData, summarizeBackupData, formatBackupSummary, countBackupRuns, describeBackupRestorePreview } from '../js/backup.js?v=532';
 import {
   UNAMBIGUOUS_SUPPLIER_LINKS,
   planSupplierLinkRepair,
   applySupplierLinkRepair,
   hasNumericSupplierId,
-} from '../js/repair-supplier-links.js?v=531';
+} from '../js/repair-supplier-links.js?v=532';
 import {
   buildSupabaseRestUrl,
   buildSupabaseHeaders,
@@ -24,8 +24,8 @@ import {
   normalizeSupabaseUrl,
   isPrimaryBackupDevice,
   canUploadToSupabase,
-} from '../js/supabase-backup.js?v=531';
-import { isAutoBackupDue, shouldSaveLastLocalCopy } from '../js/backup-service.js?v=531';
+} from '../js/supabase-backup.js?v=532';
+import { isAutoBackupDue, shouldSaveLastLocalCopy } from '../js/backup-service.js?v=532';
 import {
   backupKindLabel,
   catalogDriftWarning,
@@ -37,50 +37,51 @@ import {
   protectedBackupFileName,
   safetyKindForAction,
   selectBackupsToPrune,
-} from '../js/backup-guard.js?v=531';
-import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sanitizeBarcode, sanitizeMaterialBarcodes, getMaterialBarcodes, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair, addMaterialUsageToMap, formatMaterialUsageQty, groupMaterialUsageByCategory, isFullRecipeCompositionWeight, resolveRecipeUsagePerUnitGrams } from '../js/kitchen-db.js?v=531';
-import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=531';
-import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=531';
-import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, catalogMatchKey, buildCatalogNameMaps, POLYMORPHIC_FKS, ARRAY_FKS, OWNED_CHILD_COLLECTIONS, FLOW_TEMPLATE_PURGE_COLLECTIONS, shouldRetargetChildOnParentDedupe } from '../js/sync/collections.js?v=531';
-import { applyCloudFirstToCloudRow, canUploadLocalDatabase, CLOUD_CUTOVER_KEY, CLOUD_RESTORE_PULL_VERSION, cloudCutoverMarkerPresent, cloudRestoreMarkerPresent, cutoverRowUpdatedAt, entriesWithLocalProducts, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, pickProductionProductId, planAdoptCloudFirst, planAppendOnlyPush, planCloudFirstCutover, planCloudJoin, planRestoreJoin, planCutoverSnapshot, planCloudFirstWrite, planDemoteForeignCutover, planLiveSyncAlwaysOn, planLiveSyncTick, planRestoreBackupReplaceCloud, planManualLiveSync, FULL_PULL_INTERVAL_MS, HIDDEN_PULL_INTERVAL_MS, PRODUCTION_PULL_INTERVAL_MS, planProductionHistoryPull, planProductionHistoryUpload, planProductionLabelPush, PRODUCTION_HISTORY_COLLECTIONS, PRODUCTION_LABEL_VERSION, PRODUCTION_PULL_VERSION, PRODUCTION_REPUSH_VERSION, cloudUpdatedAtForSentHistory, localISODate, planRecentProductionRepush, recentProductionDateFloor, recentProductionPullSince, shouldRepushRecentProductionRow, toCloudUpdatedAt } from '../js/sync/cloud-first.js?v=531';
-import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, PULL_UNMEASURED_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=531';
+} from '../js/backup-guard.js?v=532';
+import { inspectCatalogDuplicates, formatCatalogDuplicateWarning } from '../js/data-health.js?v=532';
+import { normalizeRecipeImportKey, resolveRecipeBaking, normalizeBakingProfileFields, computePricePerKg, computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg, normalizeMaterialKey, pickHighestPricedMaterial, pickRecipeDefaultMaterial, buildMaterialsByNameKey, resolveRecipeIngredientMaterial, computeIngredientLineCost, computeRecipeMaterialsCostFiltered, getIngredientPriceSource, isProductRecipesCostSource, getMaterialPurchasePricePerKg, getMaterialEffectivePricePerKg, isFreeMaterial, getRecipeProductYieldInfo, scaleRecipeIngredientsForProductCount, recipeScaleRatioForProductCount, scaleRecipeIngredients, scaleIngredientsToTargetGrams, recipeTotalWeightGrams, buildRecipePortionPresetFields, formatSubdivisionWeight, gramsFromSubdivisionKg, buildMergedMaterialSynonyms, materialFieldFillPatch, shouldPreserveMaterialAsSupplierOffer, classifyMaterialsForMerge, pickMergeRecipeDefaultId, getMaterialPortionProductIds, buildProductProfileCompleteness, inferAllergensFromName, sanitizeProductAllergenIds, sanitizeProductAllergensMode, productAllergenLabel, formatProductShelfLife, resolveProductShelfLifeFields, resolveProductStorageConditionId, productStorageConditionLabel, inferRawMaterialSupplierRole, sanitizeSku, sanitizeMaterialNotes, sanitizeMinOrderQty, materialMatchesSearch, sanitizeBarcode, sanitizeMaterialBarcodes, getMaterialBarcodes, sameNumericId, compareSupplierCategories, isUntaggedRecipeVersionId, sameRecipeVersionId, homeRecipeVersionId, ingredientBelongsToRecipeVersion, planRecipeVersionIngredientRepair, addMaterialUsageToMap, formatMaterialUsageQty, groupMaterialUsageByCategory, isFullRecipeCompositionWeight, resolveRecipeUsagePerUnitGrams } from '../js/kitchen-db.js?v=532';
+import { materialLastUpdatedAt, packUnitsFromUsageQty, pickDefaultSupplierOffer, buildSupplierUsageOrderRows, formatWhatsAppUsageOrderText, normalizeWhatsAppPhone, buildWhatsAppSendUrl, listSupplierWhatsAppContacts } from '../js/kitchen-db.js?v=532';
+import { formatDateTime, formatDate, todayISO, todayDateButtonHTML, wrapDateInputWithToday, bindTodayDateButtons } from '../js/utils.js?v=532';
+import { shouldApplyRemote, orderedCollections, COLLECTION_TABLE, SYNC_ORDER, isSyncCollection, rowFingerprint, rowDedupeFingerprint, catalogMatchKey, buildCatalogNameMaps, POLYMORPHIC_FKS, ARRAY_FKS, OWNED_CHILD_COLLECTIONS, FLOW_TEMPLATE_PURGE_COLLECTIONS, shouldRetargetChildOnParentDedupe } from '../js/sync/collections.js?v=532';
+import { applyCloudFirstToCloudRow, canUploadLocalDatabase, CLOUD_CUTOVER_KEY, CLOUD_RESTORE_PULL_VERSION, cloudCutoverMarkerPresent, cloudRestoreMarkerPresent, cutoverRowUpdatedAt, entriesWithLocalProducts, isCloudFirstEnabled, localDatabaseHasRecords, mergeCatalogRecord, pickProductionProductId, planAdoptCloudFirst, planAppendOnlyPush, planCloudFirstCutover, planCloudJoin, planRestoreJoin, planCutoverSnapshot, planCloudFirstWrite, planDemoteForeignCutover, planLiveSyncAlwaysOn, planLiveSyncTick, planRestoreBackupReplaceCloud, planManualLiveSync, FULL_PULL_INTERVAL_MS, HIDDEN_PULL_INTERVAL_MS, PRODUCTION_PULL_INTERVAL_MS, planProductionHistoryPull, planProductionHistoryUpload, planProductionLabelPush, PRODUCTION_HISTORY_COLLECTIONS, PRODUCTION_LABEL_VERSION, PRODUCTION_PULL_VERSION, PRODUCTION_REPUSH_VERSION, cloudUpdatedAtForSentHistory, localISODate, planRecentProductionRepush, recentProductionDateFloor, recentProductionPullSince, shouldRepushRecentProductionRow, toCloudUpdatedAt } from '../js/sync/cloud-first.js?v=532';
+import { supplierCategoryRoleKey, classifyLiveSyncError, formatLiveSyncErrorForUi, isCloudWipeAllowed, PULL_PAGE_SIZE, buildCollectionPullPath, PULL_OVERLAP_MS, PULL_UNMEASURED_OVERLAP_MS, incrementalPullSince, noteServerClock, getServerClockOffsetMs, syncNowISO, collapseQueueItems } from '../js/supabase-sync.js?v=532';
 import {
   AUTH_RECONNECT_MESSAGE,
   jwtExpiryMs,
   sessionNeedsRefresh,
   isTransientAuthError,
   canOpenAppWithStoredSession,
-} from '../js/auth.js?v=531';
+} from '../js/auth.js?v=532';
 import {
   fetchWithTimeout,
   AUTH_FETCH_TIMEOUT_MS,
   SYNC_FETCH_TIMEOUT_MS,
-} from '../js/fetch-timeout.js?v=531';
+} from '../js/fetch-timeout.js?v=532';
 import {
   parsePackageWeightGrams, isSkipSheetName, detectSupplierSheetFormat, parseSupplierSheetRows,
   parseQuantityUnit, detectHeaderlessPriceListFormat, parseHeaderlessPriceListRows,
   detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../js/supplier-import.js?v=531';
-import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=531';
-import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange, buildPnlDailyRows, sumProcessSummaryQty } from '../js/screens/reports.js?v=531';
-import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber, isProductWasteCategory, isWasteProductionEntry, computeRunMetrics, PRODUCT_WASTE_CATEGORY_NAME, uniqueProductsByName, uniqueFlowsByName, productsForFlowRun, categoryIdsForFlowRun, buildFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical, buildProductsCatalogLayout, findLayoutCategory, overviewFlowsFromRows, uniqueHistoryFlowOptions } from '../js/db.js?v=531';
-import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel, buildHaccpTeamRoleCoverage } from '../js/haccp-db.js?v=531';
-import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=531';
-import { WORKSPACES } from '../js/workspaces.js?v=531';
-import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=531';
-import { sanitizeAuditPayload, auditActionLabel, auditEntityLabel, formatAuditSnapshotSummary } from '../js/audit.js?v=531';
+} from '../js/supplier-import.js?v=532';
+import { parseRecipesFromDocumentXml } from '../js/recipe-import.js?v=532';
+import { isFlowsReportType, isManagerReportType, normalizeReportType, groupRunsByFlow, filterProductionHistoryEntries, productIdsForHistoryScope, sortProductionHistoryEntries, managerRecordInDateRange, filterManagerTasksByRange, buildPnlDailyRows, sumProcessSummaryQty } from '../js/screens/reports.js?v=532';
+import { runStepsAllCompleted, findNextIncompleteStepIndex, parseNumericBatchNumber, computeNextBatchNumber, isProductWasteCategory, isWasteProductionEntry, computeRunMetrics, PRODUCT_WASTE_CATEGORY_NAME, uniqueProductsByName, uniqueFlowsByName, productsForFlowRun, categoryIdsForFlowRun, buildFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical, buildProductsCatalogLayout, findLayoutCategory, overviewFlowsFromRows, uniqueHistoryFlowOptions } from '../js/db.js?v=532';
+import { haccpRoleLabel, HACCP_STEPS, evaluateCcpDecisionTree, formatCriticalLimit, haccpMonitorMethodLabel, haccpMonitorFrequencyLabel, haccpProductDispositionLabel, haccpVerificationMethodLabel, haccpVerificationFrequencyLabel, haccpDocKindLabel, haccpDocFormatLabel, haccpPrpTopicLabel, haccpPrpStatusLabel, HACCP_PRP_TOPICS, haccpMonitorLogResultLabel, buildHaccpTeamRoleCoverage } from '../js/haccp-db.js?v=532';
+import { buildHaccpPlanPrintHtml } from '../js/haccp-print.js?v=532';
+import { WORKSPACES } from '../js/workspaces.js?v=532';
+import { userRoleLabel, userStatusLabel } from '../js/auth.js?v=532';
+import { sanitizeAuditPayload, auditActionLabel, auditEntityLabel, formatAuditSnapshotSummary } from '../js/audit.js?v=532';
 import {
   serializeCell, rowsToAoa, uniqueSheetName, listDataTables, buildDataTablesWorkbookSpec, DATA_TABLE_LABELS,
-} from '../js/data-tables-export.js?v=531';
-import { resolveDownloadFilename } from '../js/download.js?v=531';
+} from '../js/data-tables-export.js?v=532';
+import { resolveDownloadFilename } from '../js/download.js?v=532';
 import {
   allowedWorkspaces, canAccessWorkspace, canAccessScreen, canAccessHaccpStep, canAccessRecipeTab, canAccessBackupFull, canManageAccounts,
   canEditRecipes, canManageFlows, canAdjustInventory,
   sanitizeWorkspaceAccess, defaultWorkspacesForRole, workspaceLabel,
-} from '../js/permissions.js?v=531';
-import { lotTraceEmptyHint } from '../js/lot-trace.js?v=531';
+} from '../js/permissions.js?v=532';
+import { lotTraceEmptyHint } from '../js/lot-trace.js?v=532';
 import {
   signedAmountForCategory,
   requireManualPeriod,
@@ -95,7 +96,7 @@ import {
   FINANCE_IMPORT_HARD_MAX_LINES,
   FINANCE_CATEGORIES,
   FINANCE_RESTORE_WIPE_QUESTION,
-} from '../js/finance-db.js?v=531';
+} from '../js/finance-db.js?v=532';
 import {
   detectCsvEncoding,
   parseCsvText,
@@ -106,7 +107,7 @@ import {
   mergeColumnMappingByReportType,
   FINANCE_COLUMN_ROLES,
   FINANCE_ENCODINGS,
-} from '../js/finance-import.js?v=531';
+} from '../js/finance-import.js?v=532';
 
 export async function runAllTests() {
   /* validators */
@@ -2043,7 +2044,7 @@ export async function runAllTests() {
   });
 
   test('inventoryMovementKindLabel', async () => {
-    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=531');
+    const { inventoryMovementKindLabel, formatWhatsAppGapOrderText } = await import('../js/inventory-db.js?v=532');
     assertEqual(inventoryMovementKindLabel('receive'), 'קבלה');
     assertEqual(inventoryMovementKindLabel('issue'), 'ניפוק');
     assertEqual(inventoryMovementKindLabel('set'), 'הגדרה');
@@ -2056,7 +2057,7 @@ export async function runAllTests() {
   });
 
   test('receiveShortageToInventory — דורש מזהה', async () => {
-    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=531');
+    const { receiveShortageToInventory } = await import('../js/inventory-db.js?v=532');
     let threw = false;
     try {
       await receiveShortageToInventory(null);
@@ -2068,7 +2069,7 @@ export async function runAllTests() {
   });
 
   test('previewProductionStockIssue — דורש מספר מנות', async () => {
-    const { previewProductionStockIssue, formatProductionIssueConfirm } = await import('../js/inventory-db.js?v=531');
+    const { previewProductionStockIssue, formatProductionIssueConfirm } = await import('../js/inventory-db.js?v=532');
     let threw = false;
     try {
       await previewProductionStockIssue({ portionCount: 0 });
@@ -2217,7 +2218,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — כלי בניית תכנית מיוצאים', async () => {
-    const mod = await import('../js/haccp-db.js?v=531');
+    const mod = await import('../js/haccp-db.js?v=532');
     assertOk(typeof mod.buildHaccpPlanDraft === 'function');
     assertOk(typeof mod.getHaccpPlanReadiness === 'function');
     assertOk(typeof mod.cloneHaccpPlan === 'function');
@@ -2244,7 +2245,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — תבניות מאפייה לפי סוג', async () => {
-    const mod = await import('../js/haccp-db.js?v=531');
+    const mod = await import('../js/haccp-db.js?v=532');
     const ids = mod.HACCP_BAKERY_TEMPLATES.map((t) => t.id).sort().join(',');
     assertEqual(ids, 'cakes,creams,doughs,general');
     for (const t of mod.HACCP_BAKERY_TEMPLATES) {
@@ -2257,7 +2258,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — דשבורד חריגות מסנן וממיין', async () => {
-    const mod = await import('../js/haccp-db.js?v=531');
+    const mod = await import('../js/haccp-db.js?v=532');
     const now = Date.parse('2026-08-06T12:00:00');
     const dash = mod.buildHaccpDeviationDashboard([
       {
@@ -2297,7 +2298,7 @@ export async function runAllTests() {
   });
 
   test('HACCP — אשף נועל שלבים לפי מוכנות', async () => {
-    const mod = await import('../js/haccp-db.js?v=531');
+    const mod = await import('../js/haccp-db.js?v=532');
     const emptyReady = {
       items: mod.HACCP_WIZARD_STEPS.map((stepId) => ({
         stepId,
@@ -2857,6 +2858,53 @@ export async function runAllTests() {
     assertEqual(catalogDriftWarning({ products: 40, flows: 12, categories: 8, productionEntries: 110 }, good), null);
   });
 
+  test('inspectCatalogDuplicates — תזרים כפול לפי שם', () => {
+    const report = inspectCatalogDuplicates({
+      flows: [
+        { id: 1, name: "שטרודל תפוחים'", categoryId: 10 },
+        { id: 2, name: 'שטרודל תפוחים', categoryId: 99 },
+      ],
+      categories: [
+        { id: 10, name: 'שטרודלים' },
+        { id: 99, name: 'אחר' },
+      ],
+    });
+    assertEqual(report.ok, false);
+    assertEqual(report.duplicateFlows.length, 1);
+    assertEqual(report.extraFlowCopies, 1);
+    const warning = formatCatalogDuplicateWarning(report);
+    assertOk(warning.includes('תזרימים כפולים'));
+    assertOk(warning.includes('אל תלחץ'));
+  });
+
+  test('inspectCatalogDuplicates — ברירת מחדל בשתי קטגוריות זה תקין', () => {
+    const report = inspectCatalogDuplicates({
+      flows: [
+        { id: 1, name: 'ברירת מחדל', categoryId: 10 },
+        { id: 2, name: 'ברירת מחדל', categoryId: 11 },
+      ],
+      categories: [
+        { id: 10, name: 'עוגות' },
+        { id: 11, name: 'שטרודלים' },
+      ],
+    });
+    assertEqual(report.ok, true);
+    assertEqual(formatCatalogDuplicateWarning(report), null);
+  });
+
+  test('inspectCatalogDuplicates — מוצר כפול באותה קטגוריה', () => {
+    const report = inspectCatalogDuplicates({
+      products: [
+        { id: 1, name: 'תפוח', categoryId: 10 },
+        { id: 2, name: 'תפוח', categoryId: 10 },
+      ],
+      categories: [{ id: 10, name: 'עוגות' }],
+    });
+    assertEqual(report.ok, false);
+    assertEqual(report.extraProductCopies, 1);
+    assertOk(formatCatalogDuplicateWarning(report).includes('מוצרים כפולים'));
+  });
+
   test('mergeRestorePoints — ענן גובר על אותו זמן מקומי', () => {
     const merged = mergeRestorePoints(
       [{ id: 1, kind: 'good', createdAt: '2026-11-09T02:52:00.000Z', summary: 'מקומי', products: 40, flows: 12 }],
@@ -2870,7 +2918,7 @@ export async function runAllTests() {
   });
 
   test('getBackupScopeId — מזהה קבוע לשחזור אחרי מחיקה', async () => {
-    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=531');
+    const { getBackupScopeId, BACKUP_SCOPE_ID } = await import('../js/supabase-backup.js?v=532');
     assertEqual(getBackupScopeId(), BACKUP_SCOPE_ID);
     assertEqual(BACKUP_SCOPE_ID, 'yitzur');
   });
