@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=529';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=529';
-import { defaultColorForIndex } from './chart.js?v=529';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=529';
-import { logAuditEvent } from './audit.js?v=529';
+} from './validators.js?v=530';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=530';
+import { defaultColorForIndex } from './chart.js?v=530';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=530';
+import { logAuditEvent } from './audit.js?v=530';
 
 export { ValidationError };
 
@@ -6391,8 +6391,13 @@ function compareFlows(a, b) {
   return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id;
 }
 
+function isSharedFlowName(name) {
+  return productNameKey(name) === productNameKey('ברירת מחדל');
+}
+
 function flowDedupeKey(flow) {
   const name = productNameKey(flow?.name) || `id:${flow?.id}`;
+  if (!isSharedFlowName(flow?.name)) return name;
   const target = productNameKey(
     flow?.targetLabel || flow?.categoryName || flow?.groupName || '',
   );
@@ -6565,7 +6570,9 @@ function foldCrossTargetDuplicates(unique, byId, runCounts) {
     if (!catFlow || !groupFlow) continue;
     const sameGroup = idsEqual(catFlow.groupId, groupFlow.groupId)
       || idsEqual(catFlow.groupId, groupFlow.categoryGroupId)
-      || idsEqual(catFlow.categoryGroupId, groupFlow.groupId);
+      || idsEqual(catFlow.categoryGroupId, groupFlow.groupId)
+      || (!!productNameKey(catFlow.groupName)
+        && productNameKey(catFlow.groupName) === productNameKey(groupFlow.groupName || groupFlow.targetLabel));
     if (!sameGroup) continue;
     const keeper = pickCompleteFlow(catFlow, groupFlow, runCounts);
     const drop = keeper === catFlow ? groupFlow : catFlow;

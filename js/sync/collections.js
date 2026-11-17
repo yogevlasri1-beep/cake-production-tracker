@@ -752,6 +752,11 @@ export function buildCatalogNameMaps(categories = [], groups = []) {
   return { categoryNameOf, groupNameOf };
 }
 
+/** «ברירת מחדל» לגיטימי כמה פעמים — פעם לכל קטגוריה. שאר השמות אחרי שחזור הם אותו תזרים. */
+export function isSharedFlowName(name) {
+  return normName(name) === normName('ברירת מחדל');
+}
+
 /**
  * השוואת קטלוג אחרי שחזור: אותו שם + שם קטגוריה/קבוצה, גם כשהמספרים שונים.
  * בלי זה משיכה מהאייפון יוצרת תזרים שני לאותו מוצר.
@@ -771,6 +776,7 @@ export function catalogMatchKey(collection, row, maps = {}) {
     return categoryName ? `${collection}|${n}|c:${categoryName}` : '';
   }
   if (collection === 'flows') {
+    if (!isSharedFlowName(row.name)) return `${collection}|${n}`;
     const categoryName = categoryNameOf(row.categoryId);
     if (categoryName) return `${collection}|${n}|c:${categoryName}`;
     const groupName = groupNameOf(row.categoryGroupId || row.groupId);

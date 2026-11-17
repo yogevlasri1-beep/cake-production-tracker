@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=529';
+import { db, getSetting, setSetting } from './db.js?v=530';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=529';
+} from './supabase-backup.js?v=530';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -25,12 +25,13 @@ import {
   rowDedupeFingerprint,
   catalogMatchKey,
   buildCatalogNameMaps,
+  isSharedFlowName,
   supplierCategoryRoleKey,
   supplierCategoryCanonicalName,
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=529';
+} from './sync/collections.js?v=530';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -76,7 +77,7 @@ import {
   localISODate,
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
-} from './sync/cloud-first.js?v=529';
+} from './sync/cloud-first.js?v=530';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -86,15 +87,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=529';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=529';
+} from './sync/id-map.js?v=530';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=530';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=529';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=529';
+} from './auth.js?v=530';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=530';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -192,8 +193,10 @@ export function formatLiveSyncErrorForUi(live) {
  * v19: after Nov 11 duplicate re-seed — drop extra local copies of products/runs.
  * v20: do not merge a duplicate flow's steps/links onto the survivor (that doubled flow contents).
  * v21: collapse production entries that only differ by a duplicate product id / leftover name.
+ * v22: match restored flows by category name.
+ * v23: named flows (not «ברירת מחדל») merge by name even if the category was remapped to אחר.
  */
-const DEDUPE_VERSION = 22;
+const DEDUPE_VERSION = 23;
 
 /**
  * Bump to force one full re-pull on every device. Needed after a bug wrote bad
@@ -266,7 +269,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=529');
+    const { showToast } = await import('./utils.js?v=530');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -989,12 +992,31 @@ async function findLocalByCatalogName(collection, row, syncId) {
   ]);
   const maps = buildCatalogNameMaps(categories, groups);
   const wanted = catalogMatchKey(collection, row, maps);
-  if (!wanted) return null;
   const matches = [];
-  for (const candidate of await db[collection].toArray()) {
-    if (catalogMatchKey(collection, candidate, maps) === wanted) matches.push(candidate);
+  const candidates = await db[collection].toArray();
+  if (wanted) {
+    for (const candidate of candidates) {
+      if (catalogMatchKey(collection, candidate, maps) === wanted) matches.push(candidate);
+    }
+  }
+  if (!matches.length && collection === 'flows' && !isSharedFlowName(row?.name)) {
+    const n = String(row?.name || '').trim().toLocaleLowerCase('he');
+    if (n) {
+      for (const candidate of candidates) {
+        if (String(candidate?.name || '').trim().toLocaleLowerCase('he') === n) matches.push(candidate);
+      }
+    }
   }
   if (!matches.length) return null;
+  if (collection === 'flows' && matches.length > 1 && db.flowSteps) {
+    const counts = new Map();
+    for (const step of await db.flowSteps.toArray()) {
+      const id = Number(step.flowId);
+      if (!id) continue;
+      counts.set(id, (counts.get(id) || 0) + 1);
+    }
+    matches.sort((a, b) => (counts.get(Number(b.id)) || 0) - (counts.get(Number(a.id)) || 0));
+  }
   for (const candidate of matches) {
     const meta = await getMetaByLocal(collection, candidate.id);
     if (!meta?.syncId || meta.syncId === syncId) return candidate;
@@ -1136,8 +1158,8 @@ function sanitizeBarcodeLike(v) {
   return String(v || '').trim();
 }
 
-/** תזרימים כפולים אחרי שחזור: אותו שם לאותה קטגוריה, מזהים שונים. שומרים את העותק עם יותר שלבים. */
-async function dedupeFlowsByCatalogName() {
+/** תזרימים כפולים אחרי שחזור: אותו שם. שומרים את העותק עם יותר שלבים. */
+async function dedupeFlowsByCatalogName({ localOnly = false } = {}) {
   if (!db.flows) return 0;
   const [flows, steps, categories, groups] = await Promise.all([
     db.flows.toArray(),
@@ -1168,7 +1190,7 @@ async function dedupeFlowsByCatalogName() {
     for (const drop of list.slice(1)) {
       await deleteOwnedChildrenOf('flows', drop.id);
       await retargetLocalForeignKeys('flows', drop.id, keep.id);
-      await deleteLocalDuplicateRow('flows', drop);
+      await deleteLocalDuplicateRow('flows', drop, { localOnly });
       removed++;
     }
   }
@@ -1498,6 +1520,7 @@ function compareDedupeSurvivors(collection, a, b) {
     const bSteps = Number(b.stepCount) || 0;
     if (bSteps !== aSteps) return bSteps - aSteps;
     if (!!b.isDefault !== !!a.isDefault) return (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0);
+    return (Number(b.id) || 0) - (Number(a.id) || 0);
   }
   return (a.id - b.id);
 }
@@ -1557,7 +1580,7 @@ async function mergeChecklistTaskInto(keepId, dropId) {
   }
 }
 
-async function deleteLocalDuplicateRow(collection, row) {
+async function deleteLocalDuplicateRow(collection, row, { localOnly = false } = {}) {
   const dropKey = localKeyOf(collection, row);
   const dropMeta = await getMetaByLocal(collection, dropKey);
   invalidateFingerprintCache(collection);
@@ -1567,12 +1590,12 @@ async function deleteLocalDuplicateRow(collection, row) {
   } finally {
     applyingRemote = false;
   }
-  if (dropMeta?.syncId) {
-    await markMetaDeleted(collection, dropKey, syncNowISO());
-    await enqueue({ type: 'delete', collection, localKey: dropKey });
-  } else {
+  if (localOnly || !dropMeta?.syncId) {
     await db.syncMeta.where('[collection+localKey]').equals([collection, dropKey]).delete();
+    return;
   }
+  await markMetaDeleted(collection, dropKey, syncNowISO());
+  await enqueue({ type: 'delete', collection, localKey: dropKey });
 }
 
 /**
@@ -3053,7 +3076,10 @@ export async function startLiveSync() {
         lastFullPullAt = Date.now();
         const pulled = await pullAllCollections({ full: false });
         pulledOk = true;
-        if ((pulled?.applied || 0) > 0 && !isCloudFirstEnabled(await getLiveSyncSettings())) {
+        const liveAfter = await getLiveSyncSettings();
+        const cloudFirst = isCloudFirstEnabled(liveAfter);
+        await dedupeFlowsByCatalogName({ localOnly: cloudFirst });
+        if ((pulled?.applied || 0) > 0 && !cloudFirst) {
           await dedupeSupplierWorkspaceLight();
         }
       }
@@ -3092,16 +3118,22 @@ export async function startLiveSync() {
   // old pull-before-seed bug (v2 also covers production runs / step states).
   // Runs only AFTER a successful pull so cloud-side dedupe deletions land
   // first; otherwise this device could tombstone the copy the cloud kept.
-  if (!isCloudFirstEnabled(live) && pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
+  if (pulledOk && (!live.dedupeDone || (live.dedupeVersion || 0) < DEDUPE_VERSION)) {
     try {
-      const pruned = await pruneUnsyncedEmptySeedSupplierCategories();
-      if (pruned) console.info('live sync pruned empty seed supplier categories', pruned);
-      const result = await dedupeLocalSyncCollections();
-      const bridge = await repairRecipeProductLinksFromComposition();
-      await flushSyncQueue();
-      await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
-      if (result.removed) console.info('live sync local dedupe removed', result.removed);
-      if (bridge.added) console.info('live sync bridged recipe-product links', bridge.added);
+      if (isCloudFirstEnabled(live)) {
+        const removed = await dedupeFlowsByCatalogName({ localOnly: true });
+        await saveLiveSyncSettings({ dedupeVersion: DEDUPE_VERSION });
+        if (removed) console.info('live sync flow restore dedupe removed', removed);
+      } else {
+        const pruned = await pruneUnsyncedEmptySeedSupplierCategories();
+        if (pruned) console.info('live sync pruned empty seed supplier categories', pruned);
+        const result = await dedupeLocalSyncCollections();
+        const bridge = await repairRecipeProductLinksFromComposition();
+        await flushSyncQueue();
+        await saveLiveSyncSettings({ dedupeDone: true, dedupeVersion: DEDUPE_VERSION });
+        if (result.removed) console.info('live sync local dedupe removed', result.removed);
+        if (bridge.added) console.info('live sync bridged recipe-product links', bridge.added);
+      }
     } catch (err) {
       console.warn('live sync local dedupe', err);
     }
