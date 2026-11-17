@@ -30,12 +30,12 @@ import {
   getLinkedProductsForFlow, getCandidateProductsForFlow, setFlowProductLinks,
   productsForFlowRun, categoryIdsForFlowRun,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
-  getFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical,
+  getFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical, uniqueHistoryFlowOptions,
   idsEqual, findLayoutCategory, findLayoutGroup,
-} from '../db.js?v=526';
+} from '../db.js?v=527';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=526').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=527').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -78,7 +78,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=526');
+    } = await import('../inventory-db.js?v=527');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -119,7 +119,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=526');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=527');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -145,7 +145,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=526');
+    } = await import('../inventory-db.js?v=527');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -174,15 +174,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=526';
-import { metricsProductionValueBreakdown } from '../calc.js?v=526';
-import { openModal, closeModal } from '../modal.js?v=526';
-import { requestAutoBackupNow } from '../backup-service.js?v=526';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=526';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=526';
-import { materialMatchesSearch } from '../kitchen-db.js?v=526';
-import { getCurrentUserRole } from '../auth.js?v=526';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=526';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=527';
+import { metricsProductionValueBreakdown } from '../calc.js?v=527';
+import { openModal, closeModal } from '../modal.js?v=527';
+import { requestAutoBackupNow } from '../backup-service.js?v=527';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=527';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=527';
+import { materialMatchesSearch } from '../kitchen-db.js?v=527';
+import { getCurrentUserRole } from '../auth.js?v=527';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=527';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -1630,32 +1630,7 @@ function groupRunsByFlow(runs, flowNameMap = new Map(), lookup = null) {
 
 /** אפשרויות סינון — תזרימים קיימים + תזרימים שנמחקו שעדיין יש להם תהליכים (במיוחד שהושלמו) */
 function buildHistoryFlowOptions(runs = [], allFlows = [], lookup = null) {
-  const byId = new Map();
-  for (const f of allFlows) {
-    byId.set(Number(f.id), {
-      id: Number(f.id),
-      name: f.name,
-      deleted: false,
-    });
-  }
-  for (const run of runs) {
-    if (!run.flowId) continue;
-    const canonical = lookup ? canonicalFlowIdForRun(run, lookup) : Number(run.flowId);
-    if (canonical && byId.has(Number(canonical))) continue;
-    const id = Number(canonical || run.flowId);
-    if (!id || byId.has(id)) continue;
-    const base = run.flowName || `תזרים #${id}`;
-    byId.set(id, {
-      id,
-      name: `${base} (נמחק)`,
-      deleted: true,
-    });
-  }
-  return [...byId.values()]
-    .sort((a, b) => {
-      if (a.deleted !== b.deleted) return a.deleted ? 1 : -1;
-      return a.name.localeCompare(b.name, 'he');
-    });
+  return uniqueHistoryFlowOptions(allFlows, runs, lookup);
 }
 
 function renderAllRunsByDateHTML(runs, layout, catMap, productMap, groupMap) {
@@ -2069,8 +2044,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=526');
-    const { db } = await import('../db.js?v=526');
+    const { getRecipe } = await import('../kitchen-db.js?v=527');
+    const { db } = await import('../db.js?v=527');
     const blocks = [];
 
     for (const row of rows) {
@@ -3023,7 +2998,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=526');
+    const kitchen = await import('../kitchen-db.js?v=527');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),
