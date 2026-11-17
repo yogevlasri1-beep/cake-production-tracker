@@ -1,4 +1,4 @@
-import { escapeHtml, formatDateHebrew, localDateTimeISO } from './utils.js?v=525';
+import { escapeHtml, formatDateHebrew, localDateTimeISO } from './utils.js?v=526';
 import {
   HACCP_PLAN_STATUSES,
   haccpRoleLabel,
@@ -33,9 +33,9 @@ import {
   getHaccpVerificationProcs,
   getHaccpDocuments,
   getHaccpPrpControls,
-} from './haccp-db.js?v=525';
-import { getCategoryGroups } from './db.js?v=525';
-import { APP_VERSION } from './version.js?v=525';
+} from './haccp-db.js?v=526';
+import { getCategoryGroups } from './db.js?v=526';
+import { APP_VERSION } from './version.js?v=526';
 
 const HACCP_PRINT_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }

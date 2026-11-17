@@ -31,10 +31,11 @@ import {
   productsForFlowRun, categoryIdsForFlowRun,
   ensureProductWasteCategory, isProductWasteCategory, isWasteProductionEntry,
   getFlowAliasLookup, canonicalFlowIdForRun, flowIdsForCanonical,
-} from '../db.js?v=525';
+  idsEqual, findLayoutCategory, findLayoutGroup,
+} from '../db.js?v=526';
 
 function wirePortionIngredientsButtons(root, { onSaved } = {}) {
-  import('../portion-ingredients.js?v=525').then(({ bindPortionIngredientsButtons }) => {
+  import('../portion-ingredients.js?v=526').then(({ bindPortionIngredientsButtons }) => {
     bindPortionIngredientsButtons(root, { onSaved });
   }).catch((err) => {
     console.warn('portion-ingredients load failed', err);
@@ -77,7 +78,7 @@ async function offerInventoryIssueForPortion(run, entry, {
       previewProductionStockIssue,
       issueStockFromProduction,
       formatProductionIssueConfirm,
-    } = await import('../inventory-db.js?v=525');
+    } = await import('../inventory-db.js?v=526');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -118,7 +119,7 @@ async function offerInventoryIssueForPortion(run, entry, {
 async function reverseInventoryIssueForPortion(run, entry) {
   if (!entry?.inventoryIssued || !entry.inventoryIssueLines?.length) return;
   try {
-    const { reverseStockIssueLines } = await import('../inventory-db.js?v=525');
+    const { reverseStockIssueLines } = await import('../inventory-db.js?v=526');
     await reverseStockIssueLines(entry.inventoryIssueLines, {
       reasonLabel: `ביטול ניפוק · אצווה ${batchLabelForRun(run)} · ${entry.name || 'מנה'}`,
     });
@@ -144,7 +145,7 @@ async function resyncInventoryIssueForPortion(run, entry, {
     const {
       previewProductionStockIssue,
       issueStockFromProduction,
-    } = await import('../inventory-db.js?v=525');
+    } = await import('../inventory-db.js?v=526');
     const preview = await previewProductionStockIssue({
       portionPresetId: entry.presetId || null,
       recipeId: entry.sourceRecipeId || null,
@@ -173,15 +174,15 @@ async function resyncInventoryIssueForPortion(run, entry, {
     showToast(err.message || 'שגיאה בעדכון ניפוק');
   }
 }
-import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=525';
-import { metricsProductionValueBreakdown } from '../calc.js?v=525';
-import { openModal, closeModal } from '../modal.js?v=525';
-import { requestAutoBackupNow } from '../backup-service.js?v=525';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=525';
-import { bindFlowChecklistDragLists } from '../product-drag.js?v=525';
-import { materialMatchesSearch } from '../kitchen-db.js?v=525';
-import { getCurrentUserRole } from '../auth.js?v=525';
-import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=525';
+import { todayISO, formatDate, showToast, escapeHtml, formatPortionCount, formatPortionWeightKg, formatProductQuantity, productRecordUsesKg, formatDuration, formatStopwatch, runDurationMs, stepDurationMs, getStepTimerElapsedMs, isoToDateInput, isoToTimeInput, formatDateTime, formatDecimal, formatMoney, wrapDateInputWithToday, bindTodayDateButtons } from '../utils.js?v=526';
+import { metricsProductionValueBreakdown } from '../calc.js?v=526';
+import { openModal, closeModal } from '../modal.js?v=526';
+import { requestAutoBackupNow } from '../backup-service.js?v=526';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=526';
+import { bindFlowChecklistDragLists } from '../product-drag.js?v=526';
+import { materialMatchesSearch } from '../kitchen-db.js?v=526';
+import { getCurrentUserRole } from '../auth.js?v=526';
+import { canManageFlows, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=526';
 
 const FLOW_STEP_PORTIONS_ICON = `<span class="flow-step-portions-icon" aria-hidden="true"><svg class="flow-step-portions-scale" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 18h14"/><path d="M7 18l1.5-7h7L17 18"/><path d="M9 11V8a3 3 0 0 1 6 0v3"/></svg><span class="flow-step-portions-plus">+</span></span>`;
 
@@ -404,34 +405,42 @@ function bucketFlowsForCatalog(flowsOverview, layout) {
   const flowsByCategory = new Map();
   const flowsByGroup = new Map();
   const otherFlows = [];
-
-  for (const f of flowsOverview) {
-    if (f.targetType === 'category' && f.categoryId) {
-      if (!flowsByCategory.has(f.categoryId)) flowsByCategory.set(f.categoryId, []);
-      flowsByCategory.get(f.categoryId).push(f);
-    } else {
-      const gid = f.categoryGroupId || f.groupId;
-      if (gid) {
-        if (!flowsByGroup.has(gid)) flowsByGroup.set(gid, []);
-        flowsByGroup.get(gid).push(f);
-      } else {
-        otherFlows.push(f);
+  const put = (map, id, flow) => {
+    if (id == null || id === '') return false;
+    const keys = [id, String(id)];
+    const n = Number(id);
+    if (Number.isFinite(n) && String(n) === String(id)) keys.push(n);
+    let list = null;
+    for (const key of keys) {
+      if (map.has(key)) {
+        list = map.get(key);
+        break;
       }
     }
-  }
+    if (!list) list = [];
+    list.push(flow);
+    for (const key of keys) map.set(key, list);
+    return true;
+  };
 
-  const listedGroupIds = new Set([...flowsByGroup.keys()]);
   for (const f of flowsOverview) {
-    if (f.targetType === 'category' && f.categoryId) {
-      if (!layout.allCategories.some((c) => c.id === f.categoryId) && !otherFlows.includes(f)) {
-        otherFlows.push(f);
-      }
-    } else {
-      const gid = f.categoryGroupId || f.groupId;
-      if (gid && !listedGroupIds.has(gid) && !layout.groups.some((g) => g.id === gid) && !otherFlows.includes(f)) {
-        otherFlows.push(f);
-      }
+    const cat = findLayoutCategory(layout, {
+      categoryId: f.categoryId,
+      categoryName: f.targetType === 'category' ? f.targetLabel : '',
+    });
+    if (cat && cat.id !== 'orphans') {
+      put(flowsByCategory, cat.id, f);
+      continue;
     }
+    const group = findLayoutGroup(layout, {
+      groupId: f.categoryGroupId || f.groupId,
+      groupName: f.targetType === 'group' ? f.targetLabel : f.groupName,
+    });
+    if (group) {
+      put(flowsByGroup, group.id, f);
+      continue;
+    }
+    otherFlows.push(f);
   }
 
   return { flowsByCategory, flowsByGroup, otherFlows };
@@ -439,21 +448,26 @@ function bucketFlowsForCatalog(flowsOverview, layout) {
 
 function filterFlowsForManageTarget(allFlowsOverview, layout, { isGroupTarget, groupId, categoryId }) {
   if (isGroupTarget && groupId) {
-    const gid = Number(groupId);
+    const group = findLayoutGroup(layout, { groupId });
+    const gid = group?.id ?? groupId;
     return allFlowsOverview.filter((f) => {
-      if (Number(f.categoryGroupId) === gid && !f.categoryId) return true;
-      if (f.targetType === 'group' && Number(f.groupId || f.categoryGroupId) === gid) return true;
+      if (idsEqual(f.categoryGroupId, gid) && !f.categoryId) return true;
+      if (f.targetType === 'group' && idsEqual(f.groupId || f.categoryGroupId, gid)) return true;
       if (f.targetType === 'category' && f.categoryId) {
-        const cat = layout.allCategories.find((c) => c.id === f.categoryId);
-        return cat && Number(cat.groupId) === gid;
+        const cat = findLayoutCategory(layout, { categoryId: f.categoryId, categoryName: f.targetLabel });
+        return cat && idsEqual(cat.groupId, gid);
       }
       return false;
     });
   }
   if (categoryId) {
-    return allFlowsOverview.filter(
-      (f) => f.targetType === 'category' && Number(f.categoryId) === Number(categoryId),
-    );
+    const cat = findLayoutCategory(layout, { categoryId });
+    return allFlowsOverview.filter((f) => {
+      if (f.targetType !== 'category') return false;
+      const resolved = findLayoutCategory(layout, { categoryId: f.categoryId, categoryName: f.targetLabel });
+      return idsEqual(f.categoryId, categoryId)
+        || (cat && resolved && idsEqual(resolved.id, cat.id));
+    });
   }
   return [];
 }
@@ -2055,8 +2069,8 @@ async function openRunPortionsWeightModal(run) {
   let portionSections = '<p class="form-hint">אין מנות מתועדות</p>';
 
   try {
-    const { getRecipe } = await import('../kitchen-db.js?v=525');
-    const { db } = await import('../db.js?v=525');
+    const { getRecipe } = await import('../kitchen-db.js?v=526');
+    const { db } = await import('../db.js?v=526');
     const blocks = [];
 
     for (const row of rows) {
@@ -3009,7 +3023,7 @@ async function renderRunView(container, runId, ctx) {
   let kitchenMaterials = [];
   let kitchenSuppliers = [];
   try {
-    const kitchen = await import('../kitchen-db.js?v=525');
+    const kitchen = await import('../kitchen-db.js?v=526');
     [kitchenMaterials, kitchenSuppliers] = await Promise.all([
       kitchen.getRawMaterials(),
       kitchen.getSuppliers(),

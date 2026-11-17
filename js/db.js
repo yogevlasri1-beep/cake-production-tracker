@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=525';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=525';
-import { defaultColorForIndex } from './chart.js?v=525';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=525';
-import { logAuditEvent } from './audit.js?v=525';
+} from './validators.js?v=526';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=526';
+import { defaultColorForIndex } from './chart.js?v=526';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=526';
+import { logAuditEvent } from './audit.js?v=526';
 
 export { ValidationError };
 
@@ -3724,7 +3724,12 @@ function pickPreferredCatalogRow(prev, next, scoreOf) {
   const prevSort = prev.sortOrder ?? 0;
   const nextSort = next.sortOrder ?? 0;
   if (nextSort !== prevSort) return nextSort < prevSort ? next : prev;
-  return Number(next.id) < Number(prev.id) ? next : prev;
+  const prevId = Number(prev.id);
+  const nextId = Number(next.id);
+  if (Number.isFinite(nextId) && Number.isFinite(prevId) && nextId !== prevId) {
+    return nextId < prevId ? next : prev;
+  }
+  return String(next.id).localeCompare(String(prev.id), 'he') < 0 ? next : prev;
 }
 
 function uniqueCatalogRows(rows, keyOf, scoreOf) {
@@ -3743,69 +3748,187 @@ function uniqueCatalogRows(rows, keyOf, scoreOf) {
   return [...byKey.values()];
 }
 
+function countProductsForCategory(products, categoryId) {
+  return (products || []).filter((product) => idsEqual(product.categoryId, categoryId)).length;
+}
+
+function rememberLayoutId(map, id, value) {
+  if (id == null || id === '' || !value) return;
+  map.set(String(id), value);
+  const n = Number(id);
+  if (Number.isFinite(n)) map.set(String(n), value);
+}
+
+function lookupLayoutId(map, id) {
+  if (!map || id == null || id === '') return null;
+  return map.get(String(id))
+    || (Number.isFinite(Number(id)) ? map.get(String(Number(id))) : null)
+    || null;
+}
+
+function aliasesForLayoutCategory(cat, categories, groupNameOf, groupedCatsByName) {
+  const catGroupName = groupNameOf(cat.groupId);
+  return (categories || []).filter((row) => {
+    if (catalogNameKey(row) !== catalogNameKey(cat)) return false;
+    const rowGroup = groupNameOf(row.groupId);
+    if (!rowGroup && (groupedCatsByName.get(catalogNameKey(cat)) || []).length > 1) return false;
+    if (!rowGroup || !catGroupName) return true;
+    return rowGroup === catGroupName;
+  });
+}
+
 /**
- * קטלוג לתצוגה: קבוצה/קטגוריה/מוצר פעם אחת לפי שם.
- * אחרי שחזור נשארים מזהים כפולים — בלי זה מסך המוצרים נראה כפול ומבולגן.
+ * קטלוג לתצוגה אחרי שחזור: קבוצה/קטגוריה/מוצר פעם אחת לפי שם.
+ * עותק בלי קבוצה מתאחד לעותק המקובץ באותו שם — אחרת מוצרים «יוצאים» מהקטגוריה.
  */
 export function buildProductsCatalogLayout(groups = [], categories = [], products = []) {
   const groupNameById = new Map();
   for (const group of groups || []) {
     const key = catalogNameKey(group);
-    groupNameById.set(group.id, key);
-    groupNameById.set(Number(group.id), key);
+    if (!key) continue;
     groupNameById.set(String(group.id), key);
+    const n = Number(group.id);
+    if (Number.isFinite(n)) groupNameById.set(String(n), key);
   }
   const groupNameOf = (gid) => {
     if (gid == null || gid === '') return '';
-    return groupNameById.get(gid)
-      || groupNameById.get(Number(gid))
-      || groupNameById.get(String(gid))
+    return groupNameById.get(String(gid))
+      || (Number.isFinite(Number(gid)) ? groupNameById.get(String(Number(gid))) : '')
       || '';
   };
-  const categoryKey = (cat) => `${catalogNameKey(cat)}|g:${groupNameOf(cat?.groupId)}`;
 
   const uniqueGroups = uniqueCatalogRows(
     groups,
     catalogNameKey,
-    (group) => (categories || []).filter((cat) => Number(cat.groupId) === Number(group.id)).length,
+    (group) => {
+      const cats = (categories || []).filter((cat) => idsEqual(cat.groupId, group.id));
+      const productCount = cats.reduce((n, cat) => n + countProductsForCategory(products, cat.id), 0);
+      return cats.length * 1000 + productCount;
+    },
   ).slice().sort(compareCategories);
 
-  const uniqueCats = uniqueCatalogRows(
+  const uniqueGroupByName = new Map(uniqueGroups.map((group) => [catalogNameKey(group), group]));
+  const groupByAnyId = new Map();
+  for (const group of uniqueGroups) rememberLayoutId(groupByAnyId, group.id, group);
+  for (const group of groups || []) {
+    const unique = uniqueGroupByName.get(catalogNameKey(group));
+    if (unique) rememberLayoutId(groupByAnyId, group.id, unique);
+  }
+
+  const categoryKey = (cat) => {
+    const name = catalogNameKey(cat);
+    const g = groupNameOf(cat.groupId);
+    return g ? `${name}|g:${g}` : `${name}|ungrouped`;
+  };
+  let uniqueCats = uniqueCatalogRows(
     categories,
     categoryKey,
-    (cat) => (products || []).filter((product) => Number(product.categoryId) === Number(cat.id)).length,
+    (cat) => {
+      const gName = groupNameOf(cat.groupId);
+      const uniqueGroup = gName ? uniqueGroupByName.get(gName) : null;
+      const onUniqueGroup = uniqueGroup && idsEqual(cat.groupId, uniqueGroup.id) ? 50000 : 0;
+      return countProductsForCategory(products, cat.id) + (gName ? 100000 : 0) + onUniqueGroup;
+    },
   );
+  const groupedCatsByName = new Map();
+  for (const cat of uniqueCats) {
+    if (categoryKey(cat).endsWith('|ungrouped')) continue;
+    const name = catalogNameKey(cat);
+    if (!groupedCatsByName.has(name)) groupedCatsByName.set(name, []);
+    groupedCatsByName.get(name).push(cat);
+  }
+  uniqueCats = uniqueCats.filter((cat) => {
+    if (!categoryKey(cat).endsWith('|ungrouped')) return true;
+    return !(groupedCatsByName.get(catalogNameKey(cat)) || []).length;
+  });
 
+  const assignedProductIds = new Set();
+  const categoryByAnyId = new Map();
   const uniqueCatObjects = uniqueCats.map((cat) => {
-    const key = categoryKey(cat);
-    const aliasIds = new Set(
-      (categories || [])
-        .filter((row) => categoryKey(row) === key)
-        .map((row) => Number(row.id))
-        .filter(Boolean),
-    );
-    const preferIds = (products || [])
-      .filter((product) => Number(product.categoryId) === Number(cat.id))
+    const aliases = aliasesForLayoutCategory(cat, categories, groupNameOf, groupedCatsByName);
+    const aliasHasId = (id) => aliases.some((row) => idsEqual(row.id, id));
+    const matched = (products || []).filter((product) => aliasHasId(product.categoryId));
+    for (const product of matched) assignedProductIds.add(String(product.id));
+    const preferIds = matched
+      .filter((product) => idsEqual(product.categoryId, cat.id))
       .map((product) => product.id);
-    const catProducts = uniqueProductsByName(
-      (products || []).filter((product) => aliasIds.has(Number(product.categoryId))),
-      { preferIds },
-    ).slice().sort(compareProducts);
-    return { ...cat, products: catProducts };
+    const catProducts = uniqueProductsByName(matched, { preferIds }).slice().sort(compareProducts);
+
+    const groupedAlias = aliases.find((row) => groupNameOf(row.groupId)) || cat;
+    const groupName = groupNameOf(groupedAlias.groupId);
+    const displayGroup = groupName ? uniqueGroupByName.get(groupName) : null;
+    const display = {
+      ...cat,
+      groupId: displayGroup?.id ?? (groupName ? groupedAlias.groupId : null),
+      products: catProducts,
+    };
+    rememberLayoutId(categoryByAnyId, display.id, display);
+    for (const row of aliases) rememberLayoutId(categoryByAnyId, row.id, display);
+    return display;
   });
 
-  const grouped = uniqueGroups.map((group) => {
-    const aliasIds = rowIdsWithSameName(groups, group.id);
-    return {
-      ...group,
-      categories: uniqueCatObjects
-        .filter((cat) => aliasIds.has(Number(cat.groupId)))
-        .sort(compareCategories),
-    };
-  });
-  const ungrouped = uniqueCatObjects.filter((cat) => !cat.groupId).sort(compareCategories);
+  const grouped = uniqueGroups.map((group) => ({
+    ...group,
+    categories: uniqueCatObjects
+      .filter((cat) => idsEqual(cat.groupId, group.id))
+      .sort(compareCategories),
+  }));
+  const groupedCatKeys = new Set(
+    grouped.flatMap((group) => group.categories.map((cat) => String(cat.id))),
+  );
+  const ungrouped = uniqueCatObjects
+    .filter((cat) => !groupedCatKeys.has(String(cat.id)))
+    .sort(compareCategories);
+  const displayedProductNames = new Set(
+    uniqueCatObjects.flatMap((cat) => (cat.products || []).map((product) => productNameKey(product.name)).filter(Boolean)),
+  );
+  const orphanProducts = uniqueProductsByName(
+    (products || []).filter((product) => product && !assignedProductIds.has(String(product.id))),
+  ).filter((product) => !displayedProductNames.has(productNameKey(product.name)));
+  if (orphanProducts.length) {
+    ungrouped.push({
+      id: 'orphans',
+      name: 'מוצרים ללא קטגוריה',
+      groupId: null,
+      synthetic: true,
+      products: orphanProducts.slice().sort(compareProducts),
+    });
+  }
   const allCategories = [...grouped.flatMap((group) => group.categories), ...ungrouped];
-  return { groups: grouped, ungrouped, allCategories };
+  return { groups: grouped, ungrouped, allCategories, categoryByAnyId, groupByAnyId };
+}
+
+/** מוצא קטגוריה בתצוגה לפי מזהה או שם — אחרי שחזור המספרים לא תואמים. */
+export function findLayoutCategory(layout, { categoryId, categoryName } = {}) {
+  const cats = (layout?.allCategories || []).filter((cat) => !cat.synthetic && cat.id !== 'orphans');
+  if (categoryId != null && categoryId !== '') {
+    const byId = cats.find((cat) => idsEqual(cat.id, categoryId));
+    if (byId) return byId;
+    const alias = lookupLayoutId(layout.categoryByAnyId, categoryId);
+    if (alias) return alias;
+  }
+  const nameKey = catalogNameKey({ name: categoryName });
+  if (nameKey) {
+    const byName = cats.find((cat) => catalogNameKey(cat) === nameKey);
+    if (byName) return byName;
+  }
+  return null;
+}
+
+export function findLayoutGroup(layout, { groupId, groupName } = {}) {
+  const groups = layout?.groups || [];
+  if (groupId != null && groupId !== '') {
+    const byId = groups.find((group) => idsEqual(group.id, groupId));
+    if (byId) return byId;
+    const alias = lookupLayoutId(layout.groupByAnyId, groupId);
+    if (alias) return alias;
+  }
+  const nameKey = catalogNameKey({ name: groupName });
+  if (nameKey) {
+    const byName = groups.find((group) => catalogNameKey(group) === nameKey);
+    if (byName) return byName;
+  }
+  return null;
 }
 
 export async function getProductsCatalogLayout() {
@@ -6468,14 +6591,24 @@ export async function getFlowsForGroup(categoryGroupId) {
   return uniqueFlowsByName(flows).sort(compareFlows);
 }
 
-/** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
-export async function getAllFlowsOverview() {
-  const [flows, steps, categories, groups] = await Promise.all([
-    db.flows.toArray(),
-    db.flowSteps.toArray(),
-    db.categories.toArray(),
-    db.categoryGroups.toArray(),
-  ]);
+function dropUnmatchedFlowCopies(flows) {
+  const named = new Map();
+  for (const flow of flows || []) {
+    const key = productNameKey(flow?.name);
+    if (!key) continue;
+    if (!named.has(key)) named.set(key, []);
+    named.get(key).push(flow);
+  }
+  return (flows || []).filter((flow) => {
+    if (flow?.targetLabel) return true;
+    const key = productNameKey(flow?.name);
+    const siblings = named.get(key) || [];
+    return siblings.filter((row) => row.targetLabel).length !== 1;
+  });
+}
+
+/** תזרימים לתצוגה: מזהה קטגוריה ישן מתורגם לקטלוג הייחודי, כפילות אחרי שחזור מוסתרת. */
+export function overviewFlowsFromRows(flows = [], steps = [], categories = [], groups = []) {
   const catMap = new Map();
   for (const cat of categories) {
     catMap.set(cat.id, cat);
@@ -6490,37 +6623,64 @@ export async function getAllFlowsOverview() {
   }
   const stepCounts = new Map();
   for (const s of steps) {
-    const fid = Number(s.flowId);
-    if (!fid) continue;
-    stepCounts.set(fid, (stepCounts.get(fid) || 0) + 1);
+    if (s.flowId == null || s.flowId === '') continue;
+    const keys = [s.flowId, String(s.flowId)];
+    const n = Number(s.flowId);
+    if (Number.isFinite(n) && n) keys.push(n);
+    for (const key of keys) {
+      stepCounts.set(key, (stepCounts.get(key) || 0) + 1);
+    }
   }
 
-  return uniqueFlowsByName(flows
-    .map((f) => {
-      const isCategory = !!f.categoryId;
-      const cat = isCategory ? (catMap.get(f.categoryId) || catMap.get(Number(f.categoryId))) : null;
-      const groupId = isCategory ? cat?.groupId : f.categoryGroupId;
-      const groupName = groupMap.get(groupId) || groupMap.get(Number(groupId)) || '';
-      const targetLabel = isCategory
-        ? (cat?.name || 'קטגוריה')
-        : (groupMap.get(f.categoryGroupId) || groupMap.get(Number(f.categoryGroupId)) || 'קבוצה');
-      return {
-        ...f,
-        targetType: isCategory ? 'category' : 'group',
-        targetLabel,
-        groupId: groupId || f.categoryGroupId || null,
-        categoryId: f.categoryId || null,
-        groupName,
-        stepCount: stepCounts.get(Number(f.id)) || 0,
-      };
-    }))
+  const layout = buildProductsCatalogLayout(groups, categories, []);
+  const mapped = (flows || []).map((f) => {
+    const isCategory = !!f.categoryId;
+    const cat = isCategory ? (catMap.get(f.categoryId) || catMap.get(Number(f.categoryId)) || catMap.get(String(f.categoryId))) : null;
+    const layoutCat = findLayoutCategory(layout, {
+      categoryId: f.categoryId,
+      categoryName: cat?.name,
+    });
+    const layoutGroup = findLayoutGroup(layout, {
+      groupId: isCategory ? (layoutCat?.groupId || cat?.groupId) : f.categoryGroupId,
+      groupName: isCategory ? undefined : (groupMap.get(f.categoryGroupId) || groupMap.get(Number(f.categoryGroupId))),
+    });
+    const groupId = isCategory ? (layoutCat?.groupId || cat?.groupId) : (layoutGroup?.id || f.categoryGroupId);
+    const groupName = layoutGroup?.name
+      || groupMap.get(groupId)
+      || groupMap.get(Number(groupId))
+      || '';
+    const targetLabel = isCategory
+      ? (layoutCat?.name || cat?.name || '')
+      : (layoutGroup?.name || groupMap.get(f.categoryGroupId) || groupMap.get(Number(f.categoryGroupId)) || '');
+    return {
+      ...f,
+      targetType: isCategory ? 'category' : 'group',
+      targetLabel,
+      groupId: groupId || f.categoryGroupId || null,
+      categoryId: layoutCat?.id || f.categoryId || null,
+      groupName,
+      stepCount: stepCounts.get(f.id) || stepCounts.get(Number(f.id)) || 0,
+    };
+  });
+  return dropUnmatchedFlowCopies(uniqueFlowsByName(mapped))
     .sort((a, b) => {
       const gCmp = (a.groupName || '').localeCompare(b.groupName || '', 'he');
       if (gCmp) return gCmp;
-      const tCmp = a.targetLabel.localeCompare(b.targetLabel, 'he');
+      const tCmp = (a.targetLabel || '').localeCompare(b.targetLabel || '', 'he');
       if (tCmp) return tCmp;
       return compareFlows(a, b);
     });
+}
+
+/** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
+export async function getAllFlowsOverview() {
+  const [flows, steps, categories, groups] = await Promise.all([
+    db.flows.toArray(),
+    db.flowSteps.toArray(),
+    db.categories.toArray(),
+    db.categoryGroups.toArray(),
+  ]);
+  return overviewFlowsFromRows(flows, steps, categories, groups);
 }
 
 export async function getFlow(flowId) {
@@ -9752,7 +9912,7 @@ export function uniqueProductsByName(products, { preferIds } = {}) {
   return [...byKey.values()];
 }
 
-function idsEqual(a, b) {
+export function idsEqual(a, b) {
   if (a == null || b == null || a === '' || b === '') return false;
   if (String(a) === String(b)) return true;
   const na = Number(a);

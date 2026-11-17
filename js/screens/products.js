@@ -7,7 +7,7 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
   getPortionPresetsForProduct,
-} from '../db.js?v=525';
+} from '../db.js?v=526';
 import {
   getProductDetail,
   buildProductProfileCompleteness,
@@ -33,12 +33,12 @@ import {
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
   portionMaterialDefaultWeightGrams,
-} from '../kitchen-db.js?v=525';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=525';
-import { openModal, closeModal } from '../modal.js?v=525';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=525';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=525';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=525';
+} from '../kitchen-db.js?v=526';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=526';
+import { openModal, closeModal } from '../modal.js?v=526';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=526';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=526';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=526';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -298,6 +298,25 @@ function renderCategoryCard(cat, catIndex, mode = 'build') {
     </div>`;
   }
 
+  if (cat.synthetic) {
+    return `
+    <div class="card category-card${isExpanded ? ' is-expanded' : ''}" data-category-id="${cat.id}">
+      <div class="section-header category-card-header">
+        <div class="category-header-start">
+          <button type="button" class="category-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}" aria-label="${isExpanded ? 'סגור מוצרים' : 'פתח מוצרים'} — ${escapeHtml(cat.name)}">
+            <span class="category-chevron" aria-hidden="true"></span>
+            <span class="category-chip cat-chip">${escapeHtml(cat.name)}</span>
+            <span class="category-summary">${cat.products.length} מוצרים</span>
+          </button>
+        </div>
+      </div>
+      <div class="category-products-area">
+        ${cat.products.length === 0
+    ? '<p class="category-products-empty">אין מוצרים</p>'
+    : `<div class="product-list" data-category-id="${cat.id}">${cat.products.map((p, i) => renderProductItem(p, i, mode)).join('')}</div>`}
+      </div>
+    </div>`;
+  }
   const unitPriceAttrs = `data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" data-price="${uniform?.price ?? ''}" data-price-unit="${uniform?.priceUnit ?? 'unit'}" data-count="${cat.products.length}"`;
   const unitPriceBtn = `<button type="button" class="btn btn-secondary btn-sm cat-unit-price-btn" ${unitPriceAttrs}>💰 מחיר אחיד</button>`;
   return `
@@ -594,7 +613,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=525');
+    const { navigate } = await import('../app.js?v=526');
     navigate('backup');
   });
 
@@ -1757,8 +1776,8 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     const id = Number(recipeId);
     if (!id) return;
     try {
-      const { requestOpenRecipe } = await import('./recipes.js?v=525');
-      const { navigateToWorkspace } = await import('../app.js?v=525');
+      const { requestOpenRecipe } = await import('./recipes.js?v=526');
+      const { navigateToWorkspace } = await import('../app.js?v=526');
       requestOpenRecipe(id);
       closeModal();
       await navigateToWorkspace('recipes', 'recipes');
@@ -1777,7 +1796,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-share-baking')?.addEventListener('click', async () => {
     try {
-      const { shareBakingForProduct } = await import('./recipes.js?v=525');
+      const { shareBakingForProduct } = await import('./recipes.js?v=526');
       const method = await shareBakingForProduct(productId);
       if (method === 'cancelled') return;
       if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
@@ -1799,7 +1818,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-allergens-recompute')?.addEventListener('click', async () => {
     try {
-      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=525');
+      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=526');
       const computed = await computeProductAllergensFromComposition(productId);
       const ids = new Set(sanitizeProductAllergenIds(computed.allergenIds));
       document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
@@ -1819,7 +1838,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     let allergens = [...document.querySelectorAll('.product-allergen-cb:checked')].map((cb) => cb.value);
     try {
       if (mode === 'auto') {
-        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=525');
+        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=526');
         const computed = await computeProductAllergensFromComposition(productId);
         allergens = sanitizeProductAllergenIds(computed.allergenIds);
       } else {
