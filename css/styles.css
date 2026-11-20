@@ -1498,6 +1498,64 @@ body {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
+  will-change: transform;
+}
+
+#main-content.ptr-active {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#ptr-indicator {
+  flex: 0 0 0;
+  height: 0;
+  overflow: visible;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 6;
+}
+
+#ptr-indicator .ptr-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.15s ease, transform 0.15s ease, background 0.15s ease;
+}
+
+#ptr-indicator.is-visible .ptr-inner {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+#ptr-indicator.is-ready .ptr-inner {
+  background: var(--primary-soft);
+}
+
+.ptr-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+}
+
+#ptr-indicator.is-syncing .ptr-spinner {
+  animation: ptr-spin 0.7s linear infinite;
+}
+
+@keyframes ptr-spin {
+  to { transform: rotate(360deg); }
 }
 
 .bottom-nav {

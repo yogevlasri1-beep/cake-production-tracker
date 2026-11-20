@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>בדיקת גלילה לרענון</title>
+  <link rel="stylesheet" href="../css/styles.css?v=546">
+  <style>
+    html, body { height: 100%; margin: 0; background: #f0f4f8; }
+    #app { position: relative; height: 100dvh; max-width: 420px; margin: 0 auto; display: flex; flex-direction: column; overflow: hidden; }
+    .app-header { flex-shrink: 0; }
+    #ptr-log { font-size: 0.85rem; color: #334155; margin: 0 0 12px; line-height: 1.45; }
+    .fake-row { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="app-header">
+      <div class="app-header-row">
+        <div class="app-header-titles">
+          <h1 id="page-title">גלילה לרענון</h1>
+          <p id="page-subtitle" class="subtitle">משוך למטה כמו באפליקציה</p>
+        </div>
+      </div>
+    </header>
+    <main id="main-content">
+      <p id="ptr-log">משוך את הרשימה למטה מלמעלה. אמור לרוץ: דחיפה ואז משיכה. בלי העלאת כל הדאטה.</p>
+      <div id="rows"></div>
+    </main>
+  </div>
+  <div id="modal-overlay" class="hidden"></div>
+  <script type="module">
+    import { installPullToRefresh } from '../js/pull-to-refresh.js?v=546';
+    import { planPullToRefresh } from '../js/sync/cloud-first.js?v=546';
+
+    const rows = document.getElementById('rows');
+    rows.innerHTML = Array.from({ length: 18 }, (_, i) => (
+      `<div class="fake-row">שורה ${i + 1} · ייצור לדוגמה</div>`
+    )).join('');
+
+    const log = document.getElementById('ptr-log');
+    window.__PTR_LAST__ = null;
+
+    installPullToRefresh({
+      scroller: document.getElementById('main-content'),
+      onRefresh: async () => {
+        const plan = planPullToRefresh({ online: true, supabaseConfigured: true });
+        const steps = [];
+        if (plan.flushFirst) steps.push('דחיפה');
+        if (plan.pullFull) steps.push('משיכה');
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        const result = {
+          ok: plan.run === true && plan.reseed === false,
+          steps,
+          reseed: plan.reseed,
+        };
+        window.__PTR_LAST__ = result;
+        log.textContent = result.ok
+          ? `עודכן: ${steps.join(' ואז ')}. לא הועלתה כל הדאטה.`
+          : 'לא רץ';
+        return { message: 'עודכן' };
+      },
+    });
+  </script>
+</body>
+</html>

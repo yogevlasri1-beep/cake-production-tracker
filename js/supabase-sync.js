@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=545';
+import { db, getSetting, setSetting } from './db.js?v=546';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=545';
+} from './supabase-backup.js?v=546';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=545';
+} from './sync/collections.js?v=546';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -52,6 +52,8 @@ import {
   PRODUCTION_PULL_INTERVAL_MS,
   RECENT_PRODUCTION_MIN_GAP_MS,
   planManualLiveSync,
+  planPullToRefresh,
+  formatManualLiveSyncToast,
   planProductionLabelPush,
   toCloudUpdatedAt,
   localDatabaseHasRecords,
@@ -78,19 +80,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=545';
+} from './sync/cloud-first.js?v=546';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=545';
+} from './sync/catalog-identity.js?v=546';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=545';
+} from './sync/category-groups-repair.js?v=546';
 import {
   RESTORED_RECIPE_CATEGORIES,
   planMissingRecipeCategoryRestore,
@@ -101,7 +103,7 @@ import {
   planAssignLocalRecipesToRestoredCategories,
   planRecipeCategoryHomeRemap,
   planExtraLocalRecipeCatalogRows,
-} from './sync/recipe-catalog-repair.js?v=545';
+} from './sync/recipe-catalog-repair.js?v=546';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -113,7 +115,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=545';
+} from './sync/restore-lock.js?v=546';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -123,15 +125,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=545';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=545';
+} from './sync/id-map.js?v=546';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=546';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=545';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=545';
+} from './auth.js?v=546';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=546';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -307,7 +309,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=545');
+    const { showToast } = await import('./utils.js?v=546');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -1282,6 +1284,8 @@ export {
   supplierCategoryCanonicalName,
   toCloudUpdatedAt,
   planManualLiveSync,
+  planPullToRefresh,
+  formatManualLiveSyncToast,
   planProductionLabelPush,
 };
 
@@ -3149,6 +3153,41 @@ async function restoreFrozenForThisDevice() {
 export async function flushIfNotRestoreFrozen() {
   if (await restoreFrozenForThisDevice()) return { flushed: 0, frozen: true };
   return flushSyncQueue();
+}
+
+/**
+ * «סנכרן עכשיו» / גלילה לרענון: דחיפת תור ואז משיכה מלאה.
+ * לא מעלה את כל הדאטה המקומית.
+ */
+export async function runManualLiveSync() {
+  const cfg = await getSupabaseBackupConfig();
+  const live = await getLiveSyncSettings();
+  const plan = planPullToRefresh({
+    online: typeof navigator === 'undefined' || navigator.onLine !== false,
+    restoreFrozen: await restoreFrozenForThisDevice(),
+    holdPulls: live.holdPulls === true,
+    supabaseConfigured: !!(cfg.supabaseUrl && cfg.anonKey),
+  });
+  if (!plan.run) {
+    const err = new Error(plan.message || 'הסנכרון לא רץ');
+    err.code = plan.reason;
+    throw err;
+  }
+  const syncPlan = planManualLiveSync(live);
+  if (syncPlan.reader) await ensureCloudJoinPull();
+  const pushed = plan.flushFirst && syncPlan.flushFirst
+    ? await flushSyncQueue()
+    : { flushed: 0 };
+  if (syncPlan.pullHistory) await ensureProductionHistoryPull();
+  const pulled = plan.pullFull && syncPlan.pullFull
+    ? await pullAllCollections({ full: true })
+    : { applied: 0 };
+  await flushSyncQueue();
+  return {
+    pushed: pushed.flushed || 0,
+    pulled: pulled.applied || 0,
+    reseed: false,
+  };
 }
 
 async function stampRestoreJoin(live, marker) {
