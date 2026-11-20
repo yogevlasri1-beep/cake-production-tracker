@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=537';
+import { db, getSetting, setSetting } from './db.js?v=538';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=537';
+} from './supabase-backup.js?v=538';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=537';
+} from './sync/collections.js?v=538';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -78,19 +78,27 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=537';
+} from './sync/cloud-first.js?v=538';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=537';
+} from './sync/catalog-identity.js?v=538';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=537';
+} from './sync/category-groups-repair.js?v=538';
+import {
+  RESTORED_RECIPE_CATEGORIES,
+  planMissingRecipeCategoryRestore,
+  planMissingRecipeGroupRestore,
+  planRecipeCategoryTwinRetarget,
+  planEnsureLiveRestoredRecipeCatalog,
+  planRecipeLocalCategoryRemap,
+} from './sync/recipe-catalog-repair.js?v=538';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -102,7 +110,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=537';
+} from './sync/restore-lock.js?v=538';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -112,15 +120,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=537';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=537';
+} from './sync/id-map.js?v=538';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=538';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=537';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=537';
+} from './auth.js?v=538';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=538';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -296,7 +304,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=537');
+    const { showToast } = await import('./utils.js?v=538');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2375,6 +2383,195 @@ async function runRepairMissingCategoryGroups() {
   return { restored, renamed, groupIds: [...touchedGroupIds] };
 }
 
+let lastRecipeCatalogRepairAt = 0;
+let recipeCatalogRepairInFlight = null;
+
+export async function repairMissingRecipeCatalog() {
+  if (isRunningAppTests()) return { restored: 0, reason: 'tests' };
+  if (recipeCatalogRepairInFlight) return recipeCatalogRepairInFlight;
+  const now = Date.now();
+  if (now - lastRecipeCatalogRepairAt < 8000) return { restored: 0, reason: 'debounced' };
+  recipeCatalogRepairInFlight = runRepairMissingRecipeCatalog()
+    .finally(() => {
+      recipeCatalogRepairInFlight = null;
+      lastRecipeCatalogRepairAt = Date.now();
+    });
+  return recipeCatalogRepairInFlight;
+}
+
+async function discardPendingRecipeCatalogDeletes() {
+  if (!db.syncQueue) return 0;
+  const names = new Set(['recipeGroups', 'recipeCategories']);
+  const queued = await db.syncQueue.where('status').anyOf('pending', 'error').toArray();
+  const drop = queued.filter((item) => names.has(item.collection) && item.type === 'delete');
+  if (!drop.length) return 0;
+  await db.syncQueue.bulkUpdate(drop.map((item) => ({ key: item.id, changes: { status: 'done' } })));
+  return drop.length;
+}
+
+async function patchLocalCatalogRow(existing, collection, payload) {
+  const patch = {};
+  if (payload.name && existing.name !== payload.name) patch.name = payload.name;
+  if ('sortOrder' in payload && existing.sortOrder !== payload.sortOrder) patch.sortOrder = payload.sortOrder;
+  if ('groupId' in payload && payload.groupId != null) {
+    const groupMeta = await getMetaBySyncId(payload.groupId);
+    const localGroupId = groupMeta?.collection === 'recipeGroups' ? Number(groupMeta.localKey) : existing.groupId;
+    if (localGroupId && existing.groupId !== localGroupId) patch.groupId = localGroupId;
+  }
+  if (Object.keys(patch).length) await db[collection].update(existing.id, patch);
+  return existing.id;
+}
+
+async function buildLocalCatalogInsert(collection, payload) {
+  const row = { name: payload.name, sortOrder: payload.sortOrder || 1 };
+  if (collection === 'recipeCategories' && payload.groupId) {
+    const groupMeta = await getMetaBySyncId(payload.groupId);
+    if (groupMeta?.collection === 'recipeGroups') row.groupId = Number(groupMeta.localKey);
+  }
+  if (collection === 'recipeGroups' && payload.linkedCategoryGroupId) {
+    row.linkedCategoryGroupId = payload.linkedCategoryGroupId;
+  }
+  return row;
+}
+
+async function ensureLocalCatalogRow(collection, syncId, payload) {
+  const meta = await getMetaBySyncId(syncId);
+  if (meta?.collection === collection) {
+    const localId = Number(meta.localKey);
+    const existing = Number.isFinite(localId) ? await db[collection].get(localId) : null;
+    if (existing) {
+      await patchLocalCatalogRow(existing, collection, payload);
+      if (meta.deletedAt) {
+        await upsertMeta({
+          collection,
+          localKey: meta.localKey,
+          syncId,
+          updatedAt: meta.updatedAt,
+          deletedAt: null,
+        });
+      }
+      return existing.id;
+    }
+    if (Number.isFinite(localId) && localId > 0) {
+      const row = await buildLocalCatalogInsert(collection, payload);
+      row.id = localId;
+      await db[collection].put(row);
+      await upsertMeta({
+        collection,
+        localKey: String(localId),
+        syncId,
+        updatedAt: meta.updatedAt || syncNowISO(),
+        deletedAt: null,
+      });
+      return localId;
+    }
+  }
+  const row = await buildLocalCatalogInsert(collection, payload);
+  const localId = await db[collection].add(row);
+  await ensureSyncId(collection, localId, { reuseSyncId: syncId });
+  return localId;
+}
+
+async function runRepairMissingRecipeCatalog() {
+  const cfg = await getSupabaseBackupConfig();
+  if (!cfg?.supabaseUrl || !cfg?.anonKey) return { restored: 0, reason: 'no-supabase' };
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { restored: 0, reason: 'offline' };
+  }
+  await discardPendingRecipeCatalogDeletes();
+  const [cloudGroups, cloudCategories, cloudRecipes] = await Promise.all([
+    fetchCloudCollectionRows(cfg, 'recipeGroups'),
+    fetchCloudCollectionRows(cfg, 'recipeCategories'),
+    fetchCloudCollectionRows(cfg, 'recipes'),
+  ]);
+  const cats = planMissingRecipeCategoryRestore({ cloudCategories, cloudRecipes });
+  const groups = planMissingRecipeGroupRestore({ cloudGroups, restoredCategories: cats });
+  const twins = planRecipeCategoryTwinRetarget(cloudRecipes);
+  const live = planEnsureLiveRestoredRecipeCatalog({ cloudGroups, cloudCategories });
+  const remaps = planRecipeLocalCategoryRemap(cloudRecipes);
+  if (!cats.length && !groups.length && !twins.length && !live.groups.length && !live.cats.length && !remaps.length) {
+    return { restored: 0, reason: 'none' };
+  }
+
+  applyingRemote = true;
+  let restored = 0;
+  const twinLocalIds = [];
+  try {
+    const localGroups = [...groups, ...live.groups];
+    const seenGroups = new Set();
+    for (const item of localGroups) {
+      if (seenGroups.has(item.groupId)) continue;
+      seenGroups.add(item.groupId);
+      await ensureLocalCatalogRow('recipeGroups', item.groupId, {
+        name: item.inferredName,
+        sortOrder: item.sortOrder,
+        linkedCategoryGroupId: item.linkedCategoryGroupId,
+      });
+      restored += 1;
+    }
+    const localCats = [...cats, ...live.cats];
+    const seenCats = new Set();
+    for (const item of localCats) {
+      if (seenCats.has(item.categoryId)) continue;
+      seenCats.add(item.categoryId);
+      const known = RESTORED_RECIPE_CATEGORIES[item.categoryId] || {};
+      await ensureLocalCatalogRow('recipeCategories', item.categoryId, {
+        name: item.inferredName,
+        sortOrder: item.sortOrder,
+        groupId: item.groupId || known.groupId,
+      });
+      restored += 1;
+    }
+    for (const item of twins) {
+      const meta = await getMetaBySyncId(item.recipeId);
+      if (meta?.collection !== 'recipes') continue;
+      const recipe = await db.recipes.get(Number(meta.localKey));
+      if (!recipe) continue;
+      const catMeta = await getMetaBySyncId(item.toCategoryId);
+      const localCatId = catMeta?.collection === 'recipeCategories' ? Number(catMeta.localKey) : null;
+      if (localCatId && recipe.categoryId !== localCatId) {
+        await db.recipes.update(recipe.id, { categoryId: localCatId });
+        twinLocalIds.push(recipe.id);
+      }
+    }
+    for (const item of remaps) {
+      const recipeMeta = await getMetaBySyncId(item.recipeId);
+      const catMeta = await getMetaBySyncId(item.categoryId);
+      if (recipeMeta?.collection !== 'recipes' || catMeta?.collection !== 'recipeCategories') continue;
+      const recipe = await db.recipes.get(Number(recipeMeta.localKey));
+      const want = Number(catMeta.localKey);
+      if (!recipe || !want || Number(recipe.categoryId) === want) continue;
+      await db.recipes.update(recipe.id, { categoryId: want });
+    }
+  } finally {
+    applyingRemote = false;
+  }
+  for (const item of groups) {
+    const meta = await getMetaBySyncId(item.groupId);
+    if (meta?.collection === 'recipeGroups') await enqueueUpsert('recipeGroups', Number(meta.localKey));
+  }
+  for (const item of cats) {
+    const meta = await getMetaBySyncId(item.categoryId);
+    if (meta?.collection === 'recipeCategories') await enqueueUpsert('recipeCategories', Number(meta.localKey));
+  }
+  for (const recipeId of twinLocalIds) {
+    await enqueueUpsert('recipes', recipeId);
+  }
+  if (groups.length || cats.length || twins.length) {
+    try { await flushSyncQueue(); } catch (err) {
+      console.warn('recipe catalog restore flush', err);
+    }
+  }
+  return {
+    restored,
+    categories: cats.length,
+    groups: groups.length,
+    twins: twins.length,
+    liveGroups: live.groups.length,
+    liveCats: live.cats.length,
+  };
+}
+
 async function runSeed({ force = false, stableIdIndex = null } = {}) {
   const live = await getLiveSyncSettings();
   if (live.seedDone && !force) return { seeded: 0, skipped: true };
@@ -3457,6 +3654,11 @@ export async function startLiveSync() {
     console.warn('production history pull', err);
   }
   live = await getLiveSyncSettings();
+  try {
+    await discardPendingRecipeCatalogDeletes();
+  } catch (err) {
+    console.warn('drop pending recipe catalog deletes', err);
+  }
 
   let pulledOk = false;
   let fullPulledOk = false;
@@ -3505,6 +3707,9 @@ export async function startLiveSync() {
         }
         try { await repairMissingCategoryGroups(); } catch (err) {
           console.warn('restore missing category groups', err);
+        }
+        try { await repairMissingRecipeCatalog(); } catch (err) {
+          console.warn('restore missing recipe catalog', err);
         }
       }
     } catch (err) {
@@ -3613,6 +3818,7 @@ export async function startLiveSync() {
   });
   ensureRecentProductionRepush().catch((err) => console.warn('recent production repush', err));
   repairMissingCategoryGroups().catch((err) => console.warn('restore missing category groups', err));
+  repairMissingRecipeCatalog().catch((err) => console.warn('restore missing recipe catalog', err));
 }
 
 /** Push only local rows that are not yet linked to a cloud syncId. */

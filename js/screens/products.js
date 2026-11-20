@@ -7,7 +7,7 @@ import {
   getProductsWithEntryStats, mergeSelectedProducts,
   getLinkedFlowsForProduct, getCandidateFlowsForProduct, setProductFlowLinks,
   getPortionPresetsForProduct,
-} from '../db.js?v=537';
+} from '../db.js?v=538';
 import {
   getProductDetail,
   buildProductProfileCompleteness,
@@ -33,12 +33,12 @@ import {
   getPackagingMaterials, syncProductPackagingToMaterial, computePackagingCostPerProduct,
   getPackagingKindLabel, getSuppliers,
   portionMaterialDefaultWeightGrams,
-} from '../kitchen-db.js?v=537';
-import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=537';
-import { openModal, closeModal } from '../modal.js?v=537';
-import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=537';
-import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=537';
-import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=537';
+} from '../kitchen-db.js?v=538';
+import { formatMoney, showToast, escapeHtml, productUnitLabel, productPriceUnitLabel, formatDecimal } from '../utils.js?v=538';
+import { openModal, closeModal } from '../modal.js?v=538';
+import { CATEGORY_COLOR_HEX, defaultColorForIndex } from '../chart.js?v=538';
+import { bindProductDragLists, bindCategoryDragList, bindCategoryGroupDragList } from '../product-drag.js?v=538';
+import { renderSheetsStatusHTML, bindSheetsStatusEvents } from '../sheets-flow.js?v=538';
 
 const EXPANDED_CATS_KEY = 'yitzurExpandedCategories';
 const EXPANDED_GROUPS_KEY = 'yitzurExpandedCategoryGroups';
@@ -613,7 +613,7 @@ export async function renderProducts(container) {
   });
 
   document.getElementById('open-backup-screen')?.addEventListener('click', async () => {
-    const { navigate } = await import('../app.js?v=537');
+    const { navigate } = await import('../app.js?v=538');
     navigate('backup');
   });
 
@@ -1776,8 +1776,8 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     const id = Number(recipeId);
     if (!id) return;
     try {
-      const { requestOpenRecipe } = await import('./recipes.js?v=537');
-      const { navigateToWorkspace } = await import('../app.js?v=537');
+      const { requestOpenRecipe } = await import('./recipes.js?v=538');
+      const { navigateToWorkspace } = await import('../app.js?v=538');
       requestOpenRecipe(id);
       closeModal();
       await navigateToWorkspace('recipes', 'recipes');
@@ -1796,7 +1796,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-share-baking')?.addEventListener('click', async () => {
     try {
-      const { shareBakingForProduct } = await import('./recipes.js?v=537');
+      const { shareBakingForProduct } = await import('./recipes.js?v=538');
       const method = await shareBakingForProduct(productId);
       if (method === 'cancelled') return;
       if (method === 'share') showToast('נפתח Share — אפשר לשלוח או להדפיס');
@@ -1818,7 +1818,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
 
   document.getElementById('product-allergens-recompute')?.addEventListener('click', async () => {
     try {
-      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=537');
+      const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=538');
       const computed = await computeProductAllergensFromComposition(productId);
       const ids = new Set(sanitizeProductAllergenIds(computed.allergenIds));
       document.querySelectorAll('.product-allergen-cb').forEach((cb) => {
@@ -1838,7 +1838,7 @@ function bindProductDetailModalEvents(container, productId, refreshModal) {
     let allergens = [...document.querySelectorAll('.product-allergen-cb:checked')].map((cb) => cb.value);
     try {
       if (mode === 'auto') {
-        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=537');
+        const { computeProductAllergensFromComposition } = await import('../kitchen-db.js?v=538');
         const computed = await computeProductAllergensFromComposition(productId);
         allergens = sanitizeProductAllergenIds(computed.allergenIds);
       } else {

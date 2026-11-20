@@ -1,11 +1,11 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=537';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=538';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=537';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=537';
-import { logAuditEvent } from './audit.js?v=537';
-import { markMetaDeleted } from './sync/id-map.js?v=537';
+} from './validators.js?v=538';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=538';
+import { logAuditEvent } from './audit.js?v=538';
+import { markMetaDeleted } from './sync/id-map.js?v=538';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1096,24 +1096,47 @@ export async function getRecipesCatalogLayout() {
       subRecipesByParent.get(parentId).push(enrichRecipeRow(r));
     }
   }
+  const orphans = [];
   for (const r of allRecipes) {
     if (r.parentRecipeId) continue;
-    const sub = map.get(r.categoryId);
+    const sub = map.get(r.categoryId)
+      || map.get(Number(r.categoryId))
+      || [...map.values()].find((s) => String(s.id) === String(r.categoryId));
     if (sub) {
       const entry = enrichRecipeRow(r);
       entry.subRecipes = (subRecipesByParent.get(r.id) || [])
         .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
       sub.recipes.push(entry);
+    } else {
+      orphans.push(enrichRecipeRow(r));
     }
   }
   for (const sub of map.values()) {
     sub.recipes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   }
   const allSubCategories = subCats.map((s) => map.get(s.id)).filter(Boolean);
+  if (orphans.length) {
+    orphans.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'he') || a.id - b.id);
+    allSubCategories.push({
+      id: '__uncategorized_recipes__',
+      name: 'ללא סיווג',
+      groupId: null,
+      recipes: orphans,
+    });
+  }
   const grouped = groups.map((group) => ({
     ...group,
-    categories: allSubCategories.filter((s) => Number(s.groupId) === Number(group.id)),
+    categories: allSubCategories.filter((s) => sameNumericId(s.groupId, group.id) || String(s.groupId) === String(group.id)),
   }));
+  const hanging = allSubCategories.filter((s) => !grouped.some((g) => g.categories.includes(s)));
+  if (hanging.length) {
+    grouped.push({
+      id: '__uncategorized_recipe_group__',
+      name: 'מתכונים בלי קטגוריה',
+      sortOrder: 999,
+      categories: hanging,
+    });
+  }
   return { groups: grouped, allSubCategories };
 }
 
