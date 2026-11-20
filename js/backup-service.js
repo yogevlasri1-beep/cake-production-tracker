@@ -1,15 +1,15 @@
 import {
   db, getSetting, setSetting, isDatabaseEmpty,
-} from './db.js?v=545';
+} from './db.js?v=546';
 import {
   createBackupPayload, formatBackupSummary, parseBackupFile, restoreBackupFromFile,
   restoreBackupPayload, describeBackupRestorePreview, countBackupRuns,
-} from './backup.js?v=545';
-import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=545';
-import { downloadBlob } from './download.js?v=545';
-import { ValidationError } from './validators.js?v=545';
-import { openModal, closeModal } from './modal.js?v=545';
-import { escapeHtml, showToast } from './utils.js?v=545';
+} from './backup.js?v=546';
+import { planRestoreBackupReplaceCloud } from './sync/cloud-first.js?v=546';
+import { downloadBlob } from './download.js?v=546';
+import { ValidationError } from './validators.js?v=546';
+import { openModal, closeModal } from './modal.js?v=546';
+import { escapeHtml, showToast } from './utils.js?v=546';
 import {
   pickDefaultBackupFolder as pickFolderBridge,
   writeBackupJsonToFolder,
@@ -19,7 +19,7 @@ import {
   pruneExternalBackupFiles,
   supportsFolderPicker,
   isNativeApp,
-} from './backup-folder-bridge.js?v=545';
+} from './backup-folder-bridge.js?v=546';
 import {
   uploadBackupToSupabase,
   listSupabaseBackups,
@@ -35,7 +35,7 @@ import {
   getBackupScopeId,
   isPrimaryBackupDevice,
   isThisPrimaryBackupDevice,
-} from './supabase-backup.js?v=545';
+} from './supabase-backup.js?v=546';
 import {
   MAX_PINNED_BACKUPS,
   MAX_ROTATING_LOCAL,
@@ -49,7 +49,7 @@ import {
   protectedBackupFileName,
   safetyKindForAction,
   selectBackupsToPrune,
-} from './backup-guard.js?v=545';
+} from './backup-guard.js?v=546';
 
 const SETTINGS_KEY = 'backupSettings';
 const FILE_HANDLE_KEY = 'backupFileHandle';
@@ -588,14 +588,14 @@ export async function getBackupStatus() {
   const driftWarning = catalogDriftWarning(catalogHealth, restorePoints.goods[0]);
   let duplicateWarning = null;
   try {
-    const { inspectLocalCatalogHealth, formatCatalogDuplicateWarning } = await import('./data-health.js?v=545');
+    const { inspectLocalCatalogHealth, formatCatalogDuplicateWarning } = await import('./data-health.js?v=546');
     duplicateWarning = formatCatalogDuplicateWarning(await inspectLocalCatalogHealth());
   } catch (err) {
     console.warn('catalog duplicate health', err);
   }
   let restoreModeWarning = null;
   try {
-    const { formatRestoreModeWarning } = await import('./sync/restore-lock.js?v=545');
+    const { formatRestoreModeWarning } = await import('./sync/restore-lock.js?v=546');
     restoreModeWarning = formatRestoreModeWarning(await getSetting('restoreLock'));
   } catch (err) {
     console.warn('restore mode warning', err);
@@ -615,7 +615,7 @@ export async function getBackupStatus() {
   const isPrimaryDevice = isPrimaryBackupDevice(supabaseConfig);
   let liveSync = null;
   try {
-    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=545');
+    const { getLiveSyncStatus } = await import('./supabase-sync.js?v=546');
     liveSync = await getLiveSyncStatus();
   } catch (err) {
     console.warn('live sync status', err);
@@ -682,7 +682,7 @@ export async function runRestoreToComputerAndCloud(data, { onProgress } = {}) {
     startLiveSync,
     acquireRestoreLock,
     releaseRestoreLock,
-  } = await import('./supabase-sync.js?v=545');
+  } = await import('./supabase-sync.js?v=546');
   onProgress?.('שומר נקודת ביטחון...');
   try {
     await saveSafetySnapshot('restore');

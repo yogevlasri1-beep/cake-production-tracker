@@ -10,9 +10,9 @@ import {
   openGoogleSheet,
   extractSheetId,
   sheetsSetupInstructions,
-} from './google-sheets.js?v=545';
-import { showToast, escapeHtml } from './utils.js?v=545';
-import { openModal, closeModal } from './modal.js?v=545';
+} from './google-sheets.js?v=546';
+import { showToast, escapeHtml } from './utils.js?v=546';
+import { openModal, closeModal } from './modal.js?v=546';
 
 export async function openSheetsSetupModal({ onSaved } = {}) {
   const cfg = await getSheetsConfig();

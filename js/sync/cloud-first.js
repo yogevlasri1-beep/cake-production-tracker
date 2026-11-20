@@ -99,6 +99,88 @@ export function planManualLiveSync({ cloudFirst, cutoverDevice } = {}) {
   return { reader, flushFirst: true, pullFull: true, pullHistory: reader };
 }
 
+/** כמה למשוך למטה לפני שחרור לסנכרון. */
+export const PULL_TO_REFRESH_THRESHOLD_PX = 72;
+
+export function pullToRefreshRubberPx(dy, { maxPx = 96 } = {}) {
+  const raw = Math.max(0, Number(dy) || 0);
+  return Math.min(maxPx, Math.round(raw * 0.45));
+}
+
+/**
+ * גלילה לרענון = אותו מסלול כמו «סנכרן עכשיו».
+ * אף פעם לא «העלה את כל הדאטה המקומית».
+ */
+export function planPullToRefresh({
+  online = true,
+  restoreFrozen = false,
+  holdPulls = false,
+  busy = false,
+  supabaseConfigured = true,
+} = {}) {
+  if (busy === true) return { run: false, reason: 'busy', reseed: false, flushFirst: false, pullFull: false };
+  if (online !== true) {
+    return {
+      run: false, reason: 'offline', reseed: false, flushFirst: false, pullFull: false,
+      message: 'אין חיבור',
+    };
+  }
+  if (supabaseConfigured !== true) {
+    return {
+      run: false, reason: 'no-supabase', reseed: false, flushFirst: false, pullFull: false,
+      message: 'אין חיבור לענן',
+    };
+  }
+  if (restoreFrozen === true) {
+    return {
+      run: false, reason: 'restore', reseed: false, flushFirst: false, pullFull: false,
+      message: 'שחזור פעיל — הסנכרון עצור',
+    };
+  }
+  if (holdPulls === true) {
+    return {
+      run: false, reason: 'hold', reseed: false, flushFirst: false, pullFull: false,
+      message: 'הסנכרון מושהה',
+    };
+  }
+  return {
+    run: true,
+    reason: 'ok',
+    reseed: false,
+    flushFirst: true,
+    pullFull: true,
+    message: 'מסנכרן…',
+  };
+}
+
+export function planPullToRefreshGesture({
+  scrollTop = 0,
+  nestedScrollTop = 0,
+  dy = 0,
+  tracking = false,
+  thresholdPx = PULL_TO_REFRESH_THRESHOLD_PX,
+  modalOpen = false,
+  drawerOpen = false,
+  inputFocused = false,
+} = {}) {
+  if (modalOpen || drawerOpen || inputFocused) {
+    return { armed: false, release: false, pullPx: 0 };
+  }
+  const atTop = (Number(scrollTop) || 0) <= 1 && (Number(nestedScrollTop) || 0) <= 1;
+  if (!atTop) return { armed: false, release: false, pullPx: 0 };
+  if (!tracking) return { armed: true, release: false, pullPx: 0 };
+  const pullPx = pullToRefreshRubberPx(dy);
+  return {
+    armed: true,
+    release: (Number(dy) || 0) >= thresholdPx,
+    pullPx,
+  };
+}
+
+export function formatManualLiveSyncToast({ pushed = 0, pulled = 0 } = {}) {
+  return `סונכרן ✓ · נדחפו ${Number(pushed) || 0} · התקבלו ${Number(pulled) || 0}`;
+}
+
 /**
  * חותמת לענן: זמן העריכה המקומית, לא רגע הדחיפה.
  * דחיפה שתמיד שמה «עכשיו» הפכה תור ישן לכתיבה חדשה ודרסה מחיר שעודכן במכשיר אחר.

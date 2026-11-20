@@ -1,5 +1,5 @@
 /* Service Worker — offline: מטמון קודם ל-shell, רשת ברקע לעדכונים */
-const VERSION = '545';
+const VERSION = '546';
 const CACHE = `yitzur-v${VERSION}`;
 
 function v(path) {
@@ -14,6 +14,7 @@ const PRECACHE = [
   v('./js/vendor/dexie.min.js'),
   v('./js/vendor/chart.umd.min.js'),
   v('./js/app.js'),
+  v('./js/pull-to-refresh.js'),
   v('./js/version.js'),
   v('./js/db.js'),
   v('./js/utils.js'),
@@ -29,6 +30,7 @@ const PRECACHE = [
   v('./js/fetch-timeout.js'),
   v('./js/permissions.js'),
   v('./js/sync/collections.js'),
+  v('./js/sync/cloud-first.js'),
   v('./js/sync/restore-lock.js'),
   v('./js/sync/catalog-identity.js'),
   v('./js/sync/category-groups-repair.js'),
