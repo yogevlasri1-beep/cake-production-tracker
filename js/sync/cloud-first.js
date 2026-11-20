@@ -420,7 +420,7 @@ export function planCloudJoin({ cloudFirst, cutoverDevice, joinPullDone } = {}) 
 
 /** סימן בענן אחרי שחזור JSON — מכשירים אחרים מחליפים את העותק הישן מהענן. */
 export const CLOUD_RESTORE_KEY = 'cloudRestore';
-export const CLOUD_RESTORE_PULL_VERSION = 1;
+export const CLOUD_RESTORE_PULL_VERSION = 2;
 
 export function cloudRestoreMarkerPresent(value) {
   return !!(value && typeof value === 'object' && value.at);
@@ -429,7 +429,7 @@ export function cloudRestoreMarkerPresent(value) {
 /**
  * אחרי שחזור: מכשיר אחר לא שולח את העותק הישן. הוא מושך את הענן ומנקה עודפים.
  * מכשיר השחזור עצמו רק מסמן שכבר עודכן.
- * בלי סימן בענן — גרסת משיכה חדשה מריצה את אותו צעד פעם אחת (השחזור מ-9.11).
+ * בלי סימן בענן — גרסת משיכה חדשה מריצה את אותו צעד פעם אחת (השחזור מגיבוי 9.11).
  */
 export function planRestoreJoin({
   restorePullVersion = 0,

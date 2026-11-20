@@ -33,21 +33,21 @@ import {
   computePricePerKg, pickHighestPricedMaterial, pickRecipeDefaultMaterial,
   materialMatchesSearch, getMaterialSynonyms, getMaterialEffectivePricePerKg, isFreeMaterial,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=541';
-import { getProducts, getProductsCatalogLayout } from '../db.js?v=541';
-import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=541';
-import { renderRecipesMachines } from '../recipes-machines.js?v=541';
-import { renderRecipesPortions } from '../recipes-portions.js?v=541';
-import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=541';
-import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=541';
-import { escapeHtml, showToast, formatMoney } from '../utils.js?v=541';
-import { openModal, closeModal } from '../modal.js?v=541';
-import { getCurrentUserRole } from '../auth.js?v=541';
-import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=541';
+} from '../kitchen-db.js?v=542';
+import { getProducts, getProductsCatalogLayout } from '../db.js?v=542';
+import { parseRecipesFromDocxFile, buildRecipeBookHtml, buildRecipeBookTocHTML, renderRecipeBookItemHTML } from '../recipe-import.js?v=542';
+import { renderRecipesMachines } from '../recipes-machines.js?v=542';
+import { renderRecipesPortions } from '../recipes-portions.js?v=542';
+import { buildRatioPrintHtml, printRatioHtml } from '../ratio-print.js?v=542';
+import { buildBakingPrintHtml, shareBakingHtml } from '../baking-print.js?v=542';
+import { escapeHtml, showToast, formatMoney } from '../utils.js?v=542';
+import { openModal, closeModal } from '../modal.js?v=542';
+import { getCurrentUserRole } from '../auth.js?v=542';
+import { canAccessRecipeTab, canEditRecipes, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=542';
 import {
   bindRecipeDragLists, bindCategoryDragList, bindCategoryGroupDragList,
-} from '../product-drag.js?v=541';
-import { defaultColorForIndex } from '../chart.js?v=541';
+} from '../product-drag.js?v=542';
+import { defaultColorForIndex } from '../chart.js?v=542';
 
 const EXPANDED_RECIPE_GROUPS_KEY = 'yitzurExpandedRecipeGroups';
 const EXPANDED_RECIPE_CATS_KEY = 'yitzurExpandedRecipeCategories';
@@ -125,9 +125,13 @@ function filterRecipeLayout(layout, query) {
   return { ...layout, groups, allSubCategories: layout.allSubCategories };
 }
 
+function recipeExpandKey(id) {
+  return String(id ?? '');
+}
+
 function loadExpandedRecipeGroups() {
   try {
-    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_RECIPE_GROUPS_KEY) || '[]').map(Number));
+    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_RECIPE_GROUPS_KEY) || '[]').map(recipeExpandKey));
   } catch {
     return new Set();
   }
@@ -135,7 +139,7 @@ function loadExpandedRecipeGroups() {
 
 function loadExpandedRecipeCategories() {
   try {
-    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_RECIPE_CATS_KEY) || '[]').map(Number));
+    return new Set(JSON.parse(sessionStorage.getItem(EXPANDED_RECIPE_CATS_KEY) || '[]').map(recipeExpandKey));
   } catch {
     return new Set();
   }
@@ -228,7 +232,7 @@ function categoryChipStyle(color) {
 }
 
 function toggleRecipeGroupCard(card) {
-  const id = Number(card.dataset.groupId);
+  const id = recipeExpandKey(card.dataset.groupId);
   if (card.classList.toggle('is-expanded')) expandedRecipeGroups.add(id);
   else expandedRecipeGroups.delete(id);
   saveExpandedRecipeGroups();
@@ -237,7 +241,7 @@ function toggleRecipeGroupCard(card) {
 }
 
 function toggleRecipeCategoryCard(card) {
-  const id = Number(card.dataset.categoryId);
+  const id = recipeExpandKey(card.dataset.categoryId);
   if (card.classList.toggle('is-expanded')) expandedRecipeCategories.add(id);
   else expandedRecipeCategories.delete(id);
   saveExpandedRecipeCategories();
@@ -246,12 +250,26 @@ function toggleRecipeCategoryCard(card) {
 }
 
 function expandRecipeCategory(categoryId) {
-  expandedRecipeCategories.add(Number(categoryId));
+  expandedRecipeCategories.add(recipeExpandKey(categoryId));
   saveExpandedRecipeCategories();
 }
 
+function ensureRecipeCatalogExpanded(layout) {
+  if (expandedRecipeGroups.size || expandedRecipeCategories.size) return;
+  for (const group of layout?.groups || []) {
+    const n = (group.categories || []).reduce((sum, cat) => sum + (cat.recipes || []).length, 0);
+    if (!n) continue;
+    expandedRecipeGroups.add(recipeExpandKey(group.id));
+    for (const cat of group.categories || []) {
+      if ((cat.recipes || []).length) expandedRecipeCategories.add(recipeExpandKey(cat.id));
+    }
+  }
+  if (expandedRecipeGroups.size) saveExpandedRecipeGroups();
+  if (expandedRecipeCategories.size) saveExpandedRecipeCategories();
+}
+
 function renderRecipeSubCategoryCard(cat, catIndex, mode = 'edit') {
-  const isExpanded = expandedRecipeCategories.has(cat.id);
+  const isExpanded = expandedRecipeCategories.has(recipeExpandKey(cat.id));
   const color = defaultColorForIndex(cat.id);
   const browseClass = mode === 'browse' ? ' category-card--browse' : '';
   const hint = mode === 'browse'
@@ -295,7 +313,7 @@ function renderRecipeSubCategoryCard(cat, catIndex, mode = 'edit') {
 
 function renderRecipeGroupCard(group, groupIndex, mode = 'edit') {
   const totalRecipes = group.categories.reduce((s, c) => s + c.recipes.length, 0);
-  const isExpanded = expandedRecipeGroups.has(group.id);
+  const isExpanded = expandedRecipeGroups.has(recipeExpandKey(group.id));
   const color = defaultColorForIndex(group.id);
   const browseClass = mode === 'browse' ? ' category-group-card--browse' : '';
   const summary = mode === 'browse'
@@ -453,6 +471,8 @@ export async function renderRecipes(container) {
     const productMap = new Map(products.map((p) => [p.id, p]));
     return renderRecipeBook(container, { groups: layout.groups, allSubs: layout.allSubCategories, productMap, productCatalog });
   }
+
+  ensureRecipeCatalogExpanded(layout);
 
   if (tab === 'browse') return renderRecipesBrowse(container, { layout, productCatalog });
   if (tab === 'edit') return renderRecipesEdit(container, { layout, productCatalog });
@@ -621,7 +641,7 @@ async function renderRecipesEdit(container, { layout, productCatalog }) {
 
   container.querySelectorAll('.add-recipe').forEach((btn) => {
     btn.addEventListener('click', () => {
-      expandRecipeCategory(Number(btn.dataset.cat));
+      expandRecipeCategory(btn.dataset.cat);
       openNewRecipeBuilder(container, {
         layout,
         productCatalog,
@@ -1484,7 +1504,7 @@ function openSubCategoryForm(container, groups) {
     try {
       await addRecipeSubCategory({ groupId, name, linkedCategoryId: null });
       closeModal();
-      expandedRecipeGroups.add(groupId);
+      expandedRecipeGroups.add(recipeExpandKey(groupId));
       saveExpandedRecipeGroups();
       showToast('נוסף ✓');
       renderRecipes(container);
@@ -2614,9 +2634,9 @@ async function openIngredientMaterialInSuppliers(mat) {
     return;
   }
   try {
-    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=541');
+    const { requestOpenSupplierMaterial } = await import('./suppliers.js?v=542');
     requestOpenSupplierMaterial(mat.id);
-    const { navigateToWorkspace } = await import('../app.js?v=541');
+    const { navigateToWorkspace } = await import('../app.js?v=542');
     await navigateToWorkspace('suppliers', 'suppliers');
   } catch (err) {
     showToast(err.message || 'לא ניתן לפתוח בספקים');
