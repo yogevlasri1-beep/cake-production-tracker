@@ -345,12 +345,23 @@ export function assignOrphanRecipesToCategories(orphans = [], groups = [], subCa
 }
 
 export function filterRestoredRecipeCatalogLayout(groups = []) {
-  return (groups || []).flatMap((group) => {
+  const userGroups = (groups || []).flatMap((group) => {
     if (!group || String(group.id || '').startsWith('__')) return [];
     if (!isUserRecipeGroupName(group.name)) return [];
     const categories = (group.categories || []).filter((cat) => (
       cat && !String(cat.id || '').startsWith('__') && isUserRecipeCategoryName(cat.name)
     ));
+    return [{ ...group, categories }];
+  });
+  if (userGroups.some((group) => (group.categories || []).some((cat) => (cat.recipes || []).length))) {
+    return userGroups;
+  }
+  return (groups || []).flatMap((group) => {
+    if (!group || String(group.id || '').startsWith('__')) return [];
+    const categories = (group.categories || []).filter((cat) => (
+      cat && !String(cat.id || '').startsWith('__') && (cat.recipes || []).length
+    ));
+    if (!categories.length) return [];
     return [{ ...group, categories }];
   });
 }
