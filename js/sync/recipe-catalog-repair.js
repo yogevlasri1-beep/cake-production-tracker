@@ -33,7 +33,7 @@ export const RESTORED_RECIPE_GROUPS = {
 
 /** רק מה שהמשתמש הגדיר — בלי ברירות מחדל של האפליקציה. */
 export const USER_RECIPE_GROUP_NAMES = new Set(['מפעל', 'שטרודל', 'רונדו ליין', 'בחושות', 'ייבוא Word']);
-export const USER_RECIPE_CATEGORY_NAMES = new Set(['בצק', 'מילית', 'תוספות', 'תוספת לשטרודל', 'ראשי', 'ללא סיווג', 'בחושות']);
+export const USER_RECIPE_CATEGORY_NAMES = new Set(['בצק', 'מילית', 'תוספות', 'תוספת לשטרודל', 'ראשי', 'ללא סיווג']);
 
 /** איפה כל קטגוריה ישבה בגיבוי מ-9.11 — בלי להמציא שמות. */
 export const RECIPE_CATEGORY_HOME_GROUP = {
@@ -254,25 +254,23 @@ export function planEnsureLiveRestoredRecipeCatalog({
 } = {}) {
   const liveGroups = new Map((cloudGroups || []).filter((row) => row && !row.deleted_at && row.id).map((row) => [String(row.id), row]));
   const liveCats = new Map((cloudCategories || []).filter((row) => row && !row.deleted_at && row.id).map((row) => [String(row.id), row]));
-  const groups = Object.entries(RESTORED_RECIPE_GROUPS).flatMap(([id, known]) => {
+  const groups = Object.entries(RESTORED_RECIPE_GROUPS).map(([id, known]) => {
     const row = liveGroups.get(id);
-    if (!row) return [];
-    return [{
+    return {
       groupId: id,
       inferredName: rowName(row) || known.name,
-      sortOrder: known.sortOrder || Number(row.payload?.sortOrder) || 1,
-      linkedCategoryGroupId: known.linkedCategoryGroupId ?? row.payload?.linkedCategoryGroupId ?? null,
-    }];
+      sortOrder: known.sortOrder || Number(row?.payload?.sortOrder) || 1,
+      linkedCategoryGroupId: known.linkedCategoryGroupId ?? row?.payload?.linkedCategoryGroupId ?? null,
+    };
   });
-  const cats = Object.entries(RESTORED_RECIPE_CATEGORIES).flatMap(([id, known]) => {
+  const cats = Object.entries(RESTORED_RECIPE_CATEGORIES).map(([id, known]) => {
     const row = liveCats.get(id);
-    if (!row) return [];
-    return [{
+    return {
       categoryId: id,
       inferredName: rowName(row) || known.name,
-      groupId: row.payload?.groupId || known.groupId,
-      sortOrder: known.sortOrder || Number(row.payload?.sortOrder) || 1,
-    }];
+      groupId: row?.payload?.groupId || known.groupId,
+      sortOrder: known.sortOrder || Number(row?.payload?.sortOrder) || 1,
+    };
   });
   return { groups, cats };
 }
@@ -388,7 +386,7 @@ export function foldRecipeCatalogLayout(groups = []) {
   for (const cat of allCats) {
     const remaining = [];
     for (const recipe of cat.recipes || []) {
-      const targetName = canonicalUserCategoryName(cat.name) || categoryNameForRecipe(recipe?.name);
+      const targetName = categoryNameForRecipe(recipe?.name) || canonicalUserCategoryName(cat.name);
       const target = pickPreferredRecipeSubCategory(targetName, cloned, allCats);
       if (target && catalogRowKey(target.id) !== catalogRowKey(cat.id)) {
         if (!Array.isArray(target.recipes)) target.recipes = [];
@@ -476,6 +474,37 @@ function sameCatalogId(a, b) {
   return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
 }
 
+export function injectMissingRestoredCatalog(groups = [], categories = []) {
+  const nextGroups = [...(groups || [])];
+  for (const [id, known] of Object.entries(RESTORED_RECIPE_GROUPS)) {
+    if (nextGroups.some((group) => String(group.id) === id || String(group.name || '').trim() === known.name)) {
+      continue;
+    }
+    nextGroups.push({
+      id,
+      name: known.name,
+      sortOrder: known.sortOrder,
+      linkedCategoryGroupId: known.linkedCategoryGroupId,
+      categories: [],
+    });
+  }
+  const nextCats = [...(categories || [])];
+  const groupByName = new Map(nextGroups.map((group) => [String(group.name || '').trim(), group]));
+  for (const [id, known] of Object.entries(RESTORED_RECIPE_CATEGORIES)) {
+    if (nextCats.some((cat) => String(cat.name || '').trim() === known.name)) continue;
+    const home = RESTORED_RECIPE_GROUPS[known.groupId];
+    const group = home ? groupByName.get(home.name) : null;
+    nextCats.push({
+      id,
+      name: known.name,
+      groupId: group?.id || known.groupId,
+      sortOrder: known.sortOrder,
+      recipes: [],
+    });
+  }
+  return { groups: nextGroups, categories: nextCats };
+}
+
 export function attachRecipeCategoriesToGroups(groups = [], categories = []) {
   const cloned = (groups || []).map((group) => ({ ...group, categories: [] }));
   const byName = new Map();
@@ -526,8 +555,13 @@ export function countLayoutRecipes(groups = []) {
 }
 
 export function buildRecipesCatalogLayout({ groups = [], categories = [] } = {}) {
-  const attached = attachRecipeCategoriesToGroups(groups, categories);
+  const filled = injectMissingRestoredCatalog(groups, categories);
+  const attached = attachRecipeCategoriesToGroups(filled.groups, filled.categories);
   for (const group of attached) {
+    (group.categories || []).sort((a, b) => (
+      (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+      || String(a.name || '').localeCompare(String(b.name || ''), 'he')
+    ));
     for (const cat of group.categories || []) {
       cat.recipes = dedupeLayoutRecipes(cat.recipes);
     }
