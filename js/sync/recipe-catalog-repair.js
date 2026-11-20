@@ -304,8 +304,16 @@ export function isUserRecipeCategoryName(name) {
   return USER_RECIPE_CATEGORY_NAMES.has(String(name || '').trim());
 }
 
+export function canonicalUserCategoryName(name) {
+  const n = String(name || '').trim();
+  if (n === 'תוספת') return 'תוספת לשטרודל';
+  if (n === 'אחר') return 'ללא סיווג';
+  if (USER_RECIPE_CATEGORY_NAMES.has(n)) return n;
+  return categoryNameForRecipe(n);
+}
+
 export function pickPreferredRecipeSubCategory(categoryName, groups = [], subCategories = []) {
-  const wanted = String(categoryName || '').trim();
+  const wanted = canonicalUserCategoryName(categoryName) || String(categoryName || '').trim();
   if (!wanted || !isUserRecipeCategoryName(wanted)) return null;
   const matches = (subCategories || []).filter((sub) => (
     sub
@@ -344,8 +352,50 @@ export function assignOrphanRecipesToCategories(orphans = [], groups = [], subCa
   return [];
 }
 
+function cloneCatalogGroups(groups = []) {
+  return (groups || []).map((group) => ({
+    ...group,
+    categories: (group.categories || []).map((cat) => ({
+      ...cat,
+      recipes: [...(cat.recipes || [])],
+    })),
+  }));
+}
+
+function recipeRowKey(row) {
+  return String(row?.id ?? '');
+}
+
+function catalogRowKey(value) {
+  return String(value ?? '');
+}
+
+/** מעביר מתכונים מקטגוריות ברירת מחדל לקטגוריות שהמשתמש הגדיר, בלי להעלים מתכון. */
+export function foldRecipeCatalogLayout(groups = []) {
+  const cloned = cloneCatalogGroups(groups);
+  const allCats = cloned.flatMap((group) => group.categories || []);
+  for (const cat of allCats) {
+    const remaining = [];
+    for (const recipe of cat.recipes || []) {
+      const targetName = canonicalUserCategoryName(cat.name) || categoryNameForRecipe(recipe?.name);
+      const target = pickPreferredRecipeSubCategory(targetName, cloned, allCats);
+      if (target && catalogRowKey(target.id) !== catalogRowKey(cat.id)) {
+        if (!Array.isArray(target.recipes)) target.recipes = [];
+        if (!target.recipes.some((row) => recipeRowKey(row) === recipeRowKey(recipe))) {
+          target.recipes.push(recipe);
+        }
+      } else {
+        remaining.push(recipe);
+      }
+    }
+    cat.recipes = remaining;
+  }
+  return cloned;
+}
+
 export function filterRestoredRecipeCatalogLayout(groups = []) {
-  const userGroups = (groups || []).flatMap((group) => {
+  const folded = foldRecipeCatalogLayout(groups);
+  const userGroups = folded.flatMap((group) => {
     if (!group || String(group.id || '').startsWith('__')) return [];
     if (!isUserRecipeGroupName(group.name)) return [];
     const categories = (group.categories || []).filter((cat) => (
@@ -353,17 +403,33 @@ export function filterRestoredRecipeCatalogLayout(groups = []) {
     ));
     return [{ ...group, categories }];
   });
-  if (userGroups.some((group) => (group.categories || []).some((cat) => (cat.recipes || []).length))) {
-    return userGroups;
-  }
-  return (groups || []).flatMap((group) => {
+  const shown = new Set(
+    userGroups.flatMap((group) => (
+      (group.categories || []).flatMap((cat) => (cat.recipes || []).map((recipe) => recipeRowKey(recipe)))
+    )).filter(Boolean),
+  );
+  const leftover = folded.flatMap((group) => {
     if (!group || String(group.id || '').startsWith('__')) return [];
-    const categories = (group.categories || []).filter((cat) => (
-      cat && !String(cat.id || '').startsWith('__') && (cat.recipes || []).length
-    ));
+    if (isUserRecipeGroupName(group.name)) return [];
+    const categories = (group.categories || [])
+      .map((cat) => ({
+        ...cat,
+        recipes: (cat.recipes || []).filter((recipe) => recipe && !shown.has(recipeRowKey(recipe))),
+      }))
+      .filter((cat) => cat && !String(cat.id || '').startsWith('__') && (cat.recipes || []).length);
     if (!categories.length) return [];
     return [{ ...group, categories }];
   });
+  const result = userGroups.length ? [...userGroups, ...leftover] : leftover;
+  for (const group of result) {
+    for (const cat of group.categories || []) {
+      (cat.recipes || []).sort((a, b) => (
+        (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+        || String(a.name || '').localeCompare(String(b.name || ''), 'he')
+      ));
+    }
+  }
+  return result;
 }
 
 export function planExtraLocalRecipeCatalogRows({
@@ -371,21 +437,21 @@ export function planExtraLocalRecipeCatalogRows({
   localCategories = [],
   recipes = [],
 } = {}) {
-  const used = new Set((recipes || []).map((row) => Number(row.categoryId)).filter((id) => Number.isFinite(id) && id > 0));
+  const used = new Set((recipes || []).map((row) => catalogRowKey(row.categoryId)).filter(Boolean));
   const extraCats = (localCategories || []).filter((cat) => {
     if (!cat?.id) return false;
     if (isUserRecipeCategoryName(cat.name)) return false;
-    if (used.has(Number(cat.id))) return false;
+    if (used.has(catalogRowKey(cat.id))) return false;
     return true;
   });
-  const extraCatIds = new Set(extraCats.map((cat) => Number(cat.id)));
+  const extraCatIds = new Set(extraCats.map((cat) => catalogRowKey(cat.id)));
   const extraGroups = (localGroups || []).filter((group) => {
     if (!group?.id) return false;
     if (isUserRecipeGroupName(group.name)) return false;
     const keepChildren = (localCategories || []).filter((cat) => (
-      Number(cat.groupId) === Number(group.id) && !extraCatIds.has(Number(cat.id))
+      catalogRowKey(cat.groupId) === catalogRowKey(group.id) && !extraCatIds.has(catalogRowKey(cat.id))
     ));
-    if (keepChildren.some((cat) => used.has(Number(cat.id)) || isUserRecipeCategoryName(cat.name))) return false;
+    if (keepChildren.some((cat) => used.has(catalogRowKey(cat.id)) || isUserRecipeCategoryName(cat.name))) return false;
     return true;
   });
   return { extraGroups, extraCats };

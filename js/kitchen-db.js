@@ -1,15 +1,15 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=542';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=543';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=542';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=542';
-import { logAuditEvent } from './audit.js?v=542';
-import { markMetaDeleted } from './sync/id-map.js?v=542';
+} from './validators.js?v=543';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=543';
+import { logAuditEvent } from './audit.js?v=543';
+import { markMetaDeleted } from './sync/id-map.js?v=543';
 import {
   assignOrphanRecipesToCategories,
   filterRestoredRecipeCatalogLayout,
-} from './sync/recipe-catalog-repair.js?v=542';
+} from './sync/recipe-catalog-repair.js?v=543';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1051,15 +1051,15 @@ export async function getRecipesCatalogLayout() {
   });
   for (const r of allRecipes) {
     if (r.parentRecipeId) {
-      const parentId = Number(r.parentRecipeId);
+      const parentId = String(r.parentRecipeId);
       if (!subRecipesByParent.has(parentId)) subRecipesByParent.set(parentId, []);
       subRecipesByParent.get(parentId).push(enrichRecipeRow(r));
     }
   }
   const orphans = [];
   const attachSubRecipes = (entry) => {
-    entry.subRecipes = (subRecipesByParent.get(entry.id) || [])
-      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+    entry.subRecipes = (subRecipesByParent.get(String(entry.id)) || [])
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || String(a.id).localeCompare(String(b.id), 'he'));
     return entry;
   };
   for (const r of allRecipes) {
