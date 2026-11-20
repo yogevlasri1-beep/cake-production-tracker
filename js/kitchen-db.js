@@ -1,15 +1,15 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=543';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=544';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=543';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=543';
-import { logAuditEvent } from './audit.js?v=543';
-import { markMetaDeleted } from './sync/id-map.js?v=543';
+} from './validators.js?v=544';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=544';
+import { logAuditEvent } from './audit.js?v=544';
+import { markMetaDeleted } from './sync/id-map.js?v=544';
 import {
   assignOrphanRecipesToCategories,
-  filterRestoredRecipeCatalogLayout,
-} from './sync/recipe-catalog-repair.js?v=543';
+  buildRecipesCatalogLayout,
+} from './sync/recipe-catalog-repair.js?v=544';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -1079,10 +1079,10 @@ export async function getRecipesCatalogLayout() {
     sub.recipes.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
   }
   const allSubCategories = subCats.map((s) => map.get(s.id)).filter(Boolean);
-  const grouped = filterRestoredRecipeCatalogLayout(groups.map((group) => ({
-    ...group,
-    categories: allSubCategories.filter((s) => sameNumericId(s.groupId, group.id) || String(s.groupId) === String(group.id)),
-  })));
+  const grouped = buildRecipesCatalogLayout({
+    groups,
+    categories: allSubCategories,
+  });
   return {
     groups: grouped,
     allSubCategories: grouped.flatMap((group) => group.categories),

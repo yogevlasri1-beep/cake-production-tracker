@@ -420,7 +420,7 @@ export function planCloudJoin({ cloudFirst, cutoverDevice, joinPullDone } = {}) 
 
 /** סימן בענן אחרי שחזור JSON — מכשירים אחרים מחליפים את העותק הישן מהענן. */
 export const CLOUD_RESTORE_KEY = 'cloudRestore';
-export const CLOUD_RESTORE_PULL_VERSION = 3;
+export const CLOUD_RESTORE_PULL_VERSION = 4;
 
 export function cloudRestoreMarkerPresent(value) {
   return !!(value && typeof value === 'object' && value.at);

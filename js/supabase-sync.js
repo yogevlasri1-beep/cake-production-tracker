@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=543';
+import { db, getSetting, setSetting } from './db.js?v=544';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=543';
+} from './supabase-backup.js?v=544';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=543';
+} from './sync/collections.js?v=544';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -78,19 +78,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=543';
+} from './sync/cloud-first.js?v=544';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=543';
+} from './sync/catalog-identity.js?v=544';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=543';
+} from './sync/category-groups-repair.js?v=544';
 import {
   RESTORED_RECIPE_CATEGORIES,
   planMissingRecipeCategoryRestore,
@@ -99,8 +99,9 @@ import {
   planEnsureLiveRestoredRecipeCatalog,
   planRecipeLocalCategoryRemap,
   planAssignLocalRecipesToRestoredCategories,
+  planRecipeCategoryHomeRemap,
   planExtraLocalRecipeCatalogRows,
-} from './sync/recipe-catalog-repair.js?v=543';
+} from './sync/recipe-catalog-repair.js?v=544';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -112,7 +113,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=543';
+} from './sync/restore-lock.js?v=544';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -122,15 +123,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=543';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=543';
+} from './sync/id-map.js?v=544';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=544';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=543';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=543';
+} from './auth.js?v=544';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=544';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -306,7 +307,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=543');
+    const { showToast } = await import('./utils.js?v=544');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -2502,7 +2503,11 @@ async function runRepairMissingRecipeCatalog() {
     localCategories: db.recipeCategories ? await db.recipeCategories.toArray() : [],
     recipes: localRecipes,
   });
-  if (!cats.length && !groups.length && !twins.length && !live.groups.length && !live.cats.length && !remaps.length && !assignments.length && !extraAtStart.extraCats.length && !extraAtStart.extraGroups.length) {
+  const homesAtStart = planRecipeCategoryHomeRemap({
+    localGroups: db.recipeGroups ? await db.recipeGroups.toArray() : [],
+    localCategories: db.recipeCategories ? await db.recipeCategories.toArray() : [],
+  });
+  if (!cats.length && !groups.length && !twins.length && !live.groups.length && !live.cats.length && !remaps.length && !assignments.length && !extraAtStart.extraCats.length && !extraAtStart.extraGroups.length && !homesAtStart.length) {
     return { restored: 0, reason: 'none' };
   }
 
@@ -2565,17 +2570,29 @@ async function runRepairMissingRecipeCatalog() {
       await db.recipes.update(recipe.id, { categoryId: want });
       restored += 1;
     }
+    const homes = planRecipeCategoryHomeRemap({
+      localGroups: db.recipeGroups ? await db.recipeGroups.toArray() : [],
+      localCategories: db.recipeCategories ? await db.recipeCategories.toArray() : [],
+    });
+    for (const item of homes) {
+      await db.recipeCategories.update(item.categoryId, { groupId: item.groupId });
+      restored += 1;
+    }
     const extra = planExtraLocalRecipeCatalogRows({
       localGroups: db.recipeGroups ? await db.recipeGroups.toArray() : [],
       localCategories: db.recipeCategories ? await db.recipeCategories.toArray() : [],
       recipes: db.recipes ? await db.recipes.toArray() : [],
     });
     for (const cat of extra.extraCats) {
-      await db.recipeCategories.delete(Number(cat.id));
+      const extraCatId = Number(cat.id);
+      if (!Number.isFinite(extraCatId) || extraCatId <= 0) continue;
+      await db.recipeCategories.delete(extraCatId);
       restored += 1;
     }
     for (const group of extra.extraGroups) {
-      await db.recipeGroups.delete(Number(group.id));
+      const extraGroupId = Number(group.id);
+      if (!Number.isFinite(extraGroupId) || extraGroupId <= 0) continue;
+      await db.recipeGroups.delete(extraGroupId);
       restored += 1;
     }
   } finally {

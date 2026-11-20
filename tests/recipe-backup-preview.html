@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>בדיקת קטלוג מתכונים מגיבוי 9.11</title>
+  <style>
+    body { font-family: sans-serif; padding: 16px; background: #f8fafc; color: #0f172a; }
+    h1 { font-size: 20px; }
+    .ok { color: #047857; font-weight: 700; }
+    .bad { color: #b91c1c; font-weight: 700; }
+    .group { background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; margin: 12px 0; }
+    .cat { margin: 8px 0 8px 12px; }
+    li { margin: 2px 0; }
+  </style>
+</head>
+<body>
+  <h1>קטלוג מתכונים לפי גיבוי 9.11</h1>
+  <p id="summary">טוען…</p>
+  <div id="root"></div>
+  <script type="module">
+    import {
+      buildRecipesCatalogLayout,
+      countLayoutRecipes,
+    } from '../js/sync/recipe-catalog-repair.js?v=544';
+
+    const data = await fetch('./fixtures/nov9-recipe-layout.json').then((res) => res.json());
+    const layout = buildRecipesCatalogLayout(data);
+    const names = layout.flatMap((group) => (
+      (group.categories || []).flatMap((cat) => (cat.recipes || []).map((recipe) => recipe.name))
+    ));
+    const missing = data.uniqueWithIngs.filter((name) => !names.includes(name));
+    const count = countLayoutRecipes(layout);
+    const summary = document.getElementById('summary');
+    summary.className = missing.length ? 'bad' : 'ok';
+    summary.textContent = missing.length
+      ? `חסרים ${missing.length} מתכונים: ${missing.join(', ')}`
+      : `תקין: ${count} מתכונים כמו בגיבוי`;
+
+    document.getElementById('root').innerHTML = layout.map((group) => {
+      const cats = (group.categories || []).map((cat) => {
+        const recipes = (cat.recipes || []).map((recipe) => `<li>${recipe.name}</li>`).join('');
+        return `<div class="cat"><strong>${cat.name}</strong> (${(cat.recipes || []).length})<ul>${recipes}</ul></div>`;
+      }).join('');
+      return `<section class="group"><h2>${group.name}</h2>${cats || '<p>אין קטגוריות</p>'}</section>`;
+    }).join('');
+  </script>
+</body>
+</html>

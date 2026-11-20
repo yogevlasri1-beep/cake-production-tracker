@@ -33,7 +33,18 @@ export const RESTORED_RECIPE_GROUPS = {
 
 /** רק מה שהמשתמש הגדיר — בלי ברירות מחדל של האפליקציה. */
 export const USER_RECIPE_GROUP_NAMES = new Set(['מפעל', 'שטרודל', 'רונדו ליין', 'בחושות', 'ייבוא Word']);
-export const USER_RECIPE_CATEGORY_NAMES = new Set(['בצק', 'מילית', 'תוספות', 'תוספת לשטרודל', 'ראשי', 'ללא סיווג']);
+export const USER_RECIPE_CATEGORY_NAMES = new Set(['בצק', 'מילית', 'תוספות', 'תוספת לשטרודל', 'ראשי', 'ללא סיווג', 'בחושות']);
+
+/** איפה כל קטגוריה ישבה בגיבוי מ-9.11 — בלי להמציא שמות. */
+export const RECIPE_CATEGORY_HOME_GROUP = {
+  'בצק': 'מפעל',
+  'מילית': 'מפעל',
+  'תוספת לשטרודל': 'מפעל',
+  'תוספות': 'מפעל',
+  'בחושות': 'מפעל',
+  'ראשי': 'בחושות',
+  'ללא סיווג': 'ייבוא Word',
+};
 
 export const RESTORED_RECIPE_CATEGORIES = {
   '35b6399a-d7e9-4b1b-927d-1723c558e271': {
@@ -455,4 +466,92 @@ export function planExtraLocalRecipeCatalogRows({
     return true;
   });
   return { extraGroups, extraCats };
+}
+
+function sameCatalogId(a, b) {
+  if (a == null || b == null || a === '') return false;
+  if (String(a) === String(b)) return true;
+  const na = Number(a);
+  const nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) && na === nb;
+}
+
+export function attachRecipeCategoriesToGroups(groups = [], categories = []) {
+  const cloned = (groups || []).map((group) => ({ ...group, categories: [] }));
+  const byName = new Map();
+  for (const group of cloned) {
+    const name = String(group.name || '').trim();
+    if (isUserRecipeGroupName(name) && !byName.has(name)) byName.set(name, group);
+  }
+  for (const cat of categories || []) {
+    if (!cat || String(cat.id || '').startsWith('__')) continue;
+    let group = cloned.find((row) => sameCatalogId(row.id, cat.groupId));
+    if (!group) {
+      const home = RECIPE_CATEGORY_HOME_GROUP[canonicalUserCategoryName(cat.name) || String(cat.name || '').trim()];
+      group = home ? byName.get(home) : null;
+    }
+    if (!group) continue;
+    const existing = group.categories.find((row) => String(row.name || '').trim() === String(cat.name || '').trim());
+    if (existing) {
+      existing.recipes = [...(existing.recipes || []), ...(cat.recipes || [])];
+    } else {
+      group.categories.push({ ...cat, recipes: [...(cat.recipes || [])] });
+    }
+  }
+  return cloned;
+}
+
+export function dedupeLayoutRecipes(recipes = []) {
+  const seen = new Map();
+  for (const recipe of recipes || []) {
+    const key = recipeNameKey(recipe?.name);
+    if (!key) continue;
+    const prev = seen.get(key);
+    if (!prev) {
+      seen.set(key, recipe);
+      continue;
+    }
+    const score = (row) => (
+      (Array.isArray(row.subRecipes) ? row.subRecipes.length : 0) * 10
+      + (Array.isArray(row.linkedProductIds) ? row.linkedProductIds.length : 0)
+      + (String(row.notes || '').trim() ? 1 : 0)
+    );
+    if (score(recipe) > score(prev)) seen.set(key, recipe);
+  }
+  return [...seen.values()];
+}
+
+export function countLayoutRecipes(groups = []) {
+  return (groups || []).flatMap((group) => group.categories || []).flatMap((cat) => cat.recipes || []).length;
+}
+
+export function buildRecipesCatalogLayout({ groups = [], categories = [] } = {}) {
+  const attached = attachRecipeCategoriesToGroups(groups, categories);
+  for (const group of attached) {
+    for (const cat of group.categories || []) {
+      cat.recipes = dedupeLayoutRecipes(cat.recipes);
+    }
+  }
+  return filterRestoredRecipeCatalogLayout(attached);
+}
+
+export function planRecipeCategoryHomeRemap({ localGroups = [], localCategories = [] } = {}) {
+  const groupByName = new Map(
+    (localGroups || [])
+      .filter((group) => group && isUserRecipeGroupName(group.name))
+      .map((group) => [String(group.name || '').trim(), group]),
+  );
+  return (localCategories || []).flatMap((cat) => {
+    if (!cat?.id) return [];
+    const home = RECIPE_CATEGORY_HOME_GROUP[canonicalUserCategoryName(cat.name) || String(cat.name || '').trim()];
+    const group = home ? groupByName.get(home) : null;
+    if (!group) return [];
+    if (sameCatalogId(cat.groupId, group.id)) return [];
+    return [{
+      categoryId: cat.id,
+      groupId: group.id,
+      categoryName: cat.name,
+      groupName: group.name,
+    }];
+  });
 }

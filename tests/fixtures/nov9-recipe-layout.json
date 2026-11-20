@@ -1,0 +1,539 @@
+{
+  "groups": [
+    {
+      "id": 9,
+      "name": "מפעל",
+      "sortOrder": 1
+    },
+    {
+      "id": 28,
+      "name": "שטרודל",
+      "sortOrder": 2
+    },
+    {
+      "id": 29,
+      "name": "רונדו ליין",
+      "sortOrder": 3
+    },
+    {
+      "id": 30,
+      "name": "בחושות",
+      "sortOrder": 4
+    },
+    {
+      "id": 32,
+      "name": "ייבוא Word",
+      "sortOrder": 2
+    }
+  ],
+  "categories": [
+    {
+      "id": 34,
+      "name": "מילית",
+      "groupId": 9,
+      "sortOrder": 2,
+      "recipes": [
+        {
+          "id": 82,
+          "name": "מילוי תפוחים- עם סוכר",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 83,
+          "name": "מילוי תפוחים- ללא סוכר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 84,
+          "name": "מילוי פרג- עם סוכר",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 86,
+          "name": "מילוי פרג ללא סוכר",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 88,
+          "name": "מילוי גבינה מתוק- עם סוכר",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 89,
+          "name": "מילוי גבינה מתוק- ללא סוכר",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        },
+        {
+          "id": 112,
+          "name": "מילוי גבינה מתוק לקראנץ",
+          "sortOrder": 7,
+          "parentRecipeId": null
+        },
+        {
+          "id": 114,
+          "name": "מילוי פרג- עם סוכר לפרסבורגר/קראנץ",
+          "sortOrder": 8,
+          "parentRecipeId": null
+        },
+        {
+          "id": 120,
+          "name": "מילית תפו",
+          "sortOrder": 9,
+          "parentRecipeId": null
+        },
+        {
+          "id": 121,
+          "name": "גבינה מלוח",
+          "sortOrder": 10,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 10
+    },
+    {
+      "id": 35,
+      "name": "בצק",
+      "groupId": 9,
+      "sortOrder": 1,
+      "recipes": [
+        {
+          "id": 72,
+          "name": "בצק שטרודל",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 92,
+          "name": "בצק פרסבורגר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 94,
+          "name": "בצק שמרים קראנץ",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 95,
+          "name": "בצק שמרים מאפים",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 96,
+          "name": "בצק עלים",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 97,
+          "name": "בורקיטס",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        },
+        {
+          "id": 98,
+          "name": "בצק בייגל אמריקאי",
+          "sortOrder": 7,
+          "parentRecipeId": null
+        },
+        {
+          "id": 193,
+          "name": "בצק פריך",
+          "sortOrder": 8,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 8
+    },
+    {
+      "id": 38,
+      "name": "תוספת לשטרודל",
+      "groupId": 9,
+      "sortOrder": 4,
+      "recipes": [
+        {
+          "id": 74,
+          "name": "לקח לבן",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 75,
+          "name": "לקח לבן ללא סוכר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 76,
+          "name": "לקח קקאו(שחור)",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 77,
+          "name": "לקח קקאו ללא סוכר(שחור)",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 78,
+          "name": "תערובת שמנים- עם סוכר",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 80,
+          "name": "מילוי פירורים- עם סוכר",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 6
+    },
+    {
+      "id": 39,
+      "name": "תוספות",
+      "groupId": 9,
+      "sortOrder": 5,
+      "recipes": [
+        {
+          "id": 104,
+          "name": "שטרוייזל",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 110,
+          "name": "גלייז שוקולד",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 116,
+          "name": "מי סוכר",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 118,
+          "name": "רוגלך פלטת שוקולד",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 122,
+          "name": "שטרוייזל קקאו",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 5
+    },
+    {
+      "id": 54,
+      "name": "ראשי",
+      "groupId": 30,
+      "sortOrder": 1,
+      "recipes": [
+        {
+          "id": 100,
+          "name": "מאפינס וניל",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 102,
+          "name": "מאפינס תפוז",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 103,
+          "name": "מאפינס שוקולד",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 106,
+          "name": "עוגת דבש",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 108,
+          "name": "פלטה סולת",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 124,
+          "name": "פלטת גזר",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 6
+    },
+    {
+      "id": 55,
+      "name": "מילית",
+      "groupId": null,
+      "sortOrder": 2,
+      "recipes": [
+        {
+          "id": 172,
+          "name": "מילוי תפוחים- עם סוכר",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 173,
+          "name": "מילוי תפוחים- ללא סוכר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 174,
+          "name": "מילוי פרג- עם סוכר",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 175,
+          "name": "מילוי פרג ללא סוכר",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 176,
+          "name": "מילוי גבינה מתוק- עם סוכר",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 177,
+          "name": "מילוי גבינה מתוק- ללא סוכר",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        },
+        {
+          "id": 186,
+          "name": "מילוי גבינה מתוק לקראנץ",
+          "sortOrder": 7,
+          "parentRecipeId": null
+        },
+        {
+          "id": 187,
+          "name": "מילוי פרג- עם סוכר לפרסבורגר/קראנץ",
+          "sortOrder": 8,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 0
+    },
+    {
+      "id": 56,
+      "name": "בצק",
+      "groupId": null,
+      "sortOrder": 1,
+      "recipes": [
+        {
+          "id": 165,
+          "name": "בצק שטרודל",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 178,
+          "name": "בצק פרסבורגר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 179,
+          "name": "בצק שמרים קראנץ",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 180,
+          "name": "בצק שמרים מאפים",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 181,
+          "name": "בצק עלים",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 182,
+          "name": "בורקיטס",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        },
+        {
+          "id": 183,
+          "name": "בצק בייגל אמריקאי:",
+          "sortOrder": 7,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 0
+    },
+    {
+      "id": 57,
+      "name": "תוספת לשטרודל",
+      "groupId": null,
+      "sortOrder": 4,
+      "recipes": [
+        {
+          "id": 166,
+          "name": "לקח לבן",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 167,
+          "name": "לקח לבן ללא סוכר",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        },
+        {
+          "id": 168,
+          "name": "לקח קקאו(שחור)",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 169,
+          "name": "לקח קקאו ללא סוכר(שחור)",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 170,
+          "name": "תערובת שמנים- עם סוכר",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 171,
+          "name": "מילוי פירורים- עם סוכר",
+          "sortOrder": 6,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 0
+    },
+    {
+      "id": 58,
+      "name": "תוספות",
+      "groupId": null,
+      "sortOrder": 5,
+      "recipes": [
+        {
+          "id": 184,
+          "name": "שטרוייזל",
+          "sortOrder": 1,
+          "parentRecipeId": null
+        },
+        {
+          "id": 185,
+          "name": "גלייז שוקולד",
+          "sortOrder": 3,
+          "parentRecipeId": null
+        },
+        {
+          "id": 188,
+          "name": "מי סוכר",
+          "sortOrder": 4,
+          "parentRecipeId": null
+        },
+        {
+          "id": 189,
+          "name": "רוגלך פלטת שוקולד",
+          "sortOrder": 5,
+          "parentRecipeId": null
+        },
+        {
+          "id": 190,
+          "name": "שטרוייזל קקאו",
+          "sortOrder": 2,
+          "parentRecipeId": null
+        }
+      ],
+      "withIngs": 0
+    },
+    {
+      "id": 59,
+      "name": "ראשי",
+      "groupId": null,
+      "sortOrder": 1,
+      "recipes": [],
+      "withIngs": 0
+    },
+    {
+      "id": 60,
+      "name": "ללא סיווג",
+      "groupId": 32,
+      "sortOrder": 1,
+      "recipes": [],
+      "withIngs": 0
+    },
+    {
+      "id": 61,
+      "name": "בחושות",
+      "groupId": 9,
+      "sortOrder": 1,
+      "recipes": [],
+      "withIngs": 0
+    }
+  ],
+  "uniqueWithIngs": [
+    "בורקיטס",
+    "בצק בייגל אמריקאי",
+    "בצק עלים",
+    "בצק פריך",
+    "בצק פרסבורגר",
+    "בצק שטרודל",
+    "בצק שמרים מאפים",
+    "בצק שמרים קראנץ",
+    "גבינה מלוח",
+    "גלייז שוקולד",
+    "לקח לבן",
+    "לקח לבן ללא סוכר",
+    "לקח קקאו ללא סוכר(שחור)",
+    "לקח קקאו(שחור)",
+    "מאפינס וניל",
+    "מאפינס שוקולד",
+    "מאפינס תפוז",
+    "מי סוכר",
+    "מילוי גבינה מתוק לקראנץ",
+    "מילוי גבינה מתוק- ללא סוכר",
+    "מילוי גבינה מתוק- עם סוכר",
+    "מילוי פירורים- עם סוכר",
+    "מילוי פרג ללא סוכר",
+    "מילוי פרג- עם סוכר",
+    "מילוי פרג- עם סוכר לפרסבורגר/קראנץ",
+    "מילוי תפוחים- ללא סוכר",
+    "מילוי תפוחים- עם סוכר",
+    "מילית תפו",
+    "עוגת דבש",
+    "פלטה סולת",
+    "פלטת גזר",
+    "רוגלך פלטת שוקולד",
+    "שטרוייזל",
+    "שטרוייזל קקאו",
+    "תערובת שמנים- עם סוכר"
+  ]
+}
