@@ -1,6 +1,6 @@
-import { db } from '../db.js?v=538';
-import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=538';
-import { pickStableSyncId } from './catalog-identity.js?v=538';
+import { db } from '../db.js?v=539';
+import { COLLECTION_FKS, ARRAY_FKS, POLYMORPHIC_FKS, newSyncId } from './collections.js?v=539';
+import { pickStableSyncId } from './catalog-identity.js?v=539';
 
 export function localKeyOf(collection, recordOrId) {
   if (collection === 'settings') {

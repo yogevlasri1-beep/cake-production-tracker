@@ -73,14 +73,72 @@ function recipeCategoryId(row) {
   return row?.payload?.categoryId || row?.categoryId || null;
 }
 
+export const DEFAULT_RECIPE_SORT_GROUP_NAME = 'סידור';
+export const EMPTY_DEFAULT_RECIPE_TYPE_NAMES = new Set(['קרם', 'רטבים', 'אחר']);
+
+/** שיוך לפי הגיבוי החי — לא ממציאים שמות חדשים. */
+export const RECIPE_CATEGORY_NAME_BY_RECIPE = {
+  'בורקיטס': 'בצק',
+  'בצק בייגל אמריקאי': 'בצק',
+  'בצק עלים': 'בצק',
+  'בצק פריך': 'בצק',
+  'בצק פרסבורגר': 'בצק',
+  'בצק שטרודל': 'בצק',
+  'בצק שמרים מאפים': 'בצק',
+  'בצק שמרים קראנץ': 'בצק',
+  'גבינה מלוח': 'מילית',
+  'גלייז שוקולד': 'תוספות',
+  'לקח לבן': 'תוספת לשטרודל',
+  'לקח לבן ללא סוכר': 'תוספת לשטרודל',
+  'לקח קקאו ללא סוכר(שחור)': 'תוספת לשטרודל',
+  'לקח קקאו(שחור)': 'תוספת לשטרודל',
+  'מאפינס וניל': 'ראשי',
+  'מאפינס שוקולד': 'ראשי',
+  'מאפינס תפוז': 'ראשי',
+  'מי סוכר': 'תוספות',
+  'מילוי גבינה מתוק לקראנץ': 'מילית',
+  'מילוי גבינה מתוק- ללא סוכר': 'מילית',
+  'מילוי גבינה מתוק- עם סוכר': 'מילית',
+  'מילוי פירורים- עם סוכר': 'תוספת לשטרודל',
+  'מילוי פרג ללא סוכר': 'מילית',
+  'מילוי פרג- עם סוכר': 'מילית',
+  'מילוי פרג- עם סוכר לפרסבורגר/קראנץ': 'מילית',
+  'מילוי תפוחים- ללא סוכר': 'מילית',
+  'מילוי תפוחים- עם סוכר': 'מילית',
+  'מילית תפו': 'מילית',
+  'עוגת דבש': 'ראשי',
+  'פלטה סולת': 'ראשי',
+  'פלטת גזר': 'ראשי',
+  'רוגלך פלטת שוקולד': 'תוספות',
+  'שטרוייזל': 'תוספות',
+  'שטרוייזל קקאו': 'תוספות',
+  'תערובת שמנים- עם סוכר': 'תוספת לשטרודל',
+};
+
+export function recipeNameKey(name) {
+  return String(name || '').trim().replace(/:+\s*$/g, '').replace(/\s+/g, ' ');
+}
+
 export function inferRecipeCategoryName(recipeNames = []) {
   const blob = (recipeNames || []).join(' ');
-  if (/מאפינס|פלט|עוגת דבש/.test(blob)) return 'ראשי';
+  if (/מאפינס|פלטה|פלטת|עוגת דבש/.test(blob) && !/רוגלך/.test(blob)) return 'ראשי';
   if (/לקח|פירורים|תערובת שמנים/.test(blob)) return 'תוספת לשטרודל';
-  if (/שטרוייזל|גלייז|מי סוכר/.test(blob)) return 'תוספות';
+  if (/שטרוייזל|גלייז|מי סוכר|רוגלך/.test(blob)) return 'תוספות';
   if (/מילוי|מילית|גבינה/.test(blob)) return 'מילית';
-  if (/בצק/.test(blob)) return 'בצק';
+  if (/בצק|בורקיטס/.test(blob)) return 'בצק';
   return '';
+}
+
+export function categoryNameForRecipe(name) {
+  const key = recipeNameKey(name);
+  return RECIPE_CATEGORY_NAME_BY_RECIPE[key] || inferRecipeCategoryName([key]) || '';
+}
+
+export function restoredCategoryIdForName(categoryName) {
+  const wanted = String(categoryName || '').trim();
+  if (!wanted) return null;
+  const hit = Object.entries(RESTORED_RECIPE_CATEGORIES).find(([, row]) => row.name === wanted);
+  return hit ? hit[0] : null;
 }
 
 export function canonicalRecipeCategoryId(categoryId) {
@@ -205,5 +263,82 @@ export function planRecipeLocalCategoryRemap(cloudRecipes = []) {
     const catId = canonicalRecipeCategoryId(recipeCategoryId(row));
     if (!catId) return [];
     return [{ recipeId: String(row.id), categoryId: String(catId) }];
+  });
+}
+
+export function planAssignLocalRecipesToRestoredCategories({
+  localRecipes = [],
+  cloudRecipes = [],
+} = {}) {
+  const cloudByName = new Map();
+  for (const row of cloudRecipes || []) {
+    if (row?.deleted_at) continue;
+    const key = recipeNameKey(rowName(row));
+    if (!key) continue;
+    const catId = canonicalRecipeCategoryId(recipeCategoryId(row));
+    if (catId) cloudByName.set(key, String(catId));
+  }
+  return (localRecipes || []).flatMap((local) => {
+    if (local?.parentRecipeId || local?.id == null) return [];
+    const key = recipeNameKey(local.name);
+    const catId = cloudByName.get(key) || restoredCategoryIdForName(categoryNameForRecipe(key));
+    if (!catId) return [];
+    return [{ localRecipeId: local.id, categoryId: String(catId), recipeName: key }];
+  });
+}
+
+export function pickPreferredRecipeSubCategory(categoryName, groups = [], subCategories = []) {
+  const wanted = String(categoryName || '').trim();
+  if (!wanted) return null;
+  const matches = (subCategories || []).filter((sub) => (
+    sub
+    && String(sub.name || '').trim() === wanted
+    && String(sub.id || '').startsWith('__') === false
+  ));
+  if (!matches.length) return null;
+  const groupById = new Map((groups || []).map((group) => [String(group.id), group]));
+  return matches.find((sub) => {
+    const group = groupById.get(String(sub.groupId));
+    return group && group.name !== DEFAULT_RECIPE_SORT_GROUP_NAME && !String(group.id || '').startsWith('__');
+  }) || matches[0];
+}
+
+export function assignOrphanRecipesToCategories(orphans = [], groups = [], subCategories = []) {
+  const still = [];
+  for (const recipe of orphans || []) {
+    const sub = pickPreferredRecipeSubCategory(
+      categoryNameForRecipe(recipe?.name),
+      groups,
+      subCategories,
+    );
+    if (sub) {
+      if (!Array.isArray(sub.recipes)) sub.recipes = [];
+      sub.recipes.push(recipe);
+    } else {
+      still.push(recipe);
+    }
+  }
+  return still;
+}
+
+export function filterRestoredRecipeCatalogLayout(groups = []) {
+  const hasRestored = groups.some((group) => (
+    group
+    && group.name !== DEFAULT_RECIPE_SORT_GROUP_NAME
+    && !String(group.id || '').startsWith('__')
+    && (group.categories || []).some((cat) => (cat.recipes || []).length)
+  ));
+  return (groups || []).flatMap((group) => {
+    if (!group) return [];
+    const categories = (group.categories || []).filter((cat) => {
+      if ((cat.recipes || []).length) return true;
+      if (!hasRestored) return true;
+      if (EMPTY_DEFAULT_RECIPE_TYPE_NAMES.has(String(cat.name || '').trim())) return false;
+      return true;
+    });
+    if (hasRestored && group.name === DEFAULT_RECIPE_SORT_GROUP_NAME && !categories.some((cat) => (cat.recipes || []).length)) {
+      return [];
+    }
+    return [{ ...group, categories }];
   });
 }

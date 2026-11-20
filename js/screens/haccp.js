@@ -1,9 +1,9 @@
-import { getCategoryGroups } from '../db.js?v=538';
-import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=538';
-import { openModal, closeModal } from '../modal.js?v=538';
-import { printHaccpPlan } from '../haccp-print.js?v=538';
-import { getCurrentUserRole } from '../auth.js?v=538';
-import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=538';
+import { getCategoryGroups } from '../db.js?v=539';
+import { escapeHtml, showToast, todayISO, formatDateHebrew } from '../utils.js?v=539';
+import { openModal, closeModal } from '../modal.js?v=539';
+import { printHaccpPlan } from '../haccp-print.js?v=539';
+import { getCurrentUserRole } from '../auth.js?v=539';
+import { canAccessHaccpStep, PERMISSION_DENIED_MESSAGE } from '../permissions.js?v=539';
 import {
   HACCP_STEPS,
   HACCP_PRP_TOPICS,
@@ -133,7 +133,7 @@ import {
   createHaccpPlanFromBakeryTemplate,
   getHaccpDeviationDashboard,
   HACCP_BAKERY_TEMPLATES,
-} from '../haccp-db.js?v=538';
+} from '../haccp-db.js?v=539';
 
 const STEP_STORAGE_KEY = 'yitzurHaccpStep';
 const WIZARD_MODE_KEY = 'yitzurHaccpWizardMode';
