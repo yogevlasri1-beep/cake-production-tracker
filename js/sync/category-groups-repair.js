@@ -2,7 +2,7 @@
  * מחזיר קטגוריות כלליות שנמחקו בטעות, כשתת-הקטגוריות עדיין מצביעות עליהן.
  * לא מוחק מוצרים ולא מחליף שמות של תת-קטגוריות.
  */
-import { flowNameKey } from './collections.js?v=539';
+import { flowNameKey } from './collections.js?v=540';
 
 /** שמות שהמשתמש הגדיר — מגיבוי 9.11.2026, לפי UUID יציב. */
 export const RESTORED_GROUP_NAMES = {

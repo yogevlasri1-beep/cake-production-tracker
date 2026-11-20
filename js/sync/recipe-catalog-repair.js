@@ -31,6 +31,10 @@ export const RESTORED_RECIPE_GROUPS = {
   },
 };
 
+/** רק מה שהמשתמש הגדיר — בלי ברירות מחדל של האפליקציה. */
+export const USER_RECIPE_GROUP_NAMES = new Set(['מפעל', 'שטרודל', 'רונדו ליין', 'בחושות', 'ייבוא Word']);
+export const USER_RECIPE_CATEGORY_NAMES = new Set(['בצק', 'מילית', 'תוספות', 'תוספת לשטרודל', 'ראשי', 'ללא סיווג']);
+
 export const RESTORED_RECIPE_CATEGORIES = {
   '35b6399a-d7e9-4b1b-927d-1723c558e271': {
     name: 'בצק',
@@ -55,6 +59,11 @@ export const RESTORED_RECIPE_CATEGORIES = {
   '61083dba-a181-4125-bd99-85ad5830f496': {
     name: 'ראשי',
     groupId: '5c3efd60-32ef-47f8-8e0c-76dff602ea6f',
+    sortOrder: 1,
+  },
+  'e499d3db-bca6-4f92-a281-c6467e3ab856': {
+    name: 'ללא סיווג',
+    groupId: 'e43901a2-89a8-439e-b04c-d58e79ed2f50',
     sortOrder: 1,
   },
 };
@@ -287,19 +296,28 @@ export function planAssignLocalRecipesToRestoredCategories({
   });
 }
 
+export function isUserRecipeGroupName(name) {
+  return USER_RECIPE_GROUP_NAMES.has(String(name || '').trim());
+}
+
+export function isUserRecipeCategoryName(name) {
+  return USER_RECIPE_CATEGORY_NAMES.has(String(name || '').trim());
+}
+
 export function pickPreferredRecipeSubCategory(categoryName, groups = [], subCategories = []) {
   const wanted = String(categoryName || '').trim();
-  if (!wanted) return null;
+  if (!wanted || !isUserRecipeCategoryName(wanted)) return null;
   const matches = (subCategories || []).filter((sub) => (
     sub
+    && isUserRecipeCategoryName(sub.name)
     && String(sub.name || '').trim() === wanted
-    && String(sub.id || '').startsWith('__') === false
+    && !String(sub.id || '').startsWith('__')
   ));
   if (!matches.length) return null;
   const groupById = new Map((groups || []).map((group) => [String(group.id), group]));
   return matches.find((sub) => {
     const group = groupById.get(String(sub.groupId));
-    return group && group.name !== DEFAULT_RECIPE_SORT_GROUP_NAME && !String(group.id || '').startsWith('__');
+    return group && isUserRecipeGroupName(group.name) && !String(group.id || '').startsWith('__');
   }) || matches[0];
 }
 
@@ -318,27 +336,46 @@ export function assignOrphanRecipesToCategories(orphans = [], groups = [], subCa
       still.push(recipe);
     }
   }
-  return still;
+  if (!still.length) return [];
+  const fallback = pickPreferredRecipeSubCategory('ללא סיווג', groups, subCategories);
+  if (!fallback) return still;
+  if (!Array.isArray(fallback.recipes)) fallback.recipes = [];
+  fallback.recipes.push(...still);
+  return [];
 }
 
 export function filterRestoredRecipeCatalogLayout(groups = []) {
-  const hasRestored = groups.some((group) => (
-    group
-    && group.name !== DEFAULT_RECIPE_SORT_GROUP_NAME
-    && !String(group.id || '').startsWith('__')
-    && (group.categories || []).some((cat) => (cat.recipes || []).length)
-  ));
   return (groups || []).flatMap((group) => {
-    if (!group) return [];
-    const categories = (group.categories || []).filter((cat) => {
-      if ((cat.recipes || []).length) return true;
-      if (!hasRestored) return true;
-      if (EMPTY_DEFAULT_RECIPE_TYPE_NAMES.has(String(cat.name || '').trim())) return false;
-      return true;
-    });
-    if (hasRestored && group.name === DEFAULT_RECIPE_SORT_GROUP_NAME && !categories.some((cat) => (cat.recipes || []).length)) {
-      return [];
-    }
+    if (!group || String(group.id || '').startsWith('__')) return [];
+    if (!isUserRecipeGroupName(group.name)) return [];
+    const categories = (group.categories || []).filter((cat) => (
+      cat && !String(cat.id || '').startsWith('__') && isUserRecipeCategoryName(cat.name)
+    ));
     return [{ ...group, categories }];
   });
+}
+
+export function planExtraLocalRecipeCatalogRows({
+  localGroups = [],
+  localCategories = [],
+  recipes = [],
+} = {}) {
+  const used = new Set((recipes || []).map((row) => Number(row.categoryId)).filter((id) => Number.isFinite(id) && id > 0));
+  const extraCats = (localCategories || []).filter((cat) => {
+    if (!cat?.id) return false;
+    if (isUserRecipeCategoryName(cat.name)) return false;
+    if (used.has(Number(cat.id))) return false;
+    return true;
+  });
+  const extraCatIds = new Set(extraCats.map((cat) => Number(cat.id)));
+  const extraGroups = (localGroups || []).filter((group) => {
+    if (!group?.id) return false;
+    if (isUserRecipeGroupName(group.name)) return false;
+    const keepChildren = (localCategories || []).filter((cat) => (
+      Number(cat.groupId) === Number(group.id) && !extraCatIds.has(Number(cat.id))
+    ));
+    if (keepChildren.some((cat) => used.has(Number(cat.id)) || isUserRecipeCategoryName(cat.name))) return false;
+    return true;
+  });
+  return { extraGroups, extraCats };
 }
