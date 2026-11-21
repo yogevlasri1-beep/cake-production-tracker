@@ -6,7 +6,10 @@
   "module": "dist/esm/index.js",
   "types": "dist/esm/index.d.ts",
   "unpkg": "dist/plugin.js",
-  "files": ["dist/", "ios/"],
+  "files": [
+    "dist/",
+    "ios/"
+  ],
   "author": "yitzur",
   "license": "MIT",
   "capacitor": {
@@ -18,9 +21,14 @@
     "@capacitor/core": ">=7.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.12.0",
+    "globals": "^16.5.0",
     "puppeteer-core": "^25.5.0"
   },
   "scripts": {
-    "test": "bash scripts/run-tests.sh"
+    "test": "bash scripts/run-tests.sh",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix --ignore-pattern js/db.js --ignore-pattern js/sync/**"
   }
 }
