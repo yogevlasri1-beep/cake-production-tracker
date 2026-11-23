@@ -42,11 +42,13 @@ body {
 }
 
 #app {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100dvh;
   max-height: 100dvh;
   overflow: hidden;
+  overscroll-behavior: none;
   max-width: 480px;
   margin: 0 auto;
   background: var(--bg);
@@ -1498,6 +1500,65 @@ body {
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
+  touch-action: pan-y;
+}
+
+#ptr-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 72px;
+  z-index: 12;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+#ptr-indicator .ptr-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: #fff;
+  color: var(--primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.96);
+  transition: opacity 0.12s ease, transform 0.12s ease, background 0.15s ease;
+}
+
+#ptr-indicator.is-visible .ptr-inner {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+#ptr-indicator.is-ready .ptr-inner {
+  background: var(--primary);
+  color: #fff;
+}
+
+.ptr-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  opacity: 0.85;
+}
+
+#ptr-indicator.is-syncing .ptr-spinner {
+  animation: ptr-spin 0.7s linear infinite;
+}
+
+@keyframes ptr-spin {
+  to { transform: rotate(360deg); }
+}
+
+#app.ptr-active #main-content {
+  overflow-y: hidden;
 }
 
 .bottom-nav {
