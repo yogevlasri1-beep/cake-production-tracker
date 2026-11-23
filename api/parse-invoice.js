@@ -60,7 +60,7 @@ async function parseGemini(files, catalog, apiKey) {
     parts.push({ inline_data: { mime_type: split.mimeType, data: split.base64 } });
   }
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

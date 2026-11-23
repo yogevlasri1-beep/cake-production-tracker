@@ -1,11 +1,30 @@
 /**
  * חילוץ חשבונית: קודם API בשרת (Vercel), אחרת Gemini ישירות עם מפתח מקומי.
  */
-import { getSetting, setSetting } from './db.js?v=549';
-import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=549';
+import { getSetting, setSetting } from './db.js?v=550';
+import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=550';
 
 export const INVOICE_AI_KEY_SETTING = 'invoiceAiKey';
 export const PARSE_INVOICE_PATH = '/api/parse-invoice';
+export const GEMINI_INVOICE_MODEL = 'gemini-3.8-flash';
+
+export function geminiGenerateContentUrl(apiKey, { model = GEMINI_INVOICE_MODEL } = {}) {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+}
+
+export function formatGeminiInvoiceError(raw) {
+  const text = String(raw || '').trim();
+  if (/no longer available|not found|NOT_FOUND/i.test(text)) {
+    return 'מודל הסריקה התחלף. עדכנו את האפליקציה ונסו שוב.';
+  }
+  if (/api key not valid|invalid api key|api_key_invalid/i.test(text)) {
+    return 'מפתח ה-AI לא תקין. צרו מפתח חדש ב-Google AI Studio.';
+  }
+  if (/quota|resource exhausted|rate limit/i.test(text)) {
+    return 'הסריקה חסומה זמנית אצל Gemini. נסו שוב בעוד כמה דקות.';
+  }
+  return text || 'Gemini נכשל';
+}
 
 export async function getInvoiceAiKey() {
   const v = await getSetting(INVOICE_AI_KEY_SETTING);
@@ -187,7 +206,7 @@ async function parseViaGemini(parts, catalog, apiKey) {
     contents: [{ role: 'user', parts: [...contents, ...inline] }],
     generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
   };
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const url = geminiGenerateContentUrl(apiKey);
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -195,8 +214,7 @@ async function parseViaGemini(parts, catalog, apiKey) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const msg = data?.error?.message || 'Gemini נכשל';
-    throw new Error(msg);
+    throw new Error(formatGeminiInvoiceError(data?.error?.message));
   }
   const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') || '';
   return normalizeParsedInvoice(parseModelJson(text));
