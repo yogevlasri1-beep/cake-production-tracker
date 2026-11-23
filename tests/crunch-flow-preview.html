@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>קראנץ גדול בתזרים</title>
+  <style>
+    body { font-family: sans-serif; padding: 16px; background: #f8fafc; color: #0f172a; max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 20px; }
+    .ok { color: #047857; font-weight: 700; }
+    .bad { color: #b91c1c; font-weight: 700; }
+    .card { background: #fff; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <h1>מוצרים בתזרימי קראנץ</h1>
+  <p id="summary">טוען…</p>
+  <div id="root"></div>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import {
+      buildProductsCatalogLayout,
+      categoriesForFlowLayout,
+    } from '../js/db.js?v=546';
+
+    const groups = [{ id: 10, name: 'רונדו ליין', sortOrder: 1 }];
+    const categories = [
+      { id: 7, name: 'קראנץ', groupId: 10, sortOrder: 1 },
+      { id: 8, name: 'קראנץ גדול', groupId: 10, sortOrder: 2 },
+      { id: 9, name: 'קראנץ מנגט', groupId: 10, sortOrder: 3 },
+    ];
+    const products = [
+      { id: 1, name: 'קראנץ שוקולד', categoryId: 7, active: true },
+      { id: 2, name: 'קראנץ שוקולד גדול', categoryId: 8, active: true },
+      { id: 3, name: 'קראנץ קינמון גדול', categoryId: 8, active: true },
+      { id: 4, name: 'קראנץ מנגאט שוקולד', categoryId: 9, active: true },
+    ];
+    const layout = buildProductsCatalogLayout(groups, categories, products);
+    const flows = [
+      { id: 21, name: 'קראנץ', categoryId: 7, targetType: 'category', targetLabel: 'קראנץ' },
+      {
+        id: 22, name: 'קראנץ קטן גדול', categoryId: null, categoryGroupId: 10,
+        targetType: 'group', targetLabel: 'רונדו ליין', groupId: 10, groupName: 'רונדו ליין',
+      },
+    ];
+    const missing = [];
+    const html = flows.map((flow) => {
+      const cats = categoriesForFlowLayout(flow, layout);
+      const names = cats.flatMap((cat) => (cat.products || []).map((p) => p.name));
+      const hasLarge = cats.some((cat) => cat.name === 'קראנץ גדול') && names.some((n) => n.includes('גדול'));
+      if (!hasLarge) missing.push(flow.name);
+      return `<section class="card"><h2>${flow.name}</h2>
+        <p>${hasLarge ? 'כולל קראנץ גדול' : 'חסר קראנץ גדול'}</p>
+        <ul>${names.map((n) => `<li>${n}</li>`).join('')}</ul>
+      </section>`;
+    }).join('');
+    document.getElementById('root').innerHTML = html;
+    const summary = document.getElementById('summary');
+    summary.className = missing.length ? 'bad' : 'ok';
+    summary.textContent = missing.length
+      ? `חסר קראנץ גדול ב: ${missing.join(', ')}`
+      : 'תקין: קראנץ גדול מופיע בשני התזרימים';
+  </script>
+</body>
+</html>

@@ -501,8 +501,14 @@ export function rowFingerprint(collection, row) {
       return `${collection}|${row.productId}|${row.recipeId}`;
     case 'productPortionComponents':
       return `${collection}|${row.productId}|${row.rawMaterialId}`;
-    case 'productFlowLinks':
-      return `${collection}|${Number(row.productId) || ''}|${Number(row.flowId) || ''}`;
+    case 'productFlowLinks': {
+      const idPart = (value) => {
+        if (value == null || value === '') return '';
+        if (typeof value === 'number' || /^\d+$/.test(String(value))) return String(Number(value));
+        return String(value);
+      };
+      return `${collection}|${idPart(row.productId)}|${idPart(row.flowId)}`;
+    }
     case 'flowSteps':
       return `${collection}|${row.flowId}|${row.sortOrder ?? ''}|${n}`;
     case 'flows':

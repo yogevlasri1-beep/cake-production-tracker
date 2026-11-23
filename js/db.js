@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=545';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=545';
-import { defaultColorForIndex } from './chart.js?v=545';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=545';
-import { logAuditEvent } from './audit.js?v=545';
+} from './validators.js?v=546';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=546';
+import { defaultColorForIndex } from './chart.js?v=546';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=546';
+import { logAuditEvent } from './audit.js?v=546';
 
 export { ValidationError };
 
@@ -3621,7 +3621,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=545');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=546');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3961,7 +3961,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=545');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=546');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -6927,7 +6927,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=545');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=546');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);
@@ -10147,6 +10147,53 @@ export async function collectPlanProductFlowsForExport(items) {
   return flowOrder.map((id) => flowData.get(id)).filter(Boolean);
 }
 
+/**
+ * קטגוריית גודל תואמת באותה קבוצה: «קראנץ» ↔ «קראנץ גדול».
+ * בלי זה תזרים קראנץ מציג רק את הקטגוריה הרגילה.
+ */
+export function relatedSizeCategories(categories = [], sourceCat) {
+  if (!sourceCat) return [];
+  const base = String(sourceCat.name || '').trim();
+  if (!base) return [];
+  const names = new Set([productNameKey(`${base} גדול`)]);
+  const stripped = base.replace(/\s+גדול$/u, '').trim();
+  if (stripped && stripped !== base) names.add(productNameKey(stripped));
+  return (categories || []).filter((cat) => {
+    if (!cat || idsEqual(cat.id, sourceCat.id)) return false;
+    if (!names.has(productNameKey(cat.name))) return false;
+    if (sourceCat.groupId == null || sourceCat.groupId === '' || cat.groupId == null || cat.groupId === '') {
+      return true;
+    }
+    return idsEqual(cat.groupId, sourceCat.groupId);
+  });
+}
+
+/** קטגוריות שמוצריהן שייכים לתזרים — כולל «קראנץ גדול» ליד «קראנץ». */
+export function categoriesForFlowLayout(flow, layout) {
+  const all = (layout?.allCategories || []).filter((cat) => cat && !cat.synthetic && cat.id !== 'orphans');
+  if (!flow) return [];
+  const isCategoryTarget = flow.targetType === 'category'
+    || (flow.categoryId && flow.targetType !== 'group');
+  if (isCategoryTarget) {
+    const cat = findLayoutCategory(layout, {
+      categoryId: flow.categoryId,
+      categoryName: flow.targetLabel,
+    }) || all.find((row) => idsEqual(row.id, flow.categoryId));
+    if (!cat) return [];
+    return [cat, ...relatedSizeCategories(all, cat)];
+  }
+  const group = findLayoutGroup(layout, {
+    groupId: flow.categoryGroupId || flow.groupId,
+    groupName: flow.groupName || (flow.targetType === 'group' ? flow.targetLabel : ''),
+  });
+  if (group?.categories?.length) {
+    return group.categories.filter((cat) => cat && !cat.synthetic);
+  }
+  const gid = flow.categoryGroupId || flow.groupId;
+  if (gid == null || gid === '') return [];
+  return all.filter((cat) => idsEqual(cat.groupId, gid));
+}
+
 /** Keep one product per name — leftover re-seed copies with different ids otherwise appear twice in תיעוד ייצור. */
 export function uniqueProductsByName(products, { preferIds } = {}) {
   const prefer = new Set((preferIds || []).map((id) => Number(id)).filter(Boolean));
@@ -10185,15 +10232,19 @@ export function idsEqual(a, b) {
 export function productsForFlowRun({
   linkedProducts = [],
   categoryProducts = [],
+  relatedSizeProducts = [],
   wasteProducts = [],
 } = {}) {
   const linked = (linkedProducts || []).filter(Boolean);
+  const related = (relatedSizeProducts || []).filter(Boolean);
+  const hasId = (ids, product) => [...ids].some((id) => idsEqual(id, product?.id));
   if (linked.length) {
-    const ids = new Set(linked.map((p) => Number(p.id)).filter(Boolean));
-    const extra = (wasteProducts || []).filter((p) => p && !ids.has(Number(p.id)));
+    const ids = new Set(linked.map((p) => p.id).filter((id) => id != null && id !== ''));
+    const extra = [...related, ...(wasteProducts || [])]
+      .filter((p) => p && !hasId(ids, p));
     return uniqueProductsByName([...linked, ...extra], { preferIds: [...ids] });
   }
-  const category = (categoryProducts || []).filter(Boolean);
+  const category = [...(categoryProducts || []), ...related].filter(Boolean);
   if (category.length) {
     return uniqueProductsByName(category);
   }
@@ -10215,25 +10266,43 @@ function idsExistInCategoriesOrProducts(ids, categories, products) {
 /** קטגוריות לתיעוד: קודם הריצה, אם הן ריקות או לא תואמות — הקטגוריה/קבוצה של התזרים. */
 export function categoryIdsForFlowRun(run, flow, categories, products) {
   const fromGroup = (gid) => {
-    const n = Number(gid);
-    if (!n) return [];
+    if (gid == null || gid === '') return [];
     return (categories || [])
-      .filter((c) => Number(c.groupId) === n)
-      .map((c) => Number(c.id));
+      .filter((c) => idsEqual(c.groupId, gid))
+      .map((c) => c.id);
+  };
+  const withRelatedSizes = (ids) => {
+    const out = [...ids];
+    const seen = new Set(ids.map((id) => String(id)));
+    for (const id of ids) {
+      const cat = (categories || []).find((c) => idsEqual(c.id, id));
+      for (const related of relatedSizeCategories(categories, cat)) {
+        if (seen.has(String(related.id))) continue;
+        seen.add(String(related.id));
+        out.push(related.id);
+      }
+    }
+    return out;
   };
 
   const runIds = run?.categoryIds?.length
     ? numericIds(run.categoryIds)
     : numericIds(run?.categoryId ? [run.categoryId] : []);
-  if (idsExistInCategoriesOrProducts(runIds, categories, products)) return runIds;
+  if (idsExistInCategoriesOrProducts(runIds, categories, products)) return withRelatedSizes(runIds);
 
   const runGroup = fromGroup(run?.categoryGroupId);
   if (runGroup.length) return runGroup;
 
   const flowIds = numericIds(flow?.categoryId ? [flow.categoryId] : []);
-  if (idsExistInCategoriesOrProducts(flowIds, categories, products)) return flowIds;
+  if (idsExistInCategoriesOrProducts(flowIds, categories, products)) return withRelatedSizes(flowIds);
 
-  return fromGroup(flow?.categoryGroupId || flow?.groupId);
+  const groupIds = fromGroup(flow?.categoryGroupId || flow?.groupId);
+  if (groupIds.length) return groupIds;
+  if (flow?.categoryId) {
+    const cat = (categories || []).find((c) => idsEqual(c.id, flow.categoryId));
+    if (cat) return withRelatedSizes([cat.id]);
+  }
+  return [];
 }
 
 export async function getProductFlowLinkRows(productId) {
@@ -10367,31 +10436,36 @@ export async function getCandidateProductsForFlow(flowId) {
   const flow = (fid && await db.flows.get(fid))
     || (await db.flows.toArray()).find((f) => idsEqual(f.id, flowId));
   if (!flow) return [];
-  const allProducts = await db.products.toArray();
-  let products = [];
-  if (flow.categoryId) {
-    products = allProducts.filter((p) => idsEqual(p.categoryId, flow.categoryId));
-  } else if (flow.categoryGroupId) {
-    const cats = await db.categories.toArray();
-    const catIds = cats.filter((c) => idsEqual(c.groupId, flow.categoryGroupId));
-    products = allProducts.filter((p) => catIds.some((c) => idsEqual(c.id, p.categoryId)));
-  } else {
-    products = [];
+  const [allProducts, groups, categories] = await Promise.all([
+    db.products.toArray(),
+    db.categoryGroups.toArray(),
+    db.categories.toArray(),
+  ]);
+  const layout = buildProductsCatalogLayout(groups, categories, allProducts);
+  const flowCats = categoriesForFlowLayout(flow, layout);
+  const products = [];
+  const seen = new Set();
+  const addProduct = (product) => {
+    if (!product || product.active === false) return;
+    const key = String(product.id);
+    if (seen.has(key)) return;
+    seen.add(key);
+    products.push(product);
+  };
+  for (const cat of flowCats) {
+    for (const product of cat.products || []) addProduct(product);
   }
-  const linked = await getLinkedProductsForFlow(fid);
-  const seen = new Set(products.map((p) => p.id));
+  for (const product of allProducts) {
+    if (flowCats.some((cat) => idsEqual(cat.id, product.categoryId))) addProduct(product);
+  }
+  const linked = await getLinkedProductsForFlow(flow.id);
   const linkedIds = [];
   for (const { product } of linked) {
-    if (product && !seen.has(product.id)) {
-      products.push(product);
-      seen.add(product.id);
-    }
+    addProduct(product);
     if (product?.id) linkedIds.push(product.id);
   }
-  return uniqueProductsByName(
-    products.filter((p) => p.active !== false),
-    { preferIds: linkedIds },
-  ).sort((a, b) => a.name.localeCompare(b.name, 'he') || a.id - b.id);
+  return uniqueProductsByName(products, { preferIds: linkedIds })
+    .sort((a, b) => a.name.localeCompare(b.name, 'he') || (Number(a.id) - Number(b.id)));
 }
 
 /** תזרים ברירת מחדל למוצר — שיוך ישיר קודם, אחרת לפי קטגוריה / קבוצה */
