@@ -1557,10 +1557,6 @@ body {
   to { transform: rotate(360deg); }
 }
 
-#app.ptr-active #main-content {
-  overflow-y: hidden;
-}
-
 .bottom-nav {
   position: relative;
   flex-shrink: 0;

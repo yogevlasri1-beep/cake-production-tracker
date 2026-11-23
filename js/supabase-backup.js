@@ -1,13 +1,13 @@
-import { getSetting, setSetting } from './db.js?v=548';
-import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=548';
-import { ValidationError } from './validators.js?v=548';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=548';
+import { getSetting, setSetting } from './db.js?v=549';
+import { formatBackupSummary, restoreBackupPayload } from './backup.js?v=549';
+import { ValidationError } from './validators.js?v=549';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=549';
 import {
   MAX_PINNED_BACKUPS,
   MAX_ROTATING_CLOUD,
   MAX_SAFETY_BACKUPS,
   selectBackupsToPrune,
-} from './backup-guard.js?v=548';
+} from './backup-guard.js?v=549';
 
 const SETTINGS_KEY = 'supabaseBackup';
 const DEVICE_ID_KEY = 'deviceId';
@@ -63,7 +63,7 @@ export function buildSupabaseHeaders(anonKey, extra = {}) {
 /** JWT של המשתמש המחובר — ל-RLS. דינמי כדי למנוע ייבוא מעגלי עם auth.js. */
 export async function resolveSupabaseUserAccessToken() {
   try {
-    const { getValidSession } = await import('./auth.js?v=548');
+    const { getValidSession } = await import('./auth.js?v=549');
     const session = await getValidSession();
     return session?.access_token || null;
   } catch {

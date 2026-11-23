@@ -1,8 +1,8 @@
 /**
  * חילוץ חשבונית: קודם API בשרת (Vercel), אחרת Gemini ישירות עם מפתח מקומי.
  */
-import { getSetting, setSetting } from './db.js?v=548';
-import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=548';
+import { getSetting, setSetting } from './db.js?v=549';
+import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=549';
 
 export const INVOICE_AI_KEY_SETTING = 'invoiceAiKey';
 export const PARSE_INVOICE_PATH = '/api/parse-invoice';

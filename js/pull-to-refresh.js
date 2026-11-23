@@ -1,11 +1,13 @@
 /**
  * משיכה למטה לרענון — דחיפת תור ואז משיכה מלאה.
  * לא מעלה את כל הדאטה המקומית.
- * מאזינים ל-touch על כל ה-#app כדי שזה יעבוד באייפון גם מהכותרת.
+ * לא נועלים גלילה עד שממש מושכים למטה — אחרת אי אפשר לגלול במוצרים.
  */
 import {
   planPullToRefreshGesture,
-} from './sync/cloud-first.js?v=548';
+} from './sync/cloud-first.js?v=549';
+
+export const PTR_PULL_START_PX = 10;
 
 export function nestedScrollTopBetween(target, root) {
   let el = target instanceof Element ? target : target?.parentElement;
@@ -38,6 +40,22 @@ export function defaultPullToRefreshCanStart(event) {
   return true;
 }
 
+/** גלילה רגילה לא נחסמת. רענון רק אחרי משיכה ממש למטה. */
+export function planPtrFingerMove({
+  dy = 0,
+  dx = 0,
+  atTop = true,
+  pulling = false,
+} = {}) {
+  const y = Number(dy) || 0;
+  const x = Number(dx) || 0;
+  if (!atTop && !pulling) return { action: 'scroll' };
+  if (Math.abs(x) > Math.max(y, 0) && Math.abs(x) > 12) return { action: 'cancel' };
+  if (y < -8) return { action: 'scroll' };
+  if (atTop && y >= PTR_PULL_START_PX) return { action: 'pull' };
+  return { action: 'wait' };
+}
+
 function ensureIndicator(surface) {
   let el = document.getElementById('ptr-indicator');
   if (el) return el;
@@ -67,7 +85,7 @@ export function installPullToRefresh({
   const host = surface || scroller.closest('#app') || scroller.parentNode || document.body;
   const indicator = ensureIndicator(host);
   const labelEl = indicator.querySelector('.ptr-label');
-  let tracking = false;
+  let pending = false;
   let pulling = false;
   let busy = false;
   let source = null;
@@ -75,9 +93,14 @@ export function installPullToRefresh({
   let startX = 0;
   let lastDy = 0;
 
-  function setActive(on) {
-    host.classList.toggle('ptr-active', on);
-    scroller.classList.toggle('ptr-active', on);
+  function atTopNow(target) {
+    return (Number(scroller.scrollTop) || 0) <= 1
+      && nestedScrollTopBetween(target, scroller) <= 1;
+  }
+
+  function setPulling(on) {
+    host.classList.toggle('ptr-pulling', on);
+    scroller.classList.toggle('ptr-pulling', on);
   }
 
   function paint(pullPx, { syncing = false, hint = '', ready = false } = {}) {
@@ -96,16 +119,17 @@ export function installPullToRefresh({
     }, 240);
   }
 
-  function stopTracking() {
-    tracking = false;
+  function stopGesture() {
+    pending = false;
     pulling = false;
     source = null;
+    setPulling(false);
   }
 
   async function run() {
     if (busy) return;
     busy = true;
-    scroller.style.overflowY = 'hidden';
+    setPulling(true);
     paint(64, { syncing: true, hint: 'דוחף לענן…' });
     try {
       const result = await onRefresh();
@@ -115,8 +139,7 @@ export function installPullToRefresh({
     } finally {
       window.setTimeout(() => {
         busy = false;
-        scroller.style.overflowY = '';
-        setActive(false);
+        setPulling(false);
         reset(true);
       }, 520);
     }
@@ -127,14 +150,8 @@ export function installPullToRefresh({
     if (kind === 'pointer' && event.pointerType === 'touch') return false;
     if (kind === 'pointer' && event.pointerType === 'mouse' && event.button !== 0) return false;
     if (canStart && !canStart(event)) return false;
-    const plan = planPullToRefreshGesture({
-      scrollTop: scroller.scrollTop,
-      nestedScrollTop: nestedScrollTopBetween(event.target, scroller),
-      dy: 0,
-      tracking: true,
-    });
-    if (!plan.armed) return false;
-    tracking = true;
+    if (!atTopNow(event.target)) return false;
+    pending = true;
     pulling = false;
     source = kind;
     const pt = eventClientPoint(event);
@@ -142,38 +159,34 @@ export function installPullToRefresh({
     startX = pt.x;
     lastDy = 0;
     scroller.style.transition = '';
-    placeIndicator(indicator, host);
-    setActive(true);
     return true;
   }
 
   function move(event, kind) {
-    if (!tracking || source !== kind) return;
+    if ((!pending && !pulling) || source !== kind) return;
     const pt = eventClientPoint(event);
     const dy = pt.y - startY;
     const dx = pt.x - startX;
     lastDy = dy;
-    if (!pulling && Math.abs(dx) > dy && Math.abs(dx) > 12) {
-      stopTracking();
-      setActive(false);
+    const atTop = atTopNow(event.target);
+    const intent = planPtrFingerMove({ dy, dx, atTop, pulling });
+    if (intent.action === 'scroll' || intent.action === 'cancel') {
+      stopGesture();
       reset(false);
       return;
     }
+    if (intent.action !== 'pull') return;
+    pulling = true;
+    pending = false;
+    if (event.cancelable) event.preventDefault();
+    placeIndicator(indicator, host);
+    setPulling(true);
     const plan = planPullToRefreshGesture({
-      scrollTop: scroller.scrollTop,
-      nestedScrollTop: nestedScrollTopBetween(event.target, scroller),
+      scrollTop: 0,
+      nestedScrollTop: 0,
       dy,
       tracking: true,
     });
-    if (!plan.armed || dy <= 0) {
-      if (pulling && dy <= 0) {
-        pulling = false;
-        reset(false);
-      }
-      return;
-    }
-    pulling = true;
-    if (event.cancelable) event.preventDefault();
     paint(plan.pullPx, {
       hint: plan.release ? 'שחרר לדחיפה' : 'משוך לרענון',
       ready: plan.release,
@@ -181,21 +194,19 @@ export function installPullToRefresh({
   }
 
   function end(event, kind) {
-    if (!tracking || source !== kind) return;
+    if ((!pending && !pulling) || source !== kind) return;
     const pt = eventClientPoint(event);
     const dy = Number.isFinite(pt.y) ? pt.y - startY : lastDy;
+    const wasPulling = pulling;
     const plan = planPullToRefreshGesture({
-      scrollTop: scroller.scrollTop,
+      scrollTop: wasPulling ? 0 : scroller.scrollTop,
       nestedScrollTop: nestedScrollTopBetween(event.target, scroller),
       dy,
-      tracking: true,
+      tracking: wasPulling,
     });
-    stopTracking();
-    if (plan.release) run();
-    else {
-      setActive(false);
-      reset(true);
-    }
+    stopGesture();
+    if (wasPulling && plan.release) run();
+    else reset(true);
   }
 
   function onTouchStart(event) { begin(event, 'touch'); }
@@ -205,14 +216,16 @@ export function installPullToRefresh({
   function onPointerMove(event) { move(event, 'pointer'); }
   function onPointerUp(event) { end(event, 'pointer'); }
   function onDragStart(event) {
-    if (tracking || pulling || busy) event.preventDefault();
+    if (pulling || busy) event.preventDefault();
   }
 
+  const touchStartOpts = { passive: true, capture: true };
   const touchMoveOpts = { passive: false, capture: true };
-  host.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+  const touchEndOpts = { capture: true };
+  host.addEventListener('touchstart', onTouchStart, touchStartOpts);
   host.addEventListener('touchmove', onTouchMove, touchMoveOpts);
-  host.addEventListener('touchend', onTouchEnd, { capture: true });
-  host.addEventListener('touchcancel', onTouchEnd, { capture: true });
+  host.addEventListener('touchend', onTouchEnd, touchEndOpts);
+  host.addEventListener('touchcancel', onTouchEnd, touchEndOpts);
   host.addEventListener('pointerdown', onPointerDown);
   host.addEventListener('pointermove', onPointerMove, { passive: false });
   host.addEventListener('pointerup', onPointerUp);
@@ -220,10 +233,10 @@ export function installPullToRefresh({
   host.addEventListener('dragstart', onDragStart);
 
   return () => {
-    host.removeEventListener('touchstart', onTouchStart, { capture: true });
+    host.removeEventListener('touchstart', onTouchStart, touchStartOpts);
     host.removeEventListener('touchmove', onTouchMove, touchMoveOpts);
-    host.removeEventListener('touchend', onTouchEnd, { capture: true });
-    host.removeEventListener('touchcancel', onTouchEnd, { capture: true });
+    host.removeEventListener('touchend', onTouchEnd, touchEndOpts);
+    host.removeEventListener('touchcancel', onTouchEnd, touchEndOpts);
     host.removeEventListener('pointerdown', onPointerDown);
     host.removeEventListener('pointermove', onPointerMove);
     host.removeEventListener('pointerup', onPointerUp);
