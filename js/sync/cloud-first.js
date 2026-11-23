@@ -182,6 +182,19 @@ export function formatManualLiveSyncToast({ pushed = 0, pulled = 0 } = {}) {
 }
 
 /**
+ * holdPulls שייך רק למכשיר שמשחזר עכשיו (מחזיק את נעילת השחזור).
+ * דגל שנתקע אחרי שחזור, או שנמשך בטעות מהענן, חייב להשתחרר.
+ */
+export function planReleaseStaleHoldPulls({
+  holdPulls = false,
+  isLockHolder = false,
+} = {}) {
+  if (holdPulls !== true) return { release: false, reason: 'not-held' };
+  if (isLockHolder === true) return { release: false, reason: 'restoring' };
+  return { release: true, reason: 'stale' };
+}
+
+/**
  * חותמת לענן: זמן העריכה המקומית, לא רגע הדחיפה.
  * דחיפה שתמיד שמה «עכשיו» הפכה תור ישן לכתיבה חדשה ודרסה מחיר שעודכן במכשיר אחר.
  * updatedAt בלי Z הוא שעון מקומי (חומרי גלם); עם Z — UTC (מנות).

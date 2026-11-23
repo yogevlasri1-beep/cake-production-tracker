@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=547';
+import { db, getSetting, setSetting } from './db.js?v=548';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=547';
+} from './supabase-backup.js?v=548';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=547';
+} from './sync/collections.js?v=548';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -54,6 +54,7 @@ import {
   planManualLiveSync,
   planPullToRefresh,
   formatManualLiveSyncToast,
+  planReleaseStaleHoldPulls,
   planProductionLabelPush,
   toCloudUpdatedAt,
   localDatabaseHasRecords,
@@ -80,19 +81,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=547';
+} from './sync/cloud-first.js?v=548';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=547';
+} from './sync/catalog-identity.js?v=548';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=547';
+} from './sync/category-groups-repair.js?v=548';
 import {
   RESTORED_RECIPE_CATEGORIES,
   planMissingRecipeCategoryRestore,
@@ -103,7 +104,7 @@ import {
   planAssignLocalRecipesToRestoredCategories,
   planRecipeCategoryHomeRemap,
   planExtraLocalRecipeCatalogRows,
-} from './sync/recipe-catalog-repair.js?v=547';
+} from './sync/recipe-catalog-repair.js?v=548';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -115,7 +116,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=547';
+} from './sync/restore-lock.js?v=548';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -125,15 +126,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=547';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=547';
+} from './sync/id-map.js?v=548';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=548';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=547';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=547';
+} from './auth.js?v=548';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=548';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -309,7 +310,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=547');
+    const { showToast } = await import('./utils.js?v=548');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -444,6 +445,10 @@ const LOCAL_ONLY_SETTINGS = new Set([
   'liveSync', 'supabaseBackup', 'deviceId', 'backupSettings',
   'recipePortionPresetsSynced',
 ]);
+
+export function isLocalOnlySetting(key) {
+  return LOCAL_ONLY_SETTINGS.has(String(key || ''));
+}
 
 /** מפתח הגדרה מסונכרן — אות בדיקה בין מכשירים/משתמשים */
 export const SYNC_PROBE_KEY = 'syncProbe';
@@ -1709,6 +1714,11 @@ async function applyRemoteRow(collection, cloudRow, deviceId, {
   }
   const remoteUpdated = cloudRow.updated_at;
   let existingMeta = await getMetaBySyncId(syncId);
+
+  if (collection === 'settings') {
+    const settingKey = String(cloudRow.payload?.key || existingMeta?.localKey || '');
+    if (isLocalOnlySetting(settingKey)) return true;
+  }
 
   if (cloudRow.deleted_at) {
     if (existingMeta) {
@@ -3155,11 +3165,27 @@ export async function flushIfNotRestoreFrozen() {
   return flushSyncQueue();
 }
 
+export async function releaseStaleHoldPulls() {
+  const live = await getLiveSyncSettings();
+  const deviceId = await getOrCreateDeviceId();
+  let lock = null;
+  try { lock = await peekRestoreLock(); } catch { /* ignore */ }
+  const lockPlan = planLiveSyncDuringRestoreLock({ lock, deviceId });
+  const plan = planReleaseStaleHoldPulls({
+    holdPulls: live.holdPulls === true,
+    isLockHolder: lockPlan.holder === true,
+  });
+  if (!plan.release) return { released: false, reason: plan.reason };
+  await saveLiveSyncSettings({ holdPulls: false });
+  return { released: true, reason: plan.reason };
+}
+
 /**
  * «סנכרן עכשיו» / משיכה למטה: דחיפת תור ואז משיכה מלאה.
  * לא מעלה את כל הדאטה המקומית.
  */
 export async function runManualLiveSync() {
+  await releaseStaleHoldPulls();
   const cfg = await getSupabaseBackupConfig();
   const live = await getLiveSyncSettings();
   const plan = planPullToRefresh({
@@ -3723,6 +3749,8 @@ export async function startLiveSync() {
 
   let live = await getLiveSyncSettings();
   if (!live.enabled) return;
+  await releaseStaleHoldPulls();
+  live = await getLiveSyncSettings();
   if (live.holdPulls === true) return;
   await adoptCloudFirstFromMarker();
   live = await getLiveSyncSettings();
