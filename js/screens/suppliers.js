@@ -33,22 +33,22 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=551';
-import { getProducts, getCategories } from '../db.js?v=551';
+} from '../kitchen-db.js?v=552';
+import { getProducts, getCategories } from '../db.js?v=552';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=551';
+} from '../supplier-import.js?v=552';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=551';
-import { openModal, closeModal } from '../modal.js?v=551';
-import { requestAutoBackupNow } from '../backup-service.js?v=551';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=551';
-import { openBarcodeScanner } from '../barcode-scan.js?v=551';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=551';
+} from '../utils.js?v=552';
+import { openModal, closeModal } from '../modal.js?v=552';
+import { requestAutoBackupNow } from '../backup-service.js?v=552';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=552';
+import { openBarcodeScanner } from '../barcode-scan.js?v=552';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=552';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -56,12 +56,32 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=551';
+} from '../order-reminder.js?v=552';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
 const CLEANING_CAT_SEEDED_KEY = 'yitzurCleaningCatSeeded';
 const ORDER_WA_DEFAULT_KEY = 'yitzurOrderWhatsAppDefault';
+export const CATALOG_ALL_CAT = 'all';
+
+export function isCatalogAllCat(value) {
+  const v = String(value || '').trim();
+  return !v || v === CATALOG_ALL_CAT;
+}
+
+/** במחסן «הכל» הוא בחירה חוקית; בעריכה חייבים קטגוריה ספציפית. */
+export function resolveSupplierMatCat(raw, { tab, fallbackId } = {}) {
+  const value = String(raw ?? '').trim();
+  if (tab === 'catalog') return isCatalogAllCat(value) ? CATALOG_ALL_CAT : value;
+  if (isCatalogAllCat(value)) return fallbackId != null && fallbackId !== '' ? String(fallbackId) : '';
+  return value;
+}
+
+export function catalogFilterCatId(raw) {
+  if (isCatalogAllCat(raw)) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 const WHATSAPP_ICON_SVG = `<svg class="order-wa-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12.04 2C6.58 2 2.15 6.4 2.15 11.83c0 1.93.57 3.72 1.56 5.23L2 22l5.09-1.66a10 10 0 0 0 4.95 1.26h.01c5.46 0 9.89-4.4 9.89-9.83 0-2.62-1.03-5.09-2.9-6.95A9.94 9.94 0 0 0 12.04 2m0 17.96h-.01a8.2 8.2 0 0 1-4.18-1.15l-.3-.18-3.02.99.98-2.9-.19-.3a8.1 8.1 0 0 1-1.26-4.36c0-4.5 3.69-8.16 8.23-8.16 2.2 0 4.26.85 5.81 2.4a8.1 8.1 0 0 1 2.41 5.78c0 4.5-3.69 8.16-8.22 8.16m4.52-6.11c-.25-.12-1.46-.72-1.69-.8-.22-.08-.39-.12-.55.12-.16.25-.63.8-.78.97-.14.16-.29.18-.54.06-.25-.12-1.05-.39-2-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.02-.38.11-.5.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.16.04-.31-.02-.43-.06-.12-.55-1.33-.76-1.82-.2-.48-.4-.41-.55-.42h-.47c-.16 0-.43.06-.66.31-.22.25-.87.85-.87 2.07 0 1.22.89 2.4 1.01 2.56.12.16 1.75 2.67 4.24 3.74 1.49.64 1.86.7 2.53.59.41-.06 1.46-.6 1.67-1.17.2-.58.2-1.07.14-1.17-.06-.1-.22-.16-.47-.28"/></svg>`;
 
@@ -141,7 +161,6 @@ export async function renderSuppliers(container) {
   syncSuppliersSubNav(tab);
   updateSuppliersHeader();
 
-  const selectedMatCat = container.dataset.matCat || '';
   const selectedSupCat = container.dataset.supCat || '';
 
   // ניקוי ברקע — לא חוסם את הצגת המסך (היה מאט כל מעבר טאב/שמירה)
@@ -168,19 +187,23 @@ export async function renderSuppliers(container) {
   }
 
   const supCats = await getSupplierCategories();
+  const selectedMatCat = resolveSupplierMatCat(container.dataset.matCat, {
+    tab,
+    fallbackId: supCats[0]?.id,
+  });
+  if (selectedMatCat) container.dataset.matCat = selectedMatCat;
 
-  if (!selectedMatCat && supCats.length) container.dataset.matCat = String(supCats[0].id);
   if (!selectedSupCat && supCats.length) container.dataset.supCat = String(supCats[0].id);
 
   container.innerHTML = `<div id="supplier-tab-body"><p style="text-align:center;padding:24px;color:var(--text-muted)">טוען...</p></div>`;
   const body = document.getElementById('supplier-tab-body');
 
-  if (tab === 'catalog') await renderCatalogTab(body, container, supCats, selectedMatCat || container.dataset.matCat);
+  if (tab === 'catalog') await renderCatalogTab(body, container, supCats, selectedMatCat);
   else if (tab === 'browse') await renderBrowseTab(body, container);
-  else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat || container.dataset.matCat, selectedSupCat || container.dataset.supCat);
+  else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
   else if (tab === 'scan') {
-    const { renderInvoiceScan } = await import('./invoice-scan.js?v=551');
+    const { renderInvoiceScan } = await import('./invoice-scan.js?v=552');
     await renderInvoiceScan(body);
   }
   else await renderOrderTab(body, container);
@@ -336,7 +359,7 @@ function updateCatalogResults(body, container) {
 }
 
 async function renderCatalogTab(body, container, categories, selectedCatId) {
-  const catId = selectedCatId ? Number(selectedCatId) : null;
+  const catId = catalogFilterCatId(selectedCatId);
   const search = (container.dataset.catalogSearch || '').trim().toLowerCase();
   const [catalog, suppliers, importUndo] = await Promise.all([
     getMasterMaterialsList(catId || undefined),
@@ -362,7 +385,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
     </div>
     <div class="card">
       <div class="workspace-chip-row catalog-cat-chips" style="margin-bottom:10px">
-        <button type="button" class="workspace-chip${!catId ? ' active' : ''}" data-catalog-cat="">הכל</button>
+        <button type="button" class="workspace-chip${!catId ? ' active' : ''}" data-catalog-cat="${CATALOG_ALL_CAT}">הכל</button>
         ${categories.map((c) => `
           <button type="button" class="workspace-chip${String(c.id) === String(catId) ? ' active' : ''}"
             data-catalog-cat="${c.id}">${renderSupplierCategoryChipLabel(c)}</button>`).join('')}
@@ -393,7 +416,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
 
   body.querySelectorAll('[data-catalog-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      container.dataset.matCat = btn.dataset.catalogCat || '';
+      container.dataset.matCat = btn.dataset.catalogCat || CATALOG_ALL_CAT;
       renderSuppliers(container);
     });
   });
@@ -740,7 +763,7 @@ const MANUAL_MERGE_RENDER_LIMIT = 60;
  * אחרי איחוד החלון נשאר פתוח באותו מקום להמשך איחודים; סגירה מרעננת את המחסן.
  */
 async function openMergeSelectedMaterialsModal(container) {
-  const catId = container.dataset.matCat ? Number(container.dataset.matCat) : null;
+  const catId = catalogFilterCatId(container.dataset.matCat);
   const [catalog, categories] = await Promise.all([
     getMasterMaterialsList(catId || undefined),
     getSupplierCategories(),
@@ -3689,7 +3712,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=551');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=552');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3711,7 +3734,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=551');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=552');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3729,7 +3752,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=551');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=552');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -3980,7 +4003,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=551');
+    const inv = await import('../inventory-db.js?v=552');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];

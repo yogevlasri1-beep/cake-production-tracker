@@ -5,7 +5,7 @@
  */
 import {
   planPullToRefreshGesture,
-} from './sync/cloud-first.js?v=551';
+} from './sync/cloud-first.js?v=552';
 
 export const PTR_PULL_START_PX = 10;
 
@@ -28,6 +28,7 @@ export function shouldIgnorePtrTarget(target) {
   if (!target?.closest) return false;
   if (target.closest('input, textarea, select, [contenteditable="true"]')) return true;
   if (target.closest('.bottom-nav')) return true;
+  if (target.closest('button, a, .workspace-chip, [role="button"]')) return true;
   return false;
 }
 

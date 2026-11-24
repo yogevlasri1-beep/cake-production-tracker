@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=551';
+import { db, getSetting, setSetting } from './db.js?v=552';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=551';
+} from './supabase-backup.js?v=552';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=551';
+} from './sync/collections.js?v=552';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -81,19 +81,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=551';
+} from './sync/cloud-first.js?v=552';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=551';
+} from './sync/catalog-identity.js?v=552';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=551';
+} from './sync/category-groups-repair.js?v=552';
 import {
   RESTORED_RECIPE_CATEGORIES,
   planMissingRecipeCategoryRestore,
@@ -104,7 +104,7 @@ import {
   planAssignLocalRecipesToRestoredCategories,
   planRecipeCategoryHomeRemap,
   planExtraLocalRecipeCatalogRows,
-} from './sync/recipe-catalog-repair.js?v=551';
+} from './sync/recipe-catalog-repair.js?v=552';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -116,7 +116,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=551';
+} from './sync/restore-lock.js?v=552';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -126,15 +126,15 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=551';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=551';
+} from './sync/id-map.js?v=552';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=552';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=551';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=551';
+} from './auth.js?v=552';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=552';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -310,7 +310,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=551');
+    const { showToast } = await import('./utils.js?v=552');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }

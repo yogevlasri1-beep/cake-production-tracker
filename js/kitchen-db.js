@@ -1,15 +1,15 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=551';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=552';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=551';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=551';
-import { logAuditEvent } from './audit.js?v=551';
-import { markMetaDeleted } from './sync/id-map.js?v=551';
+} from './validators.js?v=552';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=552';
+import { logAuditEvent } from './audit.js?v=552';
+import { markMetaDeleted } from './sync/id-map.js?v=552';
 import {
   assignOrphanRecipesToCategories,
   buildRecipesCatalogLayout,
-} from './sync/recipe-catalog-repair.js?v=551';
+} from './sync/recipe-catalog-repair.js?v=552';
 
 const DEFAULT_RECIPE_YIELD = 1;
 

@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=551';
+} from './runner.js?v=552';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=551';
+} from '../js/db.js?v=552';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=551';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=551';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=551';
+} from '../js/kitchen-db.js?v=552';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=552';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=552';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=551';
-import { addCategoryGroup } from '../js/db.js?v=551';
+} from '../js/supabase-sync.js?v=552';
+import { addCategoryGroup } from '../js/db.js?v=552';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1245,6 +1245,45 @@ export async function runIntegrationTests() {
     assertEqual(names.join(','), 'שטרודל תפוחים 30,שטרודל תפוחים 50');
   });
 
+  await testAsync('מחסן — לחיצה על הכל מציגה חומרים מכל הקטגוריות', async () => {
+    await resetDatabase();
+    await initDB();
+    const dryId = await addSupplierCategory('יבש');
+    const packId = await addSupplierCategory('אריזות', { isPackaging: true });
+    await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
+    await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=552');
+    const subtitle = document.createElement('p');
+    subtitle.id = 'page-subtitle';
+    document.body.appendChild(subtitle);
+    const container = document.createElement('div');
+    container.id = 'main-content';
+    container.dataset.supplierTab = 'catalog';
+    container.dataset.matCat = String(dryId);
+    document.body.appendChild(container);
+    try {
+      await renderSuppliers(container);
+      const rowsBefore = [...container.querySelectorAll('.catalog-material-row')].map((el) => el.textContent);
+      assertOk(rowsBefore.some((t) => t.includes('קמח לחם')), 'מקטגוריה יבש');
+      assertOk(!rowsBefore.some((t) => t.includes('קרטון עוגה')), 'אריזות מוסתרות לפני הכל');
+      const allBtn = container.querySelector('[data-catalog-cat="all"]');
+      assertOk(allBtn, 'כפתור הכל');
+      allBtn.click();
+      for (let i = 0; i < 40; i++) {
+        if (container.querySelector('[data-catalog-cat="all"]')?.classList.contains('active')) break;
+        await wait(50);
+      }
+      assertEqual(container.dataset.matCat, 'all');
+      assertOk(container.querySelector('[data-catalog-cat="all"]')?.classList.contains('active'), 'הכל מסומן');
+      const rowsAfter = [...container.querySelectorAll('.catalog-material-row')].map((el) => el.textContent);
+      assertOk(rowsAfter.some((t) => t.includes('קמח לחם')));
+      assertOk(rowsAfter.some((t) => t.includes('קרטון עוגה')), 'אחרי הכל רואים גם אריזות');
+    } finally {
+      container.remove();
+      subtitle.remove();
+    }
+  });
+
   await testAsync('סריקת חשבונית — כש-3.8 עמוס נופלים ל-3.6 ומציגים בדיקה', async () => {
     await resetDatabase();
     await initDB();
@@ -1257,8 +1296,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=551');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=551');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=552');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=552');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];
