@@ -3,6 +3,13 @@
  * מפתח: GEMINI_API_KEY או OPENAI_API_KEY בהגדרות הפרויקט ב-Vercel.
  */
 
+const GEMINI_INVOICE_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+];
+const GEMINI_TIMEOUT_MS = 12000;
+
 const PROMPT = `אתה מפענח חשבוניות ספקים בעברית למאפייה.
 חלץ JSON בלבד, בלי markdown.
 חשוב:
@@ -39,6 +46,46 @@ function splitDataUrl(dataUrl) {
   return { mimeType: m[1], base64: m[2] };
 }
 
+function isCapacityError(raw, status) {
+  const code = Number(status);
+  if (code === 503 || code === 429) return true;
+  return /high demand|unavailable|overloaded|resource exhausted|rate limit|quota|try again later|UNAVAILABLE|no longer available|not found|NOT_FOUND/i.test(String(raw || ''));
+}
+
+function hebrewGeminiError(raw, status) {
+  const text = String(raw || '').trim();
+  if (/api key not valid|invalid api key|api_key_invalid/i.test(text)) {
+    return 'מפתח ה-AI לא תקין. צרו מפתח חדש ב-Google AI Studio.';
+  }
+  if (isCapacityError(text, status)) {
+    return 'הסריקה עמוסה אצל Google כרגע. נסו שוב בעוד כמה שניות.';
+  }
+  return text || 'Gemini נכשל';
+}
+
+async function fetchGeminiModel(apiKey, model, parts) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), GEMINI_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts }],
+          generationConfig: { responseMimeType: 'application/json' },
+        }),
+        signal: ctrl.signal,
+      },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { res, data };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function parseGemini(files, catalog, apiKey) {
   const parts = [
     { text: PROMPT },
@@ -59,21 +106,35 @@ async function parseGemini(files, catalog, apiKey) {
     }
     parts.push({ inline_data: { mime_type: split.mimeType, data: split.base64 } });
   }
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts }],
-        generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
-      }),
-    },
-  );
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message || 'Gemini נכשל');
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') || '';
-  return parseModelJson(text);
+  let lastErr = null;
+  for (const model of GEMINI_INVOICE_MODELS) {
+    try {
+      const { res, data } = await fetchGeminiModel(apiKey, model, parts);
+      if (!res.ok) {
+        const raw = data?.error?.message || '';
+        lastErr = new Error(hebrewGeminiError(raw, res.status));
+        lastErr.code = isCapacityError(raw, res.status) ? 'capacity' : 'gemini';
+        if (lastErr.code === 'capacity' || res.status === 404) continue;
+        throw lastErr;
+      }
+      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') || '';
+      try {
+        return parseModelJson(text);
+      } catch (parseErr) {
+        lastErr = parseErr;
+        continue;
+      }
+    } catch (err) {
+      if (err?.code === 'capacity' || err?.name === 'AbortError' || /timeout/i.test(err?.message || '')) {
+        lastErr = err.code === 'capacity'
+          ? err
+          : new Error('הסריקה עמוסה אצל Google כרגע. נסו שוב בעוד כמה שניות.');
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error('הסריקה עמוסה אצל Google כרגע. נסו שוב בעוד כמה שניות.');
 }
 
 async function parseOpenAi(files, catalog, apiKey) {
@@ -134,6 +195,9 @@ export default async function handler(req, res) {
       : await parseOpenAi(files, body.catalog, openAiKey);
     json(res, 200, { invoice, source: geminiKey ? 'gemini' : 'openai' });
   } catch (err) {
-    json(res, 500, { error: err.message || 'פענוח נכשל' });
+    json(res, 500, {
+      error: err.message || 'פענוח נכשל',
+      code: err.code || 'server',
+    });
   }
 }

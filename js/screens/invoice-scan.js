@@ -2,16 +2,16 @@ import {
   getSuppliers, getRawMaterials, getSupplierCategories, getCombinedPriceHistory,
   sanitizeSku, sanitizeMinOrderQty, getMaterialSynonyms, computePricePerKg,
   packageWeightKgFromGrams, formatKgWeight,
-} from '../kitchen-db.js?v=550';
-import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=550';
-import { openModal, closeModal } from '../modal.js?v=550';
+} from '../kitchen-db.js?v=551';
+import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=551';
+import { openModal, closeModal } from '../modal.js?v=551';
 import {
   suggestMaterialMatches, suggestSupplierMatches, compareInvoicePrice,
   isFirstMaterialScan, extractPackageKgFromName,
-} from '../invoice-match.js?v=550';
-import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=550';
-import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=550';
-import { requestAutoBackupNow } from '../backup-service.js?v=550';
+} from '../invoice-match.js?v=551';
+import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=551';
+import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=551';
+import { requestAutoBackupNow } from '../backup-service.js?v=551';
 
 export const invoiceScanMeta = {
   title: 'סריקת מסמכים',
@@ -151,7 +151,11 @@ export async function renderInvoiceScan(container) {
     parseBtn.disabled = true;
     statusEl.textContent = 'מפענח את החשבונית, זה יכול לקחת רגע...';
     try {
-      const parsed = await parseInvoiceFiles(chosenFiles, { suppliers, materials });
+      const parsed = await parseInvoiceFiles(chosenFiles, {
+        suppliers,
+        materials,
+        onStatus: (msg) => { statusEl.textContent = msg; },
+      });
       const supplierHits = suggestSupplierMatches(parsed.supplierName, suppliers);
       const supplierId = supplierHits[0]?.supplier?.id || null;
       const drafts = parsed.lines.map((line) => lineDraftFromParsed(line, materials, suppliers, supplierId));
@@ -319,7 +323,7 @@ async function renderReview(container, ctx) {
         let thumbnail = '';
         if (files?.[0] && String(files[0].type || '').startsWith('image/')) {
           try {
-            const { compressInvoiceFile } = await import('../invoice-ai.js?v=550');
+            const { compressInvoiceFile } = await import('../invoice-ai.js?v=551');
             const part = await compressInvoiceFile(files[0], { maxEdge: 480, quality: 0.5 });
             thumbnail = part.dataUrl;
           } catch { /* ignore */ }

@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=550';
+} from './runner.js?v=551';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=550';
+} from '../js/db.js?v=551';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=550';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=550';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=550';
+} from '../js/kitchen-db.js?v=551';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=551';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=551';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=550';
-import { addCategoryGroup } from '../js/db.js?v=550';
+} from '../js/supabase-sync.js?v=551';
+import { addCategoryGroup } from '../js/db.js?v=551';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1243,6 +1243,116 @@ export async function runIntegrationTests() {
     assertEqual(Number(layout.groups[0].categories[0].id), Number(newCat));
     const names = layout.groups[0].categories[0].products.map((p) => p.name).sort();
     assertEqual(names.join(','), 'שטרודל תפוחים 30,שטרודל תפוחים 50');
+  });
+
+  await testAsync('סריקת חשבונית — כש-3.8 עמוס נופלים ל-3.6 ומציגים בדיקה', async () => {
+    await resetDatabase();
+    await initDB();
+    const catId = await addSupplierCategory('יבש');
+    await addSupplier({ categoryId: catId, name: 'השחר' });
+    await addRawMaterial({
+      supplierCategoryId: catId,
+      name: 'קמח',
+      unit: 'ק"ג',
+      unitPrice: 80,
+      packageWeightGrams: 25000,
+    });
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=551');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=551');
+    await setInvoiceAiKey('test-key');
+    const originalFetch = window.fetch;
+    const calls = [];
+    window.fetch = async (url, opts = {}) => {
+      const href = String(url);
+      calls.push(href);
+      if (href.includes('/api/parse-invoice')) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.' }),
+        };
+      }
+      if (href.includes('generativelanguage.googleapis.com') && href.includes('gemini-3.8-flash')) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ error: { message: 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.' } }),
+        };
+      }
+      if (href.includes('generativelanguage.googleapis.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: JSON.stringify({
+                    supplierName: 'השחר',
+                    invoiceNumber: '123',
+                    invoiceDate: '2026-11-24',
+                    lines: [{
+                      name: 'קמח לחם 25 קג',
+                      quantity: 2,
+                      unit: 'שק',
+                      unitPrice: 80,
+                      lineTotal: 160,
+                      priceBasis: 'per_package',
+                      packageWeightKg: 25,
+                    }],
+                  }),
+                }],
+              },
+            }],
+          }),
+        };
+      }
+      return originalFetch(url, opts);
+    };
+    const host = document.createElement('div');
+    host.id = 'invoice-scan-host';
+    document.body.appendChild(host);
+    const overlay = document.createElement('div');
+    overlay.id = 'modal-overlay';
+    overlay.className = 'modal-overlay hidden';
+    overlay.innerHTML = '<div class="modal"><h2 id="modal-title"></h2><div id="modal-body"></div><div id="modal-footer"></div></div>';
+    document.body.appendChild(overlay);
+    try {
+      const parsed = await parseInvoiceFiles(
+        [new File(['קמח לחם 25 קג'], 'invoice.txt', { type: 'text/plain' })],
+        { suppliers: await getSuppliers(), materials: await getRawMaterials() },
+      );
+      assertEqual(parsed.supplierName, 'השחר');
+      assertEqual(parsed.lines[0].name, 'קמח לחם 25 קג');
+      assertOk(calls.some((u) => u.includes('/api/parse-invoice')), 'קודם מנסים שרת');
+      assertOk(calls.some((u) => u.includes('gemini-3.8-flash')), 'אחר כך 3.8');
+      assertOk(calls.some((u) => u.includes('gemini-3.6-flash')), 'ואז נופלים ל-3.6');
+
+      await renderInvoiceScan(host);
+      assertOk(host.querySelector('#invoice-parse-btn'), 'כפתור חילוץ');
+      assertOk(host.querySelector('#invoice-paste-btn'), 'כפתור הדבקה');
+      host.querySelector('#invoice-paste-btn').click();
+      const paste = document.getElementById('invoice-paste-text');
+      const go = document.getElementById('invoice-paste-go');
+      assertOk(paste && go, 'מודאל הדבקה');
+      paste.value = 'קמח לחם 25 קג';
+      go.click();
+      let saved = false;
+      for (let i = 0; i < 40; i++) {
+        if (host.querySelector('#invoice-save')) {
+          saved = true;
+          break;
+        }
+        await wait(50);
+      }
+      assertOk(saved, 'מסך בדיקה אחרי חילוץ');
+      assertOk(host.textContent.includes('קמח לחם 25 קג'));
+      assertOk(!host.textContent.includes('high demand'));
+    } finally {
+      window.fetch = originalFetch;
+      host.remove();
+      overlay.remove();
+    }
   });
 
 await flushTests();

@@ -1,29 +1,115 @@
 /**
  * חילוץ חשבונית: קודם API בשרת (Vercel), אחרת Gemini ישירות עם מפתח מקומי.
  */
-import { getSetting, setSetting } from './db.js?v=550';
-import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=550';
+import { getSetting, setSetting } from './db.js?v=551';
+import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=551';
 
 export const INVOICE_AI_KEY_SETTING = 'invoiceAiKey';
 export const PARSE_INVOICE_PATH = '/api/parse-invoice';
 export const GEMINI_INVOICE_MODEL = 'gemini-3.8-flash';
+export const GEMINI_INVOICE_FALLBACK_MODELS = Object.freeze([
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash-lite',
+]);
+export const GEMINI_INVOICE_TIMEOUT_MS = 22000;
 
 export function geminiGenerateContentUrl(apiKey, { model = GEMINI_INVOICE_MODEL } = {}) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
 }
 
-export function formatGeminiInvoiceError(raw) {
+export function isGeminiCapacityError(raw, status) {
+  const code = Number(status);
+  if (code === 503 || code === 429) return true;
+  return /high demand|unavailable|overloaded|resource exhausted|rate limit|quota|try again later|UNAVAILABLE/i.test(String(raw || ''));
+}
+
+export function shouldTryNextGeminiModel(raw, status) {
+  const code = Number(status);
+  if (isGeminiCapacityError(raw, status)) return true;
+  if (code === 404) return true;
+  return /no longer available|not found|NOT_FOUND/i.test(String(raw || ''));
+}
+
+export function formatGeminiInvoiceError(raw, status) {
   const text = String(raw || '').trim();
-  if (/no longer available|not found|NOT_FOUND/i.test(text)) {
-    return 'מודל הסריקה התחלף. עדכנו את האפליקציה ונסו שוב.';
-  }
   if (/api key not valid|invalid api key|api_key_invalid/i.test(text)) {
     return 'מפתח ה-AI לא תקין. צרו מפתח חדש ב-Google AI Studio.';
   }
-  if (/quota|resource exhausted|rate limit/i.test(text)) {
-    return 'הסריקה חסומה זמנית אצל Gemini. נסו שוב בעוד כמה דקות.';
+  if (isGeminiCapacityError(text, status)) {
+    return 'הסריקה עמוסה אצל Google כרגע. נסו שוב בעוד כמה שניות.';
+  }
+  if (/no longer available|not found|NOT_FOUND/i.test(text)) {
+    return 'מודל הסריקה התחלף. עדכנו את האפליקציה ונסו שוב.';
   }
   return text || 'Gemini נכשל';
+}
+
+function geminiInvoiceError(message, { status, retryable } = {}) {
+  const err = new Error(message);
+  err.status = status;
+  err.retryable = !!retryable;
+  err.code = retryable ? 'capacity' : 'gemini';
+  return err;
+}
+
+export async function generateGeminiInvoiceJson(apiKey, requestBody, {
+  fetchImpl,
+  models = GEMINI_INVOICE_FALLBACK_MODELS,
+  onStatus,
+  timeoutMs = GEMINI_INVOICE_TIMEOUT_MS,
+} = {}) {
+  const doFetch = fetchImpl || globalThis.fetch;
+  if (typeof doFetch !== 'function') throw new Error('Gemini נכשל');
+  let lastErr = null;
+  const list = [...(models || [])].filter(Boolean);
+  for (let i = 0; i < list.length; i++) {
+    const model = list[i];
+    if (i > 0) onStatus?.('המודל עמוס, מנסה מודל חלופי...');
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await doFetch(geminiGenerateContentUrl(apiKey, { model }), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+        signal: ctrl.signal,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const raw = data?.error?.message || '';
+        lastErr = geminiInvoiceError(formatGeminiInvoiceError(raw, res.status), {
+          status: res.status,
+          retryable: shouldTryNextGeminiModel(raw, res.status),
+        });
+        if (lastErr.retryable) continue;
+        throw lastErr;
+      }
+      const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') || '';
+      if (!String(text).trim()) {
+        lastErr = geminiInvoiceError('ה-AI לא החזיר חשבונית מובנית', { retryable: true });
+        continue;
+      }
+      try {
+        return parseModelJson(text);
+      } catch (parseErr) {
+        lastErr = geminiInvoiceError(parseErr.message || 'ה-AI לא החזיר חשבונית מובנית', { retryable: true });
+      }
+    } catch (err) {
+      if (err?.retryable) {
+        lastErr = err;
+        continue;
+      }
+      if (err?.name === 'AbortError' || /timeout/i.test(err?.message || '')) {
+        lastErr = geminiInvoiceError('הסריקה עמוסה אצל Google כרגע. נסו שוב בעוד כמה שניות.', { retryable: true });
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr || geminiInvoiceError('Gemini נכשל');
 }
 
 export async function getInvoiceAiKey() {
@@ -176,14 +262,15 @@ async function parseViaServer(parts, catalog) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const err = new Error(data.error || 'פענוח החשבונית נכשל');
-    err.code = data.code || 'server';
+    const err = new Error(formatGeminiInvoiceError(data.error || 'פענוח החשבונית נכשל', res.status));
+    err.code = data.code || (isGeminiCapacityError(data.error, res.status) ? 'capacity' : 'server');
+    err.retryable = err.code === 'capacity' || err.code === 'missing-key' || err.code === 'no-server';
     throw err;
   }
   return normalizeParsedInvoice(data.invoice || data);
 }
 
-async function parseViaGemini(parts, catalog, apiKey) {
+async function parseViaGemini(parts, catalog, apiKey, options = {}) {
   const contents = [
     { text: invoiceParsePrompt() },
     { text: `קטלוג מקומי לעזרה בזיהוי (אל תמציא מזהים):\n${JSON.stringify(catalog).slice(0, 12000)}` },
@@ -204,20 +291,10 @@ async function parseViaGemini(parts, catalog, apiKey) {
   }
   const body = {
     contents: [{ role: 'user', parts: [...contents, ...inline] }],
-    generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
+    generationConfig: { responseMimeType: 'application/json' },
   };
-  const url = geminiGenerateContentUrl(apiKey);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(formatGeminiInvoiceError(data?.error?.message));
-  }
-  const text = data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('\n') || '';
-  return normalizeParsedInvoice(parseModelJson(text));
+  const parsed = await generateGeminiInvoiceJson(apiKey, body, options);
+  return normalizeParsedInvoice(parsed);
 }
 
 export function catalogForAi({ suppliers = [], materials = [] } = {}) {
@@ -236,7 +313,7 @@ export function catalogForAi({ suppliers = [], materials = [] } = {}) {
   };
 }
 
-export async function parseInvoiceFiles(files, { suppliers = [], materials = [] } = {}) {
+export async function parseInvoiceFiles(files, { suppliers = [], materials = [], onStatus } = {}) {
   const list = [...(files || [])].filter(Boolean);
   if (!list.length) throw new Error('לא נבחר מסמך');
   const parts = [];
@@ -249,18 +326,23 @@ export async function parseInvoiceFiles(files, { suppliers = [], materials = [] 
     parts.push(await compressInvoiceFile(file));
   }
   const catalog = catalogForAi({ suppliers, materials });
+  let serverErr = null;
   try {
     return await parseViaServer(parts, catalog);
   } catch (err) {
-    if (err?.code && err.code !== 'no-server' && err.code !== 'missing-key') throw err;
+    serverErr = err;
   }
   const key = await getInvoiceAiKey();
   if (!key) {
+    if (serverErr && serverErr.code !== 'no-server' && serverErr.code !== 'missing-key') throw serverErr;
     const err = new Error('חסר מפתח AI. הוסף מפתח Gemini במסך הסריקה.');
     err.code = 'missing-key';
     throw err;
   }
-  return parseViaGemini(parts, catalog, key);
+  if (serverErr && serverErr.code !== 'no-server' && serverErr.code !== 'missing-key') {
+    onStatus?.('השרת עמוס, מנסה סריקה מהמכשיר...');
+  }
+  return parseViaGemini(parts, catalog, key, { onStatus });
 }
 
 export async function parseInvoiceText(text, { suppliers = [], materials = [] } = {}) {

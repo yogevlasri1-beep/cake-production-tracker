@@ -10,11 +10,11 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=550';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=550';
-import { defaultColorForIndex } from './chart.js?v=550';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=550';
-import { logAuditEvent } from './audit.js?v=550';
+} from './validators.js?v=551';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=551';
+import { defaultColorForIndex } from './chart.js?v=551';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=551';
+import { logAuditEvent } from './audit.js?v=551';
 
 export { ValidationError };
 
@@ -3621,7 +3621,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=550');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=551');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3961,7 +3961,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=550');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=551');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -6927,7 +6927,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=550');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=551');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);

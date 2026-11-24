@@ -8663,12 +8663,13 @@ table.report-cat-summary-table td:not(:first-child) {
   transform: translateX(-50%);
   background: var(--primary-dark);
   color: white;
-  padding: 11px 22px;
-  border-radius: 99px;
+  padding: 11px 18px;
+  border-radius: 16px;
   font-size: 0.85rem;
+  line-height: 1.35;
   z-index: 200;
   animation: fadeIn 0.2s ease;
-  max-width: 90%;
+  max-width: min(90%, 360px);
   text-align: center;
   box-shadow: 0 4px 20px rgba(37, 99, 235, 0.35);
 }
