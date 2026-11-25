@@ -1,6 +1,6 @@
-import { getAllFlowsOverview, getProductionRun } from '../db.js?v=553';
-import { getRecipes } from '../kitchen-db.js?v=553';
-import { escapeHtml, formatDate, formatDecimal, formatDuration, formatMoney, runDurationMs, showToast, todayISO } from '../utils.js?v=553';
+import { getAllFlowsOverview, getProductionRun } from '../db.js?v=554';
+import { getRecipes } from '../kitchen-db.js?v=554';
+import { escapeHtml, formatDate, formatDecimal, formatDuration, formatMoney, runDurationMs, showToast, todayISO } from '../utils.js?v=554';
 import {
   addProcessWaste,
   assignProcessUse,
@@ -17,8 +17,8 @@ import {
   saveProcessWeights,
   startProcessRun,
   updateProcessFlow,
-} from '../process-materials.js?v=553';
-import { expiryStatus, isProcessFlow, isProcessRun, kgFromOutputPercent } from '../process-materials-math.js?v=553';
+} from '../process-materials.js?v=554';
+import { expiryStatus, isProcessFlow, isProcessRun, kgFromOutputPercent, processFlowConflict, processFlowConflictMessage } from '../process-materials-math.js?v=554';
 
 const MODE_KEY = 'yitzur-flow-kind-tab';
 
@@ -92,10 +92,6 @@ export async function renderMaterialsWorkspaceHTML() {
     <${flows.length ? 'details' : 'div'} class="card">
       <${flows.length ? 'summary' : 'div'} class="card-title">תזרים חדש</${flows.length ? 'summary' : 'div'}>
       <div class="form-group">
-        <label for="pm-new-name">שם החומר</label>
-        <input type="text" id="pm-new-name" placeholder="למשל מילוי תפוחים">
-      </div>
-      <div class="form-group">
         <label for="pm-new-recipe">מתכון</label>
         <select id="pm-new-recipe">
           <option value="">בלי מתכון — אפשר לחבר אחר כך</option>
@@ -103,8 +99,14 @@ export async function renderMaterialsWorkspaceHTML() {
         </select>
       </div>
       <div class="form-group">
-        <label for="pm-new-days">ימי תוקף</label>
-        <input type="number" id="pm-new-days" min="1" step="1" inputmode="numeric" placeholder="למשל 3">
+        <label for="pm-new-name">שם החומר</label>
+        <input type="text" id="pm-new-name" placeholder="מתמלא אוטומטית מבחירת המתכון">
+        <p class="form-hint" id="pm-new-name-hint">בחרו מתכון והשם יתמלא. אפשר לשנות אותו לפני השמירה.</p>
+      </div>
+      <div class="form-group">
+        <label for="pm-new-days">ימי תוקף (רשות)</label>
+        <input type="number" id="pm-new-days" min="1" step="1" inputmode="numeric" placeholder="אפשר להשאיר ריק">
+        <p class="form-hint">לא חובה. אפשר לקבוע או לשנות אחר כך בעריכת התזרים.</p>
       </div>
       <div class="form-group">
         <label for="pm-new-yield">תפוקה רגילה אחרי עיבוד (%)</label>
@@ -156,8 +158,9 @@ export async function renderMaterialsWorkspaceHTML() {
               </select>
             </div>
             <div class="form-group">
-              <label>ימי תוקף</label>
-              <input type="number" class="pm-edit-days" min="1" step="1" value="${flow.shelfLifeDays || ''}">
+              <label>ימי תוקף (רשות)</label>
+              <input type="number" class="pm-edit-days" min="1" step="1" value="${flow.shelfLifeDays || ''}" placeholder="אפשר להשאיר ריק">
+              <p class="form-hint">אצוות שכבר נפתחו שומרות את התוקף שנרשם להן. שינוי כאן חל על אצווה חדשה.</p>
             </div>
             <div class="form-group">
               <label>תפוקה רגילה (%)</label>
@@ -217,11 +220,45 @@ export async function renderMaterialsWorkspaceHTML() {
 export function bindMaterialsWorkspace(container, rerender) {
   bindMaterialModeTabs(container, rerender);
 
+  const recipeSelect = document.getElementById('pm-new-recipe');
+  const nameInput = document.getElementById('pm-new-name');
+  const nameHint = document.getElementById('pm-new-name-hint');
+
+  const refreshNameHint = async () => {
+    if (!nameHint) return;
+    const flows = await listProcessFlows();
+    const kind = processFlowConflict(flows, {
+      name: nameInput?.value,
+      recipeId: recipeSelect?.value,
+    });
+    const message = processFlowConflictMessage(kind);
+    nameHint.textContent = message || (nameInput?.value?.trim()
+      ? 'אפשר לשנות את השם לפני השמירה.'
+      : 'בחרו מתכון והשם יתמלא. אפשר לשנות אותו לפני השמירה.');
+  };
+
+  recipeSelect?.addEventListener('change', () => {
+    const picked = recipeSelect.selectedOptions?.[0];
+    if (picked?.value && nameInput) {
+      nameInput.value = picked.textContent.trim();
+      nameInput.dataset.autoName = nameInput.value;
+    }
+    refreshNameHint();
+  });
+  nameInput?.addEventListener('input', () => {
+    if (nameInput.dataset.autoName && nameInput.value.trim() !== nameInput.dataset.autoName) {
+      delete nameInput.dataset.autoName;
+    }
+    refreshNameHint();
+  });
+
   document.getElementById('pm-create')?.addEventListener('click', async () => {
     try {
+      const picked = recipeSelect?.selectedOptions?.[0];
+      const typedName = nameInput?.value?.trim();
       const id = await createProcessFlow({
-        name: document.getElementById('pm-new-name')?.value,
-        recipeId: document.getElementById('pm-new-recipe')?.value,
+        name: typedName || (picked?.value ? picked.textContent.trim() : ''),
+        recipeId: recipeSelect?.value,
         shelfLifeDays: document.getElementById('pm-new-days')?.value,
         expectedYieldPct: document.getElementById('pm-new-yield')?.value,
       });
@@ -238,6 +275,16 @@ export function bindMaterialsWorkspace(container, rerender) {
   container.querySelectorAll('.pm-edit').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.getElementById(`pm-edit-${btn.dataset.flowId}`)?.classList.toggle('hidden');
+    });
+  });
+
+  container.querySelectorAll('.pm-edit-recipe').forEach((select) => {
+    select.addEventListener('change', () => {
+      const card = select.closest('[data-pm-flow]');
+      const nameField = card?.querySelector('.pm-edit-name');
+      const picked = select.selectedOptions?.[0];
+      if (!picked?.value || !nameField) return;
+      nameField.value = picked.textContent.trim();
     });
   });
 

@@ -1,13 +1,13 @@
-import { db, getProductionRun, getFlowStepsForFlow } from './db.js?v=553';
-import { ValidationError, sanitizeName, sanitizeProductId } from './validators.js?v=553';
-import { todayISO } from './utils.js?v=553';
+import { db, getProductionRun, getFlowStepsForFlow } from './db.js?v=554';
+import { ValidationError, sanitizeName, sanitizeProductId } from './validators.js?v=554';
+import { todayISO } from './utils.js?v=554';
 import {
   getRecipe,
   getRecipeCostingIngredients,
   recipeTotalWeightGrams,
   scaleIngredientsToTargetGrams,
   computeRecipeMaterialsCostFiltered,
-} from './kitchen-db.js?v=553';
+} from './kitchen-db.js?v=554';
 import {
   addDaysToISO,
   expiryStatus,
@@ -23,9 +23,11 @@ import {
   roundQty,
   sumKg,
   validateProcessWeights,
+  processFlowConflict,
+  processFlowConflictMessage,
   yieldOutsideBand,
   yieldPercent,
-} from './process-materials-math.js?v=553';
+} from './process-materials-math.js?v=554';
 
 export {
   expiryStatus,
@@ -62,11 +64,11 @@ export async function createProcessFlow({
   linkedProductFlowIds = [],
 } = {}) {
   const cleanName = sanitizeName(name, 60);
-  if (!cleanName) throw new ValidationError('שם החומר לא תקין');
+  if (!String(name || '').trim()) throw new ValidationError('שם החומר לא תקין');
+  if (!cleanName) throw new ValidationError('השם ארוך מ־60 תווים');
   const flows = await listProcessFlows();
-  if (flows.some((flow) => flow.name.trim() === cleanName)) {
-    throw new ValidationError('כבר יש תזרים בשם הזה');
-  }
+  const conflict = processFlowConflict(flows, { name: cleanName, recipeId });
+  if (conflict) throw new ValidationError(processFlowConflictMessage(conflict));
   const maxOrder = flows.reduce((max, flow) => Math.max(max, flow.sortOrder ?? 0), 0);
   const days = Number(shelfLifeDays);
   const expected = Number(expectedYieldPct);
@@ -111,10 +113,17 @@ export async function updateProcessFlow(flowId, patch = {}) {
   const next = {};
   if (patch.name != null) {
     const clean = sanitizeName(patch.name, 60);
-    if (!clean) throw new ValidationError('שם החומר לא תקין');
+    if (!String(patch.name || '').trim()) throw new ValidationError('שם החומר לא תקין');
+    if (!clean) throw new ValidationError('השם ארוך מ־60 תווים');
     next.name = clean;
   }
   if ('recipeId' in patch) next.recipeId = patch.recipeId ? Number(patch.recipeId) : null;
+  const conflict = processFlowConflict(await listProcessFlows(), {
+    name: next.name || flow.name,
+    recipeId: 'recipeId' in next ? next.recipeId : flow.recipeId,
+    exceptId: fid,
+  });
+  if (conflict) throw new ValidationError(processFlowConflictMessage(conflict));
   if ('shelfLifeDays' in patch) {
     const days = Number(patch.shelfLifeDays);
     next.shelfLifeDays = Number.isFinite(days) && days > 0 ? Math.round(days) : null;

@@ -1,5 +1,7 @@
 /** חישובים טהורים לחומר גלם בתהליך. בלי גישה למסד. */
 
+import { flowNameKey } from './sync/collections.js?v=554';
+
 export function roundQty(n, digits = 3) {
   const x = Number(n);
   if (!Number.isFinite(x)) return null;
@@ -116,6 +118,26 @@ export function addDaysToISO(isoDate, days) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * כפילות תזרים חומר: אותו שם אחרי נרמול, או אותו מתכון.
+ * exceptId הוא התזרים שנערך, כדי שלא ייחסם מול עצמו.
+ * מחזיר 'name' | 'recipe' | ''.
+ */
+export function processFlowConflict(flows, { name, recipeId, exceptId = null } = {}) {
+  const others = (flows || []).filter((flow) => exceptId == null || Number(flow.id) !== Number(exceptId));
+  const key = flowNameKey(name);
+  if (key && others.some((flow) => flowNameKey(flow.name) === key)) return 'name';
+  const rid = Number(recipeId);
+  if (Number.isInteger(rid) && rid > 0 && others.some((flow) => Number(flow.recipeId) === rid)) return 'recipe';
+  return '';
+}
+
+export function processFlowConflictMessage(kind) {
+  if (kind === 'name') return 'כבר יש תזרים בשם הזה';
+  if (kind === 'recipe') return 'למתכון הזה כבר יש תזרים';
+  return '';
 }
 
 export function expiryStatus(expiresAt, today) {

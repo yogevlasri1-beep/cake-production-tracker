@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=553';
+} from './runner.js?v=554';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=553';
+} from '../js/db.js?v=554';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=553';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=553';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=553';
+} from '../js/kitchen-db.js?v=554';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=554';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=554';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=553';
-import { addCategoryGroup } from '../js/db.js?v=553';
+} from '../js/supabase-sync.js?v=554';
+import { addCategoryGroup } from '../js/db.js?v=554';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1252,7 +1252,7 @@ export async function runIntegrationTests() {
     const packId = await addSupplierCategory('אריזות', { isPackaging: true });
     await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
     await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
-    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=553');
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=554');
     const subtitle = document.createElement('p');
     subtitle.id = 'page-subtitle';
     document.body.appendChild(subtitle);
@@ -1296,8 +1296,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=553');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=553');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=554');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=554');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];
