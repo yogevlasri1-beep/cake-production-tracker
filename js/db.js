@@ -10,11 +10,12 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=552';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=552';
-import { defaultColorForIndex } from './chart.js?v=552';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=552';
-import { logAuditEvent } from './audit.js?v=552';
+} from './validators.js?v=553';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=553';
+import { defaultColorForIndex } from './chart.js?v=553';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=553';
+import { isProcessBatchCode } from './process-materials-math.js?v=553';
+import { logAuditEvent } from './audit.js?v=553';
 
 export { ValidationError };
 
@@ -3621,7 +3622,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=552');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=553');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3676,6 +3677,9 @@ export async function getMaxExistingBatchNumber() {
   const runs = await db.productionRuns.toArray();
   let max = 0;
   for (const run of runs) {
+    if (isProcessBatchCode(run?.processBatchCode) || isProcessBatchCode(run?.batchNumber) || run?.flowKind === 'process') {
+      continue;
+    }
     const n = parseNumericBatchNumber(run.batchNumber);
     if (n != null && n > max) max = n;
   }
@@ -3961,7 +3965,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=552');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=553');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -6453,6 +6457,7 @@ function isSharedFlowName(name) {
 
 function flowDedupeKey(flow) {
   const name = flowNameKey(flow?.name) || productNameKey(flow?.name) || `id:${flow?.id}`;
+  if (flow?.flowKind === 'process') return `process:${name}`;
   if (!isSharedFlowName(flow?.name)) return name;
   const target = productNameKey(
     flow?.targetLabel || flow?.categoryName || flow?.groupName || '',
@@ -6927,7 +6932,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=552');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=553');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);
@@ -6938,7 +6943,8 @@ export async function getAllFlowsOverview() {
     db.categories.toArray(),
     db.categoryGroups.toArray(),
   ]);
-  return overviewFlowsFromRows(flows, steps, categories, groups);
+  const productFlows = flows.filter((flow) => flow.flowKind !== 'process');
+  return overviewFlowsFromRows(productFlows, steps, categories, groups);
 }
 
 export async function getFlow(flowId) {
@@ -7864,6 +7870,8 @@ export async function setFlowStepOrderForGroup(categoryGroupId, orderedIds) {
 const DEFAULT_FLOW_STEPS = ['הכנת חומרי גלם', 'ערבוב / הכנה', 'שקילה', 'עיצוב', 'אפייה', 'קירור', 'אריזה'];
 
 async function ensureFlowProductionStepInTx(tx, flowId) {
+  const flow = await tx.table('flows').get(flowId);
+  if (flow?.flowKind === 'process') return false;
   const steps = await tx.table('flowSteps').where('flowId').equals(flowId).toArray();
   steps.sort(compareFlowSteps);
   if (steps.some((s) => s.tracksProduction)) return false;
@@ -7873,7 +7881,6 @@ async function ensureFlowProductionStepInTx(tx, flowId) {
     return true;
   }
   const maxOrder = steps.reduce((m, s) => Math.max(m, s.sortOrder ?? 0), 0);
-  const flow = await tx.table('flows').get(flowId);
   await tx.table('flowSteps').add({
     flowId,
     categoryId: flow?.categoryId || null,
@@ -8056,6 +8063,13 @@ export async function startProductionRun({
   date, batchNumber, categoryId, categoryIds, productId, categoryGroupId,
   scopeMode, portionUnit, portionSize, portionCount, flowId,
 }) {
+  const earlyFlowId = sanitizeProductId(flowId);
+  if (earlyFlowId) {
+    const earlyFlow = await db.flows.get(earlyFlowId);
+    if (earlyFlow?.flowKind === 'process') {
+      throw new ValidationError('תזרים חומר גלם בתהליך מתחילים מהמתג «חומרים בתהליך»');
+    }
+  }
   // תאריך מהטופס אופציונלי לתאימות — בפועל נשמר רגע הלחיצה
   if (date != null && date !== '' && !isValidISODate(date)) {
     throw new ValidationError('תאריך לא תקין');
@@ -8216,7 +8230,7 @@ export async function startProductionRun({
         });
       }
     }
-    if (runSettings.autoBatchEnabled) {
+    if (runSettings.autoBatchEnabled && !isProcessBatchCode(batch)) {
       const assigned = parseNumericBatchNumber(batch)
         ?? Math.max(1, Number(runSettings.nextBatchNumber) || 1);
       const next = Math.max(assigned + 1, (await getMaxExistingBatchNumber()) + 1);
@@ -8231,6 +8245,7 @@ export async function startProductionRun({
 
 async function normalizeRunProductionSteps(run) {
   if (!run?.steps?.length) return false;
+  if (run.flowKind === 'process' || isProcessBatchCode(run.processBatchCode || run.batchNumber)) return false;
   let changed = false;
 
   for (const step of run.steps) {
@@ -9755,8 +9770,29 @@ export async function deleteProductionRun(runId) {
   if (!rid) return;
 
   const entryIds = await collectProductionEntryIdsForRun(rid);
+  const run = await db.productionRuns.get(rid);
 
   await db.transaction('rw', db.productionRuns, db.runStepStates, db.productionEntries, db.runPreparationChecks, db.runCleaningChecks, async () => {
+    if (run?.processAllocations?.length) {
+      for (const row of run.processAllocations) {
+        if (!row?.productRunId || !row.id) continue;
+        const product = await db.productionRuns.get(row.productRunId);
+        if (!product?.processUseCopies?.length) continue;
+        await db.productionRuns.update(product.id, {
+          processUseCopies: product.processUseCopies.filter((item) => item.id !== row.id),
+        });
+      }
+    }
+    if (run?.processUseCopies?.length) {
+      for (const copy of run.processUseCopies) {
+        if (!copy?.sourceRunId || !copy.id) continue;
+        const source = await db.productionRuns.get(copy.sourceRunId);
+        if (!source?.processAllocations?.length) continue;
+        await db.productionRuns.update(source.id, {
+          processAllocations: source.processAllocations.filter((item) => item.id !== copy.id),
+        });
+      }
+    }
     for (const id of entryIds) {
       await db.productionEntries.delete(id);
     }

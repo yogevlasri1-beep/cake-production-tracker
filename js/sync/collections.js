@@ -512,7 +512,9 @@ export function rowFingerprint(collection, row) {
     case 'flowSteps':
       return `${collection}|${row.flowId}|${row.sortOrder ?? ''}|${n}`;
     case 'flows':
-      return n ? `${collection}|${n}|${row.categoryId ?? ''}|${row.categoryGroupId ?? ''}` : '';
+      if (!n) return '';
+      if (row.flowKind === 'process') return `${collection}|process|${n}`;
+      return `${collection}|${n}|${row.categoryId ?? ''}|${row.categoryGroupId ?? ''}`;
     case 'targets':
       return row.scope ? `${collection}|${row.scope}|${row.scopeId ?? ''}|${row.period ?? ''}` : '';
     case 'processLogs':
@@ -725,6 +727,10 @@ export function rowDedupeFingerprint(collection, row) {
 export function rowNameFingerprint(collection, row) {
   if (!row) return '';
   if (collection === 'settings') return row.key ? `settings|${row.key}` : '';
+  if (collection === 'flows' && row.flowKind === 'process') {
+    const processName = normName(row.name);
+    return processName ? `${collection}|process|${processName}` : '';
+  }
   const n = normName(row.name);
   if (!n && row.weekStart) return `${collection}|${row.weekStart}`;
   if (!n && row.date && collection === 'productionEntries') {
@@ -792,6 +798,7 @@ export function catalogMatchKey(collection, row, maps = {}) {
   }
   if (collection === 'flows') {
     const flowKey = flowNameKey(row.name) || n;
+    if (row.flowKind === 'process') return `${collection}|process|${flowKey}`;
     if (!isSharedFlowName(row.name)) return `${collection}|${flowKey}`;
     const categoryName = categoryNameOf(row.categoryId);
     if (categoryName) return `${collection}|${n}|c:${categoryName}`;

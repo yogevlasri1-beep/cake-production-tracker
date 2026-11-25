@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <title>בדיקת חומר בתהליך</title>
+</head>
+<body>
+  <pre id="out">רץ...</pre>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import { initDB, addCategoryGroup, addCategory, addProduct, createFlow, startProductionRun, getRunSettings, setRunSettings, getAllFlowsOverview, deleteProductionRun, getProductionRun } from '../js/db.js?v=553';
+    import {
+      createProcessFlow, startProcessRun, saveProcessWeights, assignProcessUse,
+      addProcessWaste, processRemainingKg, mixProcessRuns, listExpiryNotices,
+      deleteProcessFlow,
+    } from '../js/process-materials.js?v=553';
+    import { isProcessBatchCode } from '../js/process-materials-math.js?v=553';
+
+    const steps = [];
+    function check(name, cond, detail = '') {
+      steps.push({ name, ok: !!cond, detail: detail ? String(detail) : '' });
+      if (!cond) throw new Error(`${name}${detail ? `: ${detail}` : ''}`);
+    }
+
+    const created = { runs: [], flows: [], processFlows: [], products: [], categories: [], groups: [] };
+
+    try {
+      await initDB();
+      const before = await getRunSettings();
+      await setRunSettings({ autoBatchEnabled: true, nextBatchNumber: 54 });
+
+      const groupId = await addCategoryGroup('בדיקת חומר בתהליך');
+      created.groups.push(groupId);
+      const categoryId = await addCategory('עוגות בדיקה', null, groupId);
+      created.categories.push(categoryId);
+      const productId = await addProduct({ name: 'עוגת בדיקה', categoryId, unitPrice: 40 });
+      created.products.push(productId);
+      const productFlowId = await createFlow({ categoryId, name: 'תזרים עוגה בדיקה', withDefaults: true });
+      created.flows.push(productFlowId);
+
+      const processFlowId = await createProcessFlow({
+        name: 'מילוי תפוחים בדיקה',
+        shelfLifeDays: 1,
+        expectedYieldPct: 50,
+        linkedProductFlowIds: [productFlowId],
+      });
+      created.processFlows.push(processFlowId);
+
+      const overview = await getAllFlowsOverview();
+      check('תזרים חומר לא ברשימת המוצרים', !overview.some((flow) => Number(flow.id) === Number(processFlowId)));
+
+      let refused = false;
+      try {
+        await startProductionRun({
+          scopeMode: 'product',
+          productId,
+          categoryId,
+          flowId: processFlowId,
+        });
+      } catch (err) {
+        refused = /חומר גלם בתהליך/.test(err.message || '');
+      }
+      check('אי אפשר להתחיל תזרים חומר כמוצר', refused);
+
+      const processRunId = await startProcessRun({ flowId: processFlowId });
+      created.runs.push(processRunId);
+      const processRun = await getProductionRun(processRunId, { normalize: false });
+      check('קוד אצווה נפרד', isProcessBatchCode(processRun.processBatchCode), processRun.processBatchCode);
+      check('מספר המוצר לא זז', (await getRunSettings()).nextBatchNumber === 54, String((await getRunSettings()).nextBatchNumber));
+      check('תוקף מחר', !!processRun.expiresAt);
+
+      const quiet = await saveProcessWeights(processRunId, { inputKg: 1000, outputKg: 500 });
+      check('תפוקה 50 בלי חריגה', quiet.yieldPct === 50 && quiet.yieldOutside === false, JSON.stringify(quiet));
+
+      let outside = '';
+      try {
+        await saveProcessWeights(processRunId, { inputKg: 1000, outputKg: 200 });
+      } catch (err) {
+        outside = err.code || '';
+      }
+      check('סטייה מבקשת אישור', outside === 'yield-confirm');
+      await saveProcessWeights(processRunId, { inputKg: 1000, outputKg: 500, confirmed: true });
+
+      let tooHeavy = '';
+      try {
+        await saveProcessWeights(processRunId, { inputKg: 1000, outputKg: 1200, confirmed: true });
+      } catch (err) {
+        tooHeavy = err.message || '';
+      }
+      check('אי אפשר לצאת יותר ממה שנכנס', /יותר ממה שנכנס/.test(tooHeavy), tooHeavy);
+
+      const productRunId = await startProductionRun({
+        scopeMode: 'product',
+        productId,
+        categoryId,
+        flowId: productFlowId,
+      });
+      created.runs.push(productRunId);
+      const productRun = await getProductionRun(productRunId, { normalize: false });
+      check('אצוות מוצר נשארת מספר', productRun.batchNumber === '54', productRun.batchNumber);
+      check('המונה עלה ל-55', (await getRunSettings()).nextBatchNumber === 55);
+
+      const copy = await assignProcessUse({ sourceRunId: processRunId, productRunId, pct: 70 });
+      check('70 אחוז הם 350 ק״ג', copy.kg === 350, String(copy.kg));
+      const afterAssign = await getProductionRun(processRunId, { normalize: false });
+      const productAfter = await getProductionRun(productRunId, { normalize: false });
+      check('היתרה 150', processRemainingKg(afterAssign) === 150, String(processRemainingKg(afterAssign)));
+      check('עותק אחד על המוצר', (productAfter.processUseCopies || []).length === 1 && productAfter.processUseCopies[0].kg === 350);
+
+      let blocked = '';
+      try {
+        await assignProcessUse({ sourceRunId: processRunId, productRunId, pct: 70 });
+      } catch (err) {
+        blocked = err.message || '';
+      }
+      check('שיוך שני נחסם', /נשארו/.test(blocked), blocked);
+
+      await addProcessWaste(processRunId, { kg: 20, reason: 'נשפך' });
+      const afterWaste = await getProductionRun(processRunId, { normalize: false });
+      check('אחרי פחת נשאר 130', processRemainingKg(afterWaste) === 130, String(processRemainingKg(afterWaste)));
+
+      const notices = await listExpiryNotices();
+      check('התראת תוקף', notices.some((item) => item.runId === processRunId), JSON.stringify(notices.map((item) => item.status)));
+
+      const openingId = await startProcessRun({
+        flowId: processFlowId,
+        opening: true,
+        outputKg: 8,
+        inputCost: 80,
+      });
+      created.runs.push(openingId);
+      const openingSaved = await saveProcessWeights(openingId, { inputKg: 8, outputKg: 8 });
+      check('מקרר בלי אזהרת תפוקה', openingSaved.yieldOutside === false && openingSaved.costPerKg === 10, JSON.stringify(openingSaved));
+
+      const mixedId = await mixProcessRuns(processRunId, openingId);
+      created.runs.push(mixedId);
+      const mixed = await getProductionRun(mixedId, { normalize: false });
+      const sourceLeft = processRemainingKg(await getProductionRun(processRunId, { normalize: false }));
+      check('ערבוב שומר את הק״ג', mixed.outputKg === 138, String(mixed.outputKg));
+      check('המקורות נצרכו', sourceLeft === 0);
+      check('תוקף הערבוב הוא המוקדם', mixed.expiresAt === processRun.expiresAt || mixed.expiresAt === (await getProductionRun(openingId, { normalize: false })).expiresAt);
+
+      await deleteProductionRun(productRunId);
+      created.runs = created.runs.filter((id) => id !== productRunId);
+      const released = await getProductionRun(mixedId, { normalize: false });
+      const sourceAfterDelete = await getProductionRun(processRunId, { normalize: false });
+      check('מחיקת מוצר משחררת את העותק', (sourceAfterDelete.processAllocations || []).every((row) => row.productRunId !== productRunId));
+      check('הערבוב נשאר', !!released);
+
+      await setRunSettings(before);
+      window.__PM_CHECK__ = { ok: true, steps };
+      document.getElementById('out').textContent = steps.map((step) => `${step.ok ? 'עבר' : 'נכשל'} ${step.name}`).join('\n');
+    } catch (err) {
+      window.__PM_CHECK__ = { ok: false, message: err.message, steps };
+      document.getElementById('out').textContent = `${err.message}\n${steps.map((step) => `${step.ok ? 'עבר' : 'נכשל'} ${step.name} ${step.detail}`).join('\n')}`;
+    } finally {
+      try {
+        const { db } = await import('../js/db.js?v=553');
+        for (const id of created.runs) {
+          await db.runStepStates.where('runId').equals(id).delete();
+          await db.productionRuns.delete(id);
+        }
+        for (const id of created.processFlows) {
+          try { await deleteProcessFlow(id); } catch { await db.flowSteps.where('flowId').equals(id).delete(); await db.flows.delete(id); }
+        }
+        for (const id of created.flows) {
+          await db.flowSteps.where('flowId').equals(id).delete();
+          await db.flows.delete(id);
+        }
+        for (const id of created.products) await db.products.delete(id);
+        for (const id of created.categories) await db.categories.delete(id);
+        for (const id of created.groups) await db.categoryGroups.delete(id);
+      } catch (err) {
+        console.warn('cleanup', err);
+      }
+    }
+  </script>
+</body>
+</html>

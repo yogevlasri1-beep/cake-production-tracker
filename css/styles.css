@@ -14354,3 +14354,44 @@ html[lang="he"] .mat-active-toggle.is-on .mat-active-switch::after {
   width: 100%;
   margin-top: 4px;
 }
+
+.pm-expiry-banner {
+  width: 100%;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-color: var(--warning, #d97706);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.pm-pct-row,
+.pm-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.pm-link-list {
+  flex-direction: column;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.process-kind-tabs {
+  margin-bottom: 8px;
+}
+
+details.card > summary.card-title {
+  cursor: pointer;
+}
+
+.pm-opening-panel {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+}
