@@ -175,6 +175,134 @@ export function suggestMaterialMatches(line, materials = [], { limit = 5, minSco
     .slice(0, limit);
 }
 
+export const INVOICE_ITEM_ROLES = Object.freeze([
+  { id: 'raw', label: 'חומר גלם' },
+  { id: 'packaging', label: 'אריזה' },
+  { id: 'cleaning', label: 'חומרי ניקיון' },
+]);
+
+export function invoiceItemRoleLabel(role) {
+  return INVOICE_ITEM_ROLES.find((row) => row.id === role)?.label || 'חומר גלם';
+}
+
+export function roleFromSupplierCategory(cat) {
+  if (!cat) return 'raw';
+  const name = String(cat.name || '').trim();
+  if (cat.isCleaning || /ניקיון/.test(name)) return 'cleaning';
+  if (cat.isPackaging || /^אריז/.test(name)) return 'packaging';
+  return 'raw';
+}
+
+const CLEANING_NAME_RE = /ניקיון|אקונומיק|סבון|דטרגנט|מחטא|כלור|אקונומיה|ממחטות|מגבונ/;
+const PACKAGING_NAME_RE = /קרטון|קופס|מגש|שקית|ניילון|מדבק|סרט הדב|לוגו|מכסה|אלומינ|כפפ|מנשא|מיכל|תבנית|אריז|פלסטיק|פואל|פויל|רדיד/;
+
+export function guessInvoiceItemRole(line = {}, material = null, categories = []) {
+  const name = String(line?.name || material?.name || '');
+  if (CLEANING_NAME_RE.test(name)) return 'cleaning';
+  if (PACKAGING_NAME_RE.test(name)) return 'packaging';
+  if (material?.supplierCategoryId != null && categories?.length) {
+    const cat = categories.find((c) => Number(c.id) === Number(material.supplierCategoryId));
+    return roleFromSupplierCategory(cat);
+  }
+  return 'raw';
+}
+
+/**
+ * חיפוש ידני אחרי סריקה — לפי שם / מק״ט / נרדפת, כולל הקלדה חלקית.
+ */
+export function searchMaterialsByName(query, materials = [], { limit = 12, minScore = 25 } = {}) {
+  const raw = String(query || '').trim();
+  if (!raw) return [];
+  const looseQ = looseInvoiceName(raw);
+  const skuQ = normalizeSku(raw);
+  return (materials || [])
+    .map((material) => {
+      const hit = scoreMaterialMatch({ name: raw, sku: raw }, material);
+      let score = hit.score;
+      let reason = hit.reason;
+      const name = looseInvoiceName(material.name);
+      const sku = normalizeSku(material.sku);
+      const synonyms = Array.isArray(material.synonyms) ? material.synonyms.map(looseInvoiceName) : [];
+      if (!score && looseQ && name.startsWith(looseQ)) {
+        score = 74;
+        reason = 'מתחיל ב';
+      } else if (!score && looseQ && name.includes(looseQ)) {
+        score = 62;
+        reason = 'השם כולל';
+      } else if (!score && looseQ && synonyms.some((s) => s.includes(looseQ))) {
+        score = 58;
+        reason = 'נרדפת';
+      } else if (!score && skuQ && sku && sku.includes(skuQ)) {
+        score = 55;
+        reason = 'מק״ט';
+      }
+      return { material, score, reason };
+    })
+    .filter((row) => row.score >= minScore)
+    .sort((a, b) => b.score - a.score || String(a.material.name).localeCompare(String(b.material.name), 'he'))
+    .slice(0, limit);
+}
+
+export function filterInvoiceDraftsByName(drafts = [], query = '') {
+  const q = looseInvoiceName(query);
+  if (!q) return (drafts || []).map((_, idx) => idx);
+  const tokens = tokensOf(q);
+  return (drafts || [])
+    .map((line, idx) => ({ idx, name: looseInvoiceName(line?.name), sku: normalizeSku(line?.sku) }))
+    .filter((row) => {
+      if (row.name.includes(q) || (row.sku && row.sku.includes(normalizeSku(query)))) return true;
+      return tokens.length > 0 && tokens.every((t) => row.name.includes(t));
+    })
+    .map((row) => row.idx);
+}
+
+const LINE_EDIT_FIELDS = new Set([
+  'name', 'sku', 'quantity', 'unit', 'packageWeightKg', 'unitPrice', 'lineTotal', 'priceBasis', 'synonymHint', 'notes',
+]);
+
+export function applyInvoiceLineFieldPatch(line, patch = {}, material = null) {
+  const next = { ...(line || {}) };
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (!LINE_EDIT_FIELDS.has(key)) continue;
+    if (key === 'quantity' || key === 'unitPrice' || key === 'lineTotal') {
+      const n = Number(value);
+      next[key] = Number.isFinite(n) ? n : 0;
+    } else if (key === 'packageWeightKg') {
+      const n = Number(value);
+      next[key] = Number.isFinite(n) && n > 0 ? n : null;
+    } else if (key === 'priceBasis') {
+      next[key] = value === 'per_package' || value === 'per_unit' ? value : 'per_kg';
+    } else {
+      next[key] = typeof value === 'string' ? value : String(value ?? '');
+    }
+  }
+  if (!next.packageWeightKg) {
+    next.packageWeightKg = extractPackageKgFromName(next.name);
+  }
+  next.price = material ? compareInvoicePrice(next, material) : { status: 'unknown' };
+  return next;
+}
+
+export function lineDraftFromParsed(line, materials, { supplierId = null, categories = [] } = {}) {
+  const matches = suggestMaterialMatches(line, materials);
+  const material = matches[0]?.material || null;
+  const price = material ? compareInvoicePrice(line, material) : { status: 'unknown' };
+  return {
+    ...line,
+    packageWeightKg: line.packageWeightKg || extractPackageKgFromName(line.name),
+    matches,
+    materialId: material?.id || null,
+    action: material ? 'link' : 'review',
+    firstScan: material ? isFirstMaterialScan(material) : true,
+    price,
+    updatePrice: false,
+    supplierId,
+    itemRole: guessInvoiceItemRole(line, material, categories),
+    roleTouched: false,
+    matchQuery: '',
+  };
+}
+
 export function suggestSupplierMatches(name, suppliers = [], { limit = 5 } = {}) {
   const key = looseInvoiceName(name);
   if (!key) return [];

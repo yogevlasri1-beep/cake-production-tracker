@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>תצוגת בדיקת חשבונית</title>
+  <link rel="stylesheet" href="../css/styles.css?v=553">
+  <style>
+    body { max-width: 720px; margin: 0 auto; padding: 16px; }
+  </style>
+</head>
+<body>
+  <h1>בדיקה אחרי סריקת חשבונית</h1>
+  <p class="form-hint">נתונים לדוגמה — בלי AI. אפשר לחפש, לשייך קטגוריה ולערוך שורות.</p>
+  <div id="invoice-review-host" class="card"></div>
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal"><h2 id="modal-title"></h2><div id="modal-body"></div><div id="modal-footer"></div></div>
+  </div>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import { initDB } from '../js/db.js?v=553';
+    import { addSupplierCategory, addRawMaterial, getRawMaterials, getSuppliers } from '../js/kitchen-db.js?v=553';
+    import { lineDraftFromParsed } from '../js/invoice-match.js?v=553';
+    import { renderInvoiceReview } from '../js/screens/invoice-scan.js?v=553';
+
+    await initDB();
+    const stamp = Date.now();
+    let rawId;
+    let packId;
+    let cleanId;
+    try {
+      rawId = await addSupplierCategory(`גלם-תצוגה-${stamp}`);
+      packId = await addSupplierCategory(`אריזה-תצוגה-${stamp}`, { isPackaging: true });
+      cleanId = await addSupplierCategory(`ניקיון-תצוגה-${stamp}`, { isCleaning: true });
+    } catch {
+      rawId = 1; packId = 2; cleanId = 3;
+    }
+    try {
+      await addRawMaterial({ supplierCategoryId: rawId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 80, packageWeightGrams: 25000, sku: 'FL-25' });
+      await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 12 });
+      await addRawMaterial({ supplierCategoryId: cleanId, name: 'סבון כלים', unit: "יח'", unitPrice: 8 });
+    } catch { /* already seeded */ }
+
+    const materials = await getRawMaterials();
+    const categories = [
+      { id: rawId, name: 'חומרי גלם' },
+      { id: packId, name: 'אריזות', isPackaging: true },
+      { id: cleanId, name: 'חומרי ניקיון', isCleaning: true },
+    ];
+    const parsed = {
+      supplierName: 'השחר',
+      invoiceNumber: '5012',
+      invoiceDate: '2026-11-25',
+      notes: '',
+      lines: [
+        { name: 'קמח לחם 25 קג', sku: 'FL-25', quantity: 2, unit: 'שק', packageWeightKg: 25, unitPrice: 80, lineTotal: 160, priceBasis: 'per_package' },
+        { name: 'שמן קנולה', sku: '', quantity: 1, unit: 'ק"ג', packageWeightKg: 10, unitPrice: 40, lineTotal: 40, priceBasis: 'per_kg' },
+        { name: 'קרטון עוגות', sku: '', quantity: 10, unit: 'יח', packageWeightKg: null, unitPrice: 12, lineTotal: 120, priceBasis: 'per_unit' },
+        { name: 'סבון רצפות', sku: '', quantity: 3, unit: 'יח', packageWeightKg: null, unitPrice: 9, lineTotal: 27, priceBasis: 'per_unit' },
+      ],
+    };
+    const drafts = parsed.lines.map((line) => lineDraftFromParsed(line, materials, { categories }));
+    await renderInvoiceReview(document.getElementById('invoice-review-host'), {
+      parsed,
+      drafts,
+      suppliers: await getSuppliers(),
+      materials,
+      categories,
+      supplierId: null,
+      files: [],
+    });
+  </script>
+</body>
+</html>
