@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=552';
+} from './runner.js?v=553';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=552';
+} from '../js/db.js?v=553';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=552';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=552';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=552';
+} from '../js/kitchen-db.js?v=553';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=553';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=553';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=552';
-import { addCategoryGroup } from '../js/db.js?v=552';
+} from '../js/supabase-sync.js?v=553';
+import { addCategoryGroup } from '../js/db.js?v=553';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1252,7 +1252,7 @@ export async function runIntegrationTests() {
     const packId = await addSupplierCategory('אריזות', { isPackaging: true });
     await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
     await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
-    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=552');
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=553');
     const subtitle = document.createElement('p');
     subtitle.id = 'page-subtitle';
     document.body.appendChild(subtitle);
@@ -1296,8 +1296,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=552');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=552');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=553');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=553');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];
@@ -1387,10 +1387,89 @@ export async function runIntegrationTests() {
       assertOk(saved, 'מסך בדיקה אחרי חילוץ');
       assertOk(host.textContent.includes('קמח לחם 25 קג'));
       assertOk(!host.textContent.includes('high demand'));
+      assertOk(host.querySelector('#invoice-line-search'), 'חיפוש לפי שם אחרי סריקה');
+      assertOk(host.querySelector('.invoice-role-chip'), 'שיוך לחומר גלם/אריזה/ניקיון');
+      assertOk(host.querySelector('.invoice-edit-name'), 'עריכת שם שחולץ');
     } finally {
       window.fetch = originalFetch;
       host.remove();
       overlay.remove();
+    }
+  });
+
+  await testAsync('סריקת חשבונית — חיפוש, שיוך קטגוריה ועריכת שורה', async () => {
+    await resetDatabase();
+    await initDB();
+    const stamp = Date.now();
+    const rawId = await addSupplierCategory(`גלם-סריקה-${stamp}`);
+    const packId = await addSupplierCategory(`אריזה-סריקה-${stamp}`, { isPackaging: true });
+    const cleanId = await addSupplierCategory(`ניקיון-סריקה-${stamp}`, { isCleaning: true });
+    await addRawMaterial({ supplierCategoryId: rawId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 80, packageWeightGrams: 25000, sku: 'FL-25' });
+    await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 12 });
+    await addRawMaterial({ supplierCategoryId: cleanId, name: 'סבון כלים', unit: "יח'", unitPrice: 8 });
+    const { lineDraftFromParsed } = await import('../js/invoice-match.js?v=553');
+    const { renderInvoiceReview } = await import('../js/screens/invoice-scan.js?v=553');
+    const materials = await getRawMaterials();
+    const categories = [
+      { id: rawId, name: 'חומרי גלם' },
+      { id: packId, name: 'אריזות', isPackaging: true },
+      { id: cleanId, name: 'חומרי ניקיון', isCleaning: true },
+    ];
+    const parsed = {
+      supplierName: 'השחר',
+      invoiceNumber: '99',
+      invoiceDate: '2026-11-25',
+      notes: '',
+      lines: [
+        { name: 'קמח לחם 25 קג', sku: '', quantity: 2, unit: 'שק', packageWeightKg: 25, unitPrice: 80, lineTotal: 160, priceBasis: 'per_package' },
+        { name: 'שמן קנולה', sku: '', quantity: 1, unit: 'ק"ג', packageWeightKg: 10, unitPrice: 40, lineTotal: 40, priceBasis: 'per_kg' },
+      ],
+    };
+    const drafts = parsed.lines.map((line) => lineDraftFromParsed(line, materials, { categories }));
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    try {
+      await renderInvoiceReview(host, {
+        parsed,
+        drafts,
+        suppliers: await getSuppliers(),
+        materials,
+        categories,
+        supplierId: null,
+        files: [],
+      });
+      assertOk(host.querySelector('#invoice-line-search'), 'שורת חיפוש');
+      assertOk(host.querySelector('#invoice-number'), 'עריכת מספר חשבונית');
+      const nameInput = host.querySelector('.invoice-edit-name[data-idx="0"]');
+      assertOk(nameInput, 'שדה שם לעריכה');
+      const unitInput = host.querySelector('.invoice-edit-unit[data-idx="1"]');
+      assertEqual(unitInput?.value, 'ק"ג', 'יחידה עם גרשיים לא נחתכת');
+      nameInput.value = 'קמח מתוקן';
+      nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+      assertEqual(drafts[0].name, 'קמח מתוקן');
+
+      const search = host.querySelector('#invoice-line-search');
+      search.value = 'שמן';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      const cards = [...host.querySelectorAll('.invoice-line-card[data-idx]')];
+      assertEqual(cards.filter((c) => !c.hidden).length, 1, 'סינון שורות לפי שם');
+      search.value = '';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+
+      const matchSearch = host.querySelector('.invoice-match-search[data-idx="0"]');
+      matchSearch.value = 'קמח';
+      matchSearch.dispatchEvent(new Event('input', { bubbles: true }));
+      const hit = host.querySelector('.invoice-match-hit[data-material-id]');
+      assertOk(hit, 'תוצאות חיפוש חומר קיים');
+      assertOk(hit.textContent.includes('קמח לחם'));
+
+      const packChip = host.querySelector('.invoice-role-chip[data-idx="1"][data-role="packaging"]');
+      assertOk(packChip, 'כפתור אריזה');
+      packChip.click();
+      assertEqual(drafts[1].itemRole, 'packaging');
+      assertEqual(drafts[1].roleTouched, true);
+    } finally {
+      host.remove();
     }
   });
 

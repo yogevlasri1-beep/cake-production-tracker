@@ -1,7 +1,7 @@
-import { db } from './db.js?v=552';
-import { addRawMaterial, updateRawMaterial, setRawMaterialPrice } from './kitchen-db.js?v=552';
-import { planMaterialUpgrade, invoiceComparablePrices } from './invoice-match.js?v=552';
-import { todayISO } from './utils.js?v=552';
+import { db } from './db.js?v=553';
+import { addRawMaterial, updateRawMaterial, setRawMaterialPrice, ensureRoleSupplierCategories } from './kitchen-db.js?v=553';
+import { planMaterialUpgrade, invoiceComparablePrices } from './invoice-match.js?v=553';
+import { todayISO } from './utils.js?v=553';
 
 export async function listInvoiceScans({ supplierId = null } = {}) {
   const rows = await db.invoiceScans?.toArray?.() ?? [];
@@ -57,6 +57,7 @@ export async function saveInvoiceScan({
       lineTotal: Number(line.lineTotal) || 0,
       priceBasis: line.priceBasis || '',
       action: line.action || 'skip',
+      itemRole: line.itemRole || '',
       status: line.action === 'skip' || line.action === 'review' ? 'skipped' : 'applied',
       priceStatus: line.price?.status || '',
       notes: line.notes || '',
@@ -65,9 +66,16 @@ export async function saveInvoiceScan({
   return scanId;
 }
 
+export async function categoryIdForInvoiceRole(role, fallbackId = null) {
+  const byRole = await ensureRoleSupplierCategories();
+  const cat = byRole.get(role) || byRole.get('raw');
+  return cat?.id || fallbackId || null;
+}
+
 export async function applyInvoiceLine(line, {
   supplierId = null,
   supplierCategoryId = null,
+  recategorize = false,
   updatePrice = false,
 } = {}) {
   const action = line?.action;
@@ -76,10 +84,12 @@ export async function applyInvoiceLine(line, {
   let materialId = line.materialId ? Number(line.materialId) : null;
   if (action === 'create') {
     const initial = invoiceComparablePrices(line, {});
+    const role = line.itemRole || 'raw';
+    const defaultUnit = role === 'packaging' ? 'חבילה' : (role === 'cleaning' ? "יח'" : 'ק"ג');
     materialId = await addRawMaterial({
       name: line.name,
       sku: line.sku || '',
-      unit: line.unit || 'ק"ג',
+      unit: line.unit || defaultUnit,
       unitPrice: Number(initial.invoicePackage) || 0,
       supplierId,
       supplierCategoryId,
@@ -96,6 +106,12 @@ export async function applyInvoiceLine(line, {
   if (supplierId && !material.supplierId && (action === 'link' || action === 'assign' || action === 'create')) {
     try {
       await updateRawMaterial(materialId, { supplierId });
+    } catch { /* ignore */ }
+  }
+
+  if (recategorize && supplierCategoryId && Number(material.supplierCategoryId) !== Number(supplierCategoryId)) {
+    try {
+      await updateRawMaterial(materialId, { supplierCategoryId: Number(supplierCategoryId) });
     } catch { /* ignore */ }
   }
 
