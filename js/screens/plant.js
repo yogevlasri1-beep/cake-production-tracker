@@ -5,7 +5,7 @@ import {
   formatDate,
   formatMoney,
   bindTodayDateButtons,
-} from '../utils.js?v=557';
+} from '../utils.js?v=558';
 import {
   LANES,
   INVEST_STATUSES,
@@ -25,7 +25,7 @@ import {
   loadPlant,
   savePlant,
   refreshPlantMenuHint,
-} from '../plant-db.js?v=557';
+} from '../plant-db.js?v=558';
 
 const TABS = [
   { id: 'today', label: 'היום' },

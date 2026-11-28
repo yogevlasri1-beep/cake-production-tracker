@@ -40,23 +40,23 @@ import {
   sanitizeSkuVariants,
   findRawMaterialsByAlias,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=557';
-import { getProducts, getCategories } from '../db.js?v=557';
+} from '../kitchen-db.js?v=558';
+import { getProducts, getCategories } from '../db.js?v=558';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=557';
+} from '../supplier-import.js?v=558';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=557';
-import { openModal, closeModal } from '../modal.js?v=557';
-import { requestAutoBackupNow } from '../backup-service.js?v=557';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=557';
-import { openBarcodeScanner } from '../barcode-scan.js?v=557';
-import { getInvoiceAiKey, suggestMaterialGroups } from '../invoice-ai.js?v=557';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=557';
+} from '../utils.js?v=558';
+import { openModal, closeModal } from '../modal.js?v=558';
+import { requestAutoBackupNow } from '../backup-service.js?v=558';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=558';
+import { openBarcodeScanner } from '../barcode-scan.js?v=558';
+import { getInvoiceAiKey, suggestMaterialGroups } from '../invoice-ai.js?v=558';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=558';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -64,7 +64,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=557';
+} from '../order-reminder.js?v=558';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -211,7 +211,7 @@ export async function renderSuppliers(container) {
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
   else if (tab === 'scan') {
-    const { renderInvoiceScan } = await import('./invoice-scan.js?v=557');
+    const { renderInvoiceScan } = await import('./invoice-scan.js?v=558');
     await renderInvoiceScan(body);
   }
   else await renderOrderTab(body, container);
@@ -1395,25 +1395,55 @@ async function openAiMaterialSuggestModal(container) {
       }
       const byId = new Map(candidates.map((m) => [Number(m.id), m]));
       if (host) {
-        host.innerHTML = suggested.map((group, index) => `
+        host.innerHTML = suggested.map((group, index) => {
+          const ids = group.ids.map(Number);
+          const defaultId = ids.find((id) => byId.get(id)?.isRecipeDefault) || ids[0];
+          return `
           <div class="similar-name-group is-open" data-ai-group="${index}">
             <p>${escapeHtml(group.reason || 'אותו חומר')}</p>
-            <ul>${group.ids.map((id) => {
-    const mat = byId.get(Number(id));
-    return `<li>${escapeHtml(mat?.name || id)}${mat?.sku ? ` · מק״ט ${escapeHtml(mat.sku)}` : ''}</li>`;
-  }).join('')}</ul>
+            <p class="form-hint" style="margin:0 0 6px">סמן ברירת מחדל — המתכון ייקח את המחיר מהשורה הזו.</p>
+            ${ids.map((id) => {
+    const mat = byId.get(id);
+    const sup = mat?.supplierId ? (supMap.get(Number(mat.supplierId)) || 'ספק') : 'ללא ספק';
+    const sku = mat?.sku ? ` · מק״ט ${escapeHtml(mat.sku)}` : '';
+    return `
+            <div class="similar-name-row">
+              <span class="manual-mat-merge-option-body">
+                <strong>${escapeHtml(mat?.name || String(id))}</strong>
+                <span class="merge-product-meta">${escapeHtml(sup)}${sku} · ${escapeHtml(formatMaterialPriceMeta(mat || {}))}</span>
+              </span>
+              <label class="manual-mat-merge-keep" title="השורה שהמתכון ייקח ממנה את המחיר">
+                <input type="radio" name="ai-default-${index}" class="ai-default-radio" value="${id}"${id === defaultId ? ' checked' : ''}>
+                <span>ברירת מחדל</span>
+              </label>
+            </div>`;
+  }).join('')}
             <button type="button" class="btn btn-primary btn-sm ai-link-group" data-ai-group="${index}">קשר קבוצה זו</button>
-          </div>`).join('');
+          </div>`;
+        }).join('');
         host.dataset.groups = JSON.stringify(suggested);
       }
+      host?.querySelectorAll('.ai-default-radio').forEach((radio) => {
+        radio.addEventListener('change', () => {
+          const groupEl = radio.closest('[data-ai-group]');
+          const linkBtn = groupEl?.querySelector('.ai-link-group');
+          if (!linkBtn) return;
+          linkBtn.dataset.armed = '';
+          linkBtn.disabled = false;
+          linkBtn.textContent = 'קשר קבוצה זו';
+          groupEl.querySelector('.ai-impact')?.remove();
+        });
+      });
       host?.querySelectorAll('.ai-link-group').forEach((linkBtn) => {
         linkBtn.addEventListener('click', async () => {
           const all = JSON.parse(host.dataset.groups || '[]');
           const group = all[Number(linkBtn.dataset.aiGroup)];
           if (!group?.ids?.length) return;
           const ids = group.ids.map(Number);
-          const keepId = ids[0];
-          const mergeIds = ids.slice(1);
+          const groupEl = linkBtn.closest('[data-ai-group]');
+          const picked = Number(groupEl?.querySelector('.ai-default-radio:checked')?.value);
+          const keepId = ids.includes(picked) ? picked : ids[0];
+          const mergeIds = ids.filter((id) => id !== keepId);
           const rows = await getRawMaterials();
           const byRow = new Map(rows.map((m) => [Number(m.id), m]));
           const plan = planMaterialMerge(byRow.get(keepId), mergeIds.map((id) => byRow.get(id)).filter(Boolean));
@@ -1421,18 +1451,22 @@ async function openAiMaterialSuggestModal(container) {
           if (linkBtn.dataset.armed !== '1') {
             linkBtn.dataset.armed = '1';
             linkBtn.textContent = 'מאשר וקשר';
-            linkBtn.insertAdjacentHTML('beforebegin', `<p class="form-hint">${formatMergeImpactHTML(byRow.get(keepId)?.name || '', plan, impact)}</p>`);
+            groupEl?.querySelector('.ai-impact')?.remove();
+            linkBtn.insertAdjacentHTML('beforebegin', `<p class="form-hint ai-impact">${formatMergeImpactHTML(byRow.get(keepId)?.name || '', plan, impact)}</p>`);
             return;
           }
           linkBtn.disabled = true;
           try {
             await mergeSelectedRawMaterials(keepId, mergeIds);
-            showToast('הקבוצה קושרה');
+            await setRawMaterialRecipeDefault(keepId, true);
+            showToast(`קושר. ברירת המחדל: «${byRow.get(keepId)?.name || ''}»`);
             requestAutoBackupNow().catch(() => {});
             linkBtn.textContent = 'קושר';
           } catch (err) {
             showToast(err.message || 'שגיאה');
             linkBtn.disabled = false;
+            linkBtn.dataset.armed = '';
+            linkBtn.textContent = 'קשר קבוצה זו';
           }
         });
       });
@@ -4090,7 +4124,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=557');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=558');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -4112,7 +4146,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=557');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=558');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -4130,7 +4164,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=557');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=558');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -4381,7 +4415,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=557');
+    const inv = await import('../inventory-db.js?v=558');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];

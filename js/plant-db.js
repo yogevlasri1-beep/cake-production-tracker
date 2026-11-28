@@ -1,5 +1,5 @@
-import { getSetting, setSetting } from './db.js?v=557';
-import { addDaysISO, todayISO } from './utils.js?v=557';
+import { getSetting, setSetting } from './db.js?v=558';
+import { addDaysISO, todayISO } from './utils.js?v=558';
 
 /** נשמר כהגדרה אחת שכבר מסתנכרנת בין המכשירים — בלי לגעת בטבלאות הייצור. */
 export const PLANT_SETTING_KEY = 'plantImprovement';
