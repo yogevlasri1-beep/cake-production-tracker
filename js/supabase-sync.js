@@ -2,7 +2,7 @@
  * Continuous multi-device sync: IndexedDB ↔ Supabase sync_* tables.
  * Last-write-wins by updated_at. Soft-delete via deleted_at.
  */
-import { db, getSetting, setSetting } from './db.js?v=554';
+import { db, getSetting, setSetting } from './db.js?v=555';
 import {
   getSupabaseBackupConfig,
   saveSupabaseBackupConfig,
@@ -11,7 +11,7 @@ import {
   resolveSupabaseUserAccessToken,
   getOrCreateDeviceId,
   BACKUP_SCOPE_ID,
-} from './supabase-backup.js?v=554';
+} from './supabase-backup.js?v=555';
 import {
   COLLECTION_TABLE,
   COLLECTION_FKS,
@@ -31,7 +31,7 @@ import {
   OWNED_CHILD_COLLECTIONS,
   FLOW_TEMPLATE_PURGE_COLLECTIONS,
   shouldRetargetChildOnParentDedupe,
-} from './sync/collections.js?v=554';
+} from './sync/collections.js?v=555';
 import {
   applyCloudFirstToCloudRow,
   canUploadLocalDatabase,
@@ -54,6 +54,11 @@ import {
   planManualLiveSync,
   planPullToRefresh,
   formatManualLiveSyncToast,
+  planReaderSync,
+  planReaderQueueSend,
+  planReaderCloudWrite,
+  formatReaderSyncStatus,
+  planReaderBlockedDanger,
   planReleaseStaleHoldPulls,
   planProductionLabelPush,
   toCloudUpdatedAt,
@@ -81,19 +86,19 @@ import {
   shouldRepushRecentProductionRow,
   cloudUpdatedAtForSentHistory,
   mergeCatalogRecord,
-} from './sync/cloud-first.js?v=554';
+} from './sync/cloud-first.js?v=555';
 import {
   STABLE_CATALOG_COLLECTIONS,
   buildStableIdIndexFromCloud,
   lookupStableCloudId,
   claimStableCloudId,
-} from './sync/catalog-identity.js?v=554';
+} from './sync/catalog-identity.js?v=555';
 import {
   planMissingCategoryGroupRestore,
   planKnownCategoryGroupRenames,
   localCategoriesForGroupChildren,
   shouldReplaceGroupName,
-} from './sync/category-groups-repair.js?v=554';
+} from './sync/category-groups-repair.js?v=555';
 import {
   RESTORED_RECIPE_CATEGORIES,
   planMissingRecipeCategoryRestore,
@@ -104,7 +109,7 @@ import {
   planAssignLocalRecipesToRestoredCategories,
   planRecipeCategoryHomeRemap,
   planExtraLocalRecipeCatalogRows,
-} from './sync/recipe-catalog-repair.js?v=554';
+} from './sync/recipe-catalog-repair.js?v=555';
 import {
   RESTORE_LOCK_KEY,
   RESTORE_LOCK_GRACE_MS,
@@ -116,7 +121,7 @@ import {
   otherDeviceWroteAfterLock,
   latestOtherDeviceAt,
   cloudTableWipePath,
-} from './sync/restore-lock.js?v=554';
+} from './sync/restore-lock.js?v=555';
 import {
   ensureSyncId,
   getMetaByLocal,
@@ -126,15 +131,16 @@ import {
   remapFksToLocalIds,
   remapFksToSyncIds,
   upsertMeta,
-} from './sync/id-map.js?v=554';
-import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=554';
+} from './sync/id-map.js?v=555';
+import { repairRecipeProductLinksFromComposition, ensureRoleSupplierCategories, inferRawMaterialSupplierRole, coerceSupplierNumericFks, reconcileRawMaterialPricesFromHistory } from './kitchen-db.js?v=555';
 import {
   AUTH_RECONNECT_MESSAGE,
   AUTH_OFFLINE_MESSAGE,
   isTransientAuthError,
   forceRefreshSession,
-} from './auth.js?v=554';
-import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=554';
+  getCurrentUserRole,
+} from './auth.js?v=555';
+import { fetchWithTimeout, SYNC_FETCH_TIMEOUT_MS } from './fetch-timeout.js?v=555';
 
 const LIVE_SYNC_SETTINGS = 'liveSync';
 const DEFAULT_LIVE = {
@@ -261,6 +267,13 @@ let pullTimer = null;
 let started = false;
 let tickInFlight = false;
 let authHalted = false;
+/** חשבון משני: לא שולחים כלום עד שמשיכה מלאה הצליחה. המנהל נשאר כבוי. */
+let readerGuard = { active: false, pullOk: false };
+
+export function armReaderSync(role) {
+  const plan = planReaderSync({ role });
+  readerGuard = { active: plan.reader === true, pullOk: false };
+}
 let liveSyncOnlineHandler = null;
 let liveSyncVisibilityHandler = null;
 let statusListeners = new Set();
@@ -310,7 +323,7 @@ export async function haltLiveSyncForAuth() {
     lastErrorKind: 'auth',
   });
   try {
-    const { showToast } = await import('./utils.js?v=554');
+    const { showToast } = await import('./utils.js?v=555');
     showToast(AUTH_RECONNECT_MESSAGE);
   } catch { /* ignore */ }
 }
@@ -570,8 +583,46 @@ async function fetchRemoteCloudRow(cfg, collection, id) {
   return Array.isArray(rows) ? (rows[0] || null) : null;
 }
 
+async function postReaderCloudRows(cfg, collection, body, skippedIds) {
+  const rows = Array.isArray(body) ? body : (body ? [body] : []);
+  const sending = [];
+  for (const row of rows) {
+    if (!row) continue;
+    const remote = row.id ? await fetchRemoteCloudRow(cfg, collection, row.id) : null;
+    const decision = planReaderCloudWrite({
+      collection,
+      type: row.deleted_at ? 'delete' : 'upsert',
+      remoteExists: !!(remote && !remote.deleted_at),
+      remoteUpdatedAt: remote?.updated_at || null,
+      incomingUpdatedAt: row.updated_at || null,
+    });
+    if (!decision.send) {
+      if (row.id && skippedIds) skippedIds.add(row.id);
+      continue;
+    }
+    sending.push(row);
+  }
+  if (!sending.length) return 0;
+  const payload = Array.isArray(body) ? sending : sending[0];
+  await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: payload,
+  });
+  return sending.length;
+}
+
 async function postCloudRows(cfg, collection, body, { replace = false, skippedIds = null } = {}) {
   const rowsIn = Array.isArray(body) ? body : (body ? [body] : []);
+  if (readerGuard.active) {
+    if (replace || !readerGuard.pullOk) {
+      for (const row of rowsIn) {
+        if (row?.id && skippedIds) skippedIds.add(row.id);
+      }
+      return 0;
+    }
+    return postReaderCloudRows(cfg, collection, body, skippedIds);
+  }
   if (replace) {
     if (!rowsIn.length) return 0;
     await supabaseFetch(cfg, `/${tableOf(collection)}?on_conflict=id`, {
@@ -701,6 +752,7 @@ export function flushSyncQueue() {
 
 async function runFlush() {
   if (authHalted) return { flushed: 0 };
+  if (readerGuard.active && !readerGuard.pullOk) return { flushed: 0, held: true };
   if (await restoreFrozenForThisDevice()) return { flushed: 0, frozen: true };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { flushed: 0 };
@@ -744,6 +796,18 @@ async function runFlush() {
       const prepared = [];
       const nothingToSend = [];
       for (const item of chunk) {
+        if (readerGuard.active) {
+          const gate = planReaderQueueSend({
+            reader: true,
+            pullOk: readerGuard.pullOk,
+            collection,
+            type: item.type,
+          });
+          if (!gate.send) {
+            nothingToSend.push(item);
+            continue;
+          }
+        }
         try {
           const cloudRow = item.type === 'delete'
             ? await buildDeleteCloudRow(collection, item.localKey, deviceId)
@@ -2045,19 +2109,23 @@ function afterApplies(task) {
  * pulls at once, and two pulls applying the same new cloud row both found no
  * local match and both inserted it — a duplicate on the new computer.
  */
-export async function pullAllCollections({ full = false, preferRemote = false } = {}) {
+export async function pullAllCollections({
+  full = false, preferRemote = false, forceProtectCloud = false,
+} = {}) {
   if (pullInFlight) {
     if (!full || pullInFlightFull) return pullInFlight;
     try { await pullInFlight; } catch { /* run the full pull anyway */ }
-    return pullAllCollections({ full, preferRemote });
+    return pullAllCollections({ full, preferRemote, forceProtectCloud });
   }
   pullInFlightFull = full;
-  pullInFlight = runPull({ full, preferRemote }).finally(() => { pullInFlight = null; });
+  pullInFlight = runPull({ full, preferRemote, forceProtectCloud }).finally(() => { pullInFlight = null; });
   return pullInFlight;
 }
 
-async function runPull({ full = false, preferRemote = false, exclusive = false } = {}) {
-  if (!exclusive) return afterApplies(() => runPull({ full, preferRemote, exclusive: true }));
+async function runPull({
+  full = false, preferRemote = false, exclusive = false, forceProtectCloud = false,
+} = {}) {
+  if (!exclusive) return afterApplies(() => runPull({ full, preferRemote, exclusive: true, forceProtectCloud }));
   if (authHalted) return { applied: 0 };
   const live = await getLiveSyncSettings();
   if (!live.enabled) return { applied: 0 };
@@ -2070,7 +2138,8 @@ async function runPull({ full = false, preferRemote = false, exclusive = false }
     serverClockMeasured,
   );
   const skipUnchanged = !!since;
-  const protectCloud = isCloudFirstEnabled(live) && !isCutoverDevice(live);
+  const protectCloud = forceProtectCloud === true
+    || (isCloudFirstEnabled(live) && !isCutoverDevice(live));
   const deferred = [];
   const pullOpts = { since, deferred, skipUnchanged, preferRemote, protectCloud };
   let applied = 0;
@@ -2160,7 +2229,7 @@ async function pullRecentProductionHistoryNow(notify) {
   const cfg = await getSupabaseBackupConfig();
   if (!cfg.supabaseUrl || !cfg.anonKey) return { applied: 0 };
   const since = recentProductionPullSince(new Date());
-  const reader = isCloudFirstEnabled(live) && !isCutoverDevice(live);
+  const reader = readerGuard.active || (isCloudFirstEnabled(live) && !isCutoverDevice(live));
   const deferred = [];
   const opts = {
     since,
@@ -2251,6 +2320,9 @@ async function ensureRecentProductionRepush() {
 let seedInFlight = null;
 
 export function seedLocalDataToSupabase(options = {}) {
+  if (planReaderBlockedDanger({ reader: readerGuard.active }).blocked) {
+    return Promise.resolve({ seeded: 0, skipped: true, reason: 'reader' });
+  }
   if (seedInFlight) return seedInFlight;
   seedInFlight = runSeed(options).finally(() => { seedInFlight = null; });
   return seedInFlight;
@@ -2747,6 +2819,9 @@ const CUTOVER_COUNT_TABLES = ['products', 'rawMaterials', 'recipes', 'production
  * כדי שמכשיר אחר יעבור למשיכה בלבד.
  */
 export async function pushCutoverSnapshot({ confirm = false } = {}) {
+  if (planReaderBlockedDanger({ reader: readerGuard.active }).blocked) {
+    return { pushed: false, seeded: 0, blockers: ['המחשב הזה רק מקבל נתונים מהענן'] };
+  }
   const counts = {};
   for (const name of CUTOVER_COUNT_TABLES) {
     const table = db[name];
@@ -2790,6 +2865,9 @@ export async function pushCutoverSnapshot({ confirm = false } = {}) {
  * לא מוחק את מפת המזהים ולא רץ על מחשב אחר.
  */
 export async function pushProductionHistoryFromCutover({ confirm = false } = {}) {
+  if (planReaderBlockedDanger({ reader: readerGuard.active }).blocked) {
+    return { pushed: false, seeded: 0, entries: 0, blockers: ['המחשב הזה רק מקבל נתונים מהענן'] };
+  }
   const live = await getLiveSyncSettings();
   const online = typeof navigator === 'undefined' || navigator.onLine !== false;
   const plan = planProductionHistoryUpload({
@@ -3189,6 +3267,7 @@ export async function releaseStaleHoldPulls() {
  * לא מעלה את כל הדאטה המקומית.
  */
 export async function runManualLiveSync() {
+  if (readerGuard.active) return runReaderManualSync();
   await releaseStaleHoldPulls();
   const cfg = await getSupabaseBackupConfig();
   const live = await getLiveSyncSettings();
@@ -3739,6 +3818,153 @@ export async function dedupeSupplierWorkspaceLight({ force = false } = {}) {
   return lightDedupeInFlight;
 }
 
+function emitReaderStatus(phase) {
+  emitStatus({ readerPhase: phase, message: formatReaderSyncStatus(phase) });
+}
+
+async function discardPendingReaderQueue() {
+  if (!db.syncQueue) return;
+  const queued = await db.syncQueue.where('status').anyOf('pending', 'error').toArray();
+  if (!queued.length) return;
+  await db.syncQueue.bulkUpdate(queued.map((item) => ({
+    key: item.id,
+    changes: { status: 'done' },
+  })));
+  await db.syncQueue.where('status').equals('done').delete();
+  await saveLiveSyncSettings({ pendingCount: 0 });
+}
+
+/** משיכה מלאה לפני כל שליחה. תור ישן נזרק רק אחרי שהמשיכה הצליחה. */
+async function runReaderCatchUp() {
+  await pullAllCollections({ full: true, preferRemote: true, forceProtectCloud: true });
+  await discardPendingReaderQueue();
+  readerGuard = { active: true, pullOk: true };
+  await saveLiveSyncSettings({
+    seedDone: true,
+    cloudJoinPullDone: true,
+    lastError: null,
+    lastErrorKind: null,
+  });
+  return true;
+}
+
+async function runReaderManualSync() {
+  emitReaderStatus('pulling');
+  try {
+    if (!readerGuard.pullOk) {
+      await runReaderCatchUp();
+    } else {
+      await pullAllCollections({ full: true, preferRemote: true, forceProtectCloud: true });
+    }
+  } catch (err) {
+    const classified = classifyLiveSyncError(err);
+    await saveLiveSyncSettings({
+      lastError: classified.message || String(err?.message || err),
+      lastErrorKind: classified.kind || 'other',
+    });
+    emitReaderStatus('failed');
+    const wrapped = new Error(formatReaderSyncStatus('failed'));
+    wrapped.code = 'reader-pull';
+    throw wrapped;
+  }
+  const pushed = await flushSyncQueue();
+  emitReaderStatus('ready');
+  return { pushed: pushed.flushed || 0, pulled: 0, reseed: false };
+}
+
+function startReaderLoops() {
+  let lastFullPullAt = Date.now();
+  let lastHiddenPullAt = 0;
+  const tick = async () => {
+    if (authHalted || tickInFlight) return;
+    tickInFlight = true;
+    try {
+      if (!readerGuard.pullOk) {
+        try {
+          await runReaderCatchUp();
+          emitReaderStatus('ready');
+        } catch (err) {
+          const classified = classifyLiveSyncError(err);
+          await saveLiveSyncSettings({
+            lastError: classified.message || String(err?.message || err),
+            lastErrorKind: classified.kind || 'other',
+          });
+          emitReaderStatus('failed');
+        }
+        return;
+      }
+      const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+      const now = Date.now();
+      const liveNow = await getLiveSyncSettings();
+      const deviceId = await getOrCreateDeviceId();
+      const lock = await peekRestoreLock();
+      const lockPlan = planLiveSyncDuringRestoreLock({ lock, deviceId });
+      const plan = planLiveSyncTick({
+        now,
+        lastFullPullAt,
+        hidden,
+        lastHiddenPullAt,
+        hiddenInterval: HIDDEN_PULL_INTERVAL_MS,
+        fullInterval: FULL_PULL_INTERVAL_MS,
+        holdPulls: liveNow.holdPulls === true,
+        online: typeof navigator === 'undefined' || navigator.onLine !== false,
+        restoreFrozen: lockPlan.frozen === true,
+      });
+      if (hidden && plan.flush) lastHiddenPullAt = now;
+      if (!plan.flush && !plan.pullProduction && !plan.pullCatalog) return;
+      if (plan.flush) await flushSyncQueue();
+      if (!plan.pullProduction && !plan.pullCatalog) return;
+      if (hidden) lastHiddenPullAt = Date.now();
+      if (plan.pullProduction) await pullRecentProductionHistory({ notify: true });
+      if (plan.pullCatalog) {
+        lastFullPullAt = Date.now();
+        await pullAllCollections({ full: false, preferRemote: true, forceProtectCloud: true });
+      }
+    } catch (err) {
+      console.warn('reader sync tick', err);
+    } finally {
+      tickInFlight = false;
+    }
+  };
+
+  pullTimer = setInterval(tick, PRODUCTION_PULL_INTERVAL_MS);
+  liveSyncOnlineHandler = () => { if (!authHalted) tick(); };
+  liveSyncVisibilityHandler = () => {
+    if (authHalted) return;
+    if (document.visibilityState === 'hidden') return;
+    tick();
+  };
+  window.addEventListener('online', liveSyncOnlineHandler);
+  document.addEventListener('visibilitychange', liveSyncVisibilityHandler);
+  return tick;
+}
+
+async function startReaderLiveSync() {
+  emitReaderStatus('pulling');
+  await releaseStaleHoldPulls();
+  const live = await getLiveSyncSettings();
+  if (live.holdPulls === true) {
+    emitReaderStatus('failed');
+    const tick = startReaderLoops();
+    return tick();
+  }
+  let caughtUp = false;
+  try {
+    await runReaderCatchUp();
+    caughtUp = true;
+  } catch (err) {
+    const classified = classifyLiveSyncError(err);
+    await saveLiveSyncSettings({
+      lastError: classified.message || String(err?.message || err),
+      lastErrorKind: classified.kind || 'other',
+    });
+    emitReaderStatus('failed');
+  }
+  const tick = startReaderLoops();
+  if (caughtUp) emitReaderStatus('ready');
+  return tick();
+}
+
 export async function startLiveSync() {
   if (started) return;
   const token = await resolveSupabaseUserAccessToken();
@@ -3753,6 +3979,11 @@ export async function startLiveSync() {
 
   let live = await getLiveSyncSettings();
   if (!live.enabled) return;
+  if (!readerGuard.active) armReaderSync(getCurrentUserRole());
+  if (readerGuard.active) {
+    await startReaderLiveSync();
+    return;
+  }
   await releaseStaleHoldPulls();
   live = await getLiveSyncSettings();
   if (live.holdPulls === true) return;
@@ -3977,6 +4208,9 @@ export function isCloudWipeAllowed(live, { replaceCloudRestore = false } = {}) {
 
 /** מוחק את כל שורות הסנכרון של המטבח בענן. לא נוגע ב-Dexie המקומי. */
 export async function wipeKitchenCloudTables({ replaceCloudRestore = false } = {}) {
+  if (planReaderBlockedDanger({ reader: readerGuard.active }).blocked) {
+    return { ok: false, reason: 'reader', deletedTables: 0 };
+  }
   const live = await getLiveSyncSettings();
   if (!isCloudWipeAllowed(live, { replaceCloudRestore })) {
     return { ok: false, reason: 'live-sync-on', deletedTables: 0 };
@@ -4025,6 +4259,9 @@ export async function wipeKitchenCloudTables({ replaceCloudRestore = false } = {
  * upload the restored copy, then resume live sync.
  */
 export async function replaceCloudFromLocalBackup({ onProgress } = {}) {
+  if (planReaderBlockedDanger({ reader: readerGuard.active }).blocked) {
+    return { replacedCloud: false, reason: 'reader' };
+  }
   const cfg = await getSupabaseBackupConfig();
   const online = typeof navigator === 'undefined' || navigator.onLine !== false;
   const plan = planRestoreBackupReplaceCloud({

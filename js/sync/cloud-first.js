@@ -99,6 +99,74 @@ export function planManualLiveSync({ cloudFirst, cutoverDevice } = {}) {
   return { reader, flushFirst: true, pullFull: true, pullHistory: reader };
 }
 
+/**
+ * חשבון משני במחשב אחר. מנהל ומנהל מערכת (האייפון) לא נכנסים לכאן.
+ * בלי תפקיד — נשארים במסלול הרגיל, כדי לא לחסום את האייפון בטעות.
+ */
+export function planReaderSync({ role } = {}) {
+  const reader = role === 'quality' || role === 'production';
+  return {
+    reader,
+    pullBeforePush: reader,
+    blockCatalogWrites: reader,
+    blockDeletes: reader,
+  };
+}
+
+/** רישום ייצור חדש מהמחשב המשני כן עולה. קטלוג ומחיקות לא. */
+export const READER_PUSH_COLLECTIONS = new Set([
+  'productionEntries',
+  'processLogs',
+]);
+
+export function planReaderQueueSend({ reader, pullOk, collection, type } = {}) {
+  if (reader !== true) return { send: true, reason: 'primary' };
+  if (pullOk !== true) return { send: false, reason: 'pull-first' };
+  if (type === 'delete') return { send: false, reason: 'no-delete' };
+  if (READER_PUSH_COLLECTIONS.has(collection)) return { send: true, reason: 'production' };
+  return { send: false, reason: 'catalog-blocked' };
+}
+
+/**
+ * אחרי משיכה: רישום שאין לו שורה בענן נשלח.
+ * שורה שכבר בענן נשלחת רק אם העריכה חדשה ממנה. בלי חותמת — הענן נשאר.
+ */
+export function planReaderCloudWrite({
+  collection,
+  type,
+  remoteExists = false,
+  remoteUpdatedAt = null,
+  incomingUpdatedAt = null,
+} = {}) {
+  const queued = planReaderQueueSend({
+    reader: true,
+    pullOk: true,
+    collection,
+    type,
+  });
+  if (!queued.send) return queued;
+  if (remoteExists !== true) return { send: true, reason: 'new-record' };
+  const incoming = Date.parse(incomingUpdatedAt);
+  const remote = Date.parse(remoteUpdatedAt);
+  if (Number.isFinite(incoming) && Number.isFinite(remote) && incoming > remote) {
+    return { send: true, reason: 'newer-edit' };
+  }
+  return { send: false, reason: 'keep-cloud' };
+}
+
+export function formatReaderSyncStatus(phase) {
+  if (phase === 'pulling') return 'מושך את הנתונים מהענן…';
+  if (phase === 'ready') return 'הנתונים מהענן. רישום חדש נשלח אחרי השמירה.';
+  if (phase === 'failed') return 'המשיכה מהענן נכשלה. לא נשלח כלום עד שהמשיכה תצליח.';
+  return '';
+}
+
+/** העלאה מלאה, ריקון ענן ושחזור שמחליף את הענן — חסומים בחשבון המשני. */
+export function planReaderBlockedDanger({ reader } = {}) {
+  if (reader === true) return { blocked: true, reason: 'reader' };
+  return { blocked: false };
+}
+
 /** כמה למשוך למטה לפני שחרור לדחיפה. */
 export const PULL_TO_REFRESH_THRESHOLD_PX = 64;
 

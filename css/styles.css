@@ -1491,6 +1491,29 @@ body {
   margin-top: 2px;
 }
 
+.sync-status {
+  font-size: 0.75rem;
+  margin-top: 4px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.sync-status[hidden] {
+  display: none;
+}
+
+.sync-status[data-phase="pulling"] {
+  color: var(--warning, #b45309);
+}
+
+.sync-status[data-phase="ready"] {
+  color: var(--success, #047857);
+}
+
+.sync-status[data-phase="failed"] {
+  color: var(--danger, #b91c1c);
+}
+
 #main-content {
   flex: 1;
   min-height: 0;
