@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>בחירת חשבונית — מצלמה וגלריה</title>
+  <link rel="stylesheet" href="../css/styles.css?v=555">
+  <style>body { max-width: 720px; margin: 0 auto; padding: 16px; }</style>
+</head>
+<body>
+  <h1>סריקת חשבונית — בחירת קובץ</h1>
+  <div id="host"></div>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import { initDB } from '../js/db.js?v=555';
+    import { renderInvoiceScan } from '../js/screens/invoice-scan.js?v=555';
+    await initDB();
+    const overlay = document.createElement('div');
+    overlay.id = 'modal-overlay';
+    overlay.className = 'modal-overlay hidden';
+    overlay.innerHTML = '<div class="modal"><h2 id="modal-title"></h2><div id="modal-body"></div><div id="modal-footer"></div></div>';
+    document.body.appendChild(overlay);
+    await renderInvoiceScan(document.getElementById('host'));
+  </script>
+</body>
+</html>

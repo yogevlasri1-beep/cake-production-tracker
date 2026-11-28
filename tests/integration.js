@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=554';
+} from './runner.js?v=555';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=554';
+} from '../js/db.js?v=555';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=554';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=554';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=554';
+} from '../js/kitchen-db.js?v=555';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=555';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=555';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=554';
-import { addCategoryGroup } from '../js/db.js?v=554';
+} from '../js/supabase-sync.js?v=555';
+import { addCategoryGroup } from '../js/db.js?v=555';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -1252,7 +1252,7 @@ export async function runIntegrationTests() {
     const packId = await addSupplierCategory('אריזות', { isPackaging: true });
     await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
     await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
-    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=554');
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=555');
     const subtitle = document.createElement('p');
     subtitle.id = 'page-subtitle';
     document.body.appendChild(subtitle);
@@ -1296,8 +1296,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=554');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=554');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=555');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=555');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];
@@ -1370,6 +1370,13 @@ export async function runIntegrationTests() {
       await renderInvoiceScan(host);
       assertOk(host.querySelector('#invoice-parse-btn'), 'כפתור חילוץ');
       assertOk(host.querySelector('#invoice-paste-btn'), 'כפתור הדבקה');
+      const cameraInput = host.querySelector('#invoice-files');
+      const galleryInput = host.querySelector('#invoice-gallery-files');
+      assertOk(cameraInput, 'כפתור מצלמה');
+      assertOk(galleryInput, 'כפתור גלריה');
+      assertEqual(cameraInput.hasAttribute('capture'), true, 'מצלמה פותחת מצלמה');
+      assertEqual(galleryInput.hasAttribute('capture'), false, 'גלריה בלי capture כדי לפתוח תמונות שמורות');
+      assertOk((galleryInput.getAttribute('accept') || '').includes('image/*'), 'גלריה מקבלת תמונות');
       host.querySelector('#invoice-paste-btn').click();
       const paste = document.getElementById('invoice-paste-text');
       const go = document.getElementById('invoice-paste-go');
