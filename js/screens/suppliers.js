@@ -34,29 +34,30 @@ import {
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
   planMaterialMerge,
+  absorbMaterialsIntoDefault,
   assessMaterialImpact,
   unlinkMaterialSynonym,
   getMaterialSkuLines,
   sanitizeSkuVariants,
   findRawMaterialsByAlias,
   normalizeMaterialKey,
-} from '../kitchen-db.js?v=558';
-import { getProducts, getCategories } from '../db.js?v=558';
+} from '../kitchen-db.js?v=559';
+import { getProducts, getCategories } from '../db.js?v=559';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=558';
+} from '../supplier-import.js?v=559';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=558';
-import { openModal, closeModal } from '../modal.js?v=558';
-import { requestAutoBackupNow } from '../backup-service.js?v=558';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=558';
-import { openBarcodeScanner } from '../barcode-scan.js?v=558';
-import { getInvoiceAiKey, suggestMaterialGroups } from '../invoice-ai.js?v=558';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=558';
+} from '../utils.js?v=559';
+import { openModal, closeModal } from '../modal.js?v=559';
+import { requestAutoBackupNow } from '../backup-service.js?v=559';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=559';
+import { openBarcodeScanner } from '../barcode-scan.js?v=559';
+import { getInvoiceAiKey, suggestMaterialGroups } from '../invoice-ai.js?v=559';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=559';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -64,7 +65,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=558';
+} from '../order-reminder.js?v=559';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -211,7 +212,7 @@ export async function renderSuppliers(container) {
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
   else if (tab === 'scan') {
-    const { renderInvoiceScan } = await import('./invoice-scan.js?v=558');
+    const { renderInvoiceScan } = await import('./invoice-scan.js?v=559');
     await renderInvoiceScan(body);
   }
   else await renderOrderTab(body, container);
@@ -1335,27 +1336,16 @@ function bindSimilarNamesGroupInteractions(host, container) {
 }
 
 async function openAiMaterialSuggestModal(container) {
-  const groups = await getSimilarMaterialNameGroups({ minGroupSize: 2 });
-  const candidates = [];
-  const seen = new Set();
-  for (const group of groups) {
-    for (const mat of group.materials) {
-      if (seen.has(mat.id)) continue;
-      seen.add(mat.id);
-      candidates.push(mat);
-      if (candidates.length >= 80) break;
-    }
-    if (candidates.length >= 80) break;
-  }
-  if (candidates.length < 2) {
-    showToast('אין מספיק שמות דומים לבדיקה');
+  const existing = await getRawMaterials();
+  if (existing.length < 2) {
+    showToast('אין מספיק חומרים לבדיקה');
     return;
   }
   openModal({
     title: 'הצעות AI לחומרים זהים',
     bodyHTML: `
-      <p class="form-hint" style="margin-top:0">ההצעות לא משנות כלום עד שלוחצים «קשר». נשלחים רק שם, מק״ט, ספק וקטגוריה — לא מתכונים.</p>
-      <div id="ai-suggest-host"><p class="form-hint">אפשר גם לקשר את הקבוצות המקומיות ב«שמות דומים» בלי AI.</p></div>`,
+      <p class="form-hint" style="margin-top:0">ההצעות לא משנות כלום עד שלוחצים «קשר». נשלחים כל שמות המחסן, המק״ט, הספק והקטגוריה — לא מתכונים. אחרי קישור, מה שלא נבחר כברירת מחדל יוצא מהמחסן ונכנס לתוך השורה שנבחרה.</p>
+      <div id="ai-suggest-host"><p class="form-hint">אפשר גם לקשר ידנית ב«שמות דומים».</p></div>`,
     footerHTML: `
       <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
       <button type="button" class="btn btn-primary" id="ai-suggest-run">שאל AI</button>`,
@@ -1377,8 +1367,12 @@ async function openAiMaterialSuggestModal(container) {
       btn.textContent = 'בודק...';
     }
     try {
-      const suppliers = await getSuppliers();
-      const categories = await getSupplierCategories();
+      const [suppliers, categories, materials] = await Promise.all([
+        getSuppliers(),
+        getSupplierCategories(),
+        getRawMaterials(),
+      ]);
+      const candidates = materials.filter((m) => m && m.name);
       const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
       const catMap = new Map(categories.map((c) => [Number(c.id), c.name]));
       const items = candidates.map((m) => ({
@@ -1388,7 +1382,12 @@ async function openAiMaterialSuggestModal(container) {
         supplier: m.supplierId ? (supMap.get(Number(m.supplierId)) || '') : '',
         category: catMap.get(Number(m.supplierCategoryId)) || '',
       }));
-      const suggested = await suggestMaterialGroups(items, { apiKey: key });
+      const suggested = await suggestMaterialGroups(items, {
+        apiKey: key,
+        onProgress: (done, total) => {
+          if (btn) btn.textContent = total > 1 ? `בודק ${done}/${total}` : 'בודק...';
+        },
+      });
       if (!suggested.length) {
         if (host) host.innerHTML = '<p class="form-hint">ה-AI לא מצא קבוצות בטוחות. אפשר להמשיך ידנית ב«שמות דומים».</p>';
         return;
@@ -1446,22 +1445,27 @@ async function openAiMaterialSuggestModal(container) {
           const mergeIds = ids.filter((id) => id !== keepId);
           const rows = await getRawMaterials();
           const byRow = new Map(rows.map((m) => [Number(m.id), m]));
-          const plan = planMaterialMerge(byRow.get(keepId), mergeIds.map((id) => byRow.get(id)).filter(Boolean));
+          const keepMat = byRow.get(keepId);
+          const others = mergeIds.map((id) => byRow.get(id)).filter(Boolean);
           const impact = await assessMaterialImpact(ids);
+          const bits = formatImpactSummary(impact);
           if (linkBtn.dataset.armed !== '1') {
             linkBtn.dataset.armed = '1';
             linkBtn.textContent = 'מאשר וקשר';
             groupEl?.querySelector('.ai-impact')?.remove();
-            linkBtn.insertAdjacentHTML('beforebegin', `<p class="form-hint ai-impact">${formatMergeImpactHTML(byRow.get(keepId)?.name || '', plan, impact)}</p>`);
+            const removed = others.map((m) => m.name).join(' · ') || '—';
+            linkBtn.insertAdjacentHTML('beforebegin', `<p class="form-hint ai-impact">נשאר במחסן: <strong>${escapeHtml(keepMat?.name || '')}</strong>. המחיר, הספק והמשקל שלו נשארים.<br>
+              יוצאים מהמחסן ונכנסים לתוכו כמילה נרדפת ומק״ט: ${escapeHtml(removed)}.<br>
+              שם המרכיב במתכון לא משתנה. מלאי ואצוות עוברים אליו.
+              ${bits.length ? `<br><strong>השפעה:</strong> ${escapeHtml(bits.join(' · '))}` : ''}</p>`);
             return;
           }
           linkBtn.disabled = true;
           try {
-            await mergeSelectedRawMaterials(keepId, mergeIds);
-            await setRawMaterialRecipeDefault(keepId, true);
-            showToast(`קושר. ברירת המחדל: «${byRow.get(keepId)?.name || ''}»`);
+            await absorbMaterialsIntoDefault(keepId, mergeIds);
+            showToast(`«${keepMat?.name || ''}» נשאר. השאר נכנסו לתוכו`);
             requestAutoBackupNow().catch(() => {});
-            linkBtn.textContent = 'קושר';
+            groupEl?.remove();
           } catch (err) {
             showToast(err.message || 'שגיאה');
             linkBtn.disabled = false;
@@ -4124,7 +4128,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=558');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=559');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -4146,7 +4150,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=558');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=559');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -4164,7 +4168,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=558');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=559');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -4415,7 +4419,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=558');
+    const inv = await import('../inventory-db.js?v=559');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];

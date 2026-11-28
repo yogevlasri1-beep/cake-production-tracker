@@ -5,19 +5,20 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=558';
+} from './runner.js?v=559';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=558';
+} from '../js/db.js?v=559';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
   addRecipeCategory, addRecipe, addRecipeIngredient,
   addRecipeVersion, getRecipe, listRecipeVersions,
   repairSplitDoubledRecipeVersionIngredients,
-  setRawMaterialRecipeDefault, mergeSelectedRawMaterials,
+  setRawMaterialRecipeDefault, mergeSelectedRawMaterials, absorbMaterialsIntoDefault,
+  getMaterialSkuLines,
   normalizeMaterialKey, getMaterialSynonyms, buildMaterialsByNameKey,
   resolveRecipeIngredientMaterial, getSimilarMaterialNameGroups,
   findRawMaterialsByName, setWeeklyPlanItem, computeWeeklyMaterialNeeds, getWeeklyPlan,
@@ -28,14 +29,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=558';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=558';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=558';
+} from '../js/kitchen-db.js?v=559';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=559';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=559';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=558';
-import { addCategoryGroup } from '../js/db.js?v=558';
+} from '../js/supabase-sync.js?v=559';
+import { addCategoryGroup } from '../js/db.js?v=559';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -252,6 +253,55 @@ export async function runIntegrationTests() {
       .filter((op) => op.type === 'delete' && String(op.localKey) === String(dupId))
       .first();
     assertOk(pendingDelete, 'נרשמה מחיקה לסנכרון');
+  });
+
+  await testAsync('absorbMaterialsIntoDefault — מוציא מהמחסן לתוך ברירת המחדל בלי להחליף את המחיר', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('קיפול AI');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק ברירת מחדל' });
+    const supB = await addSupplier({ categoryId: catId, name: 'ספק אחר' });
+    const keepId = await addRawMaterial({
+      supplierCategoryId: catId, name: 'תפוח', unit: 'ק"ג', unitPrice: 10,
+      supplierId: supA, sku: 'AP-1', packageWeightGrams: 1000, processedPricePerKg: 18,
+    });
+    const otherId = await addRawMaterial({
+      supplierCategoryId: catId, name: 'תפוח עץ', unit: 'ק"ג', unitPrice: 30,
+      supplierId: supB, sku: 'AP-9', packageWeightGrams: 5000,
+    });
+    const recCatId = await addRecipeCategory('מתכוני קיפול');
+    const recipeId = await addRecipe({ categoryId: recCatId, name: 'עוגת תפוח' });
+    await addRecipeIngredient(recipeId, { name: 'תפוח עץ', quantity: 200, unitKind: 'g' });
+    await upsertMeta({
+      collection: 'rawMaterials',
+      localKey: String(otherId),
+      syncId: 'test-sync-fold-other',
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+
+    await absorbMaterialsIntoDefault(keepId, [otherId]);
+    await wait(50);
+
+    const left = await getRawMaterials(catId);
+    assertEqual(left.length, 1, 'נשארה רק ברירת המחדל');
+    const keep = await db.rawMaterials.get(keepId);
+    assertEqual(keep.unitPrice, 10, 'מחיר ברירת המחדל לא הוחלף');
+    assertEqual(Number(keep.supplierId), Number(supA), 'הספק של ברירת המחדל נשאר');
+    assertEqual(keep.processedPricePerKg, 18, 'מחיר לאחר עיבוד נשאר');
+    assertOk(getMaterialSynonyms(keep).some((s) => normalizeMaterialKey(s) === normalizeMaterialKey('תפוח עץ')));
+    assertOk(getMaterialSkuLines(keep).some((line) => line.sku === 'AP-9'), 'המק״ט של השורה שהוסרה נשמר על ברירת המחדל');
+    assertOk(keep.isRecipeDefault, 'הכוכב על ברירת המחדל');
+    const ings = await db.recipeIngredients.where('recipeId').equals(recipeId).toArray();
+    assertEqual(normalizeMaterialKey(ings[0].name), normalizeMaterialKey('תפוח עץ'), 'שם המתכון לא נדרס');
+    const byNameKey = buildMaterialsByNameKey(left);
+    const matById = new Map(left.map((m) => [m.id, m]));
+    const { mat } = resolveRecipeIngredientMaterial(ings[0], { matById, byNameKey });
+    assertEqual(mat.id, keepId, 'המתכון מוצא את ברירת המחדל');
+    const meta = await getMetaByLocal('rawMaterials', otherId);
+    assertOk(meta && meta.deletedAt, 'השורה שהוסרה מסומנת לענן');
   });
 
   await testAsync('getSimilarMaterialNameGroups — מקבץ שמות דומים, לא מציע לא-קשורים', async () => {
@@ -1288,7 +1338,7 @@ export async function runIntegrationTests() {
     const packId = await addSupplierCategory('אריזות', { isPackaging: true });
     await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
     await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
-    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=558');
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=559');
     const subtitle = document.createElement('p');
     subtitle.id = 'page-subtitle';
     document.body.appendChild(subtitle);
@@ -1332,8 +1382,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=558');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=558');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=559');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=559');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];

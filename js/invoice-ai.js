@@ -1,8 +1,8 @@
 /**
  * חילוץ חשבונית: קודם API בשרת (Vercel), אחרת Gemini ישירות עם מפתח מקומי.
  */
-import { getSetting, setSetting } from './db.js?v=558';
-import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=558';
+import { getSetting, setSetting } from './db.js?v=559';
+import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=559';
 
 export const INVOICE_AI_KEY_SETTING = 'invoiceAiKey';
 export const PARSE_INVOICE_PATH = '/api/parse-invoice';
@@ -351,7 +351,7 @@ export function materialGroupPrompt(items) {
   )).join('\n');
   return `קובץ חומרי גלם של מאפייה. כל שורה: id, שם, מק״ט, ספק, קטגוריה.
 החזר JSON בלבד: {"groups":[{"ids":[1,2],"reason":"למה זה אותו חומר"}]}
-כלול רק קבוצות שאתה בטוח שהן אותו חומר גלם.
+החזר את כל הקבוצות שאתה בטוח שהן אותו חומר גלם. אל תחזיר רק כמה דוגמאות.
 אל תאחד מוצרים שונים שחולקים מילה: סוכר מול אבקת סוכר, חלב מול חלב מרוכז, קמח מול קמח תופח, חמאה מול מרגרינה.
 קבוצה צריכה לפחות שני id מהרשימה. אל תמציא id.
 
@@ -386,16 +386,37 @@ export function parseMaterialGroupResponse(raw, allowedIds) {
   return out;
 }
 
-export async function suggestMaterialGroups(items, { apiKey, fetchImpl } = {}) {
-  const list = (items || []).slice(0, 80).filter((it) => it && it.id && it.name);
+const MATERIAL_GROUP_BATCH = 80;
+
+export async function suggestMaterialGroups(items, { apiKey, fetchImpl, onProgress } = {}) {
+  const list = (items || []).filter((it) => it && it.id && it.name);
   if (list.length < 2) return [];
   if (!apiKey) throw new Error('חסר מפתח AI. הוסף מפתח Gemini במסך הסריקה.');
-  const requestBody = {
-    contents: [{ role: 'user', parts: [{ text: materialGroupPrompt(list) }] }],
-    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
-  };
-  const data = await generateGeminiInvoiceJson(apiKey, requestBody, { fetchImpl });
-  return parseMaterialGroupResponse(JSON.stringify(data || {}), list.map((it) => it.id));
+  const sorted = [...list].sort((a, b) => String(a.name).localeCompare(String(b.name), 'he'));
+  const batches = [];
+  for (let i = 0; i < sorted.length; i += MATERIAL_GROUP_BATCH) {
+    batches.push(sorted.slice(i, i + MATERIAL_GROUP_BATCH));
+  }
+  const groups = [];
+  const used = new Set();
+  for (let i = 0; i < batches.length; i += 1) {
+    const batch = batches[i];
+    onProgress?.(i + 1, batches.length);
+    if (batch.length < 2) continue;
+    const requestBody = {
+      contents: [{ role: 'user', parts: [{ text: materialGroupPrompt(batch) }] }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+    };
+    const data = await generateGeminiInvoiceJson(apiKey, requestBody, { fetchImpl });
+    const parsed = parseMaterialGroupResponse(JSON.stringify(data || {}), batch.map((it) => it.id));
+    for (const group of parsed) {
+      const ids = group.ids.filter((id) => !used.has(id));
+      if (ids.length < 2) continue;
+      ids.forEach((id) => used.add(id));
+      groups.push({ ids, reason: group.reason });
+    }
+  }
+  return groups;
 }
 
 export async function parseInvoiceText(text, { suppliers = [], materials = [] } = {}) {
