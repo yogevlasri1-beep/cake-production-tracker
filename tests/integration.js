@@ -5,12 +5,12 @@
  */
 import {
   test, testAsync, assertEqual, assertOk, flushTests,
-} from './runner.js?v=556';
+} from './runner.js?v=557';
 import {
   db, initDB, addCategory, addProduct, addProductionEntry,
   getAllFlowsOverview, getFlowsForCategory, getFlowAliasLookup,
   canonicalFlowIdForRun, flowIdsForCanonical, getProductsCatalogLayout,
-} from '../js/db.js?v=556';
+} from '../js/db.js?v=557';
 import {
   addSupplierCategory, addSupplier, addRawMaterial, updateRawMaterial, getRawMaterials,
   findRawMaterialsByBarcode, getMaterialBarcodes,
@@ -28,14 +28,14 @@ import {
   materialLastUpdatedAt,
   getMaterialsWithSameName, deleteRawMaterial, computePricePerKg, packageWeightGramsFromKg,
   assignMaterialToSupplier, findRawMaterialBySupplierAndName,
-} from '../js/kitchen-db.js?v=556';
-import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=556';
-import { shouldApplyRemote } from '../js/sync/collections.js?v=556';
+} from '../js/kitchen-db.js?v=557';
+import { getMetaByLocal, upsertMeta } from '../js/sync/id-map.js?v=557';
+import { shouldApplyRemote } from '../js/sync/collections.js?v=557';
 import {
   installLiveSyncMiddleware, findLocalByFingerprint, repairOrphanSupplierCategoryLinks,
   flushSyncQueue, pullAllCollections, saveLiveSyncSettings, getServerClockOffsetMs, noteServerClock,
-} from '../js/supabase-sync.js?v=556';
-import { addCategoryGroup } from '../js/db.js?v=556';
+} from '../js/supabase-sync.js?v=557';
+import { addCategoryGroup } from '../js/db.js?v=557';
 
 function wait(ms) {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
@@ -121,7 +121,7 @@ export async function runIntegrationTests() {
   installLiveSyncMiddleware();
   await initDB();
 
-  await testAsync('mergeSelectedRawMaterials — קיבוץ בפועל: 3→2 שורות, לא פוגע במתכון', async () => {
+  await testAsync('mergeSelectedRawMaterials — קישור בלי מחיקה: שמות נשארים, הכוכב קובע מחיר', async () => {
     const catId = await addSupplierCategory('חומרי גלם בדיקה');
     const supA = await addSupplier({ categoryId: catId, name: 'ספק A בדיקה' });
     const supB = await addSupplier({ categoryId: catId, name: 'ספק B בדיקה' });
@@ -166,16 +166,17 @@ export async function runIntegrationTests() {
     await wait(50);
 
     const after = await getRawMaterials(catId);
-    assertEqual(after.length, 2, 'אחרי איחוד: 2 שורות (יעד + הצעת ספק B) — לא 3, לא 0');
+    assertEqual(after.length, 3, 'אחרי קישור: 3 שורות נשארו (ספק אחר ושורה בלי ספק לא נמחקים)');
 
     const afterIds = new Set(after.map((m) => m.id));
     assertOk(afterIds.has(keepId), 'רשומת היעד קיימת');
-    assertOk(afterIds.has(variant1Id), 'הצעת ספק B קיימת תחת שם היעד');
-    assertOk(!afterIds.has(variant2Id), 'החומר בלי מחיר נספג ונעלם לגמרי');
+    assertOk(afterIds.has(variant1Id), 'הצעת ספק B נשארת');
+    assertOk(afterIds.has(variant2Id), 'חומר בלי ספק נשאר');
 
-    for (const m of after) {
-      assertEqual(normalizeMaterialKey(m.name), normalizeMaterialKey('סוכר'), `שם אחיד: ${m.name}`);
-    }
+    const variant1 = after.find((m) => m.id === variant1Id);
+    const variant2 = after.find((m) => m.id === variant2Id);
+    assertEqual(normalizeMaterialKey(variant1.name), normalizeMaterialKey('סוכר לבן'), 'שם ספק B לא נדרס');
+    assertEqual(normalizeMaterialKey(variant2.name), normalizeMaterialKey('סכר'), 'שם בלי ספק לא נדרס');
 
     const keepMat = await db.rawMaterials.get(keepId);
     const syns = getMaterialSynonyms(keepMat).map((s) => normalizeMaterialKey(s));
@@ -189,6 +190,7 @@ export async function runIntegrationTests() {
     // המתכון: עדיין 2 שורות — לא נמחקו/לא נוספו מרכיבים
     const ingsAfter = await db.recipeIngredients.where('recipeId').equals(recipeId).toArray();
     assertEqual(ingsAfter.length, 2, 'אחרי איחוד: עדיין 2 מרכיבים במתכון (לא נמחק כפילות)');
+    assertOk(ingsAfter.some((i) => normalizeMaterialKey(i.name) === normalizeMaterialKey('סכר')), 'שם המרכיב במתכון לא נדרס');
 
     // ברירת המחדל למתכון עדיין קובעת מחיר: resolveRecipeIngredientMaterial מוצא הצעה עם מחיר
     const byNameKey = buildMaterialsByNameKey(after);
@@ -202,22 +204,54 @@ export async function runIntegrationTests() {
     const { mat: resolvedDefault } = resolveRecipeIngredientMaterial(flourIng, { matById, byNameKey });
     assertEqual(resolvedDefault.id, variant1Id, 'ברירת המחדל למתכונים (הצעת ספק B) קובעת את המחיר');
 
-    // tombstone: החומר שנספג בלי מחיר סומן כמחוק ב-syncMeta, עם updatedAt חדש יותר מכל pull ישן
     const meta = await getMetaByLocal('rawMaterials', variant2Id);
-    assertOk(meta && meta.deletedAt, 'syncMeta מסומן כמחוק (tombstone) עבור החומר שנספג');
-    const staleRemoteUpdatedAt = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    assertOk(
-      !shouldApplyRemote(meta.updatedAt, staleRemoteUpdatedAt),
-      'pull ישן (מלפני האיחוד) לא יחייה מחדש את החומר שנספג',
-    );
+    assertOk(!meta?.deletedAt, 'שורה בלי ספק לא סומנה כמחוקה');
+  });
 
-    // ה-middleware של הסינכרון החי אמור היה לתור מחיקה אמיתית (push) עבור החומר שנספג —
-    // לא רק tombstone מקומי — כדי שגם מכשירים אחרים לא יראו אותו יותר.
+  await testAsync('mergeSelectedRawMaterials — אותו ספק ואותו מק״ט נספג עם tombstone, השם במתכון נשאר', async () => {
+    await wait(100);
+    await resetDatabase();
+    installLiveSyncMiddleware();
+    await initDB();
+
+    const catId = await addSupplierCategory('חומרי גלם בדיקה ספיגה');
+    const supA = await addSupplier({ categoryId: catId, name: 'ספק יחיד' });
+    const keepId = await addRawMaterial({
+      supplierCategoryId: catId, name: 'חמאה', unit: 'ק"ג', unitPrice: 10, supplierId: supA, sku: 'BT-1',
+    });
+    const dupId = await addRawMaterial({
+      supplierCategoryId: catId, name: 'חמאה 200', unit: 'ק"ג', unitPrice: 12, supplierId: supA, sku: 'BT-1',
+    });
+    const recCatId = await addRecipeCategory('מתכוני ספיגה');
+    const recipeId = await addRecipe({ categoryId: recCatId, name: 'עוגה' });
+    await addRecipeIngredient(recipeId, { name: 'חמאה 200', quantity: 100, unitKind: 'g' });
+    await upsertMeta({
+      collection: 'rawMaterials',
+      localKey: String(dupId),
+      syncId: 'test-sync-id-dup-sku',
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
+
+    const result = await mergeSelectedRawMaterials(keepId, [dupId]);
+    await wait(50);
+    assertOk(result?.absorbedIds?.includes(dupId), 'הכפילות נספגה');
+    const left = await getRawMaterials(catId);
+    assertEqual(left.length, 1, 'נשארה שורה אחת');
+    const keepMat = await db.rawMaterials.get(keepId);
+    assertOk(getMaterialSynonyms(keepMat).some((s) => normalizeMaterialKey(s) === normalizeMaterialKey('חמאה 200')));
+    const ings = await db.recipeIngredients.where('recipeId').equals(recipeId).toArray();
+    assertEqual(normalizeMaterialKey(ings[0].name), normalizeMaterialKey('חמאה 200'), 'שם המתכון נשאר');
+    const byNameKey = buildMaterialsByNameKey(left);
+    const matById = new Map(left.map((m) => [m.id, m]));
+    const { mat } = resolveRecipeIngredientMaterial(ings[0], { matById, byNameKey });
+    assertEqual(mat.id, keepId, 'המתכון מוצא את היעד דרך המילה הנרדפת');
+    const meta = await getMetaByLocal('rawMaterials', dupId);
+    assertOk(meta && meta.deletedAt, 'השורה שנמחקה סומנה לענן');
     const pendingDelete = await db.syncQueue
       .where('collection').equals('rawMaterials')
-      .filter((op) => op.type === 'delete' && String(op.localKey) === String(variant2Id))
+      .filter((op) => op.type === 'delete' && String(op.localKey) === String(dupId))
       .first();
-    assertOk(pendingDelete, 'נוצרה פעולת מחיקה בתור הסינכרון עבור החומר שנספג (יידחף לענן)');
+    assertOk(pendingDelete, 'נרשמה מחיקה לסנכרון');
   });
 
   await testAsync('getSimilarMaterialNameGroups — מקבץ שמות דומים, לא מציע לא-קשורים', async () => {
@@ -232,6 +266,7 @@ export async function runIntegrationTests() {
       supplierCategoryId: catId, name: 'סוכר לבן', unit: 'ק"ג', unitPrice: 6,
     });
     const sugarTypoId = await addRawMaterial({ supplierCategoryId: catId, name: 'סכר', unit: 'ק"ג', unitPrice: 0 });
+    const powderedId = await addRawMaterial({ supplierCategoryId: catId, name: 'אבקת סוכר', unit: 'ק"ג', unitPrice: 8 });
     const flourId = await addRawMaterial({ supplierCategoryId: catId, name: 'קמח לבן', unit: 'ק"ג', unitPrice: 4 });
     await addRawMaterial({ supplierCategoryId: catId, name: 'שמרים', unit: 'ק"ג', unitPrice: 8 });
 
@@ -239,7 +274,8 @@ export async function runIntegrationTests() {
     const sugarGroup = groups.find((g) => g.materials.some((m) => m.id === sugarId));
     assertOk(sugarGroup, 'נמצאה קבוצה עם "סוכר"');
     const sugarGroupIds = new Set(sugarGroup.materials.map((m) => m.id));
-    assertOk(sugarGroupIds.has(sugarWhiteId), 'סוכר לבן נכנס לאותה קבוצה (containment)');
+    assertOk(!sugarGroupIds.has(sugarWhiteId), 'סוכר לבן לא נכנס אוטומטית — מילה נוספת');
+    assertOk(!sugarGroupIds.has(powderedId), 'אבקת סוכר לא נכנסת לקבוצת הסוכר');
     assertOk(sugarGroupIds.has(sugarTypoId), 'סכר (טעות כתיב) נכנס לאותה קבוצה (Levenshtein)');
     assertOk(!sugarGroupIds.has(flourId), '"קמח לבן" לא נכנס לקבוצת הסוכר (לא דומה מספיק)');
     assertOk(sugarGroup.suggestedTargetId, 'יש הצעת יעד לקבוצה');
@@ -1252,7 +1288,7 @@ export async function runIntegrationTests() {
     const packId = await addSupplierCategory('אריזות', { isPackaging: true });
     await addRawMaterial({ supplierCategoryId: dryId, name: 'קמח לחם', unit: 'ק"ג', unitPrice: 10 });
     await addRawMaterial({ supplierCategoryId: packId, name: 'קרטון עוגה', unit: 'חבילה', unitPrice: 2 });
-    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=556');
+    const { renderSuppliers } = await import('../js/screens/suppliers.js?v=557');
     const subtitle = document.createElement('p');
     subtitle.id = 'page-subtitle';
     document.body.appendChild(subtitle);
@@ -1296,8 +1332,8 @@ export async function runIntegrationTests() {
       unitPrice: 80,
       packageWeightGrams: 25000,
     });
-    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=556');
-    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=556');
+    const { setInvoiceAiKey, parseInvoiceFiles } = await import('../js/invoice-ai.js?v=557');
+    const { renderInvoiceScan } = await import('../js/screens/invoice-scan.js?v=557');
     await setInvoiceAiKey('test-key');
     const originalFetch = window.fetch;
     const calls = [];

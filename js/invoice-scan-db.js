@@ -1,7 +1,7 @@
-import { db } from './db.js?v=556';
-import { addRawMaterial, updateRawMaterial, setRawMaterialPrice } from './kitchen-db.js?v=556';
-import { planMaterialUpgrade, invoiceComparablePrices } from './invoice-match.js?v=556';
-import { todayISO } from './utils.js?v=556';
+import { db } from './db.js?v=557';
+import { addRawMaterial, updateRawMaterial, setRawMaterialPrice } from './kitchen-db.js?v=557';
+import { planMaterialUpgrade, invoiceComparablePrices } from './invoice-match.js?v=557';
+import { todayISO } from './utils.js?v=557';
 
 export async function listInvoiceScans({ supplierId = null } = {}) {
   const rows = await db.invoiceScans?.toArray?.() ?? [];

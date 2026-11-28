@@ -10,12 +10,12 @@ import {
   sanitizeProductId,
   sanitizeCategoryColor,
   productNameKey,
-} from './validators.js?v=556';
-import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=556';
-import { defaultColorForIndex } from './chart.js?v=556';
-import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=556';
-import { isProcessBatchCode } from './process-materials-math.js?v=556';
-import { logAuditEvent } from './audit.js?v=556';
+} from './validators.js?v=557';
+import { computeProductionTotals, sumEntriesForProducts } from './calc.js?v=557';
+import { defaultColorForIndex } from './chart.js?v=557';
+import { localDateTimeISO, parseLocalDateTimeIso, addDaysISO } from './utils.js?v=557';
+import { isProcessBatchCode } from './process-materials-math.js?v=557';
+import { logAuditEvent } from './audit.js?v=557';
 
 export { ValidationError };
 
@@ -3622,7 +3622,7 @@ export async function runDeferredDbMaintenance() {
     console.warn('product recipes cost default sync', err);
   }
   try {
-    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=556');
+    const { foldRestoreFlowTwins, repairMissingCategoryGroups } = await import('./supabase-sync.js?v=557');
     await foldRestoreFlowTwins();
     await repairMissingCategoryGroups();
   } catch (err) {
@@ -3965,7 +3965,7 @@ export async function getProductsCatalogLayout() {
   ]);
   if (catalogGroupsNeedRepair(groups, categories)) {
     try {
-      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=556');
+      const { repairMissingCategoryGroups } = await import('./supabase-sync.js?v=557');
       await repairMissingCategoryGroups();
       [groups, categories] = await Promise.all([
         getCategoryGroups(),
@@ -6932,7 +6932,7 @@ export function overviewFlowsFromRows(flows = [], steps = [], categories = [], g
 /** כל התזרימים עם יעד ומספר שלבים — לתצוגה ב«נהל תזרים» */
 export async function getAllFlowsOverview() {
   try {
-    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=556');
+    const { foldRestoreFlowTwins } = await import('./supabase-sync.js?v=557');
     await foldRestoreFlowTwins();
   } catch (err) {
     console.warn('fold restore flow twins', err);

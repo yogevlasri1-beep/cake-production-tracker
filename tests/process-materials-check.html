@@ -8,13 +8,13 @@
   <pre id="out">רץ...</pre>
   <script src="../js/vendor/dexie.min.js"></script>
   <script type="module">
-    import { initDB, addCategoryGroup, addCategory, addProduct, createFlow, startProductionRun, getRunSettings, setRunSettings, getAllFlowsOverview, deleteProductionRun, getProductionRun } from '../js/db.js?v=556';
+    import { initDB, addCategoryGroup, addCategory, addProduct, createFlow, startProductionRun, getRunSettings, setRunSettings, getAllFlowsOverview, deleteProductionRun, getProductionRun } from '../js/db.js?v=557';
     import {
       createProcessFlow, startProcessRun, saveProcessWeights, assignProcessUse,
       addProcessWaste, processRemainingKg, mixProcessRuns, listExpiryNotices,
       deleteProcessFlow,
-    } from '../js/process-materials.js?v=556';
-    import { isProcessBatchCode } from '../js/process-materials-math.js?v=556';
+    } from '../js/process-materials.js?v=557';
+    import { isProcessBatchCode } from '../js/process-materials-math.js?v=557';
 
     const steps = [];
     function check(name, cond, detail = '') {
@@ -155,7 +155,7 @@
       document.getElementById('out').textContent = `${err.message}\n${steps.map((step) => `${step.ok ? 'עבר' : 'נכשל'} ${step.name} ${step.detail}`).join('\n')}`;
     } finally {
       try {
-        const { db } = await import('../js/db.js?v=556');
+        const { db } = await import('../js/db.js?v=557');
         for (const id of created.runs) {
           await db.runStepStates.where('runId').equals(id).delete();
           await db.productionRuns.delete(id);

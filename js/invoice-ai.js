@@ -1,8 +1,8 @@
 /**
  * חילוץ חשבונית: קודם API בשרת (Vercel), אחרת Gemini ישירות עם מפתח מקומי.
  */
-import { getSetting, setSetting } from './db.js?v=556';
-import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=556';
+import { getSetting, setSetting } from './db.js?v=557';
+import { extractPackageKgFromName, guessPriceBasis } from './invoice-match.js?v=557';
 
 export const INVOICE_AI_KEY_SETTING = 'invoiceAiKey';
 export const PARSE_INVOICE_PATH = '/api/parse-invoice';
@@ -343,6 +343,59 @@ export async function parseInvoiceFiles(files, { suppliers = [], materials = [],
     onStatus?.('השרת עמוס, מנסה סריקה מהמכשיר...');
   }
   return parseViaGemini(parts, catalog, key, { onStatus });
+}
+
+export function materialGroupPrompt(items) {
+  const lines = (items || []).map((it) => (
+    `${it.id}\t${it.name || ''}\t${it.sku || ''}\t${it.supplier || ''}\t${it.category || ''}`
+  )).join('\n');
+  return `קובץ חומרי גלם של מאפייה. כל שורה: id, שם, מק״ט, ספק, קטגוריה.
+החזר JSON בלבד: {"groups":[{"ids":[1,2],"reason":"למה זה אותו חומר"}]}
+כלול רק קבוצות שאתה בטוח שהן אותו חומר גלם.
+אל תאחד מוצרים שונים שחולקים מילה: סוכר מול אבקת סוכר, חלב מול חלב מרוכז, קמח מול קמח תופח, חמאה מול מרגרינה.
+קבוצה צריכה לפחות שני id מהרשימה. אל תמציא id.
+
+${lines}`;
+}
+
+export function parseMaterialGroupResponse(raw, allowedIds) {
+  const text = String(raw || '').trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const body = fence ? fence[1] : text;
+  const start = body.indexOf('{');
+  const end = body.lastIndexOf('}');
+  if (start < 0 || end <= start) return [];
+  let parsed;
+  try {
+    parsed = JSON.parse(body.slice(start, end + 1));
+  } catch {
+    return [];
+  }
+  const allow = allowedIds ? new Set([...allowedIds].map((id) => Number(id))) : null;
+  const groups = Array.isArray(parsed?.groups) ? parsed.groups : [];
+  const out = [];
+  const used = new Set();
+  for (const group of groups) {
+    const ids = [...new Set((group?.ids || []).map((id) => Number(id)).filter((id) => (
+      id && (!allow || allow.has(id)) && !used.has(id)
+    )))];
+    if (ids.length < 2) continue;
+    ids.forEach((id) => used.add(id));
+    out.push({ ids, reason: String(group?.reason || '').trim().slice(0, 180) });
+  }
+  return out;
+}
+
+export async function suggestMaterialGroups(items, { apiKey, fetchImpl } = {}) {
+  const list = (items || []).slice(0, 80).filter((it) => it && it.id && it.name);
+  if (list.length < 2) return [];
+  if (!apiKey) throw new Error('חסר מפתח AI. הוסף מפתח Gemini במסך הסריקה.');
+  const requestBody = {
+    contents: [{ role: 'user', parts: [{ text: materialGroupPrompt(list) }] }],
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' },
+  };
+  const data = await generateGeminiInvoiceJson(apiKey, requestBody, { fetchImpl });
+  return parseMaterialGroupResponse(JSON.stringify(data || {}), list.map((it) => it.id));
 }
 
 export async function parseInvoiceText(text, { suppliers = [], materials = [] } = {}) {

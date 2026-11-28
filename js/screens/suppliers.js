@@ -12,7 +12,7 @@ import {
   importSupplierExcelEntries,
   getSupplierImportUndo, undoSupplierImport,
   getMasterMaterialsList, getCombinedPriceHistory, assignMaterialToSupplier,
-  getDuplicateMaterialGroups, mergeDuplicateMaterials, mergeDuplicateMaterialsKeeping, mergeSelectedRawMaterials,
+  getDuplicateMaterialGroups, mergeSelectedRawMaterials,
   getSimilarMaterialNameGroups,
   buildMergedMaterialSynonyms, computePricePerKg,
   computePackagePrice, packageWeightKgFromGrams, packageWeightGramsFromKg, rawMaterialPricingFromPerKg,
@@ -33,22 +33,30 @@ import {
   sanitizeMaterialNotes,
   sanitizeMinOrderQty,
   classifyMaterialsForMerge,
-} from '../kitchen-db.js?v=556';
-import { getProducts, getCategories } from '../db.js?v=556';
+  planMaterialMerge,
+  assessMaterialImpact,
+  unlinkMaterialSynonym,
+  getMaterialSkuLines,
+  sanitizeSkuVariants,
+  findRawMaterialsByAlias,
+  normalizeMaterialKey,
+} from '../kitchen-db.js?v=557';
+import { getProducts, getCategories } from '../db.js?v=557';
 import {
   parseSupplierFile, detectImportPriceBasis, applyImportPriceBasis, previewImportPriceBasis,
   analyzeImportPriceBasis, flagImportEntriesForReview,
   PRICE_BASIS_PACKAGE, PRICE_BASIS_PER_KG,
-} from '../supplier-import.js?v=556';
+} from '../supplier-import.js?v=557';
 import {
   escapeHtml, showToast, formatMoney, weekStartISO, formatDate, formatDateTime, todayISO,
   monthLabel, addDaysISO, wrapDateInputWithToday, bindTodayDateButtons, formatDecimal,
-} from '../utils.js?v=556';
-import { openModal, closeModal } from '../modal.js?v=556';
-import { requestAutoBackupNow } from '../backup-service.js?v=556';
-import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=556';
-import { openBarcodeScanner } from '../barcode-scan.js?v=556';
-import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=556';
+} from '../utils.js?v=557';
+import { openModal, closeModal } from '../modal.js?v=557';
+import { requestAutoBackupNow } from '../backup-service.js?v=557';
+import { bindSupplierDragList, bindMaterialDragList } from '../product-drag.js?v=557';
+import { openBarcodeScanner } from '../barcode-scan.js?v=557';
+import { getInvoiceAiKey, suggestMaterialGroups } from '../invoice-ai.js?v=557';
+import { getLiveSyncSettings, dedupeSupplierWorkspaceLight } from '../supabase-sync.js?v=557';
 import {
   getOrderReminderInfo,
   renderOrderReminderBannerHTML,
@@ -56,7 +64,7 @@ import {
   getOrderReminderWeekday,
   setOrderReminderWeekday,
   orderReminderWeekdayLabel,
-} from '../order-reminder.js?v=556';
+} from '../order-reminder.js?v=557';
 
 const SUPPLIER_TAB_KEY = 'yitzurSupplierTab';
 const PENDING_MATERIAL_KEY = 'yitzurOpenSupplierMaterial';
@@ -203,7 +211,7 @@ export async function renderSuppliers(container) {
   else if (tab === 'edit') await renderEditTab(body, container, supCats, selectedMatCat, selectedSupCat || container.dataset.supCat);
   else if (tab === 'shortages') await renderShortagesTab(body, container);
   else if (tab === 'scan') {
-    const { renderInvoiceScan } = await import('./invoice-scan.js?v=556');
+    const { renderInvoiceScan } = await import('./invoice-scan.js?v=557');
     await renderInvoiceScan(body);
   }
   else await renderOrderTab(body, container);
@@ -380,6 +388,7 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-dup">אחד כפילויות</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-selected">איחוד נבחרים</button>
         <button type="button" class="btn btn-secondary btn-sm" id="catalog-merge-similar">שמות דומים</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="catalog-ai-suggest">הצעות AI</button>
       </div>
       <p class="form-hint" style="margin:0">כל חומר מוצג פעם אחת · גיליון לכל ספק (עם או בלי כותרות — שם + מחיר לק"ג)</p>
     </div>
@@ -436,6 +445,9 @@ async function renderCatalogTab(body, container, categories, selectedCatId) {
   });
   document.getElementById('catalog-merge-similar')?.addEventListener('click', () => {
     openSimilarNamesModal(container);
+  });
+  document.getElementById('catalog-ai-suggest')?.addEventListener('click', () => {
+    openAiMaterialSuggestModal(container);
   });
 }
 
@@ -539,32 +551,45 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         </div>
         ${catalogItem.offers.length
     ? `<table class="catalog-offers-table">
-          <thead><tr><th>ספק</th><th>מחיר/ק"ג</th><th>כמות באריזה</th><th>מחיר לאריזה</th><th>לאחר עיבוד</th><th>מתכונים</th><th></th></tr></thead>
+          <thead><tr><th>ספק</th><th>מק״ט</th><th>מחיר/ק"ג</th><th>כמות באריזה</th><th>מחיר לאריזה</th><th>לאחר עיבוד</th><th>מתכונים</th><th></th></tr></thead>
           <tbody>
             ${catalogItem.offers.map((o) => {
     const ppk = getMaterialPurchasePricePerKg(o);
     const processed = sanitizeProcessedPricePerKg(o.processedPricePerKg);
     const isDefault = !!o.isRecipeDefault;
+    const aliasName = normalizeMaterialKey(o.name) !== normalizeMaterialKey(catalogItem.name)
+      ? `<div class="form-hint">${escapeHtml(o.name)}</div>` : '';
+    const skuText = getMaterialSkuLines(o).map((line) => {
+      const parts = [line.sku ? `מק״ט ${line.sku}` : 'בלי מק״ט'];
+      if (!line.primary) parts.push('נוסף');
+      if (line.packageWeightGrams) parts.push(formatWeightGrams(line.packageWeightGrams));
+      return parts.join(' · ');
+    }).join('<br>');
+    const canUnlink = normalizeMaterialKey(o.name) !== normalizeMaterialKey(catalogItem.name);
     return `
             <tr data-offer-id="${o.id}" class="${isDefault ? 'is-recipe-default' : ''}">
-              <td>${escapeHtml(o.supplierId ? supMap.get(Number(o.supplierId)) || '—' : 'ללא ספק')}${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}</td>
+              <td>${aliasName}${escapeHtml(o.supplierId ? supMap.get(Number(o.supplierId)) || '—' : 'ללא ספק')}${isDefault ? ' <span class="recipe-default-badge">★</span>' : ''}</td>
+              <td>${skuText}</td>
               <td>${ppk != null ? formatMoney(ppk) : '—'}</td>
               <td>${formatWeightGrams(o.packageWeightGrams)}</td>
               <td>${formatMoney(o.unitPrice)}</td>
-              <td>${processed != null ? formatMoney(processed) : '—'}</td>
+              <td>${processed != null ? `${formatMoney(processed)}/ק"ג` : '—'}</td>
               <td>
                 <button type="button" class="btn btn-sm ${isDefault ? 'btn-primary' : 'btn-secondary'} set-recipe-default" data-id="${o.id}" data-on="${isDefault ? '1' : '0'}" title="${isDefault ? 'הסר ברירת מחדל' : 'סמן כברירת מחדל למתכונים'}">
                   ${isDefault ? '★ ברירת מחדל' : 'סמן ברירת מחדל'}
                 </button>
               </td>
-              <td><button type="button" class="btn btn-secondary btn-sm edit-catalog-offer" data-id="${o.id}">✏️</button></td>
+              <td>
+                <button type="button" class="btn btn-secondary btn-sm edit-catalog-offer" data-id="${o.id}">✏️</button>
+                ${canUnlink ? `<button type="button" class="btn btn-secondary btn-sm unlink-synonym" data-id="${o.id}">נתק</button>` : ''}
+              </td>
             </tr>`;
   }).join('')}
           </tbody>
         </table>`
     : '<p class="form-hint">אין שיוך לספקים עדיין</p>'}
       </div>
-      <p class="form-hint">ברירת מחדל למתכונים — ההצעה והמחיר יופיעו אוטומטית בכל המתכונים עם החומר הזה (אפשר לעקוף בכל מתכון)</p>
+      <p class="form-hint">הכוכב קובע איזו שורה נכנסת למתכון. אם מולא מחיר לאחר עיבוד — המתכון מציג אותו, ומחיר הקילו נשאר מחיר הרכישה. «נתק» מוריד כינוי בלי למחוק שורה.</p>
       <div class="material-detail-history">
         <h4 class="material-detail-subtitle">היסטוריית מחירים</h4>
         ${history.length
@@ -604,6 +629,22 @@ async function openCatalogMaterialDetailModal(container, catalogItem, categories
         const nextItem = catalog.find((c) => c.offers.some((o) => o.id === id))
           || catalog.find((c) => c.primaryId === catalogItem.primaryId);
         if (nextItem) openCatalogMaterialDetailModal(container, nextItem, categories, supMap);
+      } catch (e) {
+        showToast(e.message || 'שגיאה');
+      }
+    });
+  });
+  document.querySelectorAll('.unlink-synonym').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const offer = catalogItem.offers.find((o) => o.id === Number(btn.dataset.id));
+      if (!offer) return;
+      if (!confirm(`לנתק את «${offer.name}» מהכותרת «${catalogItem.name}»? השורה נשארת, והמתכון יפסיק לראות אותה דרך הכינוי.`)) return;
+      try {
+        await unlinkMaterialSynonym(catalogItem.primaryId, offer.name);
+        showToast('הכינוי נותק');
+        requestAutoBackupNow().catch(() => {});
+        closeModal();
+        await renderSuppliers(container);
       } catch (e) {
         showToast(e.message || 'שגיאה');
       }
@@ -701,7 +742,7 @@ function renderMergeDupGroupsHTML(groups, supMap) {
   return groups.map((g, gi) => `
     <div class="merge-dup-group" data-group="${gi}">
       <div class="merge-dup-group-name">${escapeHtml(g.name)}</div>
-      <p class="form-hint merge-dup-group-hint">סמן ספקים/רשומות לשמירה · לא מסומן יאוחד</p>
+      <p class="form-hint merge-dup-group-hint">סמן רשומות לשמירה. לא מסומן יקושר כמילה נרדפת. נמחק רק אותו ספק ואותו מק״ט.</p>
       ${g.materials.map((m) => `
         <label class="merge-dup-option">
           <input type="checkbox" class="merge-keep-cb" data-group="${gi}" value="${m.id}" checked>
@@ -730,7 +771,7 @@ async function refreshMergeDuplicatesModal(container) {
   })));
 }
 
-async function mergeDupGroupFromUI(gi, container) {
+async function mergeDupGroupFromUI(gi, container, btn) {
   const host = document.querySelector('.merge-dup-groups');
   const meta = JSON.parse(host?.dataset.groupsJson || '[]');
   const groupMeta = meta[gi];
@@ -750,10 +791,70 @@ async function mergeDupGroupFromUI(gi, container) {
     return;
   }
 
-  await mergeDuplicateMaterialsKeeping(checked, mergeIds);
-  showToast('אוחד ✓');
+  if (btn && btn.dataset.armed !== '1') {
+    const impact = await assessMaterialImpact(allIds);
+    const bits = formatImpactSummary(impact);
+    btn.dataset.armed = '1';
+    btn.textContent = 'מאשר ואחד';
+    const hint = btn.closest('.merge-dup-group')?.querySelector('.merge-dup-group-hint');
+    if (hint) {
+      hint.textContent = bits.length
+        ? `אחרי אישור: ${bits.join(' · ')}. שם המתכון לא משתנה.`
+        : 'אין מתכון, מלאי או אצווה. לחץ שוב לאישור. שם המתכון לא משתנה.';
+    }
+    return;
+  }
+
+  await mergeSelectedRawMaterials(checked[0], mergeIds);
+  showToast('קושר ✓');
   requestAutoBackupNow().catch(() => {});
   await refreshMergeDuplicatesModal(container);
+}
+
+function formatImpactSummary(impact) {
+  if (!impact) return [];
+  const bits = [];
+  if (impact.recipes?.length) {
+    const names = [...new Set(impact.recipes.map((r) => `«${r.recipeName}» (${r.ingredientName})`))].slice(0, 8);
+    bits.push(`מתכונים (${impact.recipes.length}): ${names.join(' · ')}`);
+  }
+  if (impact.inventoryQty) bits.push(`מלאי ${impact.inventoryQty}`);
+  if (impact.lotCount) bits.push(`אצוות ${impact.lotCount}`);
+  if (impact.shortageCount) bits.push(`חוסרים ${impact.shortageCount}`);
+  if (impact.portionCount) bits.push(`מנות ${impact.portionCount}`);
+  if (impact.packagingCount) bits.push(`אריזות ${impact.packagingCount}`);
+  return bits;
+}
+
+function formatMergeImpactHTML(keepName, plan, impact) {
+  const link = (plan?.link || []).map((m) => m.name).join(' · ') || '—';
+  const absorb = (plan?.absorb || []).map((m) => m.name).join(' · ');
+  const bits = formatImpactSummary(impact);
+  return `יעד: <strong>${escapeHtml(keepName)}</strong><br>
+    נשארות כשורות, והשם הופך למילה נרדפת: ${escapeHtml(link)}<br>
+    ${absorb ? `יימחקו (אותו ספק ואותו מק״ט): <strong>${escapeHtml(absorb)}</strong><br>` : ''}
+    שם המרכיב במתכון לא משתנה. הכוכב קובע את המחיר.
+    ${bits.length
+    ? `<br><strong>השפעה:</strong> ${escapeHtml(bits.join(' · '))}`
+    : '<br>אין מתכון, מלאי או אצווה על השורות האלה.'}`;
+}
+
+async function guardDeleteMaterial(id, { itemLabel = 'חומר גלם', name = '' } = {}) {
+  const impact = await assessMaterialImpact([id]);
+  if (impact.blocked) {
+    const bits = formatImpactSummary(impact);
+    openModal({
+      title: 'המחיקה נעצרה',
+      bodyHTML: `
+        <p>אי אפשר למחוק את «${escapeHtml(name || itemLabel)}».</p>
+        <p>${escapeHtml(bits.join(' · '))}</p>
+        <p class="form-hint">אפשר לקשר אותו כמילה נרדפת לחומר אחר ב«איחוד נבחרים», בלי למחוק את השורה.</p>`,
+      footerHTML: `<button type="button" class="btn btn-secondary modal-cancel">סגור</button>`,
+    });
+    document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+    return false;
+  }
+  return confirm(`למחוק ${itemLabel} «${name}»? אין מתכון, מלאי או אצווה. היסטוריית המחיר של השורה תימחק.`);
 }
 
 const MANUAL_MERGE_RENDER_LIMIT = 60;
@@ -851,8 +952,9 @@ async function openMergeSelectedMaterialsModal(container) {
       <p class="form-hint" style="margin-top:0;line-height:1.5">
         הרשימה זהה ל<strong>מחסן</strong> — חומר אחד לשם (לא כל ספק בנפרד).
         ${catName ? `מוצג לפי קטגוריה: <strong>${escapeHtml(catName)}</strong>.` : 'מוצג: כל הקטגוריות.'}
-        «יעד» = השם שישאר במחסן; שמות אחרים יהפכו למילים נרדפות וייעלמו מהרשימה.
-        ספק אחר עם מחיר נשמר כהצעה <em>בתוך</em> חומר היעד (לא כרטיס נפרד במחסן).
+        «יעד» = הכותרת שתישאר. שמות אחרים הופכים למילים נרדפות.
+        ספק אחר או מק״ט אחר נשארים שורה עם כל הפרטים, תחת אותה כותרת.
+        נמחקת רק שורה של אותו ספק ואותו מק״ט. שם המתכון לא משתנה.
         אחרי איחוד החלון נשאר פתוח להמשך.
       </p>
       <div class="form-group" style="margin-bottom:8px">
@@ -888,13 +990,16 @@ async function openMergeSelectedMaterialsModal(container) {
     const otherMats = others.flatMap((i) => i.offers);
     const syns = buildMergedMaterialSynonyms(keepMat, otherMats);
     const synText = syns.length ? syns.join(' · ') : others.map((i) => i.name).join(' · ');
-    const { preserve } = classifyMaterialsForMerge(keepMat, otherMats);
-    previewEl.innerHTML = `יעד במחסן: <strong>${escapeHtml(keepItem.name)}</strong>
-      · ייעלמו מהמחסן: <strong>${escapeHtml(others.map((i) => i.name).join(' · '))}</strong>
+    const plan = planMaterialMerge(keepMat, otherMats);
+    const confirmBtn = document.getElementById('confirm-manual-mat-merge');
+    if (confirmBtn) {
+      confirmBtn.dataset.armed = '';
+      confirmBtn.textContent = 'אחד חומרים';
+    }
+    previewEl.innerHTML = `יעד: <strong>${escapeHtml(keepItem.name)}</strong>
       · מילים נרדפות: ${escapeHtml(synText || '—')}
-      ${preserve.length
-    ? `<br>הצעות ספק (${preserve.length}) יישארו <em>בתוך</em> «${escapeHtml(keepItem.name)}» — לא כרטיסים נפרדים`
-    : ''}`;
+      · נשארות שורות: ${plan.link.length}
+      ${plan.absorb.length ? ` · יימחקו (אותו ספק ואותו מק״ט): ${plan.absorb.length}` : ''}`;
   }
 
   function rerenderList() {
@@ -993,17 +1098,27 @@ async function openMergeSelectedMaterialsModal(container) {
       return;
     }
     const btn = document.getElementById('confirm-manual-mat-merge');
+    const keepMat = keepItem.offers.find((o) => o.id === keepId) || keepItem.offers[0];
+    const otherMats = items.filter((i) => i.key !== keepKey).flatMap((i) => i.offers);
+    const plan = planMaterialMerge(keepMat, otherMats);
+    if (btn?.dataset.armed !== '1') {
+      const impact = await assessMaterialImpact([keepId, ...mergeIds]);
+      if (previewEl) previewEl.innerHTML = formatMergeImpactHTML(keepItem.name, plan, impact);
+      if (btn) {
+        btn.dataset.armed = '1';
+        btn.textContent = 'מאשר ואחד';
+      }
+      return;
+    }
     if (btn) {
       btn.disabled = true;
       btn.textContent = 'מאחד...';
     }
     try {
       const result = await mergeSelectedRawMaterials(keepId, mergeIds);
-      const preserved = result?.preservedOfferIds?.length || 0;
-      const removedNames = items.filter((i) => i.key !== keepKey).map((i) => i.name);
-      showToast(preserved
-        ? `אוחד ✓ · «${keepItem.name}» · נעלמו: ${removedNames.join(' · ')} · ${preserved} הצעות ספק בפנים`
-        : `אוחד ✓ · «${keepItem.name}» · נעלמו: ${removedNames.join(' · ')}`);
+      const linked = result?.preservedOfferIds?.length || 0;
+      const absorbed = result?.absorbedIds?.length || 0;
+      showToast(`קושר ל«${keepItem.name}» · ${linked} שורות נשארו · ${absorbed} נמחקו`);
       requestAutoBackupNow().catch(() => {});
       await refreshAfterMerge({ keptKey: keepKey, absorbedKeys });
     } catch (err) {
@@ -1034,7 +1149,7 @@ async function openMergeDuplicatesModal(container) {
     title: 'איחוד כפילויות חומרי גלם',
     modalClass: 'modal-merge-dup',
     bodyHTML: `
-      <p class="form-hint" style="margin-top:0">סמן את הספקים/רשומות שיישארו — השאר יאוחדו (החלון נשאר פתוח לקבוצה הבאה)</p>
+      <p class="form-hint" style="margin-top:0">סמן רשומות שיישארו. השאר יקושרו כמילה נרדפת. נמחקת רק כפילות של אותו ספק ואותו מק״ט. שורה בלי ספק נשארת.</p>
       <div class="merge-dup-groups">
         ${renderMergeDupGroupsHTML(groups, supMap)}
       </div>`,
@@ -1058,7 +1173,7 @@ async function openMergeDuplicatesModal(container) {
     const btn = e.target.closest('.merge-group-btn');
     if (!btn) return;
     try {
-      await mergeDupGroupFromUI(Number(btn.dataset.group), container);
+      await mergeDupGroupFromUI(Number(btn.dataset.group), container, btn);
     } catch (err) {
       showToast(err.message || 'שגיאה');
     }
@@ -1066,34 +1181,33 @@ async function openMergeDuplicatesModal(container) {
 
   document.getElementById('merge-dup-all')?.addEventListener('click', async () => {
     const btn = document.getElementById('merge-dup-all');
+    const current = await getDuplicateMaterialGroups();
+    const ids = current.flatMap((g) => g.materials.map((m) => m.id));
+    const impact = await assessMaterialImpact(ids);
+    const bits = formatImpactSummary(impact);
+    const ok = confirm(`לקשר ${current.length} קבוצות של שם זהה?\n${bits.join('\n') || 'אין מתכון, מלאי או אצווה.'}\nשם המתכון לא משתנה. נמחקת רק כפילות של אותו ספק ואותו מק״ט. שורה בלי ספק נשארת.`);
+    if (!ok) return;
     if (btn) btn.disabled = true;
     try {
-      let remaining = await getDuplicateMaterialGroups();
-      while (remaining.length) {
-        const g = remaining[0];
-        // ספק אחד לכל מפתח; חומרים בלי ספק מתאחדים יחד (לא כל אחד בנפרד)
-        const bySupplier = new Map();
-        for (const m of g.materials) {
-          const key = m.supplierId ? `s:${m.supplierId}` : 'none';
-          if (!bySupplier.has(key)) bySupplier.set(key, m.id);
-        }
-        const keepIds = [...bySupplier.values()];
-        const mergeIds = g.materials.map((m) => m.id).filter((id) => !keepIds.includes(id));
-        if (mergeIds.length) {
-          await mergeDuplicateMaterialsKeeping(keepIds, mergeIds);
-        } else if (g.materials.length > 1) {
-          // ספקים שונים בלבד — מאחדים לשם אחד דרך איחוד נבחרים (הצעות נשמרות)
-          await mergeSelectedRawMaterials(
-            g.materials[0].id,
-            g.materials.slice(1).map((m) => m.id),
-          );
-        }
-        requestAutoBackupNow().catch(() => {});
-        remaining = await getDuplicateMaterialGroups();
+      const snapshot = await getDuplicateMaterialGroups();
+      for (const g of snapshot) {
+        const keep = g.materials.find((m) => m.isRecipeDefault)
+          || g.materials.find((m) => (Number(m.unitPrice) || 0) > 0)
+          || g.materials[0];
+        const mergeIds = g.materials.map((m) => m.id).filter((id) => id !== keep.id);
+        if (mergeIds.length) await mergeSelectedRawMaterials(keep.id, mergeIds);
       }
-      showToast('כל הכפילויות אוחדו ✓');
-      closeModal();
-      renderSuppliers(container);
+      requestAutoBackupNow().catch(() => {});
+      const left = await getDuplicateMaterialGroups();
+      showToast(left.length
+        ? 'קושר ✓. שורות של ספק אחר נשארו תחת אותו שם.'
+        : 'כל הכפילויות האמיתיות אוחדו ✓');
+      if (!left.length) {
+        closeModal();
+        renderSuppliers(container);
+      } else {
+        await refreshMergeDuplicatesModal(container);
+      }
     } catch (err) {
       showToast(err.message || 'שגיאה');
       await refreshMergeDuplicatesModal(container);
@@ -1189,6 +1303,23 @@ function bindSimilarNamesGroupInteractions(host, container) {
         showToast('סמן לפחות רשומה אחת לאיחוד אל היעד');
         return;
       }
+      if (btn.dataset.armed !== '1') {
+        const rows = await getRawMaterials();
+        const byId = new Map(rows.map((m) => [Number(m.id), m]));
+        const keepMat = byId.get(targetId);
+        const others = mergeIds.map((id) => byId.get(id)).filter(Boolean);
+        const plan = planMaterialMerge(keepMat, others);
+        const impact = await assessMaterialImpact([targetId, ...mergeIds]);
+        const hostHint = btn.parentElement?.querySelector('.similar-impact')
+          || btn.insertAdjacentElement('beforebegin', document.createElement('p'));
+        if (hostHint) {
+          hostHint.className = 'form-hint similar-impact';
+          hostHint.innerHTML = formatMergeImpactHTML(keepMat?.name || '', plan, impact);
+        }
+        btn.dataset.armed = '1';
+        btn.textContent = 'מאשר וקשר';
+        return;
+      }
       btn.disabled = true;
       try {
         await mergeSelectedRawMaterials(targetId, mergeIds);
@@ -1200,6 +1331,119 @@ function bindSimilarNamesGroupInteractions(host, container) {
         btn.disabled = false;
       }
     });
+  });
+}
+
+async function openAiMaterialSuggestModal(container) {
+  const groups = await getSimilarMaterialNameGroups({ minGroupSize: 2 });
+  const candidates = [];
+  const seen = new Set();
+  for (const group of groups) {
+    for (const mat of group.materials) {
+      if (seen.has(mat.id)) continue;
+      seen.add(mat.id);
+      candidates.push(mat);
+      if (candidates.length >= 80) break;
+    }
+    if (candidates.length >= 80) break;
+  }
+  if (candidates.length < 2) {
+    showToast('אין מספיק שמות דומים לבדיקה');
+    return;
+  }
+  openModal({
+    title: 'הצעות AI לחומרים זהים',
+    bodyHTML: `
+      <p class="form-hint" style="margin-top:0">ההצעות לא משנות כלום עד שלוחצים «קשר». נשלחים רק שם, מק״ט, ספק וקטגוריה — לא מתכונים.</p>
+      <div id="ai-suggest-host"><p class="form-hint">אפשר גם לקשר את הקבוצות המקומיות ב«שמות דומים» בלי AI.</p></div>`,
+    footerHTML: `
+      <button type="button" class="btn btn-secondary modal-cancel">סגור</button>
+      <button type="button" class="btn btn-primary" id="ai-suggest-run">שאל AI</button>`,
+  });
+  document.querySelector('.modal-cancel')?.addEventListener('click', () => {
+    closeModal();
+    renderSuppliers(container);
+  });
+  document.getElementById('ai-suggest-run')?.addEventListener('click', async () => {
+    const host = document.getElementById('ai-suggest-host');
+    const btn = document.getElementById('ai-suggest-run');
+    const key = await getInvoiceAiKey();
+    if (!key) {
+      showToast('חסר מפתח AI. שמור אותו במסך הסריקה.');
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'בודק...';
+    }
+    try {
+      const suppliers = await getSuppliers();
+      const categories = await getSupplierCategories();
+      const supMap = new Map(suppliers.map((s) => [Number(s.id), s.name]));
+      const catMap = new Map(categories.map((c) => [Number(c.id), c.name]));
+      const items = candidates.map((m) => ({
+        id: m.id,
+        name: m.name,
+        sku: m.sku || '',
+        supplier: m.supplierId ? (supMap.get(Number(m.supplierId)) || '') : '',
+        category: catMap.get(Number(m.supplierCategoryId)) || '',
+      }));
+      const suggested = await suggestMaterialGroups(items, { apiKey: key });
+      if (!suggested.length) {
+        if (host) host.innerHTML = '<p class="form-hint">ה-AI לא מצא קבוצות בטוחות. אפשר להמשיך ידנית ב«שמות דומים».</p>';
+        return;
+      }
+      const byId = new Map(candidates.map((m) => [Number(m.id), m]));
+      if (host) {
+        host.innerHTML = suggested.map((group, index) => `
+          <div class="similar-name-group is-open" data-ai-group="${index}">
+            <p>${escapeHtml(group.reason || 'אותו חומר')}</p>
+            <ul>${group.ids.map((id) => {
+    const mat = byId.get(Number(id));
+    return `<li>${escapeHtml(mat?.name || id)}${mat?.sku ? ` · מק״ט ${escapeHtml(mat.sku)}` : ''}</li>`;
+  }).join('')}</ul>
+            <button type="button" class="btn btn-primary btn-sm ai-link-group" data-ai-group="${index}">קשר קבוצה זו</button>
+          </div>`).join('');
+        host.dataset.groups = JSON.stringify(suggested);
+      }
+      host?.querySelectorAll('.ai-link-group').forEach((linkBtn) => {
+        linkBtn.addEventListener('click', async () => {
+          const all = JSON.parse(host.dataset.groups || '[]');
+          const group = all[Number(linkBtn.dataset.aiGroup)];
+          if (!group?.ids?.length) return;
+          const ids = group.ids.map(Number);
+          const keepId = ids[0];
+          const mergeIds = ids.slice(1);
+          const rows = await getRawMaterials();
+          const byRow = new Map(rows.map((m) => [Number(m.id), m]));
+          const plan = planMaterialMerge(byRow.get(keepId), mergeIds.map((id) => byRow.get(id)).filter(Boolean));
+          const impact = await assessMaterialImpact(ids);
+          if (linkBtn.dataset.armed !== '1') {
+            linkBtn.dataset.armed = '1';
+            linkBtn.textContent = 'מאשר וקשר';
+            linkBtn.insertAdjacentHTML('beforebegin', `<p class="form-hint">${formatMergeImpactHTML(byRow.get(keepId)?.name || '', plan, impact)}</p>`);
+            return;
+          }
+          linkBtn.disabled = true;
+          try {
+            await mergeSelectedRawMaterials(keepId, mergeIds);
+            showToast('הקבוצה קושרה');
+            requestAutoBackupNow().catch(() => {});
+            linkBtn.textContent = 'קושר';
+          } catch (err) {
+            showToast(err.message || 'שגיאה');
+            linkBtn.disabled = false;
+          }
+        });
+      });
+    } catch (err) {
+      showToast(err.message || 'שגיאה');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'שאל AI';
+      }
+    }
   });
 }
 
@@ -2052,9 +2296,8 @@ async function openMaterialDetailModal(container, materialId) {
     setTimeout(() => openEditMaterialModal(container, mat), stayOnOrder ? 50 : 300);
   });
   document.getElementById('mat-detail-delete')?.addEventListener('click', async () => {
-    const supplierName = mat.supplierId ? (supMap.get(Number(mat.supplierId)) || '') : '';
-    const extra = supplierName ? ` אצל ${supplierName}` : '';
-    if (!confirm(`למחוק ${itemLabel} «${mat.name}»${extra}?`)) return;
+    const allowed = await guardDeleteMaterial(mat.id, { itemLabel, name: mat.name });
+    if (!allowed) return;
     try {
       await deleteRawMaterial(mat.id);
       closeModal();
@@ -2399,7 +2642,9 @@ function bindEditMaterialListHandlers(host, container, materials, selectedMatCat
 
   host.querySelectorAll('.del-mat').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm('למחוק חומר גלם?')) return;
+      const mat = materials.find((m) => m.id === Number(btn.dataset.id));
+      const allowed = await guardDeleteMaterial(Number(btn.dataset.id), { name: mat?.name || '' });
+      if (!allowed) return;
       await deleteRawMaterial(Number(btn.dataset.id));
       showToast('נמחק');
       renderSuppliers(container);
@@ -2614,6 +2859,7 @@ function openEditMaterialModal(container, mat) {
       isPackaging,
       isCleaning,
       synonyms: getMaterialSynonyms(mat),
+      skuVariants: sanitizeSkuVariants(mat.skuVariants),
       siblingOffers,
     });
     bindSupplierProfileTabs(container, mat, siblingOffers, suppliers);
@@ -2791,15 +3037,28 @@ function materialFormHTML(mat, suppliers, {
     </div>`;
 
   const rawPricingBlock = `
-    <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}" placeholder="למשל: 4.5"></div>
+    <div class="form-group"><label>מחיר לקילו (₪)</label><input type="number" id="mat-price-per-kg" min="0" step="0.01" value="${pricePerKg !== '' ? pricePerKg : ''}" placeholder="למשל: 10"></div>
     <div class="form-group"><label>כמות באריזה (ק&quot;ג)</label><input type="number" id="mat-package-qty" min="0" step="0.001" value="${packageWeightKg !== '' ? packageWeightKg : ''}" placeholder="למשל: 1 — חובה לחישוב מדויק"></div>
     <p class="form-hint" id="mat-package-price-preview"></p>
+    <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="למשל: 18 — מה שיופיע במתכון">
+      <p class="form-hint">מחיר הקילו נשאר מחיר הרכישה. אם ממלאים כאן מחיר — המתכון מציג אותו.</p>
+    </div>
     <p class="form-hint">שינוי מחיר לקילו נשמר אוטומטית בהיסטוריית המחירים</p>`;
 
+  const skuVariantsBlock = `
+    <div class="form-group mat-sku-variants">
+      <label>מק״טים נוספים אצל אותו ספק</label>
+      <div class="mat-synonyms-add-row">
+        <input type="text" id="mat-sku-variant-sku" placeholder="מק״ט" autocomplete="off">
+        <input type="number" id="mat-sku-variant-kg" min="0" step="0.001" placeholder="ק״ג" style="max-width:90px">
+        <input type="number" id="mat-sku-variant-price" min="0" step="0.01" placeholder="₪/ק״ג" style="max-width:90px">
+        <button type="button" class="btn btn-secondary btn-sm" id="mat-sku-variant-add">+</button>
+      </div>
+      <ul class="mat-synonyms-list" id="mat-sku-variants-list"></ul>
+      <p class="form-hint">אותו חומר במק״ט ומשקל אחר נשאר על השורה הזו. «למתכון» מעביר את המק״ט הזה למחיר הראשי.</p>
+    </div>`;
+
   const advancedRawBlock = `
-    <div class="form-group"><label>מחיר לאחר עיבוד (₪/ק&quot;ג)</label><input type="number" id="mat-processed-price" min="0" step="0.01" value="${mat?.processedPricePerKg ?? ''}" placeholder="אופציונלי">
-      <p class="form-hint">אם מולא — במתכונים יחושב לפי מחיר זה במקום מחיר הרכישה</p>
-    </div>
     <div class="form-group">
       <label class="checkbox-row" style="display:flex;align-items:center;gap:8px;cursor:pointer">
         <input type="checkbox" id="mat-is-free"${mat?.isFree ? ' checked' : ''}>
@@ -2924,6 +3183,7 @@ function materialFormHTML(mat, suppliers, {
     <div class="form-group"><label>שם</label><input type="text" id="mat-name" value="${mat ? escapeHtml(mat.name || '') : ''}"></div>
     ${activeToggleBlock}
     ${skuBlock}
+    ${skuVariantsBlock}
     ${rawPricingBlock}
     ${isNew ? supplierBlock : ''}
     ${advancedWrap(`${notesBlock}${barcodeListBlock}${synonymsBlock}${advancedRawBlock}`)}
@@ -2999,6 +3259,103 @@ function bindMaterialSynonymsUI(initialSynonyms = []) {
     synonyms.splice(index, 1);
     list.dataset.synonyms = JSON.stringify(synonyms);
     renderMaterialSynonymsList();
+  });
+}
+
+function readMaterialSkuVariantsFromForm() {
+  const list = document.getElementById('mat-sku-variants-list');
+  if (!list) return [];
+  try {
+    return sanitizeSkuVariants(JSON.parse(list.dataset.variants || '[]'));
+  } catch {
+    return [];
+  }
+}
+
+function renderMaterialSkuVariantsList() {
+  const list = document.getElementById('mat-sku-variants-list');
+  if (!list) return;
+  const rows = readMaterialSkuVariantsFromForm();
+  if (!rows.length) {
+    list.innerHTML = '<li class="form-hint">אין מק״טים נוספים</li>';
+    return;
+  }
+  list.innerHTML = rows.map((row, index) => {
+    const kg = row.packageWeightGrams ? row.packageWeightGrams / 1000 : null;
+    const perKg = computePricePerKg(row.unitPrice, row.packageWeightGrams);
+    return `
+      <li class="mat-synonym-item">
+        <span>${escapeHtml(row.sku || 'בלי מק״ט')}${kg ? ` · ${kg} ק״ג` : ''}${perKg != null ? ` · ${formatMoney(perKg)}/ק״ג` : ''}</span>
+        <button type="button" class="btn btn-secondary btn-sm sku-variant-use" data-index="${index}">למתכון</button>
+        <button type="button" class="btn btn-secondary btn-sm sku-variant-del" data-index="${index}">×</button>
+      </li>`;
+  }).join('');
+}
+
+function bindMaterialSkuVariantsUI(initial = []) {
+  const list = document.getElementById('mat-sku-variants-list');
+  if (!list) return;
+  list.dataset.variants = JSON.stringify(sanitizeSkuVariants(initial));
+  renderMaterialSkuVariantsList();
+
+  document.getElementById('mat-sku-variant-add')?.addEventListener('click', () => {
+    const sku = document.getElementById('mat-sku-variant-sku')?.value;
+    const kg = document.getElementById('mat-sku-variant-kg')?.value;
+    const perKg = document.getElementById('mat-sku-variant-price')?.value;
+    const grams = packageWeightGramsFromKg(kg);
+    const unitPrice = computePackagePrice(perKg, kg) || (Number(perKg) > 0 ? Number(perKg) : 0);
+    const next = sanitizeSkuVariants([
+      ...readMaterialSkuVariantsFromForm(),
+      { sku, packageWeightGrams: grams, unitPrice },
+    ]);
+    if (next.length === readMaterialSkuVariantsFromForm().length) {
+      showToast('מלא מק״ט, משקל או מחיר');
+      return;
+    }
+    list.dataset.variants = JSON.stringify(next);
+    const skuEl = document.getElementById('mat-sku-variant-sku');
+    const kgEl = document.getElementById('mat-sku-variant-kg');
+    const priceEl = document.getElementById('mat-sku-variant-price');
+    if (skuEl) skuEl.value = '';
+    if (kgEl) kgEl.value = '';
+    if (priceEl) priceEl.value = '';
+    renderMaterialSkuVariantsList();
+  });
+
+  list.addEventListener('click', (e) => {
+    const del = e.target.closest('.sku-variant-del');
+    const use = e.target.closest('.sku-variant-use');
+    const rows = readMaterialSkuVariantsFromForm();
+    if (del) {
+      rows.splice(Number(del.dataset.index), 1);
+      list.dataset.variants = JSON.stringify(rows);
+      renderMaterialSkuVariantsList();
+      return;
+    }
+    if (!use) return;
+    const row = rows[Number(use.dataset.index)];
+    if (!row) return;
+    const skuEl = document.getElementById('mat-sku');
+    const kgEl = document.getElementById('mat-package-qty');
+    const priceEl = document.getElementById('mat-price-per-kg');
+    const processedEl = document.getElementById('mat-processed-price');
+    const previous = {
+      sku: skuEl?.value || '',
+      packageWeightGrams: packageWeightGramsFromKg(kgEl?.value),
+      unitPrice: computePackagePrice(priceEl?.value, kgEl?.value) || 0,
+      processedPricePerKg: processedEl?.value || null,
+    };
+    if (skuEl) skuEl.value = row.sku || '';
+    if (kgEl) kgEl.value = row.packageWeightGrams ? String(row.packageWeightGrams / 1000) : '';
+    const perKg = computePricePerKg(row.unitPrice, row.packageWeightGrams);
+    if (priceEl) priceEl.value = perKg != null ? String(perKg) : '';
+    if (processedEl) processedEl.value = row.processedPricePerKg != null ? String(row.processedPricePerKg) : '';
+    rows.splice(Number(use.dataset.index), 1);
+    const swapped = sanitizeSkuVariants([...rows, previous]);
+    list.dataset.variants = JSON.stringify(swapped);
+    renderMaterialSkuVariantsList();
+    updateMaterialPricePreview();
+    showToast('המק״ט הזה הוא עכשיו המחיר למתכון. שמור כדי לקבע.');
   });
 }
 
@@ -3108,13 +3465,14 @@ function bindMaterialActiveToggle() {
 }
 
 function bindMaterialForm(container, categoryId, materialId, {
-  isPackaging = false, isCleaning = false, synonyms = [], siblingOffers = [],
+  isPackaging = false, isCleaning = false, synonyms = [], siblingOffers = [], skuVariants = [],
 } = {}) {
   const simplePrice = isPackaging || isCleaning;
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
   if (isPackaging) bindPackagingFormFields();
   else if (!isCleaning) bindMaterialPricePreviewFields();
   bindMaterialSynonymsUI(synonyms);
+  bindMaterialSkuVariantsUI(skuVariants);
   if (document.getElementById('mat-barcodes-list')) {
     const current = siblingOffers.find((m) => Number(m.id) === Number(materialId));
     bindMaterialBarcodesListUI(current ? getMaterialBarcodes(current) : []);
@@ -3140,6 +3498,7 @@ function bindMaterialForm(container, categoryId, materialId, {
       const payload = {
         name: document.getElementById('mat-name')?.value,
         sku: document.getElementById('mat-sku')?.value,
+        skuVariants: readMaterialSkuVariantsFromForm(),
         notes: document.getElementById('mat-notes')?.value,
         ...(simplePrice ? {
           unit: document.getElementById('mat-unit')?.value,
@@ -3206,13 +3565,14 @@ function bindMaterialForm(container, categoryId, materialId, {
           }
         }
       } else {
-        const dupes = await findRawMaterialsByName(payload.name);
+        const dupes = await findRawMaterialsByAlias(payload.name);
         if (dupes.length) {
           const supplierIdVal = payload.supplierId ? Number(payload.supplierId) : null;
-          const sameSupplier = dupes.some((m) => (m.supplierId || null) === supplierIdVal);
+          const sameSupplier = dupes.some((m) => (Number(m.supplierId) || null) === supplierIdVal);
+          const names = [...new Set(dupes.map((m) => m.name))].slice(0, 3).join(' · ');
           const msg = sameSupplier
-            ? `חומר בשם «${payload.name}» כבר קיים אצל אותו ספק. ליצור בכל זאת חומר נפרד?`
-            : `חומר בשם «${payload.name}» כבר קיים במערכת (קטגוריה/ספק אחר). ליצור הצעה נוספת באותו שם?`;
+            ? `«${payload.name}» כבר קיים אצל אותו ספק (${names}). ליצור בכל זאת שורה נפרדת?`
+            : `«${payload.name}» כבר קיים כחומר או כמילה נרדפת (${names}). ליצור שורה נוספת?`;
           if (!confirm(msg)) return;
         }
         savedId = await addRawMaterial({
@@ -3475,10 +3835,28 @@ function openImportPreview(container, parsed, categories, defaultCatId, fileName
           <li><strong>${escapeHtml(e.materialName)}</strong> · ${escapeHtml(e.supplierName)} · ${formatMoney(e.price || 0)}${e.effectiveDate ? ` · ${formatDate(e.effectiveDate)}` : ''}</li>`).join('')}
         ${entries.length > preview.length ? `<li class="form-hint">+ עוד ${entries.length - preview.length}...</li>` : ''}
       </ul>
+      <p class="form-hint" id="import-existing-hint" style="margin-top:10px">בודק התאמה לחומרים קיימים...</p>
       <p class="form-hint" style="margin-top:10px">אחרי הייבוא תוכל לבטל דרך «בטל ייבוא» — בלי לפגוע במתכונים.</p>`,
     footerHTML: `<button class="btn btn-secondary modal-cancel">ביטול</button><button class="btn btn-primary" id="confirm-sup-import">ייבוא ✓</button>`,
   });
   document.querySelector('.modal-cancel')?.addEventListener('click', closeModal);
+  getRawMaterials().then((materials) => {
+    const hint = document.getElementById('import-existing-hint');
+    if (!hint) return;
+    let known = 0;
+    for (const entry of entries) {
+      const key = normalizeMaterialKey(entry.materialName);
+      if (!key) continue;
+      const hit = materials.some((m) => (
+        normalizeMaterialKey(m.name) === key
+        || getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === key)
+      ));
+      if (hit) known += 1;
+    }
+    hint.textContent = known
+      ? `${known} שורות כבר תואמות חומר או מילה נרדפת. אצל אותו ספק יעודכן המחיר בלי כרטיס חדש. ספק אחר יישאר שורה תחת אותה כותרת.`
+      : 'לא נמצאה התאמה לשמות קיימים. שמות חדשים ייפתחו כשורות חדשות.';
+  }).catch(() => {});
   document.getElementById('import-price-basis')?.addEventListener('change', (e) => {
     const basis = e.target.value;
     const host = document.getElementById('import-price-basis-samples');
@@ -3712,7 +4090,7 @@ async function renderShortagesTab(body, container) {
 
   body.querySelectorAll('.shortage-receive-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=556');
+      const { renderLotPickerFieldHTML, bindLotPickerFields } = await import('../lot-picker.js?v=557');
       openModal({
         title: `קבלה למלאי — ${btn.dataset.name || ''}`,
         bodyHTML: `
@@ -3734,7 +4112,7 @@ async function renderShortagesTab(body, container) {
       bindLotPickerFields(document.getElementById('modal-body'));
       document.getElementById('receive-lot-save')?.addEventListener('click', async () => {
         try {
-          const { receiveShortageToInventory } = await import('../inventory-db.js?v=556');
+          const { receiveShortageToInventory } = await import('../inventory-db.js?v=557');
           const qty = document.getElementById('receive-lot-qty')?.value;
           const packagingBatchNumber = document.getElementById('receive-lot-number')?.value?.trim();
           const result = await receiveShortageToInventory(btn.dataset.id, { qty, packagingBatchNumber });
@@ -3752,7 +4130,7 @@ async function renderShortagesTab(body, container) {
   document.getElementById('receive-open-shortages')?.addEventListener('click', async () => {
     if (!confirm('לקבל למלאי את כל החוסרים הפתוחים שיש להם חומר וכמות?')) return;
     try {
-      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=556');
+      const { receiveOpenShortagesToInventory } = await import('../inventory-db.js?v=557');
       const { ok, skipped } = await receiveOpenShortagesToInventory();
       requestAutoBackupNow().catch(() => {});
       showToast(skipped ? `נקלטו ${ok}, דולגו ${skipped}` : `נקלטו ${ok} למלאי`);
@@ -4003,7 +4381,7 @@ async function renderOrderTab(body, container) {
   ]);
   let balances = [];
   try {
-    const inv = await import('../inventory-db.js?v=556');
+    const inv = await import('../inventory-db.js?v=557');
     balances = await inv.getInventoryBalances();
   } catch {
     balances = [];

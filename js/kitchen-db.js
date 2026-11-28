@@ -1,15 +1,15 @@
-import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=556';
+import { db, ValidationError, sanitizeRawMaterialsCostSource, pickDbTables, isWasteProductionEntry, getStepPortionBatches, getRunPortionLogs } from './db.js?v=557';
 import {
   sanitizeName, sanitizeProductId, sanitizeMoney, sanitizeQuantity, sanitizeRecipeQuantity,
   sanitizePortionSize, sanitizePortionCount,
-} from './validators.js?v=556';
-import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=556';
-import { logAuditEvent } from './audit.js?v=556';
-import { markMetaDeleted } from './sync/id-map.js?v=556';
+} from './validators.js?v=557';
+import { weekStartISO, todayISO, localDateTimeISO, roundDecimal, formatDecimal, productRecordUsesKg } from './utils.js?v=557';
+import { logAuditEvent } from './audit.js?v=557';
+import { markMetaDeleted } from './sync/id-map.js?v=557';
 import {
   assignOrphanRecipesToCategories,
   buildRecipesCatalogLayout,
-} from './sync/recipe-catalog-repair.js?v=556';
+} from './sync/recipe-catalog-repair.js?v=557';
 
 const DEFAULT_RECIPE_YIELD = 1;
 
@@ -2207,7 +2207,9 @@ export async function ensureRawMaterialByName(name, { supplierCategoryId, unit }
   const trimmed = sanitizeName(name, 80);
   if (!trimmed) return null;
   const all = await db.rawMaterials.toArray();
-  const found = all.find((m) => m.name === trimmed);
+  const key = normalizeMaterialKey(trimmed);
+  const found = all.find((m) => normalizeMaterialKey(m.name) === key)
+    || all.find((m) => getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === key));
   if (found) return found.id;
   return addRawMaterial({
     supplierCategoryId,
@@ -2500,6 +2502,22 @@ export function buildMaterialsByNameKey(materials) {
       add(normalizeMaterialKey(syn), m);
     }
   }
+  // כרטיס אחד: כל השמות והכינויים בקבוצה רואים את כל השורות, כדי שהכוכב יקבע מחיר
+  for (const { members } of clusterMaterialRows(materials)) {
+    if (!members || members.length < 2) continue;
+    const keys = new Set();
+    for (const m of members) {
+      const key = normalizeMaterialKey(m.name);
+      if (key) keys.add(key);
+      for (const syn of getMaterialSynonyms(m)) {
+        const sk = normalizeMaterialKey(syn);
+        if (sk) keys.add(sk);
+      }
+    }
+    for (const key of keys) {
+      for (const m of members) add(key, m);
+    }
+  }
   return map;
 }
 
@@ -2614,9 +2632,9 @@ export async function setRawMaterialRecipeDefault(materialId, enabled = true) {
   const mat = await db.rawMaterials.get(mid);
   if (!mat) throw new ValidationError('חומר לא נמצא');
 
-  const key = normalizeMaterialKey(mat.name);
   const all = await db.rawMaterials.toArray();
-  const siblings = all.filter((m) => normalizeMaterialKey(m.name) === key);
+  const cluster = clusterMaterialRows(all).find((c) => c.members.some((m) => Number(m.id) === Number(mid)));
+  const siblings = cluster?.members?.length ? cluster.members : [mat];
 
   await db.transaction('rw', db.rawMaterials, async () => {
     for (const sibling of siblings) {
@@ -4710,6 +4728,137 @@ export function sanitizeSku(value) {
   return s.slice(0, 64);
 }
 
+export function materialSkuKey(sku) {
+  const s = sanitizeSku(sku);
+  return s ? s.toLocaleLowerCase('he') : '';
+}
+
+/** מק״טים נוספים על אותה שורת ספק — משקל ומחיר יכולים להיות שונים. לא שורה נפרדת. */
+export function sanitizeSkuVariants(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const sku = sanitizeSku(item.sku);
+    const packageWeightGrams = item.packageWeightGrams != null && item.packageWeightGrams !== ''
+      ? sanitizePackageWeightGrams(item.packageWeightGrams)
+      : null;
+    const unitPrice = sanitizeMoney(item.unitPrice || 0);
+    const processedPricePerKg = sanitizeProcessedPricePerKg(item.processedPricePerKg);
+    const barcode = sanitizeBarcode(item.barcode) || null;
+    if (!sku && !packageWeightGrams && !(unitPrice > 0)) continue;
+    const key = `${materialSkuKey(sku)}|${packageWeightGrams || ''}|${barcode || ''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ sku, packageWeightGrams, unitPrice, processedPricePerKg, barcode });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+/** השורה הראשית (המחיר למתכון) ואחריה מק״טים נוספים של אותו ספק */
+export function getMaterialSkuLines(material) {
+  const primary = {
+    sku: sanitizeSku(material?.sku),
+    packageWeightGrams: material?.packageWeightGrams ?? null,
+    unitPrice: Number(material?.unitPrice) || 0,
+    processedPricePerKg: sanitizeProcessedPricePerKg(material?.processedPricePerKg),
+    barcode: sanitizeBarcode(material?.barcode) || null,
+    primary: true,
+  };
+  const primaryKey = `${materialSkuKey(primary.sku)}|${primary.packageWeightGrams || ''}`;
+  const extras = sanitizeSkuVariants(material?.skuVariants)
+    .filter((v) => `${materialSkuKey(v.sku)}|${v.packageWeightGrams || ''}` !== primaryKey)
+    .map((v) => ({ ...v, primary: false }));
+  return [primary, ...extras];
+}
+
+/**
+ * איחוד בטוח: מוחקים שורה רק כשאותו ספק ואותו מק״ט.
+ * ספק אחר, או מק״ט אחר, נשארים שורה חיה והשם הופך למילה נרדפת.
+ * שורה בלי ספק (ייבוא מתכון) לא נמחקת.
+ */
+export function planMaterialMerge(keep, others = []) {
+  const absorb = [];
+  const link = [];
+  if (!keep) return { absorb, link };
+  const keepSup = Number(keep.supplierId) || 0;
+  const keepSku = materialSkuKey(keep.sku);
+  for (const other of others || []) {
+    if (!other || other.id === keep.id) continue;
+    const otherSup = Number(other.supplierId) || 0;
+    const sameSupplier = keepSup > 0 && otherSup === keepSup;
+    const sameSku = materialSkuKey(other.sku) === keepSku;
+    if (sameSupplier && sameSku) absorb.push(other);
+    else link.push(other);
+  }
+  return { absorb, link };
+}
+
+export function chooseMaterialCanonical(members) {
+  return [...(members || [])].sort((a, b) => {
+    const owns = (m) => (members || []).some((o) => (
+      o.id !== m.id
+      && getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === normalizeMaterialKey(o.name))
+    ));
+    const score = (m) => (owns(m) ? 4 : 0)
+      + (m.isRecipeDefault ? 2 : 0)
+      + ((Number(m.unitPrice) || 0) > 0 || sanitizeProcessedPricePerKg(m.processedPricePerKg) != null ? 1 : 0);
+    const d = score(b) - score(a);
+    if (d) return d;
+    return Number(a.id) - Number(b.id);
+  })[0] || null;
+}
+
+/** שם זהה או מילה נרדפת שמצביעה על שם של שורה אחרת — כרטיס אחד */
+export function clusterMaterialRows(rows) {
+  const list = (rows || []).filter((m) => m && m.id != null);
+  const parent = new Map(list.map((m) => [m.id, m.id]));
+  function find(id) {
+    let x = id;
+    while (parent.get(x) !== x) {
+      parent.set(x, parent.get(parent.get(x)));
+      x = parent.get(x);
+    }
+    return x;
+  }
+  function union(a, b) {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  }
+  const byName = new Map();
+  for (const m of list) {
+    const key = normalizeMaterialKey(m.name);
+    if (!key) continue;
+    if (!byName.has(key)) byName.set(key, []);
+    byName.get(key).push(m);
+  }
+  for (const group of byName.values()) {
+    for (let i = 1; i < group.length; i += 1) union(group[0].id, group[i].id);
+  }
+  for (const m of list) {
+    for (const syn of getMaterialSynonyms(m)) {
+      const key = normalizeMaterialKey(syn);
+      if (!key) continue;
+      for (const other of byName.get(key) || []) {
+        if (other.id !== m.id) union(m.id, other.id);
+      }
+    }
+  }
+  const groups = new Map();
+  for (const m of list) {
+    const root = find(m.id);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(m);
+  }
+  return [...groups.values()].map((members) => ({
+    canonical: chooseMaterialCanonical(members),
+    members,
+  }));
+}
+
 /** הערות חומר גלם */
 export function sanitizeMaterialNotes(value) {
   const s = String(value ?? '').trim();
@@ -4759,6 +4908,7 @@ export async function addRawMaterial({
   barcode,
   barcodes,
   sku,
+  skuVariants,
   notes,
   minOrderQty,
   active,
@@ -4806,6 +4956,7 @@ export async function addRawMaterial({
     barcode: codes[0] || null,
     barcodes: codes,
     sku: sanitizeSku(sku),
+    skuVariants: sanitizeSkuVariants(skuVariants),
     notes: sanitizeMaterialNotes(notes),
     minOrderQty: sanitizeMinOrderQty(minOrderQty),
     ...packaging,
@@ -4880,6 +5031,7 @@ export async function updateRawMaterial(id, patch) {
   }
   if ('active' in data) data.active = !!data.active;
   if ('sku' in data) data.sku = sanitizeSku(data.sku);
+  if ('skuVariants' in data) data.skuVariants = sanitizeSkuVariants(data.skuVariants);
   if ('notes' in data) data.notes = sanitizeMaterialNotes(data.notes);
   if ('minOrderQty' in data) data.minOrderQty = sanitizeMinOrderQty(data.minOrderQty);
   if ('packagingKind' in data || 'packUnitsCount' in data || 'packProductsPerUnit' in data
@@ -4918,6 +5070,9 @@ export async function deleteRawMaterial(id) {
   }
   await db.rawMaterialPriceHistory.where('rawMaterialId').equals(mid).delete();
   await db.rawMaterials.delete(mid);
+  try {
+    await markMetaDeleted('rawMaterials', mid, new Date().toISOString());
+  } catch { /* syncMeta optional in older DBs */ }
   await syncRawMaterialsActiveFromRecipes();
 }
 
@@ -5142,25 +5297,20 @@ export async function getMasterMaterialsList(supplierCategoryId) {
   const cid = supplierCategoryId ? sanitizeProductId(supplierCategoryId) : null;
   if (cid) rows = rows.filter((m) => sameNumericId(m.supplierCategoryId, cid));
 
-  const byKey = new Map();
-  for (const m of rows) {
-    const key = normalizeMaterialKey(m.name);
-    if (!key) continue;
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(m);
-  }
-
   const list = [];
-  for (const [key, offers] of byKey.entries()) {
-    offers.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
+  for (const { canonical, members } of clusterMaterialRows(rows)) {
+    if (!canonical) continue;
+    const key = normalizeMaterialKey(canonical.name);
+    if (!key) continue;
+    const offers = [...members].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id);
     const supplierIds = new Set(offers.filter((o) => o.supplierId).map((o) => o.supplierId));
     const recipeDefault = offers.find((o) => o.isRecipeDefault) || null;
     list.push({
       key,
-      name: offers[0].name,
-      supplierCategoryId: offers[0].supplierCategoryId,
+      name: canonical.name,
+      supplierCategoryId: canonical.supplierCategoryId,
       offers,
-      primaryId: offers[0].id,
+      primaryId: canonical.id,
       supplierCount: supplierIds.size,
       recipeDefaultId: recipeDefault?.id || null,
       recipeDefaultSupplierId: recipeDefault?.supplierId || null,
@@ -5171,7 +5321,7 @@ export async function getMasterMaterialsList(supplierCategoryId) {
 }
 
 export async function getCombinedPriceHistory(materialId) {
-  const mats = await getMaterialsWithSameName(materialId);
+  const mats = await getMaterialCluster(materialId);
   if (!mats.length) return [];
   const suppliers = await getSuppliers();
   const supMap = new Map(suppliers.map((s) => [s.id, s.name]));
@@ -5295,19 +5445,29 @@ function levenshteinDistance(a, b) {
   return dp[n];
 }
 
-/** האם שני שמות (אחרי נרמול רך) דומים מספיק כדי להציע קיבוץ — לא זהים (זה טיפול «כפילויות») */
+const NAME_FILLER_TOKENS = new Set([
+  'קג', 'קילו', 'גרם', 'גר', 'ליטר', 'מל', 'יח', 'שק', 'קרטון', 'חבילה', 'יחידה',
+]);
+
+function isNameFillerToken(token) {
+  if (/^\d+([.,]\d+)?$/.test(token)) return true;
+  return NAME_FILLER_TOKENS.has(token);
+}
+
+/**
+ * הצעת דמיון בלבד. מילה נוספת (סוכר / אבקת סוכר, חלב / חלב מרוכז) היא מוצר אחר.
+ * נשארים: טעות כתיב קצרה, ואותו שם עם מספר או יחידת מידה.
+ */
 function looseNamesAreSimilar(a, b) {
   if (!a || !b || a === b) return false;
   const minLen = Math.min(a.length, b.length);
-  if (minLen < 2) return false; // מגבלת רעש: שם קצר מדי בלי containment ברור
-  if (a.includes(b) || b.includes(a)) return true;
+  if (minLen < 2) return false;
 
-  const aTokens = new Set(nameTokens(a));
-  const bTokens = new Set(nameTokens(b));
-  if (aTokens.size && bTokens.size) {
-    const overlap = [...aTokens].filter((t) => t.length >= 2 && bTokens.has(t));
-    const union = new Set([...aTokens, ...bTokens]);
-    if (overlap.length && overlap.length / union.size >= 0.5) return true;
+  const aCore = nameTokens(a).filter((t) => !isNameFillerToken(t));
+  const bCore = nameTokens(b).filter((t) => !isNameFillerToken(t));
+  if (aCore.length && bCore.length && aCore.length === bCore.length) {
+    const bSet = new Set(bCore);
+    if (aCore.every((t) => bSet.has(t))) return true;
   }
 
   if (Math.max(a.length, b.length) <= 14) {
@@ -5683,28 +5843,6 @@ async function retargetMaterialRefs(fromId, toId, { productsCache } = {}) {
   }
 }
 
-/**
- * מעדכן recipeIngredients.name לשם היעד עבור כל השמות הישנים בבת אחת —
- * סריקה אחת של הטבלה (לא סריקה מלאה בנפרד לכל חומר שנספג באיחוד).
- */
-async function renameRecipeIngredientsMaterialNames(fromNames, toName, ingredientsCache) {
-  const to = sanitizeName(toName, 80);
-  if (!to) return;
-  const toKey = normalizeMaterialKey(to);
-  const fromKeys = new Set(
-    (fromNames || [])
-      .map((n) => normalizeMaterialKey(n))
-      .filter((k) => k && k !== toKey),
-  );
-  if (!fromKeys.size) return;
-  const ings = ingredientsCache || await db.recipeIngredients.toArray();
-  for (const ing of ings) {
-    if (fromKeys.has(normalizeMaterialKey(ing.name))) {
-      await db.recipeIngredients.update(ing.id, { name: to });
-    }
-  }
-}
-
 /** טבלאות שנכתבות בזמן איחוד חומרי גלם — חייבות להיות באותה טרנזקציה */
 function materialMergeTxTables() {
   const tables = [db.rawMaterials, db.rawMaterialPriceHistory, db.recipeIngredients];
@@ -5735,14 +5873,44 @@ export async function mergeDuplicateMaterials(keepId, mergeIds) {
   await syncRawMaterialsActiveFromRecipes();
 }
 
+async function foldSkuVariantsInto(keepId, fromMat) {
+  const keepRow = await db.rawMaterials.get(keepId);
+  if (!keepRow || !fromMat) return;
+  const primaryKey = `${materialSkuKey(keepRow.sku)}|${keepRow.packageWeightGrams || ''}`;
+  const seen = new Set([primaryKey]);
+  const variants = [];
+  const addLine = (line) => {
+    const sku = sanitizeSku(line?.sku);
+    const grams = line?.packageWeightGrams != null && line.packageWeightGrams !== ''
+      ? sanitizePackageWeightGrams(line.packageWeightGrams)
+      : null;
+    const key = `${materialSkuKey(sku)}|${grams || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (!sku && !grams && !(Number(line?.unitPrice) > 0)) return;
+    variants.push({
+      sku,
+      packageWeightGrams: grams,
+      unitPrice: sanitizeMoney(line?.unitPrice || 0),
+      processedPricePerKg: sanitizeProcessedPricePerKg(line?.processedPricePerKg),
+      barcode: sanitizeBarcode(line?.barcode) || null,
+    });
+  };
+  for (const line of getMaterialSkuLines(keepRow)) {
+    if (!line.primary) addLine(line);
+  }
+  for (const line of getMaterialSkuLines(fromMat)) addLine(line);
+  await db.rawMaterials.update(keepId, { skuVariants: sanitizeSkuVariants(variants) });
+}
+
 /**
- * סופג רשומה ליעד: מעביר מרכיבי מתכון (רק החלפת מזהה — בלי מחיקת שורות),
- * היסטוריית מחירים וקישורים, ואז מוחק את הרשומה המאוחדת.
+ * סופג רשומה ליעד: מעביר קישורים והיסטוריית מחיר, בלי לשנות את שם המרכיב במתכון.
  */
 async function mergeMaterialIntoKeep(keep, mid, { productsCache } = {}) {
   if (!keep || !mid || keep === mid) return;
   const fromMat = await db.rawMaterials.get(mid);
   if (!fromMat) return;
+  await foldSkuVariantsInto(keep, fromMat);
 
   const ings = await db.recipeIngredients.where('rawMaterialId').equals(mid).toArray();
   for (const ing of ings) {
@@ -5782,36 +5950,10 @@ async function mergeMaterialIntoKeep(keep, mid, { productsCache } = {}) {
 }
 
 /**
- * ספקים שונים לאותו מוצר — משאירים הצעה נפרדת תחת שם היעד עם המחיר, כמות אריזה ושאר פרטי הספק.
- */
-async function alignCrossSupplierMaterialOffer(keepMat, fromMat, { clearRecipeDefault = true } = {}) {
-  if (!keepMat || !fromMat || keepMat.id === fromMat.id) return;
-  const keepName = keepMat.name;
-  const fromName = fromMat.name;
-  const patch = {};
-  if (normalizeMaterialKey(fromName) !== normalizeMaterialKey(keepName)) {
-    patch.name = keepName;
-  }
-  if (clearRecipeDefault && fromMat.isRecipeDefault) {
-    patch.isRecipeDefault = false;
-  }
-  // אותה קטגוריה כמו היעד — כדי שלא יופיע כרטיס נפרד במחסן לפי קטגוריה
-  if (keepMat.supplierCategoryId
-    && Number(fromMat.supplierCategoryId) !== Number(keepMat.supplierCategoryId)) {
-    patch.supplierCategoryId = keepMat.supplierCategoryId;
-  }
-  if (Object.keys(patch).length) {
-    await db.rawMaterials.update(fromMat.id, patch);
-  }
-  // recipeIngredients.name מעודכן בבת אחת ב-mergeSelectedRawMaterials (לא כאן — נמנע מסריקה חוזרת).
-}
-
-/**
- * איחוד ידני של חומרי גלם נבחרים (גם עם שמות שונים).
- * - שם היעד נשאר; שמות שאינם יעד → מילים נרדפות.
- * - ספק אחר עם מחיר → הצעה אחת תחת שם היעד (מחיר, כמות אריזה וכו').
- * - בלי מחיר / אותו ספק / כפילות לאותו ספק → נספג (בלי לשנות מבנה מתכון).
- * - ברירת מחדל למתכונים נשמרת על ההצעה המתאימה.
+ * איחוד ידני. שם המתכון לא נדרס.
+ * - כל שם מאוחד נרשם כמילה נרדפת על היעד.
+ * - ספק אחר, מק״ט אחר, או שורה בלי ספק — נשארים שורה חיה תחת אותה כותרת.
+ * - אותו ספק ואותו מק״ט — נספג (השורה נמחקת, עם סימון מחיקה לענן).
  */
 export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   const keep = sanitizeProductId(keepId);
@@ -5828,59 +5970,21 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
   }
   if (!others.length) throw new ValidationError('לא נמצאו חומרים לאיחוד');
 
-  const keepNameKey = normalizeMaterialKey(keepMat.name);
-  const otherIds = new Set(others.map((m) => m.id));
-  const existingOffers = (await db.rawMaterials.toArray()).filter((m) => (
-    m.id !== keep
-    && !otherIds.has(m.id)
-    && normalizeMaterialKey(m.name) === keepNameKey
-  ));
-
-  const {
-    absorbIntoKeep,
-    preserve,
-    absorbIntoOffer,
-  } = classifyMaterialsForMerge(keepMat, others, { existingOffers });
-
+  const { absorb, link } = planMaterialMerge(keepMat, others);
   const synonyms = buildMergedMaterialSynonyms(keepMat, others);
-  const fillPatch = materialFieldFillPatch(keepMat, absorbIntoKeep, {
-    preserveCrossSupplierOffers: false,
-  });
+  const fillPatch = materialFieldFillPatch(keepMat, absorb, { preserveCrossSupplierOffers: false });
   delete fillPatch.isRecipeDefault;
   const preferredUnitPrice = fillPatch.unitPrice != null
     ? fillPatch.unitPrice
     : ((Number(keepMat.unitPrice) || 0) > 0 ? keepMat.unitPrice : null);
-
-  const preservedOfferIds = [];
-  const defaultId = pickMergeRecipeDefaultId(keepMat, others, {
-    preservedIds: preserve.map((m) => m.id),
-  });
+  const linkedIds = link.map((m) => m.id);
+  const defaultId = pickMergeRecipeDefaultId(keepMat, others, { preservedIds: linkedIds });
 
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    // סריקה אחת של recipeIngredients לכל שמות היעד שהשתנו (במקום אחת לכל חומר נספג)
-    const namesToRename = [
-      ...absorbIntoKeep.map((mat) => mat.name),
-      ...absorbIntoOffer.map(({ mat }) => mat.name),
-      ...preserve.map((mat) => mat.name),
-    ];
-    const ingredientsCache = await db.recipeIngredients.toArray();
-    await renameRecipeIngredientsMaterialNames(namesToRename, keepMat.name, ingredientsCache);
     const productsCache = db.products ? await db.products.toArray() : null;
-
-    for (const mat of absorbIntoKeep) {
+    for (const mat of absorb) {
       await mergeMaterialIntoKeep(keep, mat.id, { productsCache });
     }
-    for (const mat of preserve) {
-      const keepDefaultOnOffer = defaultId === mat.id;
-      await alignCrossSupplierMaterialOffer(keepMat, mat, {
-        clearRecipeDefault: !keepDefaultOnOffer,
-      });
-      preservedOfferIds.push(mat.id);
-    }
-    for (const { target, mat } of absorbIntoOffer) {
-      await mergeMaterialIntoKeep(target.id, mat.id, { productsCache });
-    }
-
     const patch = { ...fillPatch, synonyms };
     if (Object.keys(patch).length) {
       await db.rawMaterials.update(keep, patch);
@@ -5891,22 +5995,17 @@ export async function mergeSelectedRawMaterials(keepId, mergeIds) {
     const stillThere = await db.rawMaterials.get(defaultId);
     await setRawMaterialRecipeDefault(stillThere ? defaultId : keep, true);
   }
-  await syncRawMaterialLatestPrice(keep);
-  if (preferredUnitPrice != null) {
+  if (absorb.length) await syncRawMaterialLatestPrice(keep);
+  if (preferredUnitPrice != null && absorb.length) {
     await db.rawMaterials.update(keep, { unitPrice: preferredUnitPrice });
   }
-  for (const oid of preservedOfferIds) {
-    await syncRawMaterialLatestPrice(oid);
-  }
-  if (fillPatch.isPortion) {
-    await syncRawMaterialPortionPreset(keep);
-  }
+  if (fillPatch.isPortion) await syncRawMaterialPortionPreset(keep);
   await syncRawMaterialsActiveFromRecipes();
   await syncRecipesAffectedByMaterial(keep);
-  for (const oid of preservedOfferIds) {
+  for (const oid of linkedIds) {
     await syncRecipesAffectedByMaterial(oid);
   }
-  return { keepId: keep, preservedOfferIds };
+  return { keepId: keep, preservedOfferIds: linkedIds, absorbedIds: absorb.map((m) => m.id) };
 }
 
 /** שומר מספר רשומות (ספקים) — לא מסומנות מאוחדות לרשומת יעד מתאימה */
@@ -5936,15 +6035,6 @@ export async function mergeDuplicateMaterialsKeeping(keepIds, mergeIds) {
 
   const touched = new Set();
   await db.transaction('rw', ...materialMergeTxTables(), async () => {
-    const targetName = primaryMat?.name;
-    if (targetName) {
-      const ingredientsCache = await db.recipeIngredients.toArray();
-      await renameRecipeIngredientsMaterialNames(
-        absorbMats.map((mat) => mat.name),
-        targetName,
-        ingredientsCache,
-      );
-    }
     const productsCache = db.products ? await db.products.toArray() : null;
     for (const mat of absorbMats) {
       let target = mat.supplierId ? keepBySupplier.get(mat.supplierId) : null;
@@ -6062,7 +6152,12 @@ export async function findRawMaterialBySupplierAndName(supplierId, name) {
   const key = normalizeMaterialKey(name);
   if (!sid || !key) return null;
   const mats = await db.rawMaterials.toArray();
-  return mats.find((m) => sameNumericId(m.supplierId, sid) && normalizeMaterialKey(m.name) === key) || null;
+  const exact = mats.find((m) => sameNumericId(m.supplierId, sid) && normalizeMaterialKey(m.name) === key);
+  if (exact) return exact;
+  return mats.find((m) => (
+    sameNumericId(m.supplierId, sid)
+    && getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === key)
+  )) || null;
 }
 
 export async function getMaterialsWithSameName(materialId) {
@@ -6071,6 +6166,126 @@ export async function getMaterialsWithSameName(materialId) {
   const key = normalizeMaterialKey(mat.name);
   const all = await db.rawMaterials.toArray();
   return all.filter((m) => normalizeMaterialKey(m.name) === key);
+}
+
+/** הכרטיס במחסן: אותו שם, או שורות שחוברו במילה נרדפת */
+export async function getMaterialCluster(materialId) {
+  const id = Number(materialId);
+  if (!id) return [];
+  const all = await db.rawMaterials.toArray();
+  const found = clusterMaterialRows(all).find((c) => c.members.some((m) => Number(m.id) === id));
+  return found?.members || [];
+}
+
+export async function findRawMaterialsByAlias(name, { excludeId = null } = {}) {
+  const key = normalizeMaterialKey(name);
+  if (!key) return [];
+  const exclude = excludeId ? Number(excludeId) : null;
+  const rows = (await db.rawMaterials.toArray()).filter((m) => {
+    if (exclude && Number(m.id) === exclude) return false;
+    if (normalizeMaterialKey(m.name) === key) return true;
+    return getMaterialSynonyms(m).some((s) => normalizeMaterialKey(s) === key);
+  });
+  rows.sort((a, b) => a.id - b.id);
+  return rows;
+}
+
+export async function unlinkMaterialSynonym(canonicalId, aliasName) {
+  const id = sanitizeProductId(canonicalId);
+  const key = normalizeMaterialKey(aliasName);
+  if (!id || !key) throw new ValidationError('כינוי לא תקין');
+  const members = await getMaterialCluster(id);
+  if (!members.length) throw new ValidationError('חומר לא נמצא');
+  const aliasRows = members.filter((m) => normalizeMaterialKey(m.name) === key);
+  const others = members.filter((m) => normalizeMaterialKey(m.name) !== key);
+  const otherNames = new Set(others.map((m) => normalizeMaterialKey(m.name)).filter(Boolean));
+  let changed = 0;
+  for (const mat of others) {
+    const syns = getMaterialSynonyms(mat);
+    const next = syns.filter((s) => normalizeMaterialKey(s) !== key);
+    if (next.length !== syns.length) {
+      await updateRawMaterial(mat.id, { synonyms: next });
+      changed += 1;
+    }
+  }
+  for (const mat of aliasRows) {
+    const syns = getMaterialSynonyms(mat);
+    const next = syns.filter((s) => !otherNames.has(normalizeMaterialKey(s)));
+    if (next.length !== syns.length) {
+      await updateRawMaterial(mat.id, { synonyms: next });
+      changed += 1;
+    }
+  }
+  if (!changed) throw new ValidationError('הכינוי לא נמצא על הכרטיס');
+}
+
+export async function assessMaterialImpact(materialIds) {
+  const ids = new Set((materialIds || []).map((id) => Number(id)).filter(Boolean));
+  const mats = [];
+  if (db.rawMaterials) {
+    const all = await db.rawMaterials.toArray();
+    for (const m of all) {
+      if (ids.has(Number(m.id))) mats.push(m);
+    }
+  }
+  const names = new Set();
+  for (const m of mats) {
+    const key = normalizeMaterialKey(m.name);
+    if (key) names.add(key);
+    for (const syn of getMaterialSynonyms(m)) {
+      const sk = normalizeMaterialKey(syn);
+      if (sk) names.add(sk);
+    }
+  }
+  const recipes = db.recipes ? await db.recipes.toArray() : [];
+  const recipeName = new Map(recipes.map((r) => [Number(r.id), r.name]));
+  const ings = db.recipeIngredients ? await db.recipeIngredients.toArray() : [];
+  const recipeHits = [];
+  for (const ing of ings) {
+    const byId = ids.has(Number(ing.rawMaterialId));
+    const byName = names.has(normalizeMaterialKey(ing.name));
+    if (!byId && !byName) continue;
+    recipeHits.push({
+      recipeId: ing.recipeId,
+      recipeName: recipeName.get(Number(ing.recipeId)) || 'מתכון',
+      ingredientName: ing.name,
+    });
+  }
+  let inventoryQty = 0;
+  if (db.inventoryBalances) {
+    for (const id of ids) {
+      const bal = await db.inventoryBalances.where('rawMaterialId').equals(id).first();
+      if (bal) inventoryQty += Math.abs(Number(bal.qtyOnHand) || 0);
+    }
+  }
+  let lotCount = 0;
+  if (db.activeLots) {
+    for (const id of ids) lotCount += await db.activeLots.where('rawMaterialId').equals(id).count();
+  }
+  let shortageCount = 0;
+  if (db.supplierShortages) {
+    for (const id of ids) shortageCount += await db.supplierShortages.where('rawMaterialId').equals(id).count();
+  }
+  let portionCount = 0;
+  if (db.groupPortionPresets) {
+    for (const id of ids) portionCount += await db.groupPortionPresets.where('sourceRawMaterialId').equals(id).count();
+  }
+  let packagingCount = 0;
+  if (db.products) {
+    const products = await db.products.toArray();
+    packagingCount = products.filter((p) => ids.has(Number(p.packagingMaterialId))).length;
+  }
+  const blocked = recipeHits.length > 0 || inventoryQty > 0 || lotCount > 0
+    || shortageCount > 0 || portionCount > 0 || packagingCount > 0;
+  return {
+    recipes: recipeHits,
+    inventoryQty,
+    lotCount,
+    shortageCount,
+    portionCount,
+    packagingCount,
+    blocked,
+  };
 }
 
 export async function findOrCreateSupplierCategory(name) {
