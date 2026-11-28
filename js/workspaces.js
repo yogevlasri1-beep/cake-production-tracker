@@ -59,6 +59,12 @@ export const WORKSPACES = {
     icon: '₪',
     defaultScreen: 'finance',
   },
+  plant: {
+    id: 'plant',
+    label: 'שיפור המפעל',
+    icon: '🛠',
+    defaultScreen: 'plant',
+  },
 };
 
 const STORAGE_KEY = 'appWorkspace';

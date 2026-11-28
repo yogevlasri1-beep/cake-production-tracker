@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>תצוגת שיפור המפעל</title>
+  <link rel="stylesheet" href="../css/styles.css?v=555">
+  <style>
+    html, body { background: #f0f4f8; margin: 0; }
+    #page-subtitle { margin: 0; padding: 8px 16px 0; color: #64748b; font-family: sans-serif; }
+    #main-content { max-width: 420px; margin: 0 auto; }
+  </style>
+</head>
+<body>
+  <p id="page-subtitle"></p>
+  <main id="main-content"></main>
+  <script src="../js/vendor/dexie.min.js"></script>
+  <script type="module">
+    import { renderPlant } from '../js/screens/plant.js?v=555';
+    const main = document.getElementById('main-content');
+    renderPlant(main).then(() => {
+      window.__PLANT_READY__ = true;
+    }).catch((err) => {
+      window.__PLANT_READY__ = String(err && (err.stack || err.message) || err);
+    });
+  </script>
+</body>
+</html>

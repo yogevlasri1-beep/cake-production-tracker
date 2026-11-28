@@ -11,6 +11,7 @@ export const MANAGEABLE_WORKSPACES = [
   'productCatalog',
   'accounts',
   'finance',
+  'plant',
 ];
 
 const STAFF_WORKSPACES = [
@@ -23,7 +24,7 @@ const STAFF_WORKSPACES = [
   'inventory',
   'productCatalog',
 ];
-const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts', 'finance'];
+const ALL_WORKSPACES = [...STAFF_WORKSPACES, 'accounts', 'finance', 'plant'];
 
 const WORKSPACE_ACCESS = {
   production: ['production', 'recipes', 'haccp', 'lots', 'productCatalog'],
@@ -43,6 +44,7 @@ const WORKSPACE_LABELS = {
   productCatalog: 'קטלוג מוצרים',
   accounts: 'חשבונות',
   finance: 'כספים',
+  plant: 'שיפור המפעל',
 };
 
 // שלבי HACCP הנגישים ל-production — שאר התפקידים רואים הכל
