@@ -14237,6 +14237,11 @@ html[lang="he"] .mat-active-toggle.is-on .mat-active-switch::after {
   flex-wrap: wrap;
 }
 
+.invoice-scan-upload .invoice-file-btn,
+.invoice-scan-upload .btn {
+  flex: 1 1 140px;
+}
+
 .invoice-file-btn {
   position: relative;
   overflow: hidden;

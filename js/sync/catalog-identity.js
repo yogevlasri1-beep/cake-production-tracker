@@ -2,7 +2,7 @@
  * אותו מזהה ענן לאותו שם קטלוג אחרי שחזור.
  * בלי זה שחזור מנפיק UUID חדש, והאייפון דוחף עותק שני.
  */
-import { catalogMatchKey, buildCatalogNameMaps } from './collections.js?v=554';
+import { catalogMatchKey, buildCatalogNameMaps } from './collections.js?v=555';
 
 export const STABLE_CATALOG_COLLECTIONS = ['categoryGroups', 'categories', 'products', 'flows'];
 

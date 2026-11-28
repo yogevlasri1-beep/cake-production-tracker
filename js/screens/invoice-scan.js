@@ -2,16 +2,16 @@ import {
   getSuppliers, getRawMaterials, getSupplierCategories, getCombinedPriceHistory,
   sanitizeSku, sanitizeMinOrderQty, getMaterialSynonyms, computePricePerKg,
   packageWeightKgFromGrams, formatKgWeight,
-} from '../kitchen-db.js?v=554';
-import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=554';
-import { openModal, closeModal } from '../modal.js?v=554';
+} from '../kitchen-db.js?v=555';
+import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=555';
+import { openModal, closeModal } from '../modal.js?v=555';
 import {
   suggestMaterialMatches, suggestSupplierMatches, compareInvoicePrice,
   isFirstMaterialScan, extractPackageKgFromName,
-} from '../invoice-match.js?v=554';
-import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=554';
-import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=554';
-import { requestAutoBackupNow } from '../backup-service.js?v=554';
+} from '../invoice-match.js?v=555';
+import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=555';
+import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=555';
+import { requestAutoBackupNow } from '../backup-service.js?v=555';
 
 export const invoiceScanMeta = {
   title: 'סריקת מסמכים',
@@ -78,13 +78,17 @@ export async function renderInvoiceScan(container) {
     <section class="card invoice-scan-card">
       <h3 class="card-title">סריקת חשבונית</h3>
       <p class="form-hint" style="line-height:1.55;margin-bottom:10px">
-        צלם או העלה חשבונית (תמונה / PDF). ה-AI מחלץ שורות, מזהה ספק, ומציע שיוך לחומרים קיימים —
+        צלם חשבונית או בחר תמונה מהגלריה (וגם PDF). ה-AI מחלץ שורות, מזהה ספק, ומציע שיוך לחומרים קיימים —
         בלי לפתוח כפילות. ${unscanedCount ? `<strong>${unscanedCount}</strong> חומרים עדיין בלי סריקה.` : 'כל החומרים כבר נסרקו פעם.'}
       </p>
       <div class="invoice-scan-upload">
         <label class="btn btn-primary invoice-file-btn">
-          📷 בחר / צלם חשבונית
-          <input type="file" id="invoice-files" accept="image/*,application/pdf" multiple capture="environment" hidden>
+          📷 צלם חשבונית
+          <input type="file" id="invoice-files" class="invoice-file-input" accept="image/*" multiple capture="environment" hidden>
+        </label>
+        <label class="btn btn-secondary invoice-file-btn">
+          🖼 בחר מהגלריה
+          <input type="file" id="invoice-gallery-files" class="invoice-file-input" accept="image/*,application/pdf" multiple hidden>
         </label>
         <button type="button" class="btn btn-secondary" id="invoice-paste-btn">הדבק טקסט</button>
       </div>
@@ -109,7 +113,6 @@ export async function renderInvoiceScan(container) {
       ${scans.length ? renderHistory(scans, suppliers) : '<p class="report-empty">אין סריקות עדיין</p>'}
     </section>`;
 
-  const fileInput = document.getElementById('invoice-files');
   const parseBtn = document.getElementById('invoice-parse-btn');
   const namesEl = document.getElementById('invoice-file-names');
   const statusEl = document.getElementById('invoice-parse-status');
@@ -121,10 +124,17 @@ export async function renderInvoiceScan(container) {
     showToast('מפתח נשמר במכשיר');
   });
 
-  fileInput?.addEventListener('change', () => {
-    chosenFiles = [...(fileInput.files || [])];
+  function applyChosenFiles(input) {
+    chosenFiles = [...(input?.files || [])];
     namesEl.textContent = chosenFiles.map((f) => f.name).join(' · ') || '';
     parseBtn.disabled = !chosenFiles.length;
+    container.querySelectorAll('.invoice-file-input').forEach((el) => {
+      if (el !== input) el.value = '';
+    });
+  }
+
+  container.querySelectorAll('.invoice-file-input').forEach((input) => {
+    input.addEventListener('change', () => applyChosenFiles(input));
   });
 
   document.getElementById('invoice-paste-btn')?.addEventListener('click', () => {
@@ -323,7 +333,7 @@ async function renderReview(container, ctx) {
         let thumbnail = '';
         if (files?.[0] && String(files[0].type || '').startsWith('image/')) {
           try {
-            const { compressInvoiceFile } = await import('../invoice-ai.js?v=554');
+            const { compressInvoiceFile } = await import('../invoice-ai.js?v=555');
             const part = await compressInvoiceFile(files[0], { maxEdge: 480, quality: 0.5 });
             thumbnail = part.dataUrl;
           } catch { /* ignore */ }
