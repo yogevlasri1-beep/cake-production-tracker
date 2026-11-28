@@ -2,8 +2,8 @@
  * תזכורת הזמנה שבועית — באנר במסך הבית / טאב הזמנה.
  * יום ברירת מחדל: ראשון (0). ניתן לשינוי ב-localStorage.
  */
-import { weekStartISO, todayISO, addDaysISO } from './utils.js?v=555';
-import { computeHomeMaterialUsage } from './kitchen-db.js?v=555';
+import { weekStartISO, todayISO, addDaysISO } from './utils.js?v=556';
+import { computeHomeMaterialUsage } from './kitchen-db.js?v=556';
 
 const REMINDER_DAY_KEY = 'yitzurOrderReminderWeekday'; // 0=ראשון … 6=שבת
 const DISMISS_KEY = 'yitzurOrderReminderDismissWeek';

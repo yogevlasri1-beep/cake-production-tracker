@@ -1,6 +1,6 @@
-import { getAllFlowsOverview, getProductionRun } from '../db.js?v=555';
-import { getRecipes } from '../kitchen-db.js?v=555';
-import { escapeHtml, formatDate, formatDecimal, formatDuration, formatMoney, runDurationMs, showToast, todayISO } from '../utils.js?v=555';
+import { getAllFlowsOverview, getProductionRun } from '../db.js?v=556';
+import { getRecipes } from '../kitchen-db.js?v=556';
+import { escapeHtml, formatDate, formatDecimal, formatDuration, formatMoney, runDurationMs, showToast, todayISO } from '../utils.js?v=556';
 import {
   addProcessWaste,
   assignProcessUse,
@@ -17,8 +17,8 @@ import {
   saveProcessWeights,
   startProcessRun,
   updateProcessFlow,
-} from '../process-materials.js?v=555';
-import { expiryStatus, isProcessFlow, isProcessRun, kgFromOutputPercent, processFlowConflict, processFlowConflictMessage } from '../process-materials-math.js?v=555';
+} from '../process-materials.js?v=556';
+import { expiryStatus, isProcessFlow, isProcessRun, kgFromOutputPercent, processFlowConflict, processFlowConflictMessage } from '../process-materials-math.js?v=556';
 
 const MODE_KEY = 'yitzur-flow-kind-tab';
 

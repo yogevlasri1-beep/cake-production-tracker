@@ -1,6 +1,6 @@
 /** חישובים טהורים לחומר גלם בתהליך. בלי גישה למסד. */
 
-import { flowNameKey } from './sync/collections.js?v=555';
+import { flowNameKey } from './sync/collections.js?v=556';
 
 export function roundQty(n, digits = 3) {
   const x = Number(n);

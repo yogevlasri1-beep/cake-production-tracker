@@ -2,16 +2,16 @@ import {
   getSuppliers, getRawMaterials, getSupplierCategories, getCombinedPriceHistory,
   sanitizeSku, sanitizeMinOrderQty, getMaterialSynonyms, computePricePerKg,
   packageWeightKgFromGrams, formatKgWeight,
-} from '../kitchen-db.js?v=555';
-import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=555';
-import { openModal, closeModal } from '../modal.js?v=555';
+} from '../kitchen-db.js?v=556';
+import { escapeHtml, showToast, formatMoney, formatDate, formatDateTime } from '../utils.js?v=556';
+import { openModal, closeModal } from '../modal.js?v=556';
 import {
   suggestMaterialMatches, suggestSupplierMatches, compareInvoicePrice,
   isFirstMaterialScan, extractPackageKgFromName,
-} from '../invoice-match.js?v=555';
-import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=555';
-import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=555';
-import { requestAutoBackupNow } from '../backup-service.js?v=555';
+} from '../invoice-match.js?v=556';
+import { parseInvoiceFiles, getInvoiceAiKey, setInvoiceAiKey } from '../invoice-ai.js?v=556';
+import { listInvoiceScans, getInvoiceScan, saveInvoiceScan, applyInvoiceLine } from '../invoice-scan-db.js?v=556';
+import { requestAutoBackupNow } from '../backup-service.js?v=556';
 
 export const invoiceScanMeta = {
   title: 'סריקת מסמכים',
@@ -323,7 +323,7 @@ async function renderReview(container, ctx) {
         let thumbnail = '';
         if (files?.[0] && String(files[0].type || '').startsWith('image/')) {
           try {
-            const { compressInvoiceFile } = await import('../invoice-ai.js?v=555');
+            const { compressInvoiceFile } = await import('../invoice-ai.js?v=556');
             const part = await compressInvoiceFile(files[0], { maxEdge: 480, quality: 0.5 });
             thumbnail = part.dataUrl;
           } catch { /* ignore */ }

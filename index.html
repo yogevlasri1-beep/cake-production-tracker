@@ -13,7 +13,7 @@
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-  <script>window.__APP_BUILD__ = '555';</script>
+  <script>window.__APP_BUILD__ = '556';</script>
   <script>
     (function earlyVersionGate() {
       if (/force-update=1/.test(location.search)) return;
@@ -42,7 +42,7 @@
         .catch(function () { /* ignore */ });
     })();
   </script>
-  <link rel="stylesheet" href="css/styles.css?v=555">
+  <link rel="stylesheet" href="css/styles.css?v=556">
   <script type="importmap">
   {
     "imports": {
@@ -136,6 +136,13 @@
             <span class="workspace-menu-label">
               כספים
               <small class="workspace-menu-hint">ייבוא דוחות מחשבשבת ושכר</small>
+            </span>
+          </button>
+          <button type="button" class="workspace-menu-item" data-workspace="plant">
+            <span class="workspace-menu-icon">🛠</span>
+            <span class="workspace-menu-label">
+              שיפור המפעל
+              <small class="workspace-menu-hint" id="plant-menu-hint">מפה, שיפורים, תחזוקה להיום</small>
             </span>
           </button>
           <div class="workspace-drawer-divider" role="separator"></div>
@@ -378,6 +385,6 @@
       showBootError(msg);
     });
   </script>
-  <script src="js/vendor/dexie.min.js?v=555"></script>
+  <script src="js/vendor/dexie.min.js?v=556"></script>
 </body>
 </html>
